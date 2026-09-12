@@ -1,0 +1,356 @@
+// Package ca implements the cluster certificate authority: an Ed25519 root
+// CA, node certificate issuance and renewal, mTLS configuration builders for
+// all internal listeners, and a trust bundle that supports two simultaneously
+// active CAs (for CA rotation, exercised in Phase 14).
+//
+// Certificate layout:
+//   - CA:  Ed25519, self-signed, CN "Expanse Cluster CA <cluster-id>",
+//     validity 10 years, stored at /cluster/ca/cert in Raft; the private key
+//     is sealed at /persist/expanse/secrets/ca.key (age-encrypted with a key
+//     derived from the cluster secret; TPM-sealed in Phase 14).
+//   - Node: Ed25519, CN = node ID, SANs = node ID, hostname, all node IPs,
+//     validity 30 days, auto-renewed when 10 days remain (i.e. at 20 days of
+//     a 30-day cert). A node whose cert fully expires (offline > 30 days)
+//     must re-join with a fresh token.
+package ca
+
+import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net"
+	"slices"
+	"sort"
+	"time"
+
+	"filippo.io/age"
+	"golang.org/x/crypto/hkdf"
+)
+
+// Validity periods.
+const (
+	CAValidity        = 10 * 365 * 24 * time.Hour
+	NodeCertValidity  = 30 * 24 * time.Hour
+	NodeCertRenewLeft = 10 * 24 * time.Hour // renew while ≥10d remain → renewed at 20 days of a 30-day cert
+)
+
+// CA is a cluster certificate authority.
+type CA struct {
+	Priv ed25519.PrivateKey
+	Cert *x509.Certificate
+}
+
+// Generate creates a fresh self-signed Ed25519 CA for clusterID.
+func Generate(clusterID string, now time.Time) (*CA, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate CA key: %w", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: randomSerial(),
+		Subject: pkix.Name{
+			CommonName:   fmt.Sprintf("Expanse Cluster CA %s", clusterID),
+			Organization: []string{"Expanse"},
+		},
+		NotBefore:             now.Add(-time.Hour), // tolerate small clock skew
+		NotAfter:              now.Add(CAValidity),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+	if err != nil {
+		return nil, fmt.Errorf("create CA cert: %w", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse CA cert: %w", err)
+	}
+	return &CA{Priv: priv, Cert: cert}, nil
+}
+
+// ParseCA restores a CA from a sealed private key and the stored certificate.
+func ParseCA(priv ed25519.PrivateKey, certPEM []byte) (*CA, error) {
+	if len(priv) != ed25519.PrivateKeySize {
+		return nil, errors.New("ca: invalid Ed25519 private key size")
+	}
+	cert, err := UnmarshalCert(certPEM)
+	if err != nil {
+		return nil, err
+	}
+	if cert.PublicKeyAlgorithm != x509.Ed25519 {
+		return nil, errors.New("ca: certificate is not Ed25519")
+	}
+	if !priv.Public().(ed25519.PublicKey).Equal(cert.PublicKey.(ed25519.PublicKey)) {
+		return nil, errors.New("ca: private key does not match certificate")
+	}
+	return &CA{Priv: priv, Cert: cert}, nil
+}
+
+// IssueNode issues a node certificate. CN = nodeID; SANs include nodeID,
+// hostname and every IP. The certificate is valid for NodeCertValidity and
+// usable for both client and server authentication (all node↔node peers are
+// both gRPC servers and clients).
+func (c *CA) IssueNode(nodeID, hostname string, ips []net.IP, now time.Time) (*x509.Certificate, ed25519.PrivateKey, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate node key: %w", err)
+	}
+	sans := []string{nodeID}
+	if hostname != "" && hostname != nodeID {
+		sans = append(sans, hostname)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: randomSerial(),
+		Subject:      pkix.Name{CommonName: nodeID, Organization: []string{"Expanse"}},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(NodeCertValidity),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     sans,
+		IPAddresses:  ips,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.Cert, pub, c.Priv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sign node cert: %w", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse node cert: %w", err)
+	}
+	return cert, priv, nil
+}
+
+// NeedsRenewal reports whether a node certificate should be renewed now:
+// true when less than NodeCertRenewLeft of validity remains (i.e. the cert
+// has reached 20 days of its 30-day lifetime).
+func NeedsRenewal(cert *x509.Certificate, now time.Time) bool {
+	return now.After(cert.NotAfter.Add(-NodeCertRenewLeft))
+}
+
+// Expired reports whether cert is not valid at now.
+func Expired(cert *x509.Certificate, now time.Time) bool {
+	return now.Before(cert.NotBefore) || now.After(cert.NotAfter)
+}
+
+// randomSerial returns a random positive certificate serial number.
+func randomSerial() *big.Int {
+	for {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			panic(err) // crypto/rand failure is unrecoverable
+		}
+		n := new(big.Int).SetBytes(b)
+		if n.Sign() > 0 {
+			return n
+		}
+	}
+}
+
+// --- cert (un)marshaling ---
+
+const pemTypeCert = "CERTIFICATE"
+
+// MarshalCert PEM-encodes a certificate for storage (e.g. at /cluster/ca/cert).
+func MarshalCert(cert *x509.Certificate) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: pemTypeCert, Bytes: cert.Raw})
+}
+
+// UnmarshalCert parses a PEM certificate produced by MarshalCert.
+func UnmarshalCert(b []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(b)
+	if block == nil || block.Type != pemTypeCert {
+		return nil, errors.New("ca: no CERTIFICATE PEM block found")
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
+// KeyPEM PEM-encodes a private key (PKCS8).
+func KeyPEM(priv ed25519.PrivateKey) ([]byte, error) {
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, fmt.Errorf("marshal private key: %w", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
+}
+
+// ParseKeyPEM parses a PKCS8 private key.
+func ParseKeyPEM(b []byte) (ed25519.PrivateKey, error) {
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return nil, errors.New("ca: no PRIVATE KEY PEM block found")
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+	priv, ok := key.(ed25519.PrivateKey)
+	if !ok {
+		return nil, errors.New("ca: private key is not Ed25519")
+	}
+	return priv, nil
+}
+
+// --- trust bundle (supports two active CAs for rotation) ---
+
+// Bundle is the set of trusted cluster CAs. It normally holds exactly one
+// CA; during CA rotation it holds two (the incoming and the outgoing) so
+// that certs issued by either are accepted until the old CA is removed.
+type Bundle struct {
+	CAs []*x509.Certificate // first entry is the primary (issuing) CA
+}
+
+// NewBundle builds a bundle from one or more CA certificates.
+func NewBundle(certs ...*x509.Certificate) (*Bundle, error) {
+	if len(certs) == 0 {
+		return nil, errors.New("ca: empty trust bundle")
+	}
+	for _, c := range certs {
+		if !c.IsCA {
+			return nil, errors.New("ca: bundle contains a non-CA certificate")
+		}
+	}
+	return &Bundle{CAs: certs}, nil
+}
+
+// Primary returns the issuing CA.
+func (b *Bundle) Primary() *x509.Certificate { return b.CAs[0] }
+
+// Pool returns an x509 pool containing every CA in the bundle.
+func (b *Bundle) Pool() *x509.CertPool {
+	pool := x509.NewCertPool()
+	for _, c := range b.CAs {
+		pool.AddCert(c)
+	}
+	return pool
+}
+
+// VerifyNode verifies that a node certificate chains to one of the bundle's
+// CAs and has the right key usages. The node ID (CN) must be checked
+// separately by the caller against membership (see VerifyPeerCN).
+func (b *Bundle) VerifyNode(cert *x509.Certificate, now time.Time) error {
+	_, err := cert.Verify(x509.VerifyOptions{
+		Roots:         b.Pool(),
+		CurrentTime:   now,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		Intermediates: x509.NewCertPool(),
+	})
+	if err != nil {
+		return fmt.Errorf("ca: verify node cert: %w", err)
+	}
+	return nil
+}
+
+// VerifyPeerCN returns a tls.VerifyPeerCertificate callback that checks the
+// leaf certificate's Common Name against the currently known node IDs.
+// Membership changes take effect on the next handshake without restarting
+// the listener. Chain and expiry verification are still performed by the
+// standard verifier; this callback only adds the CN-membership check.
+func VerifyPeerCN(knownNodes func() []string) func([][]byte, [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return errors.New("ca: no peer certificate presented")
+		}
+		cert, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return fmt.Errorf("ca: parse peer cert: %w", err)
+		}
+		known := knownNodes()
+		i := sort.SearchStrings(known, cert.Subject.CommonName)
+		if i >= len(known) || known[i] != cert.Subject.CommonName {
+			return fmt.Errorf("ca: peer CN %q is not a known node", cert.Subject.CommonName)
+		}
+		return nil
+	}
+}
+
+// TLSConfig builds the tls.Config used by every internal listener (gRPC
+// :7443, Raft :7444, join :7446). TLS 1.3 only, mutual TLS with the cluster
+// CA(s) on both sides, plus the CN-membership check.
+func TLSConfig(bundle *Bundle, ownCert tls.Certificate, knownNodes func() []string) *tls.Config {
+	return &tls.Config{
+		MinVersion:            tls.VersionTLS13,
+		ClientAuth:            tls.RequireAndVerifyClientCert,
+		ClientCAs:             bundle.Pool(),
+		RootCAs:               bundle.Pool(),
+		Certificates:          []tls.Certificate{ownCert},
+		VerifyPeerCertificate: VerifyPeerCN(knownNodes),
+	}
+}
+
+// --- sealed CA key storage ---
+
+const hkdfInfo = "expanse/ca-seal/v1"
+
+// deriveSealPassphrase derives the age passphrase from the cluster secret
+// via HKDF-SHA256 (32 bytes, hex-encoded). The passphrase never leaves the
+// sealing layer; rotate by rotating the cluster secret itself.
+func deriveSealPassphrase(clusterSecret []byte) string {
+	key := make([]byte, 32)
+	h := hkdf.New(sha256.New, clusterSecret, nil, []byte(hkdfInfo))
+	if _, err := io.ReadFull(h, key); err != nil {
+		panic(err) // HKDF-SHA256 from 32+ byte secrets cannot fail short reads
+	}
+	return hex.EncodeToString(key)
+}
+
+// SealKey encrypts the CA private key for storage at
+// /persist/expanse/secrets/ca.key. The key is age-encrypted with a
+// passphrase derived (HKDF-SHA256) from the cluster secret.
+func SealKey(priv ed25519.PrivateKey, clusterSecret []byte) ([]byte, error) {
+	pemKey, err := KeyPEM(priv)
+	if err != nil {
+		return nil, err
+	}
+	recipient, err := age.NewScryptRecipient(deriveSealPassphrase(clusterSecret))
+	if err != nil {
+		return nil, fmt.Errorf("ca: scrypt recipient: %w", err)
+	}
+	var buf bytes.Buffer
+	w, err := age.Encrypt(&buf, recipient)
+	if err != nil {
+		return nil, fmt.Errorf("ca: seal key: %w", err)
+	}
+	if _, err := w.Write(pemKey); err != nil {
+		return nil, fmt.Errorf("ca: seal key write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("ca: seal key close: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// UnsealKey decrypts a key sealed by SealKey.
+func UnsealKey(data, clusterSecret []byte) (ed25519.PrivateKey, error) {
+	identity, err := age.NewScryptIdentity(deriveSealPassphrase(clusterSecret))
+	if err != nil {
+		return nil, fmt.Errorf("ca: scrypt identity: %w", err)
+	}
+	r, err := age.Decrypt(bytes.NewReader(data), identity)
+	if err != nil {
+		return nil, fmt.Errorf("ca: unseal key (wrong cluster secret?): %w", err)
+	}
+	pemKey, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("ca: unseal key read: %w", err)
+	}
+	return ParseKeyPEM(pemKey)
+}
+
+// SortedIDs is a helper for callers maintaining a known-node list for
+// VerifyPeerCN: the list must be sorted for binary search.
+func SortedIDs(ids []string) []string {
+	out := slices.Clone(ids)
+	sort.Strings(out)
+	return out
+}
