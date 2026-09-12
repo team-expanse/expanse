@@ -38,15 +38,20 @@
         devShells.default = pkgs.callPackage ./nix/devshell.nix { };
 
         checks = {
-          lint = with pkgs; runCommand "lint" { nativeBuildInputs = [ golangci-lint ]; } ''
+          lint = with pkgs; runCommand "lint" { nativeBuildInputs = [ golangci-lint go stdenv.cc ]; } ''
+            export HOME="$TMPDIR"
             cp -r ${self} src
+            chmod -R u+w src
             cd src
             golangci-lint run --timeout=5m ./... 2>&1 | tee $out
           '';
-          unit = with pkgs; runCommand "unit" { nativeBuildInputs = [ go ]; } ''
+          unit = with pkgs; runCommand "unit" { nativeBuildInputs = [ go stdenv.cc ]; } ''
+            export HOME="$TMPDIR"
+            export GOCACHE="$TMPDIR/go-build"
             cp -r ${self} src
+            chmod -R u+w src
             cd src
-            go test -race -coverprofile=coverage.out ./... > $out 2>&1
+            go test -race -coverprofile=coverage.out ./... > $out 2>&1 || { cat $out; exit 1; }
           '';
           smoke = mkTest "smoke" ./nix/tests/smoke.nix;
           install-unattended = mkTest "install-unattended" ./nix/tests/install-unattended.nix;

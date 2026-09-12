@@ -160,10 +160,10 @@ func emit(opts *ctlOpts, table func(), v any) error {
 				if err != nil {
 					return err
 				}
-			comma := ","
-			if i == reflectSlice.Len()-1 {
-				comma = ""
-			}
+				comma := ","
+				if i == reflectSlice.Len()-1 {
+					comma = ""
+				}
 				fmt.Printf("%s%s\n", string(out), comma)
 			}
 			fmt.Println("]")
