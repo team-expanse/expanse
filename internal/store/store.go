@@ -6,6 +6,25 @@ import (
 	"github.com/expanse/expanse/internal/errors"
 )
 
+// staleReadKey is the context key for opting into stale (local-FSM) reads.
+type staleReadKey struct{}
+
+// WithStale returns a context under which a Store serves reads straight
+// from its local state with no linearizability round trip. This is an
+// EXPLICIT opt-in for hot paths (metrics, UI polling) only. Scheduling and
+// lease decisions must never use stale reads — internal/store's
+// AssertNoStaleReads test helper enforces this by scanning for WithStale
+// in sensitive packages.
+func WithStale(ctx context.Context) context.Context {
+	return context.WithValue(ctx, staleReadKey{}, true)
+}
+
+// StaleFrom reports whether ctx opted into stale reads.
+func StaleFrom(ctx context.Context) bool {
+	v, _ := ctx.Value(staleReadKey{}).(bool)
+	return v
+}
+
 // Key is a slash-separated path identifying a value in the store.
 //
 // List/Watch prefixes are LITERAL byte prefixes: List("/a") returns "/ab"

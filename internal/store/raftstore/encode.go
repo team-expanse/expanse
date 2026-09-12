@@ -32,8 +32,11 @@ const (
 	CmdTxn    = pb.CommandType_COMMAND_TYPE_TXN
 )
 
-// encodeCommand serializes a Command for the Raft log.
+// encodeCommand serializes a Command for the Raft log. It stamps the
+// current encoding version — a Command that bypasses this cannot be
+// decoded by any node.
 func encodeCommand(c *Command) ([]byte, error) {
+	c.Version = CommandVersion
 	return proto.Marshal(c)
 }
 

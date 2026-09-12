@@ -13,6 +13,9 @@ filippo.io/hpke/internal/byteorder
 # github.com/armon/go-metrics v0.4.1
 ## explicit; go 1.12
 github.com/armon/go-metrics
+# github.com/boltdb/bolt v1.3.1
+## explicit
+github.com/boltdb/bolt
 # github.com/coreos/go-systemd/v22 v22.7.0
 ## explicit; go 1.23
 github.com/coreos/go-systemd/v22/daemon
@@ -45,6 +48,9 @@ github.com/hashicorp/golang-lru/simplelru
 # github.com/hashicorp/raft v1.7.3
 ## explicit; go 1.20
 github.com/hashicorp/raft
+# github.com/hashicorp/raft-boltdb/v2 v2.3.1
+## explicit; go 1.20
+github.com/hashicorp/raft-boltdb/v2
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap

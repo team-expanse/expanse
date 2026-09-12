@@ -7,6 +7,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/raft v1.7.3
+	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.55.0
@@ -19,6 +20,7 @@ require (
 require (
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
+	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/hashicorp/go-hclog v1.6.2 // indirect

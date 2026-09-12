@@ -70,9 +70,11 @@ func TestCommandVersionRejected(t *testing.T) {
 	} {
 		var b []byte
 		if tc.c != nil {
+			// Bypass encodeCommand (which stamps the current version) — we
+			// are deliberately crafting a bad-version payload.
 			var err error
-			if b, err = encodeCommand(tc.c); err != nil {
-				t.Fatalf("encode: %v", err)
+			if b, err = proto.Marshal(tc.c); err != nil {
+				t.Fatalf("marshal: %v", err)
 			}
 		} else {
 			b = []byte{0xff, 0xff, 0xff}
