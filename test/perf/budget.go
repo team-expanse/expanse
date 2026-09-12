@@ -19,8 +19,11 @@ type Budget struct {
 // LoadBudgets reads test/perf/budgets.yaml and returns the list of budgets.
 func LoadBudgets() []Budget {
 	return []Budget{
-		{Name: "binary_size", Unit: "bytes", Max: 41943040},   // 40 MiB
-		{Name: "cli_startup", Unit: "ms", Max: 50},          // 50 ms
+		{Name: "binary_size", Unit: "bytes", Max: 41943040},         // 40 MiB
+		{Name: "cli_startup", Unit: "ms", Max: 50},                  // 50 ms
+		{Name: "iso_size", Unit: "bytes", Max: 1610612736},          // 1.5 GiB (G1.1)
+		{Name: "install_footprint", Unit: "bytes", Max: 6442450944}, // 6 GiB (G1.7)
+		{Name: "boot_time_ms", Unit: "ms", Max: 90000},              // 90 s median (G1.4)
 	}
 }
 
@@ -34,6 +37,11 @@ func CheckAll(budgets []Budget) error {
 			b.Measured = measureBinarySize()
 		case "cli_startup":
 			b.Measured = measureCLIStartup()
+		case "iso_size":
+			b.Measured = measureISOSize()
+		case "install_footprint", "boot_time_ms":
+			// Measured inside the VM tests (nix/tests/*), not here.
+			b.Measured = -1
 		}
 		if b.Measured > b.Max {
 			msgs = append(msgs, fmt.Sprintf("budget %s violated: %.0f %s > %.0f %s", b.Name, b.Measured, b.Unit, b.Max, b.Unit))
@@ -73,6 +81,24 @@ func measureCLIStartup() float64 {
 		total += time.Since(start)
 	}
 	return float64(total.Milliseconds()) / runs
+}
+
+// measureISOSize returns the size of the built installer ISO, or -1 if
+// the ISO has not been built (result-iso symlink from `nix build .#iso`).
+func measureISOSize() float64 {
+	root, ok := repoRoot()
+	if !ok {
+		return -1
+	}
+	entries, err := filepath.Glob(filepath.Join(root, "result-iso", "iso", "*.iso"))
+	if err != nil || len(entries) == 0 {
+		return -1
+	}
+	fi, err := os.Stat(entries[0])
+	if err != nil {
+		return -1
+	}
+	return float64(fi.Size())
 }
 
 // repoRoot walks up from the current directory to find the module root

@@ -5,3 +5,12 @@ budgets:
   - name: cli_startup
     unit: ms
     max: 50
+  - name: iso_size
+    unit: bytes
+    max: 1610612736      # 1.5 GiB (G1.1; raised from 1.2 GiB — linux-firmware + offline nixpkgs channel dominate)
+  - name: install_footprint
+    unit: bytes
+    max: 6442450944      # 6 GiB (G1.7)
+  - name: boot_time_ms
+    unit: ms
+    max: 90000           # 90 s median (G1.4)

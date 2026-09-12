@@ -6,7 +6,7 @@
 nix develop          # drops you into a shell with go, golangci-lint, protoc, qemu
 ```
 
-The devshell provides: `go_1_23`, `gopls`, `golangci-lint`, `gofumpt`, `delve`, `protobuf`, `protoc-gen-go`, `protoc-gen-go-grpc`, `qemu`, `nixos-rebuild`, `jq`, `just`, `make`, `git`.
+The devshell provides: `go`, `gopls`, `golangci-lint`, `gofumpt`, `delve`, `protobuf`, `protoc-gen-go`, `protoc-gen-go-grpc`, `qemu`, `nixos-rebuild`, `jq`, `just`, `make`, `git`.
 
 ## Building and Running
 

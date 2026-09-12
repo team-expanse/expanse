@@ -1,6 +1,6 @@
 { pkgs, ... }:
 let
-  go = pkgs.go_1_23;
+  go = pkgs.go;
 in
 pkgs.mkShell {
   packages = [
