@@ -1,0 +1,28 @@
+# Expanse Makefile
+
+.PHONY: help build test lint fmt vm-test perf clean
+
+help:            ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
+	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+build:           ## Build the binary
+	go build -o bin/expanse ./cmd/expanse/
+
+test:            ## Run unit tests with coverage
+	go test -race -coverprofile=coverage.out ./...
+
+lint:            ## Run golangci-lint
+	golangci-lint run ./...
+
+fmt:             ## Format Go and Nix
+	gofumpt -w . && nixpkgs-fmt .
+
+vm-test:         ## Run NixOS VM tests
+	nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).smoke -L
+
+perf: build      ## Check performance budgets
+	RUN_PERF=1 go test ./test/perf/... -v
+
+clean:           ## Clean build artifacts
+	rm -rf bin result coverage.out

@@ -1,0 +1,7 @@
+budgets:
+  - name: binary_size
+    unit: bytes
+    max: 41943040        # 40 MiB
+  - name: cli_startup
+    unit: ms
+    max: 50

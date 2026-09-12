@@ -1,0 +1,23 @@
+cat: true                    # Allow all categories by default
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - revive
+    - gosec
+    - ineffassign
+    - unused
+    - gofumpt
+    - misspell
+    - bodyclose
+    - contextcheck
+    - errorlint
+    - nilerr
+
+issues:
+  exclude-rules: []
+
+run:
+  timeout: 5m
