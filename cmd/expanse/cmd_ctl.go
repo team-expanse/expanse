@@ -8,12 +8,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/expanse/expanse/proto"
 )
@@ -136,6 +139,36 @@ func withClient(cmd *cobra.Command, opts *ctlOpts, fn func(ctx context.Context, 
 func emit(opts *ctlOpts, table func(), v any) error {
 	switch opts.output {
 	case "json":
+		// protojson (lowerCamelCase proto field names) makes the output
+		// stable and scriptable; std json is the fallback for non-proto
+		// values.
+		if m, ok := v.(proto.Message); ok {
+			out, err := protojson.MarshalOptions{Indent: "  "}.Marshal(m)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(out))
+			return nil
+		}
+		// Slices of proto messages (e.g. resource lists): emit as a JSON
+		// array of protojson objects.
+		if reflectSlice, ok := toProtoSlice(v); ok {
+			fmt.Println("[")
+			for i := 0; i < reflectSlice.Len(); i++ {
+				m := reflectSlice.Index(i).Interface().(proto.Message)
+				out, err := protojson.MarshalOptions{Indent: "  "}.Marshal(m)
+				if err != nil {
+					return err
+				}
+			comma := ","
+			if i == reflectSlice.Len()-1 {
+				comma = ""
+			}
+				fmt.Printf("%s%s\n", string(out), comma)
+			}
+			fmt.Println("]")
+			return nil
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(v)
@@ -150,6 +183,15 @@ func emit(opts *ctlOpts, table func(), v any) error {
 		table()
 		return nil
 	}
+}
+
+func toProtoSlice(v any) (reflect.Value, bool) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice || rv.Len() == 0 {
+		return rv, false
+	}
+	_, ok := rv.Index(0).Interface().(proto.Message)
+	return rv, ok
 }
 
 func ctlNodeStatus(cmd *cobra.Command, opts *ctlOpts) error {
