@@ -1,6 +1,6 @@
 # Expanse Makefile
 
-.PHONY: help build test lint fmt vm-test perf clean
+.PHONY: help build test lint fmt proto vm-test perf clean
 
 help:            ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -17,6 +17,11 @@ lint:            ## Run golangci-lint
 
 fmt:             ## Format Go and Nix
 	gofumpt -w . && nixpkgs-fmt .
+
+proto:           ## Regenerate protobuf Go code (requires protoc + plugins on PATH)
+	protoc --go_out=. --go_opt=module=github.com/expanse/expanse \
+	       --go-grpc_out=. --go-grpc_opt=module=github.com/expanse/expanse \
+	       --proto_path=. proto/*.proto
 
 vm-test:         ## Run NixOS VM tests
 	nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).smoke -L

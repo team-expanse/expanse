@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package expanse.store.v1;
+
+option go_package = "github.com/expanse/expanse/proto";
+
+// Command is the unit of replication: every store mutation is encoded as a
+// Command, proposed through Raft, and applied deterministically by the FSM
+// on every node (see internal/store/raftstore/fsm.go). The encoding is
+// versioned from day one so Phase 16's rolling upgrade can distinguish old
+// and new formats.
+message Command {
+  // Encoding version. Currently 1. A node that sees a version it does not
+  // understand must refuse to apply the entry (fail loudly, never guess).
+  uint32 version = 1;
+
+  CommandType type = 2;
+
+  // For PUT and DELETE: the target key and value.
+  string key = 3;
+  bytes value = 4;
+
+  // CAS precondition: 0 means "must not exist" for PUT-style CAS; for
+  // DELETE, 0 means unconditional.
+  uint64 expect = 5;
+
+  // For TXN: the ordered list of operations.
+  repeated Op ops = 6;
+
+  // Set by the leader before proposing. The FSM NEVER uses time.Now() —
+  // determinism requires timestamps to travel inside the command.
+  int64 timestamp_unix_ns = 7;
+
+  // Client-supplied idempotency key. A retried write (network failure after
+  // commit) reuses the same RequestID and the FSM deduplicates it.
+  string request_id = 8;
+}
+
+enum CommandType {
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  COMMAND_TYPE_PUT = 1;
+  COMMAND_TYPE_DELETE = 2;
+  COMMAND_TYPE_TXN = 3;
+}
+
+enum OpKind {
+  OP_KIND_UNSPECIFIED = 0;
+  OP_KIND_PUT = 1;
+  OP_KIND_DELETE = 2;
+  OP_KIND_CHECK = 3;
+}
+
+message Op {
+  OpKind kind = 1;
+  string key = 2;
+  bytes value = 3;
+  uint64 expect = 4;
+}
