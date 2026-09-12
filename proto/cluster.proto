@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package expanse.cluster.v1;
+
+import "proto/store.proto";
+
+option go_package = "github.com/expanse/expanse/proto";
+
+// InternalStoreService is the node-to-node write-forwarding RPC (§4.1
+// "Write forwarding"): a follower that receives a write forwards the
+// encoded store Command to the leader, which applies it through Raft and
+// returns the committed revision. The command bytes are the same wire
+// format the Raft log uses, so no re-encoding happens mid-cluster.
+service InternalStoreService {
+  // ForwardCommand: follower → leader write forwarding (§4.1).
+  rpc ForwardCommand(expanse.store.v1.Command) returns (ForwardCommandResponse);
+  // LinearRead: follower → leader read forwarding. raft.Barrier only
+  // works on the leader, so a follower serving a linearizable read
+  // forwards it (same pattern as Consul's consistent reads).
+  rpc LinearRead(LinearReadRequest) returns (LinearReadResponse);
+}
+
+message LinearReadRequest {
+  oneof query {
+    string get_key = 1;
+    string list_prefix = 2;
+    bool revision_only = 3;
+  }
+}
+
+message LinearReadResponse {
+  oneof result {
+    Entry entry = 1;
+    EntryList list = 2;
+    uint64 revision = 3;
+    ErrorDetail error = 4;
+  }
+}
+
+message Entry {
+  string key = 1;
+  bytes value = 2;
+  uint64 revision = 3;
+  int64 created_at_unix_ns = 4;
+  int64 updated_at_unix_ns = 5;
+}
+
+message EntryList {
+  repeated Entry entries = 1;
+}
+
+message ForwardCommandResponse {
+  oneof result {
+    // Revision of the committed state after the command applied.
+    uint64 revision = 1;
+    // The typed error from the leader's apply (kind/op/message of
+    // internal/errors.Error), so client-side error semantics are
+    // identical whether a write ran locally or was forwarded.
+    ErrorDetail error = 2;
+  }
+}
+
+// ErrorDetail mirrors internal/errors.Error for cross-node transport.
+message ErrorDetail {
+  string kind = 1;
+  string op = 2;
+  string message = 3;
+}

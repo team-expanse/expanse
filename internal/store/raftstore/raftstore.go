@@ -26,7 +26,6 @@ const (
 	snapshotInterval  = 30 * time.Second
 	applyTimeout      = 10 * time.Second
 	barrierTimeout    = 10 * time.Second
-	noLeaderTimeout   = 5 * time.Second // read-only mode deadline (§4.10)
 )
 
 // Config configures a raftstore node.
@@ -44,8 +43,9 @@ type Store struct {
 	r         *raft.Raft
 	fsm       *FSM
 	trans     *raft.NetworkTransport
-	logs      io.Closer // bolt log+stable store; closed after raft shutdown
-	forwarder Forwarder // leader write-forwarding hook (set by daemon wiring)
+	logs      io.Closer     // bolt log+stable store; closed after raft shutdown
+	forwarder Forwarder     // leader write-forwarding hook (set by daemon wiring)
+	readFwd   ReadForwarder // leader read-forwarding hook (linearizable reads)
 }
 
 // Open creates (or rejoins) a raftstore node. With Bootstrap=true a fresh
@@ -150,9 +150,9 @@ func staleFrom(ctx context.Context) bool { return store.StaleFrom(ctx) }
 
 // barrier waits until this node's FSM reflects everything committed as of
 // now (linearizable read barrier). Returns an error of kind
-// KindUnavailable when no leader is reachable within noLeaderTimeout.
+// KindUnavailable when no leader is reachable within LeaderWaitTimeout.
 func (s *Store) barrier(ctx context.Context) error {
-	cctx, cancel := context.WithTimeout(ctx, noLeaderTimeout)
+	cctx, cancel := context.WithTimeout(ctx, LeaderWaitTimeout)
 	defer cancel()
 	for {
 		err := s.r.Barrier(barrierTimeout).Error()
@@ -172,22 +172,32 @@ func (s *Store) barrier(ctx context.Context) error {
 }
 
 // Get returns the entry for k. Linearizable by default; store.WithStale
-// serves from the local FSM with no round trip.
+// serves from the local FSM with no round trip. On a follower a
+// linearizable read is forwarded to the leader (raft.Barrier is
+// leader-only).
 func (s *Store) Get(ctx context.Context, k store.Key) (*store.Entry, error) {
-	if !staleFrom(ctx) {
-		if err := s.barrier(ctx); err != nil {
-			return nil, err
-		}
+	if staleFrom(ctx) {
+		return s.fsm.get(k)
+	}
+	if !s.IsLeader() && s.readFwd != nil {
+		return s.readFwd.ForwardGet(ctx, k)
+	}
+	if err := s.barrier(ctx); err != nil {
+		return nil, err
 	}
 	return s.fsm.get(k)
 }
 
 // List returns all entries under prefix, sorted by key.
 func (s *Store) List(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
-	if !staleFrom(ctx) {
-		if err := s.barrier(ctx); err != nil {
-			return nil, err
-		}
+	if staleFrom(ctx) {
+		return s.fsm.list(prefix)
+	}
+	if !s.IsLeader() && s.readFwd != nil {
+		return s.readFwd.ForwardList(ctx, prefix)
+	}
+	if err := s.barrier(ctx); err != nil {
+		return nil, err
 	}
 	return s.fsm.list(prefix)
 }
@@ -261,13 +271,13 @@ func (s *Store) propose(ctx context.Context, c *pb.Command) (store.Revision, err
 	return res.rev, res.err
 }
 
-// Forwarder is installed by the daemon wiring: it forwards a write command
-// from a follower to the current leader (T06). It must return the same
-// (revision, error) semantics as a local apply.
-type Forwarder func(ctx context.Context, c *pb.Command) (store.Revision, error)
-
-// SetForwarder installs the leader-forwarding hook.
-func (s *Store) SetForwarder(f Forwarder) { s.forwarder = f }
+// Forwarder is installed by the daemon wiring — see forward.go.
+//
+// SetForwarder installs the leader write-forwarding hook; SetReadForwarder
+// installs the linearizable read-forwarding hook (followers forward reads
+// — raft.Barrier is leader-only).
+func (s *Store) SetForwarder(f Forwarder)          { s.forwarder = f }
+func (s *Store) SetReadForwarder(rf ReadForwarder) { s.readFwd = rf }
 
 // Watch registers a watcher under prefix (local FSM events, in revision
 // order, same semantics as boltstore).
@@ -277,10 +287,47 @@ func (s *Store) Watch(ctx context.Context, prefix store.Key, fromRev store.Revis
 
 // Revision returns the current revision (linearizable by default).
 func (s *Store) Revision(ctx context.Context) (store.Revision, error) {
-	if !staleFrom(ctx) {
-		if err := s.barrier(ctx); err != nil {
-			return 0, err
-		}
+	if staleFrom(ctx) {
+		return s.fsm.Revision(), nil
+	}
+	if !s.IsLeader() && s.readFwd != nil {
+		return s.readFwd.ForwardRevision(ctx)
+	}
+	if err := s.barrier(ctx); err != nil {
+		return 0, err
+	}
+	return s.fsm.Revision(), nil
+}
+
+// LinearGet is the leader-side endpoint of forwarded linearizable reads.
+func (s *Store) LinearGet(ctx context.Context, k store.Key) (*store.Entry, error) {
+	if !s.IsLeader() {
+		return nil, errors.New(errors.KindUnavailable, "raftstore.LinearGet", "not leader")
+	}
+	if err := s.barrier(ctx); err != nil {
+		return nil, err
+	}
+	return s.fsm.get(k)
+}
+
+// LinearList is the leader-side endpoint of forwarded linearizable reads.
+func (s *Store) LinearList(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
+	if !s.IsLeader() {
+		return nil, errors.New(errors.KindUnavailable, "raftstore.LinearList", "not leader")
+	}
+	if err := s.barrier(ctx); err != nil {
+		return nil, err
+	}
+	return s.fsm.list(prefix)
+}
+
+// LinearRevision is the leader-side endpoint of forwarded linearizable reads.
+func (s *Store) LinearRevision(ctx context.Context) (store.Revision, error) {
+	if !s.IsLeader() {
+		return 0, errors.New(errors.KindUnavailable, "raftstore.LinearRevision", "not leader")
+	}
+	if err := s.barrier(ctx); err != nil {
+		return 0, err
 	}
 	return s.fsm.Revision(), nil
 }

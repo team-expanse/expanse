@@ -81,6 +81,10 @@ func (f *FSM) Apply(l *raft.Log) interface{} {
 		rev    store.Revision
 		aerr   error
 	)
+	// The mutation section runs under f.mu: readers (get/list/StateHash)
+	// hold the read side, and raft applies entries from its own goroutine.
+	// Without this lock the maps race with concurrent reads.
+	f.mu.Lock()
 	switch cmd.GetType() {
 	case CmdPut:
 		events, rev, aerr = f.applyCAS(store.Key(cmd.GetKey()), store.Revision(cmd.GetExpect()), cmd.GetValue(), cmd.GetTimestampUnixNs())
@@ -94,6 +98,10 @@ func (f *FSM) Apply(l *raft.Log) interface{} {
 		}
 		events, rev, aerr = f.applyTxn(ops, cmd.GetTimestampUnixNs())
 	}
+	if aerr == nil {
+		f.revision = rev
+	}
+	f.mu.Unlock()
 
 	if id := cmd.GetRequestId(); id != "" {
 		f.dedup.Add(id, uint64(rev), aerr == nil)
@@ -102,9 +110,6 @@ func (f *FSM) Apply(l *raft.Log) interface{} {
 	if aerr != nil {
 		return &applyResult{err: aerr}
 	}
-	f.mu.Lock()
-	f.revision = rev
-	f.mu.Unlock()
 	f.watchers.broadcast(events)
 	return &applyResult{rev: rev}
 }
