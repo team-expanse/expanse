@@ -54,7 +54,7 @@ in
 
     with subtest("store persists across restart (G2.2)"):
         # Apply a resource, restart the agent, assert it is still listed.
-        machine.succeed("expanse ctl resource apply - <<'EOF'\nfile:/etc/expanse-test:\n  type: file\n  path: /etc/expanse-test\n  content: persisted\n  mode: \"0644\"\nEOF\n")
+        machine.succeed("expanse ctl resource apply -f - <<'EOF'\nfile:/etc/expanse-test:\n  type: file\n  path: /etc/expanse-test\n  content: persisted\n  mode: \"0644\"\nEOF\n")
         machine.succeed("expanse ctl reconcile")
         machine.succeed("test \"$(cat /etc/expanse-test)\" = persisted")
         machine.succeed("systemctl restart expansed.service")

@@ -34,7 +34,7 @@ in
         return int(json.loads(out)["changesApplied"])
 
     with subtest("apply a file resource"):
-        machine.succeed("expanse ctl resource apply - <<'EOF'\nfile:/etc/expanse-test:\n  type: file\n  path: /etc/expanse-test\n  content: hello\n  mode: \"0644\"\nEOF\n")
+        machine.succeed("expanse ctl resource apply -f - <<'EOF'\nfile:/etc/expanse-test:\n  type: file\n  path: /etc/expanse-test\n  content: hello\n  mode: \"0644\"\nEOF\n")
 
     with subtest("converges within 5s (G2.5)"):
         deadline = time.time() + 5
