@@ -112,7 +112,7 @@ func (c *Collector) Collect(nodeID string) (*Inventory, error) {
 	r := c.Roots
 	inv := &Inventory{
 		NodeID:         nodeID,
-		Hostname:       firstLine(r.proc() + "/hostname"),
+		Hostname:       hostname(r),
 		OS:             c.osInfo(r),
 		CPU:            c.cpuInfo(r),
 		Memory:         c.memInfo(r),
@@ -124,6 +124,16 @@ func (c *Collector) Collect(nodeID string) (*Inventory, error) {
 	}
 	inv.Capabilities = capabilities(inv)
 	return inv, nil
+}
+
+func hostname(r Roots) string {
+	if h := firstLine(r.proc() + "/sys/kernel/hostname"); h != "" {
+		return h
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return ""
 }
 
 func firstLine(path string) string {

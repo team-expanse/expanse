@@ -185,3 +185,18 @@ func TestLoadavg(t *testing.T) {
 		t.Errorf("loadavg1 = %v", one)
 	}
 }
+
+func TestHostname(t *testing.T) {
+	f := newFixture(t)
+	// /proc/hostname does not exist; the kernel exposes it under
+	// /proc/sys/kernel/hostname.
+	writeFile(t, filepath.Join(f.root.Proc, "sys/kernel/hostname"), "node-a\n")
+	c := Collector{Roots: f.root}
+	inv, err := c.Collect("node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.Hostname != "node-a" {
+		t.Errorf("hostname = %q, want node-a", inv.Hostname)
+	}
+}
