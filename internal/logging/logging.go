@@ -32,6 +32,9 @@ func Setup(o Options) (*slog.Logger, error) {
 	}
 
 	var handler slog.Handler
+	if o.Output == nil {
+		o.Output = os.Stdout
+	}
 	switch o.Format {
 	case "json":
 		handler = slog.NewJSONHandler(o.Output, &slog.HandlerOptions{Level: level})

@@ -41,7 +41,7 @@ func TestValidateEmptyDataDir(t *testing.T) {
 func TestValidateInvalidLogLevel(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
-	os.WriteFile(cfgPath, []byte("log_level: bogus\n"), 0644)
+	os.WriteFile(cfgPath, []byte("log_level: bogus\n"), 0o644)
 	c, err := Load(cfgPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

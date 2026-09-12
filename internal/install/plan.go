@@ -61,24 +61,42 @@ const DefaultTargetFlake = "/run/expanse-flake"
 // Stages returns the ordered install stages.
 func Stages() []Stage {
 	return []Stage{
-		{Name: "preflight", Desc: "check hardware requirements (arch, RAM >= 2G, disk >= 20G, network)", Run: stagePreflight,
-			DryRun: "lsblk -J; free -m"},
-		{Name: "detect", Desc: "detect target disks", Run: stageDetect,
-			DryRun: "lsblk -J -p -o NAME,PATH,SIZE,MODEL,TYPE,RM,MOUNTPOINT,FSTYPE"},
-		{Name: "confirm", Desc: "confirm the destructive plan (WILL WIPE selected disks)", Run: stageConfirm,
-			DryRun: "interactive confirmation (or --force)"},
-		{Name: "partition", Desc: "partition + format via disko", Run: stagePartition,
-			DryRun: "disko --mode destroy,format,mount <layout>.nix --arg disks [...]"},
-		{Name: "snapshot", Desc: "take rpool/root@blank snapshot (impermanence anchor)", Run: stageSnapshot,
-			DryRun: "zfs snapshot rpool/root@blank"},
-		{Name: "identity", Desc: "generate node identity (UUID + Ed25519 keypair)", Run: stageIdentity,
-			DryRun: "EnsureIdentity(/mnt/persist/expanse/identity)"},
-		{Name: "config", Desc: "generate system configuration under /mnt", Run: stageConfig,
-			DryRun: "write /mnt/etc/nixos/configuration.nix; write /mnt/persist/expanse/install-config.yaml"},
-		{Name: "install", Desc: "nixos-install onto /mnt", Run: stageInstall,
-			DryRun: "nixos-install --root /mnt --no-root-password"},
-		{Name: "verify", Desc: "verify bootloader, datasets, blank snapshot, identity", Run: stageVerify,
-			DryRun: "zfs list rpool/persist; zfs list -t snapshot rpool/root@blank"},
+		{
+			Name: "preflight", Desc: "check hardware requirements (arch, RAM >= 2G, disk >= 20G, network)", Run: stagePreflight,
+			DryRun: "lsblk -J; free -m",
+		},
+		{
+			Name: "detect", Desc: "detect target disks", Run: stageDetect,
+			DryRun: "lsblk -J -p -o NAME,PATH,SIZE,MODEL,TYPE,RM,MOUNTPOINT,FSTYPE",
+		},
+		{
+			Name: "confirm", Desc: "confirm the destructive plan (WILL WIPE selected disks)", Run: stageConfirm,
+			DryRun: "interactive confirmation (or --force)",
+		},
+		{
+			Name: "partition", Desc: "partition + format via disko", Run: stagePartition,
+			DryRun: "disko --mode destroy,format,mount <layout>.nix --arg disks [...]",
+		},
+		{
+			Name: "snapshot", Desc: "take rpool/root@blank snapshot (impermanence anchor)", Run: stageSnapshot,
+			DryRun: "zfs snapshot rpool/root@blank",
+		},
+		{
+			Name: "identity", Desc: "generate node identity (UUID + Ed25519 keypair)", Run: stageIdentity,
+			DryRun: "EnsureIdentity(/mnt/persist/expanse/identity)",
+		},
+		{
+			Name: "config", Desc: "generate system configuration under /mnt", Run: stageConfig,
+			DryRun: "write /mnt/etc/nixos/configuration.nix; write /mnt/persist/expanse/install-config.yaml",
+		},
+		{
+			Name: "install", Desc: "nixos-install onto /mnt", Run: stageInstall,
+			DryRun: "nixos-install --root /mnt --no-root-password",
+		},
+		{
+			Name: "verify", Desc: "verify bootloader, datasets, blank snapshot, identity", Run: stageVerify,
+			DryRun: "zfs list rpool/persist; zfs list -t snapshot rpool/root@blank",
+		},
 	}
 }
 
@@ -192,7 +210,7 @@ func stageSnapshot(rc *RunContext) error {
 }
 
 func stageConfig(rc *RunContext) error {
-	if err := os.MkdirAll(filepath.Join(rc.Mount, "etc/nixos"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(rc.Mount, "etc/nixos"), 0o750); err != nil {
 		return err
 	}
 	if err := rc.Config.WriteYAML(filepath.Join(rc.Mount, "persist/expanse/install-config.yaml")); err != nil {

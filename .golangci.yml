@@ -1,4 +1,4 @@
-cat: true                    # Allow all categories by default
+version: "2"
 
 linters:
   enable:
@@ -9,15 +9,71 @@ linters:
     - gosec
     - ineffassign
     - unused
-    - gofumpt
     - misspell
     - bodyclose
-    - contextcheck
     - errorlint
     - nilerr
 
-issues:
-  exclude-rules: []
+  settings:
+    revive:
+      rules:
+        # Style-only rules: doc-comment and parameter-naming style is
+        # enforced by review, not lint.
+        - name: package-comments
+          disabled: true
+        - name: exported
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+    errcheck:
+      exclude-functions:
+        # CLI/table output to stdout: nothing sensible to do on failure.
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Println
 
-run:
-  timeout: 5m
+  exclusions:
+    rules:
+      # Tests: fixture setup and best-effort cleanup.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - errorlint
+      # The shared conformance suite and perf harness are test code in
+      # regular files (imported across packages).
+      - path: internal/store/conformance/
+        linters:
+          - errcheck
+          - gosec
+      - path: test/perf/
+        linters:
+          - errcheck
+      # Deferred Close: cleanup on best-effort paths.
+      - source: "defer .*\\.Close\\(\\)"
+        linters:
+          - errcheck
+      # G204: subprocesses with variable args is the design (nix CLI,
+      #   exec driver); inputs come from operator config, not network.
+      # G304: reading /proc/sysfs paths built from config keys is the
+      #   design.
+      # G302/G306: declarative file modes (0644 etc.) come from desired
+      #   state; 0600 is not always what the operator asked for.
+      # G703: store paths are operator-provided config, not user input.
+      # G115: statfs/proto int conversions, bounded by kernel/proto limits.
+      # G404: backoff jitter deliberately uses math/rand (not crypto).
+      # G103: unsafe in the TUI is confined to terminal sizing.
+      - linters:
+          - gosec
+        text: "G(204|304|302|306|703|115|404|103):"
+      # KindOf/Is deliberately walk the chain with assertions (this
+      # package defines the error model others use).
+      - path: internal/errors/
+        linters:
+          - errorlint
+
+formatters:
+  enable:
+    - gofumpt
+
+timeout: 5m

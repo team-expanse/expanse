@@ -11,11 +11,11 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	NodeName  string         `yaml:"node_name"`
-	DataDir   string         `yaml:"data_dir"`
-	LogLevel  string         `yaml:"log_level"`
-	LogFormat string         `yaml:"log_format"`
-	Listen    ListenConfig   `yaml:"listen"`
+	NodeName  string       `yaml:"node_name"`
+	DataDir   string       `yaml:"data_dir"`
+	LogLevel  string       `yaml:"log_level"`
+	LogFormat string       `yaml:"log_format"`
+	Listen    ListenConfig `yaml:"listen"`
 }
 
 // ListenConfig holds listen address configuration.

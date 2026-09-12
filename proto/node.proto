@@ -1,0 +1,204 @@
+syntax = "proto3";
+
+package expanse.node.v1;
+
+option go_package = "github.com/expanse/expanse/proto";
+
+// NodeService exposes the single-node agent API.
+service NodeService {
+  rpc GetStatus(GetStatusRequest) returns (NodeStatus);
+  rpc GetInventory(GetInventoryRequest) returns (Inventory);
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse);
+  rpc GetResource(GetResourceRequest) returns (Resource);
+  rpc ApplyResources(ApplyResourcesRequest) returns (ApplyResourcesResponse);
+  rpc DeleteResource(DeleteResourceRequest) returns (DeleteResourceResponse);
+  rpc Reconcile(ReconcileRequest) returns (stream ReconcileEvent);
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+  rpc GetHealth(GetHealthRequest) returns (HealthReport);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message GetStatusRequest {}
+
+message NodeStatus {
+  string node_id = 1;
+  Status status = 2;
+  int64 tick_count = 3;
+  int64 last_tick_unix_ns = 4;
+  double last_tick_duration_ms = 5;
+  int64 resources_total = 6;
+  int64 changes_applied = 7;
+  int64 failures = 8;
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_IDLE = 1;
+    STATUS_RECONCILING = 2;
+    STATUS_DEGRADED = 3;
+    STATUS_ERROR = 4;
+  }
+}
+
+message GetInventoryRequest {}
+
+message Inventory {
+  string node_id = 1;
+  string hostname = 2;
+  OSInfo os = 3;
+  CPUInfo cpu = 4;
+  MemoryInfo memory = 5;
+  repeated DiskInfo disks = 6;
+  repeated NICInfo nics = 7;
+  repeated GPUInfo gpus = 8;
+  string virtualization = 9;
+  TPMInfo tpm = 10;
+  repeated string capabilities = 11;
+}
+
+message OSInfo {
+  string name = 1;
+  string version = 2;
+  string kernel = 3;
+  string system_closure_path = 4;
+}
+
+message CPUInfo {
+  string model = 1;
+  int64 cores = 2;
+  int64 threads = 3;
+  double mhz = 4;
+  repeated string flags = 5;
+}
+
+message MemoryInfo {
+  int64 total = 1;
+  int64 available = 2;
+  int64 swap_total = 3;
+  int64 swap_available = 4;
+}
+
+message DiskInfo {
+  string path = 1;
+  string model = 2;
+  string serial = 3;
+  int64 size = 4;
+  bool rotational = 5;
+  string smart_status = 6;
+}
+
+message NICInfo {
+  string name = 1;
+  string mac = 2;
+  int64 speed = 3;
+  repeated string addresses = 4;
+  bool up = 5;
+}
+
+message GPUInfo {
+  string vendor = 1;
+  string model = 2;
+  int64 vram = 3;
+  string driver = 4;
+  string pci_id = 5;
+}
+
+message TPMInfo {
+  bool present = 1;
+  string version = 2;
+}
+
+message ListResourcesRequest {
+  string prefix = 1;
+}
+
+message Resource {
+  string id = 1;
+  string type = 2;
+  string desired_state = 3;
+  string observed_state = 4;
+  Health health = 5;
+  int64 updated_at_unix_ns = 6;
+}
+
+enum Health {
+  HEALTH_UNSPECIFIED = 0;
+  HEALTH_HEALTHY = 1;
+  HEALTH_DEGRADED = 2;
+  HEALTH_UNHEALTHY = 3;
+  HEALTH_UNKNOWN = 4;
+}
+
+message ListResourcesResponse {
+  repeated Resource resources = 1;
+}
+
+message GetResourceRequest {
+  string id = 1;
+}
+
+message ApplyResourcesRequest {
+  bytes spec = 1;
+}
+
+message ApplyResourcesResponse {
+  int64 applied = 1;
+  int64 failed = 2;
+  repeated string errors = 3;
+}
+
+message DeleteResourceRequest {
+  string id = 1;
+}
+
+message DeleteResourceResponse {
+  bool deleted = 1;
+}
+
+message ReconcileRequest {
+  bool dry_run = 1;
+}
+
+message ReconcileEvent {
+  string phase = 1;
+  string message = 2;
+  double progress_pct = 3;
+}
+
+message StreamEventsRequest {
+  string prefix = 1;
+}
+
+message Event {
+  string type = 1;
+  string payload = 2;
+  int64 timestamp_unix_ns = 3;
+}
+
+message GetHealthRequest {}
+
+message HealthReport {
+  repeated CheckResult checks = 1;
+  OverallStatus overall = 2;
+
+  enum OverallStatus {
+    OVERALL_UNSPECIFIED = 0;
+    OVERALL_HEALTHY = 1;
+    OVERALL_DEGRADED = 2;
+    OVERALL_UNHEALTHY = 3;
+  }
+}
+
+message CheckResult {
+  string name = 1;
+  Health status = 2;
+  string message = 3;
+  map<string, string> details = 4;
+  int64 took_ms = 5;
+}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {
+  bool success = 1;
+  string message = 2;
+}

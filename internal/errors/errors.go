@@ -8,13 +8,13 @@ import (
 type Kind string
 
 const (
-	KindNotFound      Kind = "not_found"
-	KindConflict      Kind = "conflict"
-	KindInvalid       Kind = "invalid"
-	KindUnavailable   Kind = "unavailable"
-	KindInternal      Kind = "internal"
-	KindPermission    Kind = "permission"
-	KindTimeout       Kind = "timeout"
+	KindNotFound    Kind = "not_found"
+	KindConflict    Kind = "conflict"
+	KindInvalid     Kind = "invalid"
+	KindUnavailable Kind = "unavailable"
+	KindInternal    Kind = "internal"
+	KindPermission  Kind = "permission"
+	KindTimeout     Kind = "timeout"
 )
 
 // Error is a typed error used cluster-wide.

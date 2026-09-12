@@ -8,6 +8,7 @@
     ./identity.nix
     ./network-base.nix
     ./hardening.nix
+    ./agent.nix
   ];
 
   options = {

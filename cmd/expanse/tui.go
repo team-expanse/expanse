@@ -116,7 +116,7 @@ func runTUI() error {
 	if err := rawMode(true); err != nil {
 		return fmt.Errorf("put terminal in raw mode: %w", err)
 	}
-	defer rawMode(false)
+	defer func() { _ = rawMode(false) }()
 
 	st := &tuiState{netMode: "dhcp", picked: map[int]bool{}}
 	st.disks, _ = install.DetectDisks()
@@ -179,11 +179,12 @@ func handleKey(st *tuiState, key string) bool {
 			}
 		}
 		if key == " " || key == "enter" {
-			if st.sel == 0 {
+			switch st.sel {
+			case 0:
 				st.netMode = "dhcp"
 				nextScreen(st)
 				return true
-			} else if st.sel == 1 {
+			case 1:
 				st.netMode = "static"
 			}
 		}
@@ -400,7 +401,7 @@ func runInstallProgress(st *tuiState) {
 		st.screen = screenDone
 		return
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if err := cfg.WriteYAML(tmp.Name()); err != nil {
 		st.errmsg = err.Error()
 		st.screen = screenDone

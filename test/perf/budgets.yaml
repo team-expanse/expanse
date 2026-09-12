@@ -14,3 +14,12 @@ budgets:
   - name: boot_time_ms
     unit: ms
     max: 90000           # 90 s median (G1.4)
+  - name: agent_idle_rss_bytes
+    unit: bytes
+    max: 125829120       # 120 MB (G2.11)
+  - name: agent_idle_cpu_percent
+    unit: percent
+    max: 2               # of one core (G2.11)
+  - name: reconcile_tick_p99_ms
+    unit: ms
+    max: 500             # with 20 resources (G2.11)
