@@ -47,7 +47,7 @@ flags		: fpu aes avx2 vmx svm
 	writeFile(t, filepath.Join(f.root.Proc, "cpuinfo"), cpuinfo)
 	writeFile(t, filepath.Join(f.root.Proc, "meminfo"),
 		"MemTotal:       16384000 kB\nMemAvailable:    8000000 kB\nSwapTotal:      4096000 kB\n")
-	writeFile(t, filepath.Join(f.root.Proc, "hostname"), "node-a\n")
+	writeFile(t, filepath.Join(f.root.Proc, "sys/kernel/hostname"), "node-a\n")
 	writeFile(t, filepath.Join(f.root.Proc, "sys/kernel/osrelease"), "6.6.42\n")
 	// Two threads, one core each in the same package → 2 cores, 2 threads.
 	writeFile(t, f.root.Sys+"/devices/system/cpu/cpu0/topology/physical_package_id", "0\n")
