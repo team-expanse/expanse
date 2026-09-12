@@ -30,11 +30,12 @@ const (
 
 // Config configures a raftstore node.
 type Config struct {
-	NodeID    string        // Raft server ID (required)
-	BindAddr  string        // Raft transport listen address (required, host:port)
-	DataDir   string        // persistent state dir (required); raft files under <DataDir>/raft
-	Bootstrap bool          // bootstrap a brand-new single-node cluster
-	Logger    raft.LogStore // unused placeholder (kept nil); logging goes to stderr
+	NodeID        string        // Raft server ID (required)
+	BindAddr      string        // Raft transport listen address (required, host:port)
+	AdvertiseAddr string        // advertised transport address (default: BindAddr); set to IP:7444 when binding 0.0.0.0
+	DataDir       string        // persistent state dir (required); raft files under <DataDir>/raft
+	Bootstrap     bool          // bootstrap a brand-new single-node cluster
+	Logger        raft.LogStore // unused placeholder (kept nil); logging goes to stderr
 }
 
 // Store is the Raft-replicated store.Store.
@@ -64,7 +65,14 @@ func Open(cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve bind addr: %w", err)
 	}
-	trans, err := raft.NewTCPTransport(cfg.BindAddr, addr, 3, 10*time.Second, os.Stderr)
+	advAddr := addr
+	if cfg.AdvertiseAddr != "" {
+		advAddr, err = net.ResolveTCPAddr("tcp", cfg.AdvertiseAddr)
+		if err != nil {
+			return nil, fmt.Errorf("resolve advertise addr: %w", err)
+		}
+	}
+	trans, err := raft.NewTCPTransport(cfg.BindAddr, advAddr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
 		return nil, fmt.Errorf("raft transport: %w", err)
 	}
@@ -133,6 +141,9 @@ func Open(cfg Config) (*Store, error) {
 func (s *Store) Leader() string {
 	return string(s.r.Leader())
 }
+
+// NodeID reports this node's ID.
+func (s *Store) NodeID() string { return s.cfg.NodeID }
 
 // State reports the node's Raft role.
 func (s *Store) State() raft.RaftState { return s.r.State() }

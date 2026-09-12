@@ -177,9 +177,10 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 			"AddVoter failed (no quorum or lost leadership): "+err.Error()))
 	}
 
-	// 6. Sign the CSR. (Re-join deliberately re-signs: the interrupted
-	// joiner may have lost its key material.)
-	cert, _, err := s.CA.IssueNode(req.GetNodeId(), req.GetAdvertiseAddr(), nil, time.Now())
+	// 6. Sign the joiner's CSR (key generated and kept by the joiner;
+	// only the public key travels). Re-join deliberately re-signs: the
+	// interrupted joiner may have lost its key material.
+	cert, err := s.CA.IssueCSR(csr, time.Now())
 	if err != nil {
 		return nil, joinErr(codes.Internal, errors.Wrap(err, errors.KindInternal, "join.Join", "sign CSR: "+err.Error()))
 	}

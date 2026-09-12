@@ -42,6 +42,7 @@ func newRootCmd(ctx context.Context) *rootCmd {
 	rc.cmd.AddCommand(newUICmd())
 	rc.cmd.AddCommand(newProxyCmd())
 	rc.cmd.AddCommand(newCtlCmd())
+	rc.cmd.AddCommand(newClusterCmd())
 	rc.cmd.AddCommand(newVersionCmd())
 	rc.cmd.AddCommand(newInstallCmd())
 	rc.cmd.AddCommand(newNodeCmd())

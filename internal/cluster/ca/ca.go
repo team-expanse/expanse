@@ -97,6 +97,36 @@ func ParseCA(priv ed25519.PrivateKey, certPEM []byte) (*CA, error) {
 	return &CA{Priv: priv, Cert: cert}, nil
 }
 
+// IssueCSR signs a client-provided CSR. The joiner generates and keeps
+// its own private key; only the public key travels (§4.5 JoinRequest
+// carries the CSR). CN and SANs come from the CSR subject. The CSR
+// signature is verified before signing; the resulting certificate is
+// valid for NodeCertValidity with both server and client usage.
+func (c *CA) IssueCSR(csr *x509.CertificateRequest, now time.Time) (*x509.Certificate, error) {
+	if err := csr.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("CSR signature: %w", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: randomSerial(),
+		Subject:      pkix.Name{CommonName: csr.Subject.CommonName, Organization: []string{"Expanse"}},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(NodeCertValidity),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:     csr.DNSNames,
+		IPAddresses:  csr.IPAddresses,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.Cert, csr.PublicKey, c.Priv)
+	if err != nil {
+		return nil, fmt.Errorf("sign CSR: %w", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse node cert: %w", err)
+	}
+	return cert, nil
+}
+
 // IssueNode issues a node certificate. CN = nodeID; SANs include nodeID,
 // hostname and every IP. The certificate is valid for NodeCertValidity and
 // usable for both client and server authentication (all node↔node peers are

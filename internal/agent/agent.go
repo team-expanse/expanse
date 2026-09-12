@@ -24,11 +24,15 @@ import (
 	"github.com/expanse/expanse/internal/agent/managers/systemdman"
 	"github.com/expanse/expanse/internal/agent/nix"
 	"github.com/expanse/expanse/internal/api"
+	"github.com/expanse/expanse/internal/cluster/ca"
+	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/install"
 	"github.com/expanse/expanse/internal/logging"
 	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
+	"github.com/expanse/expanse/internal/store/raftstore"
 	"gopkg.in/yaml.v3"
 )
 
@@ -75,8 +79,18 @@ func detectNodeID(dataDir string) string {
 }
 
 // Agent is the running node agent.
+// clusterCtl holds the cluster-mode additions (nil in single-node mode).
+type clusterCtl struct {
+	store   *raftstore.Store
+	ca      *ca.CA
+	secret  []byte
+	id      string
+	dataDir string
+}
+
 type Agent struct {
 	cfg          Config
+	ctl          *clusterCtl
 	store        store.Store
 	logger       *slog.Logger
 	recon        *reconcile.Reconciler
@@ -102,15 +116,38 @@ func New(cfg Config) (*Agent, error) {
 	}
 	logger = logging.WithComponent(logger, "agent")
 
-	// Store: /persist/expanse/store/local.db.
-	st, err := boltstore.New(filepath.Join(cfg.DataDir, "store", "local.db"))
-	if err != nil {
-		return nil, fmt.Errorf("open store: %w", err)
+	// Store: single-node boltstore by default; the raft-replicated
+	// store when this node carries a cluster enrollment (cluster-id
+	// file present) — Phase 03 §5 daemon wiring.
+	var st store.Store
+	var ctl *clusterCtl
+	if control.IsClusterNode(cfg.DataDir) {
+		clusterID, secret, clusterCA, err := control.LoadCluster(cfg.DataDir)
+		if err != nil {
+			return nil, fmt.Errorf("load cluster enrollment: %w", err)
+		}
+		rs, err := raftstore.Open(raftstore.Config{
+			NodeID:   cfg.NodeID,
+			BindAddr: fmt.Sprintf("0.0.0.0:%d", config.PortRaft),
+			DataDir:  filepath.Join(cfg.DataDir, control.RaftDir),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("open cluster store: %w", err)
+		}
+		st = rs
+		ctl = &clusterCtl{store: rs, ca: clusterCA, secret: secret, id: clusterID, dataDir: cfg.DataDir}
+		logger.Info("cluster mode: raft-replicated store", "cluster", clusterID)
+	} else {
+		st, err = boltstore.New(filepath.Join(cfg.DataDir, "store", "local.db"))
+		if err != nil {
+			return nil, fmt.Errorf("open store: %w", err)
+		}
 	}
 
 	a := &Agent{
 		cfg:    cfg,
 		store:  st,
+		ctl:    ctl,
 		logger: logger,
 		invMu:  sync.Mutex{},
 	}
@@ -347,6 +384,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		notify("WATCHDOG=1")
 	})
 	defer notify("STOPPING=1")
+
+	// Cluster mode: serve the token-authenticated join endpoint on
+	// :7446 (redirects when not leader; no-op when single-node).
+	if a.ctl != nil {
+		go func() {
+			if err := control.ServeJoinEndpoint(ctx, a.ctl.store, a.ctl.ca, a.ctl.secret, a.ctl.dataDir, a.ctl.id); err != nil {
+				a.logger.Error("join endpoint failed", "err", err)
+			}
+		}()
+	}
 
 	// gRPC on the unix socket (filesystem permissions are the auth).
 	srv := api.NewServer(a, a.store, a.logger)
