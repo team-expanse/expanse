@@ -237,6 +237,28 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("TxnCheckAbsent", func(t *testing.T) {
+		s := newStore(t)
+		defer s.Close()
+		// Expect==0 on a missing key passes...
+		if _, err := s.Txn(ctx, []store.Op{
+			{Kind: store.OpCheck, Key: "/fresh", Expect: 0},
+			{Kind: store.OpPut, Key: "/fresh", Value: []byte("v")},
+		}); err != nil {
+			t.Fatalf("Txn check-absent: %v", err)
+		}
+		// ...and conflicts once the key exists (join node-ID uniqueness).
+		if _, err := s.Txn(ctx, []store.Op{
+			{Kind: store.OpCheck, Key: "/fresh", Expect: 0},
+			{Kind: store.OpPut, Key: "/other", Value: []byte("x")},
+		}); !errors.Is(err, errors.KindConflict) {
+			t.Fatalf("err kind = %q, want conflict", errors.KindOf(err))
+		}
+		if _, err := s.Get(ctx, "/other"); !errors.Is(err, errors.KindNotFound) {
+			t.Error("conflicting txn must not apply writes")
+		}
+	})
+
 	t.Run("TxnDeleteAndWatch", func(t *testing.T) {
 		s := newStore(t)
 		defer s.Close()

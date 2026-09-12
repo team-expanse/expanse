@@ -219,6 +219,12 @@ func (s *Store) Txn(ctx context.Context, ops []store.Op) (store.Revision, error)
 				})
 			case store.OpCheck:
 				old := data.Get([]byte(op.Key))
+				if op.Expect == 0 {
+					if old != nil {
+						return nil, conflict("Txn.Check", op.Key, "key exists (want absent)")
+					}
+					continue // Expect==0: key must not exist
+				}
 				if old == nil {
 					return nil, conflict("Txn.Check", op.Key, "key does not exist")
 				}

@@ -500,6 +500,258 @@ func (x *ErrorDetail) GetMessage() string {
 	return ""
 }
 
+type JoinRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`                      // Raft server ID / cert CN
+	Csr           []byte                 `protobuf:"bytes,2,opt,name=csr,proto3" json:"csr,omitempty"`                                          // PKCS#10 DER; CN must equal node_id
+	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`                                      // expanse-join-… token
+	AdvertiseAddr string                 `protobuf:"bytes,4,opt,name=advertise_addr,json=advertiseAddr,proto3" json:"advertise_addr,omitempty"` // Raft addr host:port the joiner binds
+	ApiAddr       string                 `protobuf:"bytes,5,opt,name=api_addr,json=apiAddr,proto3" json:"api_addr,omitempty"`                   // public API addr host:port
+	Role          string                 `protobuf:"bytes,6,opt,name=role,proto3" json:"role,omitempty"`                                        // voter | nonvoter | witness (§4.2)
+	Inventory     string                 `protobuf:"bytes,7,opt,name=inventory,proto3" json:"inventory,omitempty"`                              // JSON capabilities/capacity (phase 04)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinRequest) Reset() {
+	*x = JoinRequest{}
+	mi := &file_proto_cluster_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinRequest) ProtoMessage() {}
+
+func (x *JoinRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cluster_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
+func (*JoinRequest) Descriptor() ([]byte, []int) {
+	return file_proto_cluster_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *JoinRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetCsr() []byte {
+	if x != nil {
+		return x.Csr
+	}
+	return nil
+}
+
+func (x *JoinRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetAdvertiseAddr() string {
+	if x != nil {
+		return x.AdvertiseAddr
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetApiAddr() string {
+	if x != nil {
+		return x.ApiAddr
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetInventory() string {
+	if x != nil {
+		return x.Inventory
+	}
+	return ""
+}
+
+type JoinResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CaCert         []byte                 `protobuf:"bytes,1,opt,name=ca_cert,json=caCert,proto3" json:"ca_cert,omitempty"`       // cluster CA cert, PEM
+	NodeCert       []byte                 `protobuf:"bytes,2,opt,name=node_cert,json=nodeCert,proto3" json:"node_cert,omitempty"` // freshly signed node cert, PEM
+	ClusterId      string                 `protobuf:"bytes,3,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	ClusterSecret  []byte                 `protobuf:"bytes,4,opt,name=cluster_secret,json=clusterSecret,proto3" json:"cluster_secret,omitempty"` // 32B; HMAC key for tokens, sealed CA key
+	Peers          []*JoinPeer            `protobuf:"bytes,5,rep,name=peers,proto3" json:"peers,omitempty"`
+	RaftConfig     string                 `protobuf:"bytes,6,opt,name=raft_config,json=raftConfig,proto3" json:"raft_config,omitempty"` // JSON: heartbeat/election timeouts
+	LeaderRaftAddr string                 `protobuf:"bytes,7,opt,name=leader_raft_addr,json=leaderRaftAddr,proto3" json:"leader_raft_addr,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *JoinResponse) Reset() {
+	*x = JoinResponse{}
+	mi := &file_proto_cluster_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinResponse) ProtoMessage() {}
+
+func (x *JoinResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cluster_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
+func (*JoinResponse) Descriptor() ([]byte, []int) {
+	return file_proto_cluster_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *JoinResponse) GetCaCert() []byte {
+	if x != nil {
+		return x.CaCert
+	}
+	return nil
+}
+
+func (x *JoinResponse) GetNodeCert() []byte {
+	if x != nil {
+		return x.NodeCert
+	}
+	return nil
+}
+
+func (x *JoinResponse) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+func (x *JoinResponse) GetClusterSecret() []byte {
+	if x != nil {
+		return x.ClusterSecret
+	}
+	return nil
+}
+
+func (x *JoinResponse) GetPeers() []*JoinPeer {
+	if x != nil {
+		return x.Peers
+	}
+	return nil
+}
+
+func (x *JoinResponse) GetRaftConfig() string {
+	if x != nil {
+		return x.RaftConfig
+	}
+	return ""
+}
+
+func (x *JoinResponse) GetLeaderRaftAddr() string {
+	if x != nil {
+		return x.LeaderRaftAddr
+	}
+	return ""
+}
+
+type JoinPeer struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	RaftAddr      string                 `protobuf:"bytes,2,opt,name=raft_addr,json=raftAddr,proto3" json:"raft_addr,omitempty"`
+	ApiAddr       string                 `protobuf:"bytes,3,opt,name=api_addr,json=apiAddr,proto3" json:"api_addr,omitempty"`
+	Role          string                 `protobuf:"bytes,4,opt,name=role,proto3" json:"role,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinPeer) Reset() {
+	*x = JoinPeer{}
+	mi := &file_proto_cluster_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinPeer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinPeer) ProtoMessage() {}
+
+func (x *JoinPeer) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cluster_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinPeer.ProtoReflect.Descriptor instead.
+func (*JoinPeer) Descriptor() ([]byte, []int) {
+	return file_proto_cluster_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *JoinPeer) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *JoinPeer) GetRaftAddr() string {
+	if x != nil {
+		return x.RaftAddr
+	}
+	return ""
+}
+
+func (x *JoinPeer) GetApiAddr() string {
+	if x != nil {
+		return x.ApiAddr
+	}
+	return ""
+}
+
+func (x *JoinPeer) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
 var File_proto_cluster_proto protoreflect.FileDescriptor
 
 const file_proto_cluster_proto_rawDesc = "" +
@@ -532,11 +784,36 @@ const file_proto_cluster_proto_rawDesc = "" +
 	"\vErrorDetail\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x0e\n" +
 	"\x02op\x18\x02 \x01(\tR\x02op\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage2\xcc\x01\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xc2\x01\n" +
+	"\vJoinRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x10\n" +
+	"\x03csr\x18\x02 \x01(\fR\x03csr\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\x12%\n" +
+	"\x0eadvertise_addr\x18\x04 \x01(\tR\radvertiseAddr\x12\x19\n" +
+	"\bapi_addr\x18\x05 \x01(\tR\aapiAddr\x12\x12\n" +
+	"\x04role\x18\x06 \x01(\tR\x04role\x12\x1c\n" +
+	"\tinventory\x18\a \x01(\tR\tinventory\"\x89\x02\n" +
+	"\fJoinResponse\x12\x17\n" +
+	"\aca_cert\x18\x01 \x01(\fR\x06caCert\x12\x1b\n" +
+	"\tnode_cert\x18\x02 \x01(\fR\bnodeCert\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\x03 \x01(\tR\tclusterId\x12%\n" +
+	"\x0ecluster_secret\x18\x04 \x01(\fR\rclusterSecret\x122\n" +
+	"\x05peers\x18\x05 \x03(\v2\x1c.expanse.cluster.v1.JoinPeerR\x05peers\x12\x1f\n" +
+	"\vraft_config\x18\x06 \x01(\tR\n" +
+	"raftConfig\x12(\n" +
+	"\x10leader_raft_addr\x18\a \x01(\tR\x0eleaderRaftAddr\"f\n" +
+	"\bJoinPeer\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
+	"\traft_addr\x18\x02 \x01(\tR\braftAddr\x12\x19\n" +
+	"\bapi_addr\x18\x03 \x01(\tR\aapiAddr\x12\x12\n" +
+	"\x04role\x18\x04 \x01(\tR\x04role2\xcc\x01\n" +
 	"\x14InternalStoreService\x12W\n" +
 	"\x0eForwardCommand\x12\x19.expanse.store.v1.Command\x1a*.expanse.cluster.v1.ForwardCommandResponse\x12[\n" +
 	"\n" +
-	"LinearRead\x12%.expanse.cluster.v1.LinearReadRequest\x1a&.expanse.cluster.v1.LinearReadResponseB\"Z github.com/expanse/expanse/protob\x06proto3"
+	"LinearRead\x12%.expanse.cluster.v1.LinearReadRequest\x1a&.expanse.cluster.v1.LinearReadResponse2X\n" +
+	"\vJoinService\x12I\n" +
+	"\x04Join\x12\x1f.expanse.cluster.v1.JoinRequest\x1a .expanse.cluster.v1.JoinResponseB\"Z github.com/expanse/expanse/protob\x06proto3"
 
 var (
 	file_proto_cluster_proto_rawDescOnce sync.Once
@@ -550,7 +827,7 @@ func file_proto_cluster_proto_rawDescGZIP() []byte {
 	return file_proto_cluster_proto_rawDescData
 }
 
-var file_proto_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_proto_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_proto_cluster_proto_goTypes = []any{
 	(*LinearReadRequest)(nil),      // 0: expanse.cluster.v1.LinearReadRequest
 	(*LinearReadResponse)(nil),     // 1: expanse.cluster.v1.LinearReadResponse
@@ -558,7 +835,10 @@ var file_proto_cluster_proto_goTypes = []any{
 	(*EntryList)(nil),              // 3: expanse.cluster.v1.EntryList
 	(*ForwardCommandResponse)(nil), // 4: expanse.cluster.v1.ForwardCommandResponse
 	(*ErrorDetail)(nil),            // 5: expanse.cluster.v1.ErrorDetail
-	(*Command)(nil),                // 6: expanse.store.v1.Command
+	(*JoinRequest)(nil),            // 6: expanse.cluster.v1.JoinRequest
+	(*JoinResponse)(nil),           // 7: expanse.cluster.v1.JoinResponse
+	(*JoinPeer)(nil),               // 8: expanse.cluster.v1.JoinPeer
+	(*Command)(nil),                // 9: expanse.store.v1.Command
 }
 var file_proto_cluster_proto_depIdxs = []int32{
 	2, // 0: expanse.cluster.v1.LinearReadResponse.entry:type_name -> expanse.cluster.v1.Entry
@@ -566,15 +846,18 @@ var file_proto_cluster_proto_depIdxs = []int32{
 	5, // 2: expanse.cluster.v1.LinearReadResponse.error:type_name -> expanse.cluster.v1.ErrorDetail
 	2, // 3: expanse.cluster.v1.EntryList.entries:type_name -> expanse.cluster.v1.Entry
 	5, // 4: expanse.cluster.v1.ForwardCommandResponse.error:type_name -> expanse.cluster.v1.ErrorDetail
-	6, // 5: expanse.cluster.v1.InternalStoreService.ForwardCommand:input_type -> expanse.store.v1.Command
-	0, // 6: expanse.cluster.v1.InternalStoreService.LinearRead:input_type -> expanse.cluster.v1.LinearReadRequest
-	4, // 7: expanse.cluster.v1.InternalStoreService.ForwardCommand:output_type -> expanse.cluster.v1.ForwardCommandResponse
-	1, // 8: expanse.cluster.v1.InternalStoreService.LinearRead:output_type -> expanse.cluster.v1.LinearReadResponse
-	7, // [7:9] is the sub-list for method output_type
-	5, // [5:7] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	8, // 5: expanse.cluster.v1.JoinResponse.peers:type_name -> expanse.cluster.v1.JoinPeer
+	9, // 6: expanse.cluster.v1.InternalStoreService.ForwardCommand:input_type -> expanse.store.v1.Command
+	0, // 7: expanse.cluster.v1.InternalStoreService.LinearRead:input_type -> expanse.cluster.v1.LinearReadRequest
+	6, // 8: expanse.cluster.v1.JoinService.Join:input_type -> expanse.cluster.v1.JoinRequest
+	4, // 9: expanse.cluster.v1.InternalStoreService.ForwardCommand:output_type -> expanse.cluster.v1.ForwardCommandResponse
+	1, // 10: expanse.cluster.v1.InternalStoreService.LinearRead:output_type -> expanse.cluster.v1.LinearReadResponse
+	7, // 11: expanse.cluster.v1.JoinService.Join:output_type -> expanse.cluster.v1.JoinResponse
+	9, // [9:12] is the sub-list for method output_type
+	6, // [6:9] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_proto_cluster_proto_init() }
@@ -604,9 +887,9 @@ func file_proto_cluster_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_cluster_proto_rawDesc), len(file_proto_cluster_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_proto_cluster_proto_goTypes,
 		DependencyIndexes: file_proto_cluster_proto_depIdxs,

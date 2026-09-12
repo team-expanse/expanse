@@ -103,6 +103,12 @@ type Op struct {
 	Expect Revision // for OpCheck / conditional delete
 }
 
+// OpCheck semantics (both stores): Expect==R (R>0) requires the key to
+// exist at revision R; Expect==0 requires the key to NOT exist. The
+// latter is how join transactions enforce node-ID uniqueness (§4.5).
+// Must be kept identical in boltstore and raftstore — the conformance
+// suite covers it.
+
 // EventType identifies what happened in a Watch event.
 type EventType int
 

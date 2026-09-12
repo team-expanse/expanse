@@ -182,6 +182,12 @@ func (f *FSM) applyTxn(ops []store.Op, ts int64) ([]store.Event, store.Revision,
 			}
 		case store.OpCheck:
 			e := f.current(op.Key)
+			if op.Expect == 0 {
+				if e != nil {
+					return nil, 0, conflict("Txn.Check", op.Key, "key exists (want absent)")
+				}
+				continue // Expect==0: key must not exist
+			}
 			if e == nil {
 				return nil, 0, conflict("Txn.Check", op.Key, "key does not exist")
 			}

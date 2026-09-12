@@ -177,3 +177,125 @@ var InternalStoreService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "proto/cluster.proto",
 }
+
+const (
+	JoinService_Join_FullMethodName = "/expanse.cluster.v1.JoinService/Join"
+)
+
+// JoinServiceClient is the client API for JoinService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// JoinService is the bootstrap enrollment endpoint (§4.5), served on
+// :7446 over TLS. The joiner has no credentials yet — authorization is
+// the join token (HMAC-SHA256 keyed by the cluster secret); the cluster
+// CA and secret are delivered in the response and then pinned locally.
+type JoinServiceClient interface {
+	// Join: enroll a node — verify token, sign the CSR, add the Raft
+	// voter, and return the cluster material. Token consumption and the
+	// /nodes/<id> record commit in one Raft txn, so two racing joins with
+	// the same single-use token cannot both succeed (§10 "Join race on
+	// the same token").
+	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
+}
+
+type joinServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewJoinServiceClient(cc grpc.ClientConnInterface) JoinServiceClient {
+	return &joinServiceClient{cc}
+}
+
+func (c *joinServiceClient) Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinResponse)
+	err := c.cc.Invoke(ctx, JoinService_Join_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// JoinServiceServer is the server API for JoinService service.
+// All implementations must embed UnimplementedJoinServiceServer
+// for forward compatibility.
+//
+// JoinService is the bootstrap enrollment endpoint (§4.5), served on
+// :7446 over TLS. The joiner has no credentials yet — authorization is
+// the join token (HMAC-SHA256 keyed by the cluster secret); the cluster
+// CA and secret are delivered in the response and then pinned locally.
+type JoinServiceServer interface {
+	// Join: enroll a node — verify token, sign the CSR, add the Raft
+	// voter, and return the cluster material. Token consumption and the
+	// /nodes/<id> record commit in one Raft txn, so two racing joins with
+	// the same single-use token cannot both succeed (§10 "Join race on
+	// the same token").
+	Join(context.Context, *JoinRequest) (*JoinResponse, error)
+	mustEmbedUnimplementedJoinServiceServer()
+}
+
+// UnimplementedJoinServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedJoinServiceServer struct{}
+
+func (UnimplementedJoinServiceServer) Join(context.Context, *JoinRequest) (*JoinResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Join not implemented")
+}
+func (UnimplementedJoinServiceServer) mustEmbedUnimplementedJoinServiceServer() {}
+func (UnimplementedJoinServiceServer) testEmbeddedByValue()                     {}
+
+// UnsafeJoinServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to JoinServiceServer will
+// result in compilation errors.
+type UnsafeJoinServiceServer interface {
+	mustEmbedUnimplementedJoinServiceServer()
+}
+
+func RegisterJoinServiceServer(s grpc.ServiceRegistrar, srv JoinServiceServer) {
+	// If the following call pancis, it indicates UnimplementedJoinServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&JoinService_ServiceDesc, srv)
+}
+
+func _JoinService_Join_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JoinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(JoinServiceServer).Join(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: JoinService_Join_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(JoinServiceServer).Join(ctx, req.(*JoinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// JoinService_ServiceDesc is the grpc.ServiceDesc for JoinService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var JoinService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "expanse.cluster.v1.JoinService",
+	HandlerType: (*JoinServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Join",
+			Handler:    _JoinService_Join_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "proto/cluster.proto",
+}

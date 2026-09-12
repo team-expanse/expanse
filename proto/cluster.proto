@@ -66,3 +66,43 @@ message ErrorDetail {
   string op = 2;
   string message = 3;
 }
+
+// JoinService is the bootstrap enrollment endpoint (§4.5), served on
+// :7446 over TLS. The joiner has no credentials yet — authorization is
+// the join token (HMAC-SHA256 keyed by the cluster secret); the cluster
+// CA and secret are delivered in the response and then pinned locally.
+service JoinService {
+  // Join: enroll a node — verify token, sign the CSR, add the Raft
+  // voter, and return the cluster material. Token consumption and the
+  // /nodes/<id> record commit in one Raft txn, so two racing joins with
+  // the same single-use token cannot both succeed (§10 "Join race on
+  // the same token").
+  rpc Join(JoinRequest) returns (JoinResponse);
+}
+
+message JoinRequest {
+  string node_id = 1;        // Raft server ID / cert CN
+  bytes csr = 2;             // PKCS#10 DER; CN must equal node_id
+  string token = 3;          // expanse-join-… token
+  string advertise_addr = 4; // Raft addr host:port the joiner binds
+  string api_addr = 5;       // public API addr host:port
+  string role = 6;           // voter | nonvoter | witness (§4.2)
+  string inventory = 7;      // JSON capabilities/capacity (phase 04)
+}
+
+message JoinResponse {
+  bytes ca_cert = 1;         // cluster CA cert, PEM
+  bytes node_cert = 2;       // freshly signed node cert, PEM
+  string cluster_id = 3;
+  bytes cluster_secret = 4;  // 32B; HMAC key for tokens, sealed CA key
+  repeated JoinPeer peers = 5;
+  string raft_config = 6;    // JSON: heartbeat/election timeouts
+  string leader_raft_addr = 7;
+}
+
+message JoinPeer {
+  string id = 1;
+  string raft_addr = 2;
+  string api_addr = 3;
+  string role = 4;
+}
