@@ -1,10 +1,2 @@
-bin/
-result*
-coverage.out
-*.exe
-*.test
-*.out
-*.tar
-*.tar.gz
-.direnv/
-*.pem
+/expanse
+/expansed
