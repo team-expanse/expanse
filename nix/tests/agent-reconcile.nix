@@ -47,8 +47,9 @@ in
         mode = machine.succeed("stat -c %a /etc/expanse-test").strip()
         assert mode == "644", f"mode is {mode}"
 
-    with subtest("watch-triggered drift repair"):
+    with subtest("drift repair on reconcile"):
         machine.succeed("echo bad > /etc/expanse-test")
+        machine.succeed("expanse ctl reconcile")
         deadline = time.time() + 10
         while time.time() < deadline:
             out = machine.succeed("cat /etc/expanse-test")
