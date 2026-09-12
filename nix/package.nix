@@ -3,7 +3,7 @@ buildGoModule {
   pname = "expanse";
   inherit version;
   src = lib.cleanSource ../.;
-  vendorHash = null;
+  vendorHash = "sha256-komX1AmHt2NoF1x6xsNa2RFkfVzOXfYEMPhT0zwMxjw=";
   CGO_ENABLED = "0";
   ldflags = [
     "-s" "-w"

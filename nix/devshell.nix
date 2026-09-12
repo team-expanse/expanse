@@ -16,7 +16,7 @@ pkgs.mkShell {
     pkgs.nixos-rebuild
     pkgs.jq
     pkgs.just
-    pkgs.make
+    pkgs.gnumake
     pkgs.git
   ];
 
