@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,33 @@ func newCtlCmd() *cobra.Command {
 	}
 	res.AddCommand(del)
 	cmd.AddCommand(res)
+
+	gen := &cobra.Command{Use: "generation", Short: "Desired-state generation history and rollback"}
+	gen.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List generations (oldest first)",
+		RunE:  func(cmd *cobra.Command, args []string) error { return ctlGenList(cmd, opts) },
+	})
+	gen.AddCommand(&cobra.Command{
+		Use:   "show <n>",
+		Short: "Show one generation's metadata and keys",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(cmd *cobra.Command, args []string) error { return ctlGenShow(cmd, opts, args[0]) },
+	})
+	gen.AddCommand(&cobra.Command{
+		Use:   "diff <a> <b>",
+		Short: "Diff two generations' desired state",
+		Args:  cobra.ExactArgs(2),
+		RunE:  func(cmd *cobra.Command, args []string) error { return ctlGenDiff(cmd, opts, args[0], args[1]) },
+	})
+	rb := &cobra.Command{
+		Use:   "rollback [<n>]",
+		Short: "Restore generation n's state as a NEW generation (default: n-1). History is append-only — roll forward by rolling back again.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  func(cmd *cobra.Command, args []string) error { return ctlGenRollback(cmd, opts, args) },
+	}
+	gen.AddCommand(rb)
+	cmd.AddCommand(gen)
 
 	rec := &cobra.Command{
 		Use:   "reconcile",
@@ -192,6 +220,102 @@ func toProtoSlice(v any) (reflect.Value, bool) {
 	}
 	_, ok := rv.Index(0).Interface().(proto.Message)
 	return rv, ok
+}
+
+func ctlGenList(cmd *cobra.Command, opts *ctlOpts) error {
+	return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+		res, err := c.ListGenerations(ctx, &pb.ListGenerationsRequest{})
+		if err != nil {
+			return fmt.Errorf("ListGenerations: %w", err)
+		}
+		w := cmd.OutOrStdout()
+		fmt.Fprintf(w, "%-6s %-20s %-8s %-12s %s\n", "GEN", "CREATED", "BY", "REVISION", "DESCRIPTION")
+		for _, g := range res.Generations {
+			fmt.Fprintf(w, "%-6d %-20s %-8s %-12d %s\n",
+				g.Number,
+				time.Unix(0, g.CreatedAtUnixNs).UTC().Format("2006-01-02T15:04:05Z"),
+				g.CreatedBy, g.Revision, g.Description)
+		}
+		return nil
+	})
+}
+
+func ctlGenShow(cmd *cobra.Command, opts *ctlOpts, arg string) error {
+	n, err := strconv.ParseUint(arg, 10, 64)
+	if err != nil {
+		return fmt.Errorf("generation %q is not a number", arg)
+	}
+	return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+		g, err := c.GetGeneration(ctx, &pb.GetGenerationRequest{Number: n, IncludeKeys: true})
+		if err != nil {
+			return fmt.Errorf("GetGeneration: %w", err)
+		}
+		w := cmd.OutOrStdout()
+		fmt.Fprintf(w, "generation:  %d\n", g.Number)
+		fmt.Fprintf(w, "created:     %s\n", time.Unix(0, g.CreatedAtUnixNs).UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "created_by:  %s\n", g.CreatedBy)
+		fmt.Fprintf(w, "revision:    %d\n", g.Revision)
+		fmt.Fprintf(w, "parent:      %d\n", g.Parent)
+		fmt.Fprintf(w, "hash:        %s\n", g.Hash)
+		if g.Description != "" {
+			fmt.Fprintf(w, "description: %s\n", g.Description)
+		}
+		fmt.Fprintf(w, "keys:        %d\n", len(g.Keys))
+		for _, k := range g.Keys {
+			fmt.Fprintf(w, "  %s\n", k)
+		}
+		return nil
+	})
+}
+
+func ctlGenDiff(cmd *cobra.Command, opts *ctlOpts, aArg, bArg string) error {
+	a, err := strconv.ParseUint(aArg, 10, 64)
+	if err != nil {
+		return fmt.Errorf("generation %q is not a number", aArg)
+	}
+	b, err := strconv.ParseUint(bArg, 10, 64)
+	if err != nil {
+		return fmt.Errorf("generation %q is not a number", bArg)
+	}
+	return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+		d, err := c.DiffGenerations(ctx, &pb.DiffGenerationsRequest{A: a, B: b})
+		if err != nil {
+			return fmt.Errorf("DiffGenerations: %w", err)
+		}
+		w := cmd.OutOrStdout()
+		for _, k := range d.Added {
+			fmt.Fprintf(w, "+ %s\n", k)
+		}
+		for _, k := range d.Changed {
+			fmt.Fprintf(w, "~ %s\n", k)
+		}
+		for _, k := range d.Removed {
+			fmt.Fprintf(w, "- %s\n", k)
+		}
+		if len(d.Added)+len(d.Changed)+len(d.Removed) == 0 {
+			fmt.Fprintln(w, "no differences")
+		}
+		return nil
+	})
+}
+
+func ctlGenRollback(cmd *cobra.Command, opts *ctlOpts, args []string) error {
+	var target uint64
+	if len(args) == 1 {
+		n, err := strconv.ParseUint(args[0], 10, 64)
+		if err != nil {
+			return fmt.Errorf("generation %q is not a number", args[0])
+		}
+		target = n
+	}
+	return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+		res, err := c.RollbackGeneration(ctx, &pb.RollbackGenerationRequest{Target: target})
+		if err != nil {
+			return fmt.Errorf("RollbackGeneration: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "rolled back; new generation %d (history is append-only — roll forward by rolling back again)\n", res.NewGeneration)
+		return nil
+	})
 }
 
 func ctlNodeStatus(cmd *cobra.Command, opts *ctlOpts) error {

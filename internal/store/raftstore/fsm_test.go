@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/raft"
 
+	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -451,5 +454,49 @@ func TestFSMDeterminismBadTimestamp(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		rand.Read(b)
 		f.Apply(testLog(b)) // must not panic
+	}
+}
+
+// TestFSMRetentionVictims verifies the retention rule (§4.7): keep the
+// newest KeepLast generations plus everything created within the last
+// 30 days; everything else is pruned. Uses fake meta timestamps — the
+// victim calculation must be deterministic regardless of wall clock.
+func TestFSMRetentionVictims(t *testing.T) {
+	f := NewFSM()
+	now := time.Now().UnixNano()
+	old := now - int64(40*24*time.Hour) // 40 days ago
+
+	writeMeta := func(n uint64, ts int64) {
+		meta, _ := json.Marshal(generation.Generation{
+			Number: n, CreatedAt: time.Unix(0, ts).UTC(),
+		})
+		f.data[generation.MetaKey(n)] = &store.Entry{Key: generation.MetaKey(n), Value: meta}
+		f.data[generation.DataKey(n)] = &store.Entry{Key: generation.DataKey(n), Value: []byte("{}")}
+	}
+
+	// Gens 1–60: created 40 days ago (old).
+	for n := uint64(1); n <= 60; n++ {
+		writeMeta(n, old)
+	}
+	// Gens 61–70: fresh.
+	for n := uint64(61); n <= 70; n++ {
+		writeMeta(n, now)
+	}
+
+	victims := map[uint64]bool{}
+	for _, v := range f.retentionVictimsLocked(70, now) {
+		victims[v] = true
+	}
+	// Newest 50 (21..70) kept; fresh ones (61..70) kept regardless.
+	// Old beyond the newest 50: 1..20 pruned.
+	for n := uint64(1); n <= 20; n++ {
+		if !victims[n] {
+			t.Errorf("gen %d should be pruned", n)
+		}
+	}
+	for n := uint64(21); n <= 70; n++ {
+		if victims[n] {
+			t.Errorf("gen %d should be retained", n)
+		}
 	}
 }

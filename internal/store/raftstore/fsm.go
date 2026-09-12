@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/raft"
 
+	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 )
@@ -100,6 +105,17 @@ func (f *FSM) Apply(l *raft.Log) interface{} {
 	}
 	if aerr == nil {
 		f.revision = rev
+		// §4.7: every accepted desired-state mutation creates a new
+		// generation atomically — the generation keys are written inside
+		// this same Apply (same log entry), so all replicas see them or
+		// none does. Fully deterministic: number and hash derive from
+		// state, timestamps from the leader-provided command timestamp.
+		if mutationTouchesDesired(events) {
+			gevents, grev := f.createGenerationLocked(cmd.GetTimestampUnixNs())
+			events = append(events, gevents...)
+			f.revision = grev
+			rev = grev
+		}
 	}
 	f.mu.Unlock()
 
@@ -339,6 +355,120 @@ func (f *FSM) Revision() store.Revision {
 
 func conflict(op string, k store.Key, msg string) error {
 	return errors.New(errors.KindConflict, op, fmt.Sprintf("%s (key %s)", msg, k))
+}
+
+// mutationTouchesDesired reports whether any event in the batch mutates
+// a desired-state key (§4.7). Status/observed keys never trigger a
+// generation.
+func mutationTouchesDesired(events []store.Event) bool {
+	for _, ev := range events {
+		if ev.Entry != nil && generation.IsDesiredKey(ev.Entry.Key) {
+			return true
+		}
+		if ev.Prev != nil && generation.IsDesiredKey(ev.Prev.Key) {
+			return true
+		}
+	}
+	return false
+}
+
+// createGenerationLocked snapshots the desired state and writes
+// /generations/<n>/{meta,data} plus the /cluster/generation pointer,
+// applying retention (last 50 + last 30 days). Caller holds f.mu (write).
+func (f *FSM) createGenerationLocked(ts int64) ([]store.Event, store.Revision) {
+	cur := f.currentGenLocked()
+	n := cur + 1
+
+	snap := make(map[store.Key][]byte)
+	for k, e := range f.data {
+		if generation.IsDesiredKey(k) {
+			snap[k] = e.Value
+		}
+	}
+	meta, _ := json.Marshal(generation.Generation{ //nolint:errcheck — struct with plain fields
+		Number:    n,
+		Revision:  f.revision,
+		CreatedAt: time.Unix(0, ts).UTC(),
+		CreatedBy: "system",
+		Parent:    cur,
+		Hash:      generation.Hash(snap),
+	})
+
+	var events []store.Event
+	events = append(events, f.putEntry(f.current(generation.DataKey(n)),
+		generation.DataKey(n), generation.EncodeSnapshot(snap), ts))
+	events = append(events, f.putEntry(f.current(generation.MetaKey(n)),
+		generation.MetaKey(n), meta, ts))
+	events = append(events, f.putEntry(f.current(generation.CurrentKey),
+		generation.CurrentKey, []byte(strconv.FormatUint(n, 10)), ts))
+
+	// Retention: keep the last KeepLast generations and everything within
+	// KeepWindow of the entry timestamp; delete the rest. Old generation
+	// deletes ride the same revision — deterministic on every replica.
+	for _, old := range f.retentionVictimsLocked(n, ts) {
+		for _, k := range []store.Key{generation.DataKey(old), generation.MetaKey(old)} {
+			e := f.data[k]
+			if e == nil {
+				continue
+			}
+			delete(f.data, k)
+			events = append(events, store.Event{Type: store.EventDelete, Entry: e, Prev: e, Revision: f.revision})
+		}
+	}
+	return events, f.revision
+}
+
+// currentGenLocked parses /cluster/generation (0 when absent or corrupt —
+// a corrupt pointer would make numbering restart, which is safe because
+// new numbers are still monotonic from there).
+func (f *FSM) currentGenLocked() uint64 {
+	if e := f.data[generation.CurrentKey]; e != nil {
+		if n, err := strconv.ParseUint(string(e.Value), 10, 64); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// retentionVictimsLocked returns the generation numbers to delete: all
+// recorded generations except the newest KeepLast and those created
+// within KeepWindow of ts.
+func (f *FSM) retentionVictimsLocked(newest uint64, ts int64) []uint64 {
+	type genMeta struct {
+		num   uint64
+		ageOk bool
+	}
+	var gens []genMeta
+	cutoff := time.Unix(0, ts).Add(-generation.KeepWindow)
+	for k, e := range f.data {
+		if !strings.HasPrefix(string(k), generation.GensPrefix) || !strings.HasSuffix(string(k), "/meta") {
+			continue
+		}
+		numStr := strings.TrimSuffix(strings.TrimPrefix(string(k), generation.GensPrefix), "/meta")
+		num, err := strconv.ParseUint(numStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		var g generation.Generation
+		ageOk := json.Unmarshal(e.Value, &g) == nil && g.CreatedAt.After(cutoff)
+		gens = append(gens, genMeta{num: num, ageOk: ageOk})
+	}
+	if len(gens) <= generation.KeepLast {
+		return nil
+	}
+	sort.Slice(gens, func(i, j int) bool { return gens[i].num > gens[j].num }) // newest first
+	for i := range gens {
+		if i < generation.KeepLast {
+			gens[i].ageOk = true // newest 50 always kept
+		}
+	}
+	var victims []uint64
+	for _, g := range gens {
+		if !g.ageOk && g.num != newest {
+			victims = append(victims, g.num)
+		}
+	}
+	return victims
 }
 
 // fsmSnapshot streams the canonical serialization. Persist/Release are

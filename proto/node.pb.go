@@ -1847,6 +1847,438 @@ func (x *ShutdownResponse) GetMessage() string {
 	return ""
 }
 
+type ListGenerationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListGenerationsRequest) Reset() {
+	*x = ListGenerationsRequest{}
+	mi := &file_proto_node_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListGenerationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListGenerationsRequest) ProtoMessage() {}
+
+func (x *ListGenerationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListGenerationsRequest.ProtoReflect.Descriptor instead.
+func (*ListGenerationsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{28}
+}
+
+type ListGenerationsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Generations   []*GenerationInfo      `protobuf:"bytes,1,rep,name=generations,proto3" json:"generations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListGenerationsResponse) Reset() {
+	*x = ListGenerationsResponse{}
+	mi := &file_proto_node_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListGenerationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListGenerationsResponse) ProtoMessage() {}
+
+func (x *ListGenerationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListGenerationsResponse.ProtoReflect.Descriptor instead.
+func (*ListGenerationsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ListGenerationsResponse) GetGenerations() []*GenerationInfo {
+	if x != nil {
+		return x.Generations
+	}
+	return nil
+}
+
+type GetGenerationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Number        uint64                 `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
+	IncludeKeys   bool                   `protobuf:"varint,2,opt,name=include_keys,json=includeKeys,proto3" json:"include_keys,omitempty"` // include the snapshot's key list
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetGenerationRequest) Reset() {
+	*x = GetGenerationRequest{}
+	mi := &file_proto_node_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetGenerationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetGenerationRequest) ProtoMessage() {}
+
+func (x *GetGenerationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetGenerationRequest.ProtoReflect.Descriptor instead.
+func (*GetGenerationRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *GetGenerationRequest) GetNumber() uint64 {
+	if x != nil {
+		return x.Number
+	}
+	return 0
+}
+
+func (x *GetGenerationRequest) GetIncludeKeys() bool {
+	if x != nil {
+		return x.IncludeKeys
+	}
+	return false
+}
+
+type GenerationInfo struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Number          uint64                 `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
+	Revision        uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	CreatedAtUnixNs int64                  `protobuf:"varint,3,opt,name=created_at_unix_ns,json=createdAtUnixNs,proto3" json:"created_at_unix_ns,omitempty"`
+	CreatedBy       string                 `protobuf:"bytes,4,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	Description     string                 `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
+	Parent          uint64                 `protobuf:"varint,6,opt,name=parent,proto3" json:"parent,omitempty"`
+	Hash            string                 `protobuf:"bytes,7,opt,name=hash,proto3" json:"hash,omitempty"`
+	Keys            []string               `protobuf:"bytes,8,rep,name=keys,proto3" json:"keys,omitempty"` // populated when include_keys
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *GenerationInfo) Reset() {
+	*x = GenerationInfo{}
+	mi := &file_proto_node_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenerationInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenerationInfo) ProtoMessage() {}
+
+func (x *GenerationInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenerationInfo.ProtoReflect.Descriptor instead.
+func (*GenerationInfo) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *GenerationInfo) GetNumber() uint64 {
+	if x != nil {
+		return x.Number
+	}
+	return 0
+}
+
+func (x *GenerationInfo) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *GenerationInfo) GetCreatedAtUnixNs() int64 {
+	if x != nil {
+		return x.CreatedAtUnixNs
+	}
+	return 0
+}
+
+func (x *GenerationInfo) GetCreatedBy() string {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return ""
+}
+
+func (x *GenerationInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *GenerationInfo) GetParent() uint64 {
+	if x != nil {
+		return x.Parent
+	}
+	return 0
+}
+
+func (x *GenerationInfo) GetHash() string {
+	if x != nil {
+		return x.Hash
+	}
+	return ""
+}
+
+func (x *GenerationInfo) GetKeys() []string {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+type DiffGenerationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	A             uint64                 `protobuf:"varint,1,opt,name=a,proto3" json:"a,omitempty"`
+	B             uint64                 `protobuf:"varint,2,opt,name=b,proto3" json:"b,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiffGenerationsRequest) Reset() {
+	*x = DiffGenerationsRequest{}
+	mi := &file_proto_node_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiffGenerationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiffGenerationsRequest) ProtoMessage() {}
+
+func (x *DiffGenerationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiffGenerationsRequest.ProtoReflect.Descriptor instead.
+func (*DiffGenerationsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *DiffGenerationsRequest) GetA() uint64 {
+	if x != nil {
+		return x.A
+	}
+	return 0
+}
+
+func (x *DiffGenerationsRequest) GetB() uint64 {
+	if x != nil {
+		return x.B
+	}
+	return 0
+}
+
+type DiffGenerationsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Added         []string               `protobuf:"bytes,1,rep,name=added,proto3" json:"added,omitempty"`
+	Removed       []string               `protobuf:"bytes,2,rep,name=removed,proto3" json:"removed,omitempty"`
+	Changed       []string               `protobuf:"bytes,3,rep,name=changed,proto3" json:"changed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiffGenerationsResponse) Reset() {
+	*x = DiffGenerationsResponse{}
+	mi := &file_proto_node_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiffGenerationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiffGenerationsResponse) ProtoMessage() {}
+
+func (x *DiffGenerationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiffGenerationsResponse.ProtoReflect.Descriptor instead.
+func (*DiffGenerationsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *DiffGenerationsResponse) GetAdded() []string {
+	if x != nil {
+		return x.Added
+	}
+	return nil
+}
+
+func (x *DiffGenerationsResponse) GetRemoved() []string {
+	if x != nil {
+		return x.Removed
+	}
+	return nil
+}
+
+func (x *DiffGenerationsResponse) GetChanged() []string {
+	if x != nil {
+		return x.Changed
+	}
+	return nil
+}
+
+type RollbackGenerationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Target        uint64                 `protobuf:"varint,1,opt,name=target,proto3" json:"target,omitempty"` // 0 = previous generation
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RollbackGenerationRequest) Reset() {
+	*x = RollbackGenerationRequest{}
+	mi := &file_proto_node_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RollbackGenerationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RollbackGenerationRequest) ProtoMessage() {}
+
+func (x *RollbackGenerationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RollbackGenerationRequest.ProtoReflect.Descriptor instead.
+func (*RollbackGenerationRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *RollbackGenerationRequest) GetTarget() uint64 {
+	if x != nil {
+		return x.Target
+	}
+	return 0
+}
+
+type RollbackGenerationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NewGeneration uint64                 `protobuf:"varint,1,opt,name=new_generation,json=newGeneration,proto3" json:"new_generation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RollbackGenerationResponse) Reset() {
+	*x = RollbackGenerationResponse{}
+	mi := &file_proto_node_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RollbackGenerationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RollbackGenerationResponse) ProtoMessage() {}
+
+func (x *RollbackGenerationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RollbackGenerationResponse.ProtoReflect.Descriptor instead.
+func (*RollbackGenerationResponse) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *RollbackGenerationResponse) GetNewGeneration() uint64 {
+	if x != nil {
+		return x.NewGeneration
+	}
+	return 0
+}
+
 var File_proto_node_proto protoreflect.FileDescriptor
 
 const file_proto_node_proto_rawDesc = "" +
@@ -1982,13 +2414,40 @@ const file_proto_node_proto_rawDesc = "" +
 	"\x0fShutdownRequest\"F\n" +
 	"\x10ShutdownResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage*s\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x18\n" +
+	"\x16ListGenerationsRequest\"\\\n" +
+	"\x17ListGenerationsResponse\x12A\n" +
+	"\vgenerations\x18\x01 \x03(\v2\x1f.expanse.node.v1.GenerationInfoR\vgenerations\"Q\n" +
+	"\x14GetGenerationRequest\x12\x16\n" +
+	"\x06number\x18\x01 \x01(\x04R\x06number\x12!\n" +
+	"\finclude_keys\x18\x02 \x01(\bR\vincludeKeys\"\xf2\x01\n" +
+	"\x0eGenerationInfo\x12\x16\n" +
+	"\x06number\x18\x01 \x01(\x04R\x06number\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\x12+\n" +
+	"\x12created_at_unix_ns\x18\x03 \x01(\x03R\x0fcreatedAtUnixNs\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\x04 \x01(\tR\tcreatedBy\x12 \n" +
+	"\vdescription\x18\x05 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06parent\x18\x06 \x01(\x04R\x06parent\x12\x12\n" +
+	"\x04hash\x18\a \x01(\tR\x04hash\x12\x12\n" +
+	"\x04keys\x18\b \x03(\tR\x04keys\"4\n" +
+	"\x16DiffGenerationsRequest\x12\f\n" +
+	"\x01a\x18\x01 \x01(\x04R\x01a\x12\f\n" +
+	"\x01b\x18\x02 \x01(\x04R\x01b\"c\n" +
+	"\x17DiffGenerationsResponse\x12\x14\n" +
+	"\x05added\x18\x01 \x03(\tR\x05added\x12\x18\n" +
+	"\aremoved\x18\x02 \x03(\tR\aremoved\x12\x18\n" +
+	"\achanged\x18\x03 \x03(\tR\achanged\"3\n" +
+	"\x19RollbackGenerationRequest\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\x04R\x06target\"C\n" +
+	"\x1aRollbackGenerationResponse\x12%\n" +
+	"\x0enew_generation\x18\x01 \x01(\x04R\rnewGeneration*s\n" +
 	"\x06Health\x12\x16\n" +
 	"\x12HEALTH_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eHEALTH_HEALTHY\x10\x01\x12\x13\n" +
 	"\x0fHEALTH_DEGRADED\x10\x02\x12\x14\n" +
 	"\x10HEALTH_UNHEALTHY\x10\x03\x12\x12\n" +
-	"\x0eHEALTH_UNKNOWN\x10\x042\xe4\x06\n" +
+	"\x0eHEALTH_UNKNOWN\x10\x042\xf8\t\n" +
 	"\vNodeService\x12K\n" +
 	"\tGetStatus\x12!.expanse.node.v1.GetStatusRequest\x1a\x1b.expanse.node.v1.NodeStatus\x12P\n" +
 	"\fGetInventory\x12$.expanse.node.v1.GetInventoryRequest\x1a\x1a.expanse.node.v1.Inventory\x12^\n" +
@@ -1999,7 +2458,11 @@ const file_proto_node_proto_rawDesc = "" +
 	"\tReconcile\x12!.expanse.node.v1.ReconcileRequest\x1a\x1f.expanse.node.v1.ReconcileEvent0\x01\x12N\n" +
 	"\fStreamEvents\x12$.expanse.node.v1.StreamEventsRequest\x1a\x16.expanse.node.v1.Event0\x01\x12M\n" +
 	"\tGetHealth\x12!.expanse.node.v1.GetHealthRequest\x1a\x1d.expanse.node.v1.HealthReport\x12O\n" +
-	"\bShutdown\x12 .expanse.node.v1.ShutdownRequest\x1a!.expanse.node.v1.ShutdownResponseB\"Z github.com/expanse/expanse/protob\x06proto3"
+	"\bShutdown\x12 .expanse.node.v1.ShutdownRequest\x1a!.expanse.node.v1.ShutdownResponse\x12d\n" +
+	"\x0fListGenerations\x12'.expanse.node.v1.ListGenerationsRequest\x1a(.expanse.node.v1.ListGenerationsResponse\x12W\n" +
+	"\rGetGeneration\x12%.expanse.node.v1.GetGenerationRequest\x1a\x1f.expanse.node.v1.GenerationInfo\x12d\n" +
+	"\x0fDiffGenerations\x12'.expanse.node.v1.DiffGenerationsRequest\x1a(.expanse.node.v1.DiffGenerationsResponse\x12m\n" +
+	"\x12RollbackGeneration\x12*.expanse.node.v1.RollbackGenerationRequest\x1a+.expanse.node.v1.RollbackGenerationResponseB\"Z github.com/expanse/expanse/protob\x06proto3"
 
 var (
 	file_proto_node_proto_rawDescOnce sync.Once
@@ -2014,40 +2477,48 @@ func file_proto_node_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_node_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_proto_node_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_proto_node_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_proto_node_proto_goTypes = []any{
-	(Health)(0),                     // 0: expanse.node.v1.Health
-	(NodeStatus_Status)(0),          // 1: expanse.node.v1.NodeStatus.Status
-	(HealthReport_OverallStatus)(0), // 2: expanse.node.v1.HealthReport.OverallStatus
-	(*GetStatusRequest)(nil),        // 3: expanse.node.v1.GetStatusRequest
-	(*NodeStatus)(nil),              // 4: expanse.node.v1.NodeStatus
-	(*GetInventoryRequest)(nil),     // 5: expanse.node.v1.GetInventoryRequest
-	(*Inventory)(nil),               // 6: expanse.node.v1.Inventory
-	(*OSInfo)(nil),                  // 7: expanse.node.v1.OSInfo
-	(*CPUInfo)(nil),                 // 8: expanse.node.v1.CPUInfo
-	(*MemoryInfo)(nil),              // 9: expanse.node.v1.MemoryInfo
-	(*DiskInfo)(nil),                // 10: expanse.node.v1.DiskInfo
-	(*NICInfo)(nil),                 // 11: expanse.node.v1.NICInfo
-	(*GPUInfo)(nil),                 // 12: expanse.node.v1.GPUInfo
-	(*TPMInfo)(nil),                 // 13: expanse.node.v1.TPMInfo
-	(*ListResourcesRequest)(nil),    // 14: expanse.node.v1.ListResourcesRequest
-	(*Resource)(nil),                // 15: expanse.node.v1.Resource
-	(*ListResourcesResponse)(nil),   // 16: expanse.node.v1.ListResourcesResponse
-	(*GetResourceRequest)(nil),      // 17: expanse.node.v1.GetResourceRequest
-	(*ApplyResourcesRequest)(nil),   // 18: expanse.node.v1.ApplyResourcesRequest
-	(*ApplyResourcesResponse)(nil),  // 19: expanse.node.v1.ApplyResourcesResponse
-	(*DeleteResourceRequest)(nil),   // 20: expanse.node.v1.DeleteResourceRequest
-	(*DeleteResourceResponse)(nil),  // 21: expanse.node.v1.DeleteResourceResponse
-	(*ReconcileRequest)(nil),        // 22: expanse.node.v1.ReconcileRequest
-	(*ReconcileEvent)(nil),          // 23: expanse.node.v1.ReconcileEvent
-	(*StreamEventsRequest)(nil),     // 24: expanse.node.v1.StreamEventsRequest
-	(*Event)(nil),                   // 25: expanse.node.v1.Event
-	(*GetHealthRequest)(nil),        // 26: expanse.node.v1.GetHealthRequest
-	(*HealthReport)(nil),            // 27: expanse.node.v1.HealthReport
-	(*CheckResult)(nil),             // 28: expanse.node.v1.CheckResult
-	(*ShutdownRequest)(nil),         // 29: expanse.node.v1.ShutdownRequest
-	(*ShutdownResponse)(nil),        // 30: expanse.node.v1.ShutdownResponse
-	nil,                             // 31: expanse.node.v1.CheckResult.DetailsEntry
+	(Health)(0),                        // 0: expanse.node.v1.Health
+	(NodeStatus_Status)(0),             // 1: expanse.node.v1.NodeStatus.Status
+	(HealthReport_OverallStatus)(0),    // 2: expanse.node.v1.HealthReport.OverallStatus
+	(*GetStatusRequest)(nil),           // 3: expanse.node.v1.GetStatusRequest
+	(*NodeStatus)(nil),                 // 4: expanse.node.v1.NodeStatus
+	(*GetInventoryRequest)(nil),        // 5: expanse.node.v1.GetInventoryRequest
+	(*Inventory)(nil),                  // 6: expanse.node.v1.Inventory
+	(*OSInfo)(nil),                     // 7: expanse.node.v1.OSInfo
+	(*CPUInfo)(nil),                    // 8: expanse.node.v1.CPUInfo
+	(*MemoryInfo)(nil),                 // 9: expanse.node.v1.MemoryInfo
+	(*DiskInfo)(nil),                   // 10: expanse.node.v1.DiskInfo
+	(*NICInfo)(nil),                    // 11: expanse.node.v1.NICInfo
+	(*GPUInfo)(nil),                    // 12: expanse.node.v1.GPUInfo
+	(*TPMInfo)(nil),                    // 13: expanse.node.v1.TPMInfo
+	(*ListResourcesRequest)(nil),       // 14: expanse.node.v1.ListResourcesRequest
+	(*Resource)(nil),                   // 15: expanse.node.v1.Resource
+	(*ListResourcesResponse)(nil),      // 16: expanse.node.v1.ListResourcesResponse
+	(*GetResourceRequest)(nil),         // 17: expanse.node.v1.GetResourceRequest
+	(*ApplyResourcesRequest)(nil),      // 18: expanse.node.v1.ApplyResourcesRequest
+	(*ApplyResourcesResponse)(nil),     // 19: expanse.node.v1.ApplyResourcesResponse
+	(*DeleteResourceRequest)(nil),      // 20: expanse.node.v1.DeleteResourceRequest
+	(*DeleteResourceResponse)(nil),     // 21: expanse.node.v1.DeleteResourceResponse
+	(*ReconcileRequest)(nil),           // 22: expanse.node.v1.ReconcileRequest
+	(*ReconcileEvent)(nil),             // 23: expanse.node.v1.ReconcileEvent
+	(*StreamEventsRequest)(nil),        // 24: expanse.node.v1.StreamEventsRequest
+	(*Event)(nil),                      // 25: expanse.node.v1.Event
+	(*GetHealthRequest)(nil),           // 26: expanse.node.v1.GetHealthRequest
+	(*HealthReport)(nil),               // 27: expanse.node.v1.HealthReport
+	(*CheckResult)(nil),                // 28: expanse.node.v1.CheckResult
+	(*ShutdownRequest)(nil),            // 29: expanse.node.v1.ShutdownRequest
+	(*ShutdownResponse)(nil),           // 30: expanse.node.v1.ShutdownResponse
+	(*ListGenerationsRequest)(nil),     // 31: expanse.node.v1.ListGenerationsRequest
+	(*ListGenerationsResponse)(nil),    // 32: expanse.node.v1.ListGenerationsResponse
+	(*GetGenerationRequest)(nil),       // 33: expanse.node.v1.GetGenerationRequest
+	(*GenerationInfo)(nil),             // 34: expanse.node.v1.GenerationInfo
+	(*DiffGenerationsRequest)(nil),     // 35: expanse.node.v1.DiffGenerationsRequest
+	(*DiffGenerationsResponse)(nil),    // 36: expanse.node.v1.DiffGenerationsResponse
+	(*RollbackGenerationRequest)(nil),  // 37: expanse.node.v1.RollbackGenerationRequest
+	(*RollbackGenerationResponse)(nil), // 38: expanse.node.v1.RollbackGenerationResponse
+	nil,                                // 39: expanse.node.v1.CheckResult.DetailsEntry
 }
 var file_proto_node_proto_depIdxs = []int32{
 	1,  // 0: expanse.node.v1.NodeStatus.status:type_name -> expanse.node.v1.NodeStatus.Status
@@ -2063,32 +2534,41 @@ var file_proto_node_proto_depIdxs = []int32{
 	28, // 10: expanse.node.v1.HealthReport.checks:type_name -> expanse.node.v1.CheckResult
 	2,  // 11: expanse.node.v1.HealthReport.overall:type_name -> expanse.node.v1.HealthReport.OverallStatus
 	0,  // 12: expanse.node.v1.CheckResult.status:type_name -> expanse.node.v1.Health
-	31, // 13: expanse.node.v1.CheckResult.details:type_name -> expanse.node.v1.CheckResult.DetailsEntry
-	3,  // 14: expanse.node.v1.NodeService.GetStatus:input_type -> expanse.node.v1.GetStatusRequest
-	5,  // 15: expanse.node.v1.NodeService.GetInventory:input_type -> expanse.node.v1.GetInventoryRequest
-	14, // 16: expanse.node.v1.NodeService.ListResources:input_type -> expanse.node.v1.ListResourcesRequest
-	17, // 17: expanse.node.v1.NodeService.GetResource:input_type -> expanse.node.v1.GetResourceRequest
-	18, // 18: expanse.node.v1.NodeService.ApplyResources:input_type -> expanse.node.v1.ApplyResourcesRequest
-	20, // 19: expanse.node.v1.NodeService.DeleteResource:input_type -> expanse.node.v1.DeleteResourceRequest
-	22, // 20: expanse.node.v1.NodeService.Reconcile:input_type -> expanse.node.v1.ReconcileRequest
-	24, // 21: expanse.node.v1.NodeService.StreamEvents:input_type -> expanse.node.v1.StreamEventsRequest
-	26, // 22: expanse.node.v1.NodeService.GetHealth:input_type -> expanse.node.v1.GetHealthRequest
-	29, // 23: expanse.node.v1.NodeService.Shutdown:input_type -> expanse.node.v1.ShutdownRequest
-	4,  // 24: expanse.node.v1.NodeService.GetStatus:output_type -> expanse.node.v1.NodeStatus
-	6,  // 25: expanse.node.v1.NodeService.GetInventory:output_type -> expanse.node.v1.Inventory
-	16, // 26: expanse.node.v1.NodeService.ListResources:output_type -> expanse.node.v1.ListResourcesResponse
-	15, // 27: expanse.node.v1.NodeService.GetResource:output_type -> expanse.node.v1.Resource
-	19, // 28: expanse.node.v1.NodeService.ApplyResources:output_type -> expanse.node.v1.ApplyResourcesResponse
-	21, // 29: expanse.node.v1.NodeService.DeleteResource:output_type -> expanse.node.v1.DeleteResourceResponse
-	23, // 30: expanse.node.v1.NodeService.Reconcile:output_type -> expanse.node.v1.ReconcileEvent
-	25, // 31: expanse.node.v1.NodeService.StreamEvents:output_type -> expanse.node.v1.Event
-	27, // 32: expanse.node.v1.NodeService.GetHealth:output_type -> expanse.node.v1.HealthReport
-	30, // 33: expanse.node.v1.NodeService.Shutdown:output_type -> expanse.node.v1.ShutdownResponse
-	24, // [24:34] is the sub-list for method output_type
-	14, // [14:24] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	39, // 13: expanse.node.v1.CheckResult.details:type_name -> expanse.node.v1.CheckResult.DetailsEntry
+	34, // 14: expanse.node.v1.ListGenerationsResponse.generations:type_name -> expanse.node.v1.GenerationInfo
+	3,  // 15: expanse.node.v1.NodeService.GetStatus:input_type -> expanse.node.v1.GetStatusRequest
+	5,  // 16: expanse.node.v1.NodeService.GetInventory:input_type -> expanse.node.v1.GetInventoryRequest
+	14, // 17: expanse.node.v1.NodeService.ListResources:input_type -> expanse.node.v1.ListResourcesRequest
+	17, // 18: expanse.node.v1.NodeService.GetResource:input_type -> expanse.node.v1.GetResourceRequest
+	18, // 19: expanse.node.v1.NodeService.ApplyResources:input_type -> expanse.node.v1.ApplyResourcesRequest
+	20, // 20: expanse.node.v1.NodeService.DeleteResource:input_type -> expanse.node.v1.DeleteResourceRequest
+	22, // 21: expanse.node.v1.NodeService.Reconcile:input_type -> expanse.node.v1.ReconcileRequest
+	24, // 22: expanse.node.v1.NodeService.StreamEvents:input_type -> expanse.node.v1.StreamEventsRequest
+	26, // 23: expanse.node.v1.NodeService.GetHealth:input_type -> expanse.node.v1.GetHealthRequest
+	29, // 24: expanse.node.v1.NodeService.Shutdown:input_type -> expanse.node.v1.ShutdownRequest
+	31, // 25: expanse.node.v1.NodeService.ListGenerations:input_type -> expanse.node.v1.ListGenerationsRequest
+	33, // 26: expanse.node.v1.NodeService.GetGeneration:input_type -> expanse.node.v1.GetGenerationRequest
+	35, // 27: expanse.node.v1.NodeService.DiffGenerations:input_type -> expanse.node.v1.DiffGenerationsRequest
+	37, // 28: expanse.node.v1.NodeService.RollbackGeneration:input_type -> expanse.node.v1.RollbackGenerationRequest
+	4,  // 29: expanse.node.v1.NodeService.GetStatus:output_type -> expanse.node.v1.NodeStatus
+	6,  // 30: expanse.node.v1.NodeService.GetInventory:output_type -> expanse.node.v1.Inventory
+	16, // 31: expanse.node.v1.NodeService.ListResources:output_type -> expanse.node.v1.ListResourcesResponse
+	15, // 32: expanse.node.v1.NodeService.GetResource:output_type -> expanse.node.v1.Resource
+	19, // 33: expanse.node.v1.NodeService.ApplyResources:output_type -> expanse.node.v1.ApplyResourcesResponse
+	21, // 34: expanse.node.v1.NodeService.DeleteResource:output_type -> expanse.node.v1.DeleteResourceResponse
+	23, // 35: expanse.node.v1.NodeService.Reconcile:output_type -> expanse.node.v1.ReconcileEvent
+	25, // 36: expanse.node.v1.NodeService.StreamEvents:output_type -> expanse.node.v1.Event
+	27, // 37: expanse.node.v1.NodeService.GetHealth:output_type -> expanse.node.v1.HealthReport
+	30, // 38: expanse.node.v1.NodeService.Shutdown:output_type -> expanse.node.v1.ShutdownResponse
+	32, // 39: expanse.node.v1.NodeService.ListGenerations:output_type -> expanse.node.v1.ListGenerationsResponse
+	34, // 40: expanse.node.v1.NodeService.GetGeneration:output_type -> expanse.node.v1.GenerationInfo
+	36, // 41: expanse.node.v1.NodeService.DiffGenerations:output_type -> expanse.node.v1.DiffGenerationsResponse
+	38, // 42: expanse.node.v1.NodeService.RollbackGeneration:output_type -> expanse.node.v1.RollbackGenerationResponse
+	29, // [29:43] is the sub-list for method output_type
+	15, // [15:29] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_proto_node_proto_init() }
@@ -2102,7 +2582,7 @@ func file_proto_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_node_proto_rawDesc), len(file_proto_node_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   29,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

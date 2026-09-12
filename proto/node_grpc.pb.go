@@ -19,16 +19,20 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NodeService_GetStatus_FullMethodName      = "/expanse.node.v1.NodeService/GetStatus"
-	NodeService_GetInventory_FullMethodName   = "/expanse.node.v1.NodeService/GetInventory"
-	NodeService_ListResources_FullMethodName  = "/expanse.node.v1.NodeService/ListResources"
-	NodeService_GetResource_FullMethodName    = "/expanse.node.v1.NodeService/GetResource"
-	NodeService_ApplyResources_FullMethodName = "/expanse.node.v1.NodeService/ApplyResources"
-	NodeService_DeleteResource_FullMethodName = "/expanse.node.v1.NodeService/DeleteResource"
-	NodeService_Reconcile_FullMethodName      = "/expanse.node.v1.NodeService/Reconcile"
-	NodeService_StreamEvents_FullMethodName   = "/expanse.node.v1.NodeService/StreamEvents"
-	NodeService_GetHealth_FullMethodName      = "/expanse.node.v1.NodeService/GetHealth"
-	NodeService_Shutdown_FullMethodName       = "/expanse.node.v1.NodeService/Shutdown"
+	NodeService_GetStatus_FullMethodName          = "/expanse.node.v1.NodeService/GetStatus"
+	NodeService_GetInventory_FullMethodName       = "/expanse.node.v1.NodeService/GetInventory"
+	NodeService_ListResources_FullMethodName      = "/expanse.node.v1.NodeService/ListResources"
+	NodeService_GetResource_FullMethodName        = "/expanse.node.v1.NodeService/GetResource"
+	NodeService_ApplyResources_FullMethodName     = "/expanse.node.v1.NodeService/ApplyResources"
+	NodeService_DeleteResource_FullMethodName     = "/expanse.node.v1.NodeService/DeleteResource"
+	NodeService_Reconcile_FullMethodName          = "/expanse.node.v1.NodeService/Reconcile"
+	NodeService_StreamEvents_FullMethodName       = "/expanse.node.v1.NodeService/StreamEvents"
+	NodeService_GetHealth_FullMethodName          = "/expanse.node.v1.NodeService/GetHealth"
+	NodeService_Shutdown_FullMethodName           = "/expanse.node.v1.NodeService/Shutdown"
+	NodeService_ListGenerations_FullMethodName    = "/expanse.node.v1.NodeService/ListGenerations"
+	NodeService_GetGeneration_FullMethodName      = "/expanse.node.v1.NodeService/GetGeneration"
+	NodeService_DiffGenerations_FullMethodName    = "/expanse.node.v1.NodeService/DiffGenerations"
+	NodeService_RollbackGeneration_FullMethodName = "/expanse.node.v1.NodeService/RollbackGeneration"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -47,6 +51,10 @@ type NodeServiceClient interface {
 	StreamEvents(ctx context.Context, in *StreamEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
 	GetHealth(ctx context.Context, in *GetHealthRequest, opts ...grpc.CallOption) (*HealthReport, error)
 	Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error)
+	ListGenerations(ctx context.Context, in *ListGenerationsRequest, opts ...grpc.CallOption) (*ListGenerationsResponse, error)
+	GetGeneration(ctx context.Context, in *GetGenerationRequest, opts ...grpc.CallOption) (*GenerationInfo, error)
+	DiffGenerations(ctx context.Context, in *DiffGenerationsRequest, opts ...grpc.CallOption) (*DiffGenerationsResponse, error)
+	RollbackGeneration(ctx context.Context, in *RollbackGenerationRequest, opts ...grpc.CallOption) (*RollbackGenerationResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -175,6 +183,46 @@ func (c *nodeServiceClient) Shutdown(ctx context.Context, in *ShutdownRequest, o
 	return out, nil
 }
 
+func (c *nodeServiceClient) ListGenerations(ctx context.Context, in *ListGenerationsRequest, opts ...grpc.CallOption) (*ListGenerationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListGenerationsResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListGenerations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetGeneration(ctx context.Context, in *GetGenerationRequest, opts ...grpc.CallOption) (*GenerationInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GenerationInfo)
+	err := c.cc.Invoke(ctx, NodeService_GetGeneration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) DiffGenerations(ctx context.Context, in *DiffGenerationsRequest, opts ...grpc.CallOption) (*DiffGenerationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DiffGenerationsResponse)
+	err := c.cc.Invoke(ctx, NodeService_DiffGenerations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RollbackGeneration(ctx context.Context, in *RollbackGenerationRequest, opts ...grpc.CallOption) (*RollbackGenerationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RollbackGenerationResponse)
+	err := c.cc.Invoke(ctx, NodeService_RollbackGeneration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -191,6 +239,10 @@ type NodeServiceServer interface {
 	StreamEvents(*StreamEventsRequest, grpc.ServerStreamingServer[Event]) error
 	GetHealth(context.Context, *GetHealthRequest) (*HealthReport, error)
 	Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error)
+	ListGenerations(context.Context, *ListGenerationsRequest) (*ListGenerationsResponse, error)
+	GetGeneration(context.Context, *GetGenerationRequest) (*GenerationInfo, error)
+	DiffGenerations(context.Context, *DiffGenerationsRequest) (*DiffGenerationsResponse, error)
+	RollbackGeneration(context.Context, *RollbackGenerationRequest) (*RollbackGenerationResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -230,6 +282,18 @@ func (UnimplementedNodeServiceServer) GetHealth(context.Context, *GetHealthReque
 }
 func (UnimplementedNodeServiceServer) Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Shutdown not implemented")
+}
+func (UnimplementedNodeServiceServer) ListGenerations(context.Context, *ListGenerationsRequest) (*ListGenerationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListGenerations not implemented")
+}
+func (UnimplementedNodeServiceServer) GetGeneration(context.Context, *GetGenerationRequest) (*GenerationInfo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetGeneration not implemented")
+}
+func (UnimplementedNodeServiceServer) DiffGenerations(context.Context, *DiffGenerationsRequest) (*DiffGenerationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DiffGenerations not implemented")
+}
+func (UnimplementedNodeServiceServer) RollbackGeneration(context.Context, *RollbackGenerationRequest) (*RollbackGenerationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RollbackGeneration not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -418,6 +482,78 @@ func _NodeService_Shutdown_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_ListGenerations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListGenerationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListGenerations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListGenerations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListGenerations(ctx, req.(*ListGenerationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetGeneration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGenerationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetGeneration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetGeneration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetGeneration(ctx, req.(*GetGenerationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_DiffGenerations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DiffGenerationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).DiffGenerations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_DiffGenerations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).DiffGenerations(ctx, req.(*DiffGenerationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RollbackGeneration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RollbackGenerationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RollbackGeneration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RollbackGeneration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RollbackGeneration(ctx, req.(*RollbackGenerationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -456,6 +592,22 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Shutdown",
 			Handler:    _NodeService_Shutdown_Handler,
+		},
+		{
+			MethodName: "ListGenerations",
+			Handler:    _NodeService_ListGenerations_Handler,
+		},
+		{
+			MethodName: "GetGeneration",
+			Handler:    _NodeService_GetGeneration_Handler,
+		},
+		{
+			MethodName: "DiffGenerations",
+			Handler:    _NodeService_DiffGenerations_Handler,
+		},
+		{
+			MethodName: "RollbackGeneration",
+			Handler:    _NodeService_RollbackGeneration_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

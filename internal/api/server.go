@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 	"github.com/expanse/expanse/internal/agent/health"
 	"github.com/expanse/expanse/internal/agent/inventory"
+	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
@@ -434,6 +436,74 @@ func pbHealth(h health.Health) pb.Health {
 func (s *Server) Shutdown(ctx context.Context, req *pb.ShutdownRequest) (*pb.ShutdownResponse, error) {
 	s.agent.Shutdown("api request")
 	return &pb.ShutdownResponse{Success: true, Message: "shutdown initiated"}, nil
+}
+
+// --- Generations (§4.7) ---
+
+func genInfo(g *generation.Generation, keys []string) *pb.GenerationInfo {
+	info := &pb.GenerationInfo{
+		Number:          g.Number,
+		Revision:        uint64(g.Revision),
+		CreatedAtUnixNs: g.CreatedAt.UnixNano(),
+		CreatedBy:       g.CreatedBy,
+		Description:     g.Description,
+		Parent:          g.Parent,
+		Hash:            g.Hash,
+		Keys:            keys,
+	}
+	return info
+}
+
+// ListGenerations returns the retained generation history, oldest first.
+func (s *Server) ListGenerations(ctx context.Context, req *pb.ListGenerationsRequest) (*pb.ListGenerationsResponse, error) {
+	gens, err := generation.List(ctx, s.store)
+	if err != nil {
+		return nil, mapErr("ListGenerations", err)
+	}
+	out := &pb.ListGenerationsResponse{}
+	for i := range gens {
+		out.Generations = append(out.Generations, genInfo(&gens[i], nil))
+	}
+	return out, nil
+}
+
+// GetGeneration returns one generation's metadata and (optionally) its keys.
+func (s *Server) GetGeneration(ctx context.Context, req *pb.GetGenerationRequest) (*pb.GenerationInfo, error) {
+	g, err := generation.Get(ctx, s.store, req.Number)
+	if err != nil {
+		return nil, mapErr("GetGeneration", err)
+	}
+	var keys []string
+	if req.IncludeKeys {
+		content, err := generation.Content(ctx, s.store, req.Number)
+		if err != nil {
+			return nil, mapErr("GetGeneration", err)
+		}
+		for k := range content {
+			keys = append(keys, string(k))
+		}
+		sort.Strings(keys)
+	}
+	return genInfo(g, keys), nil
+}
+
+// DiffGenerations compares two snapshots.
+func (s *Server) DiffGenerations(ctx context.Context, req *pb.DiffGenerationsRequest) (*pb.DiffGenerationsResponse, error) {
+	d, err := generation.DiffGenerations(ctx, s.store, req.A, req.B)
+	if err != nil {
+		return nil, mapErr("DiffGenerations", err)
+	}
+	return &pb.DiffGenerationsResponse{Added: d.Added, Removed: d.Removed, Changed: d.Changed}, nil
+}
+
+// RollbackGeneration restores a prior generation's desired state as a new
+// generation (append-only — see the generation package comment).
+func (s *Server) RollbackGeneration(ctx context.Context, req *pb.RollbackGenerationRequest) (*pb.RollbackGenerationResponse, error) {
+	n, err := generation.Rollback(ctx, s.store, req.Target, "user", "")
+	if err != nil {
+		return nil, mapErr("RollbackGeneration", err)
+	}
+	return &pb.RollbackGenerationResponse{NewGeneration: n}, nil
 }
 
 // mapErr converts typed errors to gRPC codes; unknown errors become

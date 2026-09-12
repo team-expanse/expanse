@@ -16,6 +16,10 @@ service NodeService {
   rpc StreamEvents(StreamEventsRequest) returns (stream Event);
   rpc GetHealth(GetHealthRequest) returns (HealthReport);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  rpc ListGenerations(ListGenerationsRequest) returns (ListGenerationsResponse);
+  rpc GetGeneration(GetGenerationRequest) returns (GenerationInfo);
+  rpc DiffGenerations(DiffGenerationsRequest) returns (DiffGenerationsResponse);
+  rpc RollbackGeneration(RollbackGenerationRequest) returns (RollbackGenerationResponse);
 }
 
 message GetStatusRequest {}
@@ -201,4 +205,46 @@ message ShutdownRequest {}
 message ShutdownResponse {
   bool success = 1;
   string message = 2;
+}
+// --- Generations (§4.7) ---
+
+message ListGenerationsRequest {}
+
+message ListGenerationsResponse {
+  repeated GenerationInfo generations = 1;
+}
+
+message GetGenerationRequest {
+  uint64 number = 1;
+  bool include_keys = 2; // include the snapshot's key list
+}
+
+message GenerationInfo {
+  uint64 number = 1;
+  uint64 revision = 2;
+  int64 created_at_unix_ns = 3;
+  string created_by = 4;
+  string description = 5;
+  uint64 parent = 6;
+  string hash = 7;
+  repeated string keys = 8; // populated when include_keys
+}
+
+message DiffGenerationsRequest {
+  uint64 a = 1;
+  uint64 b = 2;
+}
+
+message DiffGenerationsResponse {
+  repeated string added = 1;
+  repeated string removed = 2;
+  repeated string changed = 3;
+}
+
+message RollbackGenerationRequest {
+  uint64 target = 1; // 0 = previous generation
+}
+
+message RollbackGenerationResponse {
+  uint64 new_generation = 1;
 }

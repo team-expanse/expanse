@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/ca"
+	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
@@ -104,12 +105,23 @@ func Init(ctx context.Context, opts InitOptions) (*InitResult, error) {
 	waitLeader(ctx, st)
 
 	// 5–7. /cluster/meta, /nodes/<id>, generation 1 (single-op Txn puts).
+	// Generation 1 is the empty bootstrap snapshot: meta + empty desired
+	// state + pointer, so the generation history starts complete (§4.7).
 	meta, _ := json.Marshal(ClusterMeta{ID: clusterID, Name: opts.Name, Created: time.Now().UnixNano(), Version: opts.Version, Expect: opts.Expect})
 	rec, _ := json.Marshal(join.NodeRecord{ID: nodeID, RaftAddr: adv, Role: "voter", JoinedAt: time.Now().UnixNano()})
+	gen1Meta, _ := json.Marshal(generation.Generation{ //nolint:errcheck — plain struct
+		Number:      1,
+		CreatedAt:   time.Now().UTC(),
+		CreatedBy:   "system",
+		Description: "cluster bootstrap",
+		Hash:        generation.Hash(map[store.Key][]byte{}),
+	})
 	if _, err := st.Txn(ctx, []store.Op{
 		{Kind: store.OpPut, Key: store.Key(MetaKey), Value: meta},
 		{Kind: store.OpPut, Key: store.Key(join.NodesKeyPrefix + nodeID), Value: rec},
-		{Kind: store.OpPut, Key: store.Key(GenerationKey), Value: []byte(GenerationOne)},
+		{Kind: store.OpPut, Key: generation.DataKey(1), Value: generation.EncodeSnapshot(map[store.Key][]byte{})},
+		{Kind: store.OpPut, Key: generation.MetaKey(1), Value: gen1Meta},
+		{Kind: store.OpPut, Key: generation.CurrentKey, Value: []byte(GenerationOne)},
 	}); err != nil {
 		_ = st.Close()
 		return nil, errors.Wrap(err, errors.KindInternal, "control.Init", "write meta: "+err.Error())

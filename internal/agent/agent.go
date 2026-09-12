@@ -66,8 +66,12 @@ func (c *Config) fill() error {
 	return nil
 }
 
-// detectNodeID prefers the Phase 01 node identity; falls back to hostname.
+// detectNodeID prefers the cluster enrollment's node-id (must match the
+// raft voter config), then the Phase 01 node identity, then hostname.
 func detectNodeID(dataDir string) string {
+	if id := control.LoadNodeID(dataDir); id != "" {
+		return id
+	}
 	if id, err := install.LoadIdentity(filepath.Join(dataDir, install.IdentityDir)); err == nil {
 		return id.NodeID.String()
 	}
@@ -127,9 +131,10 @@ func New(cfg Config) (*Agent, error) {
 			return nil, fmt.Errorf("load cluster enrollment: %w", err)
 		}
 		rs, err := raftstore.Open(raftstore.Config{
-			NodeID:   cfg.NodeID,
-			BindAddr: fmt.Sprintf("0.0.0.0:%d", config.PortRaft),
-			DataDir:  filepath.Join(cfg.DataDir, control.RaftDir),
+			NodeID:        cfg.NodeID,
+			BindAddr:      fmt.Sprintf("0.0.0.0:%d", config.PortRaft),
+			AdvertiseAddr: fmt.Sprintf("%s:%d", control.LocalIP(), config.PortRaft),
+			DataDir:       filepath.Join(cfg.DataDir, control.RaftDir),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("open cluster store: %w", err)
