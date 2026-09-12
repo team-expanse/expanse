@@ -286,7 +286,9 @@ func jsonField(json, field string) (float64, bool) {
 	if end < 0 {
 		return 0, false
 	}
-	v, err := strconv.ParseFloat(strings.TrimSpace(rest[:end]), 64)
+	// protojson emits 64-bit ints as quoted strings: strip quotes.
+	val := strings.Trim(strings.TrimSpace(rest[:end]), `"`)
+	v, err := strconv.ParseFloat(val, 64)
 	return v, err == nil
 }
 

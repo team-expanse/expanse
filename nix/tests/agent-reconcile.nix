@@ -30,7 +30,8 @@ in
 
     def changes():
         out = machine.succeed("expanse ctl node status -o json")
-        return json.loads(out)["changesApplied"]
+        # protojson emits 64-bit ints as strings.
+        return int(json.loads(out)["changesApplied"])
 
     with subtest("apply a file resource"):
         machine.succeed("expanse ctl resource apply - <<'EOF'\nfile:/etc/expanse-test:\n  type: file\n  path: /etc/expanse-test\n  content: hello\n  mode: \"0644\"\nEOF\n")

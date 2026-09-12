@@ -41,11 +41,11 @@ in
 
     with subtest("inventory complete (G2.8)"):
         out = machine.succeed("expanse ctl node inspect -o json")
-        assert '"cores"' in out and out.count('"cores"') >= 1
         import json
         inv = json.loads(out)
-        assert inv["cpu"]["cores"] > 0, "cpu cores missing"
-        assert inv["memory"]["total"] > 0, "memory missing"
+        # protojson emits 64-bit ints as strings.
+        assert int(inv["cpu"]["cores"]) > 0, "cpu cores missing"
+        assert int(inv["memory"]["total"]) > 0, "memory missing"
         assert inv["hostname"] != "", "hostname missing"
 
     with subtest("health report"):
