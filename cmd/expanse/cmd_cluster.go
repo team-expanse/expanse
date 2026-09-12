@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/cluster/discovery"
 	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/store/raftstore"
 )
@@ -24,6 +27,7 @@ func newClusterCmd() *cobra.Command {
 	cmd.AddCommand(newClusterStatusCmd())
 	cmd.AddCommand(newClusterLeaveCmd())
 	cmd.AddCommand(newClusterTokenCmd())
+	cmd.AddCommand(newClusterDiscoverCmd())
 	return cmd
 }
 
@@ -79,11 +83,17 @@ func newClusterJoinCmd() *cobra.Command {
 		Use:   "join",
 		Short: "Join an existing cluster using a join token",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			joinAddr := address
 			if discover {
-				return fmt.Errorf("--discover (mDNS discovery) is not wired yet; use --address HOST:7446")
+				found, err := discoverJoinAddr(cmd.Context())
+				if err != nil {
+					return err
+				}
+				joinAddr = found
+				fmt.Printf("discovered join endpoint: %s\n", joinAddr)
 			}
 			res, err := control.Enroll(cmd.Context(), control.EnrollOptions{
-				DataDir: dataDir, NodeID: nodeID, Address: address, Token: token, APIAddr: apiAddr,
+				DataDir: dataDir, NodeID: nodeID, Address: joinAddr, Token: token, APIAddr: apiAddr,
 			})
 			if err != nil {
 				return err
@@ -98,8 +108,70 @@ func newClusterJoinCmd() *cobra.Command {
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
 	cmd.Flags().StringVar(&address, "address", "", "leader join endpoint HOST:7446")
 	cmd.Flags().StringVar(&token, "token", "", "join token (expanse-join-…)")
-	cmd.Flags().BoolVar(&discover, "discover", false, "discover the leader via mDNS (T12)")
+	cmd.Flags().BoolVar(&discover, "discover", false, "discover the join endpoint via mDNS instead of --address")
 	cmd.Flags().StringVar(&apiAddr, "api-addr", fmt.Sprintf(":%d", config.PortAPI), "advertised API address")
+	return cmd
+}
+
+// discoverJoinAddr browses mDNS for cluster members and returns the
+// first join endpoint (IP:7446). Discovery only finds candidates; the
+// token still authorizes (§4.6).
+func discoverJoinAddr(ctx context.Context) (string, error) {
+	records, err := discovery.Browse(ctx, 3*time.Second)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range records {
+		if r.ClusterID != "" && r.Role != discovery.RoleUnjoined && r.Addr != "" {
+			return net.JoinHostPort(r.Addr, strconv.Itoa(config.PortJoin)), nil
+		}
+	}
+	return "", fmt.Errorf("no cluster found on the local network (mDNS requires same L2; use --address for routed networks)")
+}
+
+// newClusterDiscoverCmd implements `expanse cluster discover` — lists
+// found clusters and unjoined nodes on the local network.
+func newClusterDiscoverCmd() *cobra.Command {
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use:   "discover",
+		Short: "List clusters and unjoined nodes found via mDNS",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout+2*time.Second)
+			defer cancel()
+			records, err := discovery.Browse(ctx, timeout)
+			if err != nil {
+				return err
+			}
+			clusters := map[string][]discovery.Record{}
+			var unjoined []discovery.Record
+			for _, r := range records {
+				if r.ClusterID == "" || r.Role == discovery.RoleUnjoined {
+					unjoined = append(unjoined, r)
+				} else {
+					clusters[r.ClusterID] = append(clusters[r.ClusterID], r)
+				}
+			}
+			if len(clusters) == 0 && len(unjoined) == 0 {
+				fmt.Println("nothing found (mDNS requires the same L2 network)")
+				return nil
+			}
+			for id, nodes := range clusters {
+				fmt.Printf("cluster %s — %d node(s) visible:\n", id, len(nodes))
+				for _, r := range nodes {
+					fmt.Printf("  %-20s %-8s %s api=%d\n", r.NodeID, r.Role, r.Addr, r.APIPort)
+				}
+			}
+			if len(unjoined) > 0 {
+				fmt.Printf("unjoined nodes — %d:\n", len(unjoined))
+				for _, r := range unjoined {
+					fmt.Printf("  %-20s %s api=%d\n", r.NodeID, r.Addr, r.APIPort)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().DurationVar(&timeout, "timeout", 3*time.Second, "mDNS browse duration")
 	return cmd
 }
 
