@@ -72,12 +72,15 @@ func defaultAdvertise() string {
 
 func newClusterJoinCmd() *cobra.Command {
 	var (
-		dataDir  string
-		nodeID   string
-		address  string
-		token    string
-		discover bool
-		apiAddr  string
+		dataDir   string
+		nodeID    string
+		address   string
+		token     string
+		discover  bool
+		apiAddr   string
+		role      string
+		bind      string
+		advertise string
 	)
 	cmd := &cobra.Command{
 		Use:   "join",
@@ -93,7 +96,8 @@ func newClusterJoinCmd() *cobra.Command {
 				fmt.Printf("discovered join endpoint: %s\n", joinAddr)
 			}
 			res, err := control.Enroll(cmd.Context(), control.EnrollOptions{
-				DataDir: dataDir, NodeID: nodeID, Address: joinAddr, Token: token, APIAddr: apiAddr,
+				DataDir: dataDir, NodeID: nodeID, Address: joinAddr, Token: token,
+				APIAddr: apiAddr, Role: role, BindAddr: bind, AdvertiseAddr: advertise,
 			})
 			if err != nil {
 				return err
@@ -110,6 +114,9 @@ func newClusterJoinCmd() *cobra.Command {
 	cmd.Flags().StringVar(&token, "token", "", "join token (expanse-join-…)")
 	cmd.Flags().BoolVar(&discover, "discover", false, "discover the join endpoint via mDNS instead of --address")
 	cmd.Flags().StringVar(&apiAddr, "api-addr", fmt.Sprintf(":%d", config.PortAPI), "advertised API address")
+	cmd.Flags().StringVar(&role, "role", "voter", "node role (§4.9): voter | witness (full raft voter, zero capacity, skips storage/net-mesh)")
+	cmd.Flags().StringVar(&bind, "bind-addr", "", "raft transport bind addr (default 0.0.0.0:7444)")
+	cmd.Flags().StringVar(&advertise, "advertise-addr", "", "raft transport advertised addr (default: derived from bind)")
 	return cmd
 }
 
@@ -188,10 +195,19 @@ func openClusterStore(dataDir, nodeID string) (*raftstore.Store, func(), error) 
 			return nil, nil, fmt.Errorf("no node-id recorded in %s (pre-Phase03 enrollment?); pass --node-id", dataDir)
 		}
 	}
+	// Rebind on THIS node's recorded raft address (persisted at init/
+	// join) so multi-node clusters on one host each get their own port.
+	bind, adv := control.LoadRaftAddr(dataDir)
+	if bind == "" {
+		bind = fmt.Sprintf("0.0.0.0:%d", config.PortRaft)
+	}
+	if adv == "" {
+		adv = fmt.Sprintf("%s:%d", control.LocalIP(), config.PortRaft)
+	}
 	st, err := raftstore.Open(raftstore.Config{
 		NodeID:        nodeID,
-		BindAddr:      fmt.Sprintf("0.0.0.0:%d", config.PortRaft),
-		AdvertiseAddr: fmt.Sprintf("%s:%d", control.LocalIP(), config.PortRaft),
+		BindAddr:      bind,
+		AdvertiseAddr: adv,
 		DataDir:       filepath.Join(dataDir, control.RaftDir),
 	})
 	if err != nil {

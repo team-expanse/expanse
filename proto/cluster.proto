@@ -98,6 +98,7 @@ message JoinResponse {
   repeated JoinPeer peers = 5;
   string raft_config = 6;    // JSON: heartbeat/election timeouts
   string leader_raft_addr = 7;
+  bytes sealed_ca_key = 8;   // CA private key, age-sealed to the cluster secret (§4.4: every node can serve joins when leader)
 }
 
 message JoinPeer {

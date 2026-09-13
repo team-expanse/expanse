@@ -66,6 +66,13 @@ func Enroll(ctx context.Context, opts EnrollOptions) (*EnrollResult, error) {
 	if opts.DataDir == "" {
 		opts.DataDir = "/persist/expanse"
 	}
+	switch opts.Role {
+	case "", "voter":
+		opts.Role = "voter"
+	case "witness", "nonvoter":
+	default:
+		return nil, errors.New(errors.KindInvalid, "control.Enroll", "--role must be voter, witness or nonvoter (§4.9)")
+	}
 	if IsClusterNode(opts.DataDir) {
 		return nil, errors.New(errors.KindConflict, "control.Enroll", "already a cluster node ("+opts.DataDir+"/"+ClusterIDFile+" exists); re-join after wiping enrollment state")
 	}
@@ -155,7 +162,19 @@ func Enroll(ctx context.Context, opts EnrollOptions) (*EnrollResult, error) {
 		_ = st.Close()
 		return nil, err
 	}
+	// The sealed CA key lets this node serve joins when it becomes
+	// leader (§4.4 layout; sealed to the cluster secret it already has).
+	if len(resp.GetSealedCaKey()) > 0 {
+		if err := os.WriteFile(filepath.Join(opts.DataDir, CAKeyFile), resp.GetSealedCaKey(), 0o600); err != nil {
+			_ = st.Close()
+			return nil, errors.New(errors.KindInternal, "control.Enroll", "save sealed CA key: "+err.Error())
+		}
+	}
 	if err := saveNodeTLS(opts.DataDir, resp.GetNodeCert(), keyPEM); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	if err := SaveRaftAddr(opts.DataDir, bind, adv); err != nil {
 		_ = st.Close()
 		return nil, err
 	}

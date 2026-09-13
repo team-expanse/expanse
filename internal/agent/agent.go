@@ -6,8 +6,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -49,7 +51,22 @@ type Config struct {
 	EnableTCP  bool
 	TCPTCPAddr string
 	LogLevel   string
+	// Role overrides the cluster role (§4.9: "voter" | "witness")
+	// recorded at join time; when empty it is read from the node record.
+	Role string
+	// RaftBindAddr / RaftAdvertiseAddr override the raft transport
+	// binding (default 0.0.0.0:7444, advertised as LocalIP:7444).
+	// They MUST match what the node joined with (the cluster dials the
+	// advertised address from the node record).
+	RaftBindAddr      string
+	RaftAdvertiseAddr string
 }
+
+// Role is the node's cluster role (§4.9): "voter" (default) or
+// "witness". A witness is a full Raft voter with zero advertised
+// capacity: it skips the reconcile loop, inventory collection and the
+// storage/net-mesh, so the scheduler never places anything on it. When
+// unset, the role is derived from the node's cluster record.
 
 func (c *Config) fill() error {
 	if c.DataDir == "" {
@@ -91,6 +108,7 @@ type clusterCtl struct {
 	secret  []byte
 	id      string
 	dataDir string
+	role    string // §4.9: "voter" | "witness" (from the node record)
 }
 
 type Agent struct {
@@ -131,10 +149,23 @@ func New(cfg Config) (*Agent, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load cluster enrollment: %w", err)
 		}
+		raftBind := cfg.RaftBindAddr
+		if raftBind == "" {
+			raftBind = fmt.Sprintf("0.0.0.0:%d", config.PortRaft)
+		}
+		raftAdv := cfg.RaftAdvertiseAddr
+		if raftAdv == "" {
+			host, port, err := net.SplitHostPort(raftBind)
+			advHost := control.LocalIP()
+			if err == nil && host != "" && host != "0.0.0.0" {
+				advHost = host
+			}
+			raftAdv = net.JoinHostPort(advHost, port)
+		}
 		rs, err := raftstore.Open(raftstore.Config{
 			NodeID:        cfg.NodeID,
-			BindAddr:      fmt.Sprintf("0.0.0.0:%d", config.PortRaft),
-			AdvertiseAddr: fmt.Sprintf("%s:%d", control.LocalIP(), config.PortRaft),
+			BindAddr:      raftBind,
+			AdvertiseAddr: raftAdv,
 			DataDir:       filepath.Join(cfg.DataDir, control.RaftDir),
 		})
 		if err != nil {
@@ -142,7 +173,23 @@ func New(cfg Config) (*Agent, error) {
 		}
 		st = rs
 		ctl = &clusterCtl{store: rs, ca: clusterCA, secret: secret, id: clusterID, dataDir: cfg.DataDir}
-		logger.Info("cluster mode: raft-replicated store", "cluster", clusterID)
+		// Role (§4.9): explicit config wins; otherwise read it from the
+		// node's own cluster record. Retry while raft restores its FSM —
+		// the record may not be visible in the first moments.
+		ctl.role = cfg.Role
+		if ctl.role == "" {
+			for i := 0; i < 25; i++ {
+				ctl.role = lookupRole(rs, cfg.NodeID)
+				if ctl.role != "" {
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+		if ctl.role == "" {
+			ctl.role = "voter"
+		}
+		logger.Info("cluster mode: raft-replicated store", "cluster", clusterID, "role", ctl.role)
 	} else {
 		st, err = boltstore.New(filepath.Join(cfg.DataDir, "store", "local.db"))
 		if err != nil {
@@ -199,6 +246,22 @@ func New(cfg Config) (*Agent, error) {
 
 // Store exposes the agent's store (used by the API server).
 func (a *Agent) Store() store.Store { return a.store }
+
+// lookupRole reads the node's role from its cluster record (§4.9);
+// empty when there is no record yet (pre-init bootstrap).
+func lookupRole(rs *raftstore.Store, nodeID string) string {
+	e, err := rs.Get(store.WithStale(context.Background()), store.Key("/nodes/"+nodeID))
+	if err != nil {
+		return ""
+	}
+	var rec struct {
+		Role string `json:"role"`
+	}
+	if json.Unmarshal(e.Value, &rec) != nil {
+		return ""
+	}
+	return rec.Role
+}
 
 // NodeID implements api.Agent.
 func (a *Agent) NodeID() string { return a.cfg.NodeID }
@@ -361,8 +424,16 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	a.status.Store("idle")
 
-	// Reconcile loop (watch-triggered + periodic).
-	go a.recon.Run(ctx)
+	witness := a.ctl != nil && a.ctl.role == "witness"
+	if witness {
+		a.logger.Info("witness mode: full raft voter, zero capacity — reconcile/inventory/storage skipped (§4.9)")
+	}
+
+	// Reconcile loop (watch-triggered + periodic). Witnesses never
+	// reconcile: zero capacity means nothing is ever placed here (§4.9).
+	if !witness {
+		go a.recon.Run(ctx)
+	}
 
 	// Node-lifecycle failure monitor (§4.8), cluster mode only: the
 	// leader marks silent nodes unreachable (15 s) then failed (5 min).
@@ -380,16 +451,31 @@ func (a *Agent) Run(ctx context.Context) error {
 			},
 		}
 		go mon.Run(ctx)
+
+		// §4.10.3/§4.10.4: track quorum reachability; when this node has
+		// been without a leader for DegradedAfter it goes read-only and
+		// the reconcile loop freezes (existing workloads keep running).
+		go a.watchDegraded(ctx)
 	}
 
-	// Inventory: immediately, then every 5 minutes.
-	a.refreshInventory()
-	go a.loop(ctx, 5*time.Minute, "inventory", a.refreshInventory)
+	// Inventory: immediately, then every 5 minutes (witnesses skip —
+	// §4.9 minimal footprint).
+	if !witness {
+		a.refreshInventory()
+		go a.loop(ctx, 5*time.Minute, "inventory", a.refreshInventory)
+	}
 
-	// Health + node status: every 10 s.
+	// Health + node status: every 10 s. The status value advertises the
+	// degraded condition (§4.10.3) when the node cannot reach quorum;
+	// the write itself will fail while degraded (no quorum = no
+	// commits), which is exactly what makes the leader mark us
+	// unreachable via §4.8.
 	go a.loop(ctx, 10*time.Second, "health", func() {
 		rep := a.healthR.RunAll(ctx)
 		val := fmt.Sprintf("health=%s", rep.Overall)
+		if rs, ok := a.store.(*raftstore.Store); ok && rs.Degraded() {
+			val += " degraded=true writable=false"
+		}
 		a.status.Store(statusFromHealth(rep.Overall))
 		key := store.Key(fmt.Sprintf("/nodes/%s/status", a.cfg.NodeID))
 		if _, err := a.store.Put(ctx, key, []byte(val)); err != nil {
@@ -411,7 +497,9 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// Cluster mode: serve the token-authenticated join endpoint on
 	// :7446 (redirects when not leader; no-op when single-node).
-	if a.ctl != nil {
+	// Witnesses don't serve joins: they hold the CA material but have
+	// no capacity and (per §4.9) exist only to vote.
+	if a.ctl != nil && !witness {
 		go func() {
 			if err := control.ServeJoinEndpoint(ctx, a.ctl.store, a.ctl.ca, a.ctl.secret, a.ctl.dataDir, a.ctl.id); err != nil {
 				a.logger.Error("join endpoint failed", "err", err)
@@ -444,6 +532,48 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.logger.Error("store close failed", "err", err)
 	}
 	return nil
+}
+
+// watchDegraded follows the store's degraded flag (§4.10.3): on
+// entering degraded mode the reconcile loop freezes — no new desired
+// state is applied, existing workloads keep running (§4.10.4).
+func (a *Agent) watchDegraded(ctx context.Context) {
+	rs, ok := a.store.(*raftstore.Store)
+	if !ok {
+		return
+	}
+	frozen := false
+	t := time.NewTicker(500 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		deg := rs.Degraded()
+		if deg != frozen {
+			frozen = deg
+			a.recon.Freeze(deg)
+			if deg {
+				since, _ := rs.DegradedSince()
+				a.logger.Warn("DEGRADED: no quorum — read-only, reconcile frozen", "since", since.Format(time.RFC3339))
+				a.status.Store("degraded")
+			} else {
+				a.logger.Info("quorum restored — writable again, reconcile unfrozen")
+			}
+		}
+	}
+}
+
+// Degraded reports whether the local node currently cannot reach
+// quorum (§4.10.3) — always false in single-node (boltstore) mode.
+func (a *Agent) Degraded() bool {
+	rs, ok := a.store.(*raftstore.Store)
+	if !ok {
+		return false
+	}
+	return rs.Degraded()
 }
 
 // Stop stops the agent from outside Run (e.g. SIGTERM already canceled ctx).

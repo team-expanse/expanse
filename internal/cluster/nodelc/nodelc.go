@@ -128,8 +128,13 @@ func voters(ctx context.Context, st *raftstore.Store) ([]join.NodeRecord, error)
 }
 
 // placeable reports whether another node can host new work: a voter
-// that is up (not unreachable/failed) and not cordoned.
+// that is up (not unreachable/failed) and not cordoned. Witnesses are
+// NEVER placeable — zero advertised capacity (§4.9) — even though they
+// vote (so they count toward quorum, not toward placement).
 func placeable(r join.NodeRecord) bool {
+	if r.Role == "witness" {
+		return false // §4.9: zero capacity, scheduler never places here
+	}
 	switch r.State {
 	case StateUnreachable, StateFailed:
 		return false

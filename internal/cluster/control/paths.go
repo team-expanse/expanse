@@ -169,3 +169,38 @@ func localIP() string {
 	}
 	return "127.0.0.1"
 }
+
+// RaftAddrFile records this node's raft bind/advertise addresses
+// (host:port each, advertise optional) so later CLI invocations rebind
+// on the same ports (multi-node clusters on one host).
+const RaftAddrFile = "raft-addr"
+
+// SaveRaftAddr persists the node's raft bind (and advertise, if
+// different) addresses under the data dir.
+func SaveRaftAddr(dataDir, bind, advertise string) error {
+	if bind == "" {
+		return nil
+	}
+	content := bind
+	if advertise != "" && advertise != bind {
+		content += "\n" + advertise
+	}
+	return os.WriteFile(filepath.Join(dataDir, RaftAddrFile), []byte(content), 0o600)
+}
+
+// LoadRaftAddr returns the persisted (bind, advertise) raft addresses;
+// empty strings when unrecorded (defaults apply).
+func LoadRaftAddr(dataDir string) (bind, advertise string) {
+	b, err := os.ReadFile(filepath.Join(dataDir, RaftAddrFile))
+	if err != nil {
+		return "", ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) > 0 {
+		bind = strings.TrimSpace(lines[0])
+	}
+	if len(lines) > 1 {
+		advertise = strings.TrimSpace(lines[1])
+	}
+	return bind, advertise
+}

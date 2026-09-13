@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -35,8 +37,14 @@ type Config struct {
 	AdvertiseAddr string        // advertised transport address (default: BindAddr); set to IP:7444 when binding 0.0.0.0
 	DataDir       string        // persistent state dir (required); raft files under <DataDir>/raft
 	Bootstrap     bool          // bootstrap a brand-new single-node cluster
+	DegradedAfter time.Duration // no quorum for this long → degraded/read-only (default 5s, §4.10.3)
 	Logger        raft.LogStore // unused placeholder (kept nil); logging goes to stderr
 }
+
+// DefaultDegradedAfter is how long a node tolerates having no raft
+// leader before it declares itself degraded and goes read-only (§4.10.3:
+// "cannot reach quorum for > 5 s").
+const DefaultDegradedAfter = 5 * time.Second
 
 // Store is the Raft-replicated store.Store.
 type Store struct {
@@ -47,6 +55,16 @@ type Store struct {
 	logs      io.Closer     // bolt log+stable store; closed after raft shutdown
 	forwarder Forwarder     // leader write-forwarding hook (set by daemon wiring)
 	readFwd   ReadForwarder // leader read-forwarding hook (linearizable reads)
+
+	// Degraded-mode state (§4.10.3): no visible raft leader for
+	// DegradedAfter → read-only. lastLeader is the unix-nano time of the
+	// last leader sighting (startup counts as one, so a node joining a
+	// healthy cluster has the full election window to find a leader);
+	// degradedAt is when degradation was first observed.
+	lastLeader   atomic.Int64
+	degradedAt   atomic.Int64
+	stopWatch    chan struct{}
+	stopWatchOff sync.Once
 }
 
 // Open creates (or rejoins) a raftstore node. With Bootstrap=true a fresh
@@ -111,7 +129,13 @@ func Open(cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("new raft: %w", err)
 	}
 
+	if cfg.DegradedAfter <= 0 {
+		cfg.DegradedAfter = DefaultDegradedAfter
+	}
 	s := &Store{cfg: cfg, r: r, fsm: fsm, trans: trans, logs: logStore}
+	s.lastLeader.Store(time.Now().UnixNano())
+	s.stopWatch = make(chan struct{})
+	go s.watchQuorum()
 
 	if cfg.Bootstrap {
 		// Only bootstrap when the store is empty; a restarted node must
@@ -140,6 +164,61 @@ func Open(cfg Config) (*Store, error) {
 // Leader reports the current leader's transport address, or "" if unknown.
 func (s *Store) Leader() string {
 	return string(s.r.Leader())
+}
+
+// watchQuorum tracks the last leader sighting. The degraded decision
+// itself is computed on demand in Degraded() so the flag never lags the
+// ticker period.
+func (s *Store) watchQuorum() {
+	t := time.NewTicker(200 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stopWatch:
+			return
+		case <-t.C:
+		}
+		if s.r.Leader() != "" {
+			s.lastLeader.Store(time.Now().UnixNano())
+			s.degradedAt.Store(0)
+		}
+	}
+}
+
+// Degraded reports whether this node has been without a reachable
+// quorum for longer than DegradedAfter (§4.10.3): writes are refused
+// with KindUnavailable and only stale reads are served.
+func (s *Store) Degraded() bool {
+	now := time.Now().UnixNano()
+	if s.r.Leader() != "" {
+		// Leader visible → quorum reachable (a leader only exists with
+		// majority backing). Refresh the sighting; no lag.
+		s.lastLeader.Store(now)
+		s.degradedAt.Store(0)
+		return false
+	}
+	silent := now - s.lastLeader.Load()
+	if silent <= int64(s.cfg.DegradedAfter) {
+		return false
+	}
+	// First observation of a degraded interval wins the timestamp.
+	s.degradedAt.CompareAndSwap(0, now)
+	return true
+}
+
+// DegradedSince reports when the node entered degraded mode, if it is
+// currently degraded.
+func (s *Store) DegradedSince() (time.Time, bool) {
+	if !s.Degraded() {
+		return time.Time{}, false
+	}
+	return time.Unix(0, s.degradedAt.Load()), true
+}
+
+// degradeErr is the typed error returned for mutations on a degraded node.
+func (s *Store) degradeErr(op string) error {
+	desc := "node is degraded (no quorum): writes rejected, stale reads still served"
+	return errors.New(errors.KindUnavailable, "raftstore."+op, desc)
 }
 
 // NodeID reports this node's ID.
@@ -258,6 +337,11 @@ func (s *Store) Txn(ctx context.Context, ops []store.Op) (store.Revision, error)
 // otherwise — or when forwarding fails — the caller gets
 // KindUnavailable.
 func (s *Store) propose(ctx context.Context, c *pb.Command) (store.Revision, error) {
+	// §4.10.3: a node that cannot reach quorum refuses writes
+	// immediately instead of timing out. Stale reads are unaffected.
+	if s.Degraded() {
+		return 0, s.degradeErr("propose")
+	}
 	if fwd := s.forwarder; fwd != nil && !s.IsLeader() {
 		return fwd(ctx, c)
 	}
@@ -370,6 +454,7 @@ func (s *Store) TransferLeadership(id string) error {
 
 // Close shuts down Raft and releases resources. Safe to call once.
 func (s *Store) Close() error {
+	s.stopWatchOff.Do(func() { close(s.stopWatch) })
 	f := s.r.Shutdown()
 	if err := f.Error(); err != nil {
 		return fmt.Errorf("raft shutdown: %w", err)

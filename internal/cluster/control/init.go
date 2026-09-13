@@ -144,6 +144,27 @@ func Init(ctx context.Context, opts InitOptions) (*InitResult, error) {
 		_ = st.Close()
 		return nil, err
 	}
+	// The init node needs its own TLS identity too: the join endpoint
+	// (:7446) presents it, and Phase 03+ mTLS uses it. Same layout as
+	// Enroll persists for joiners (tls/node-cert.pem, tls/node-key.pem).
+	nodeCert, nodePriv, err := clusterCA.IssueNode(nodeID, hostnameOrLocal(), nil, time.Now())
+	if err != nil {
+		_ = st.Close()
+		return nil, errors.Wrap(err, errors.KindInternal, "control.Init", "issue node cert: "+err.Error())
+	}
+	keyPEM, err := ca.KeyPEM(nodePriv)
+	if err != nil {
+		_ = st.Close()
+		return nil, errors.Wrap(err, errors.KindInternal, "control.Init", "encode node key: "+err.Error())
+	}
+	if err := saveNodeTLS(opts.DataDir, ca.MarshalCert(nodeCert), keyPEM); err != nil {
+		_ = st.Close()
+		return nil, errors.Wrap(err, errors.KindInternal, "control.Init", "save node TLS: "+err.Error())
+	}
+	if err := SaveRaftAddr(opts.DataDir, bind, adv); err != nil {
+		_ = st.Close()
+		return nil, errors.Wrap(err, errors.KindInternal, "control.Init", "save raft addr: "+err.Error())
+	}
 
 	// 8. Join command with a fresh token.
 	token, _, err := join.CreateToken(ctx, st, clusterID, secret, join.DefaultTokenTTL, 1, nodeID)
@@ -172,6 +193,15 @@ func hostOf(addr string) string {
 		}
 	}
 	return addr
+}
+
+// hostnameOrLocal is the SAN hostname for the init node's own cert:
+// the machine's hostname, falling back to "localhost".
+func hostnameOrLocal() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "localhost"
 }
 
 // waitLeader polls until the bootstrapped node wins its election.

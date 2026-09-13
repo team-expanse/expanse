@@ -32,6 +32,12 @@ type Service struct {
 	Secret     []byte // 32 bytes
 	ThisNodeID string
 
+	// SealedCAKey is the CA private key age-sealed to the cluster
+	// secret (§4.4 layout: every node stores it so any node can serve
+	// the join endpoint when it becomes leader). Computed lazily from
+	// CA.Priv + Secret when nil.
+	SealedCAKey []byte
+
 	// LeaderJoinAddr maps a leader raft address to the :7446 join
 	// endpoint advertised to redirected clients. Optional.
 	LeaderJoinAddr func(raftAddr string) (string, bool)
@@ -208,6 +214,7 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 		Peers:          peers,
 		RaftConfig:     `{"heartbeat":1000,"election":1000}`, // ms, matches raftstore defaults
 		LeaderRaftAddr: s.St.Leader(),
+		SealedCaKey:    s.sealedCAKey(),
 	}, nil
 }
 
@@ -259,4 +266,18 @@ func (s *Service) peerList(ctx context.Context) ([]*pb.JoinPeer, error) {
 
 func hexEncode(b []byte) string {
 	return fmt.Sprintf("%x", b)
+}
+
+// sealedCAKey returns the age-sealed CA private key (sealed to the
+// cluster secret), sealing on first use. The joiner stores it verbatim;
+// its exposure equals the cluster secret it is sealed to.
+func (s *Service) sealedCAKey() []byte {
+	if len(s.SealedCAKey) == 0 {
+		sealed, err := ca.SealKey(s.CA.Priv, s.Secret)
+		if err != nil {
+			return nil
+		}
+		s.SealedCAKey = sealed
+	}
+	return s.SealedCAKey
 }

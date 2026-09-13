@@ -618,8 +618,17 @@ func ctlNodeRows(ctx context.Context, st *raftstore.Store) ([]nodeRow, error) {
 			lc = "healthy"
 		}
 		last := time.Unix(0, r.JoinedAt)
+		degraded := false
 		if se, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+r.ID+"/status")); err == nil {
 			last = time.Unix(0, se.UpdatedAt)
+			for _, f := range strings.Fields(string(se.Value)) {
+				if f == "degraded=true" {
+					degraded = true
+				}
+			}
+		}
+		if degraded && !strings.Contains(lc, "degraded") {
+			lc += "/degraded"
 		}
 		rows = append(rows, nodeRow{
 			ID: r.ID, Role: r.Role, Lifecycle: lc, Cordoned: r.Cordoned,

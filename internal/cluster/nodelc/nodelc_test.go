@@ -178,6 +178,15 @@ func TestCordonUncordon(t *testing.T) {
 	}
 }
 
+// writeRes writes a desired resource for a node (what ApplySpec leaves
+// behind).
+func writeRes(t *testing.T, ctx context.Context, st *raftstore.Store, node, id string) {
+	t.Helper()
+	if _, err := st.Put(ctx, store.Key("/node/"+node+"/resources/"+id), []byte("type: file")); err != nil {
+		t.Fatalf("put resource: %v", err)
+	}
+}
+
 // TestDrainInterlock: drain cordons and verifies re-placability.
 func TestDrainInterlock(t *testing.T) {
 	t.Run("no resources", func(t *testing.T) {
@@ -191,13 +200,6 @@ func TestDrainInterlock(t *testing.T) {
 			t.Error("drain did not cordon")
 		}
 	})
-
-	writeRes := func(t *testing.T, ctx context.Context, st *raftstore.Store, node, id string) {
-		t.Helper()
-		if _, err := st.Put(ctx, store.Key("/node/"+node+"/resources/"+id), []byte("type: file")); err != nil {
-			t.Fatalf("put resource: %v", err)
-		}
-	}
 
 	t.Run("unplaceable refused", func(t *testing.T) {
 		st, ctx := newLCEnv(t)
@@ -332,5 +334,40 @@ func TestMonitorFreshNodeStaysHealthy(t *testing.T) {
 	}
 	if got := record(t, ctx, st, "n1").State; got != "" {
 		t.Errorf("n1 state = %q, want healthy (empty)", got)
+	}
+}
+
+// TestWitnessNeverPlaceable (§4.9): a witness votes (counts toward
+// quorum) but is never a drain destination — zero advertised capacity.
+func TestWitnessNeverPlaceable(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	// n1 (the node being drained) and n2 = witness only — the leader's
+	// record is deliberately absent so the witness is the sole neighbor.
+	writeNode(t, ctx, st, "n1", "")
+	// n2 as witness: role=witness, otherwise healthy.
+	r := join.NodeRecord{ID: "n2", Role: "witness", RaftAddr: "127.0.0.1:1", JoinedAt: time.Now().UnixNano()}
+	b, _ := json.Marshal(r)
+	if _, err := st.Put(ctx, store.Key(join.NodesKeyPrefix+"n2"), b); err != nil {
+		t.Fatalf("write witness record: %v", err)
+	}
+	writeRes(t, ctx, st, "n1", "web") // one resource on n1
+
+	// Drain must refuse: the only "other" node is a witness.
+	if _, err := nodelc.Drain(ctx, st, "n1", nil); !errors.Is(err, errors.KindConflict) {
+		t.Fatalf("Drain with witness-only neighbor err = %v, want Conflict", err)
+	}
+	// Replacing the witness with a real voter unblocks the drain.
+	r.Role = "voter"
+	b2, _ := json.Marshal(r)
+	e, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+"n2"))
+	if err != nil {
+		t.Fatalf("get n2: %v", err)
+	}
+	if _, err := st.CompareAndSwap(ctx, store.Key(join.NodesKeyPrefix+"n2"), e.Revision, b2); err != nil {
+		t.Fatalf("rewrite n2: %v", err)
+	}
+	n, err := nodelc.Drain(ctx, st, "n1", nil)
+	if err != nil || n != 1 {
+		t.Fatalf("Drain with real voter = %d, %v; want 1, nil", n, err)
 	}
 }

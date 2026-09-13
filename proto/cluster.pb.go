@@ -601,6 +601,7 @@ type JoinResponse struct {
 	Peers          []*JoinPeer            `protobuf:"bytes,5,rep,name=peers,proto3" json:"peers,omitempty"`
 	RaftConfig     string                 `protobuf:"bytes,6,opt,name=raft_config,json=raftConfig,proto3" json:"raft_config,omitempty"` // JSON: heartbeat/election timeouts
 	LeaderRaftAddr string                 `protobuf:"bytes,7,opt,name=leader_raft_addr,json=leaderRaftAddr,proto3" json:"leader_raft_addr,omitempty"`
+	SealedCaKey    []byte                 `protobuf:"bytes,8,opt,name=sealed_ca_key,json=sealedCaKey,proto3" json:"sealed_ca_key,omitempty"` // CA private key, age-sealed to the cluster secret (§4.4: every node can serve joins when leader)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -682,6 +683,13 @@ func (x *JoinResponse) GetLeaderRaftAddr() string {
 		return x.LeaderRaftAddr
 	}
 	return ""
+}
+
+func (x *JoinResponse) GetSealedCaKey() []byte {
+	if x != nil {
+		return x.SealedCaKey
+	}
+	return nil
 }
 
 type JoinPeer struct {
@@ -792,7 +800,7 @@ const file_proto_cluster_proto_rawDesc = "" +
 	"\x0eadvertise_addr\x18\x04 \x01(\tR\radvertiseAddr\x12\x19\n" +
 	"\bapi_addr\x18\x05 \x01(\tR\aapiAddr\x12\x12\n" +
 	"\x04role\x18\x06 \x01(\tR\x04role\x12\x1c\n" +
-	"\tinventory\x18\a \x01(\tR\tinventory\"\x89\x02\n" +
+	"\tinventory\x18\a \x01(\tR\tinventory\"\xad\x02\n" +
 	"\fJoinResponse\x12\x17\n" +
 	"\aca_cert\x18\x01 \x01(\fR\x06caCert\x12\x1b\n" +
 	"\tnode_cert\x18\x02 \x01(\fR\bnodeCert\x12\x1d\n" +
@@ -802,7 +810,8 @@ const file_proto_cluster_proto_rawDesc = "" +
 	"\x05peers\x18\x05 \x03(\v2\x1c.expanse.cluster.v1.JoinPeerR\x05peers\x12\x1f\n" +
 	"\vraft_config\x18\x06 \x01(\tR\n" +
 	"raftConfig\x12(\n" +
-	"\x10leader_raft_addr\x18\a \x01(\tR\x0eleaderRaftAddr\"f\n" +
+	"\x10leader_raft_addr\x18\a \x01(\tR\x0eleaderRaftAddr\x12\"\n" +
+	"\rsealed_ca_key\x18\b \x01(\fR\vsealedCaKey\"f\n" +
 	"\bJoinPeer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\traft_addr\x18\x02 \x01(\tR\braftAddr\x12\x19\n" +

@@ -35,6 +35,7 @@ type NodeStatus struct {
 	APIAddr  string
 	Role     string
 	State    string // leader | follower | nonvoter | witness
+	Degraded bool   // the node self-reported degraded=true (§4.10.3)
 }
 
 // WaitForLeader blocks until the store's raft node knows a leader
@@ -90,23 +91,37 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 		if role == "" {
 			role = "voter"
 		}
-		if role == "voter" {
+		// §4.9: a witness is a FULL raft voter — it counts toward
+		// quorum; only nonvoters don't.
+		if role == "voter" || role == "witness" {
 			voters++
 		}
 		state := role
-		if r.RaftAddr == rep.Leader && role == "voter" {
+		if r.RaftAddr == rep.Leader && (role == "voter" || role == "witness") {
 			state = "leader"
 		}
 		// Lifecycle annotation (§4.8): unreachable/failed from the
 		// failure monitor, cordoned from drain/cordon.
+		deg := false
 		if r.State != "" {
 			state += "/" + r.State
 		}
 		if r.Cordoned {
 			state += "/cordoned"
 		}
+		// Degraded condition (§4.10.3): the node's own status value
+		// carries "degraded=true writable=false" while it cannot reach
+		// quorum (best effort — the write usually fails while degraded,
+		// and §4.8 then marks the node unreachable instead).
+		if se, gerr := st.Get(ctx, store.Key(join.NodesKeyPrefix+r.ID+"/status")); gerr == nil {
+			for _, f := range strings.Fields(string(se.Value)) {
+				if f == "degraded=true" {
+					deg = true
+				}
+			}
+		}
 		rep.Nodes = append(rep.Nodes, NodeStatus{
-			ID: r.ID, RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, Role: role, State: state,
+			ID: r.ID, RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, Role: role, State: state, Degraded: deg,
 		})
 	}
 	rep.QuorumNeed = voters/2 + 1
@@ -130,7 +145,7 @@ func Render(r *Report) string {
 	fmt.Fprintf(&b, "nodes:     %d\n", len(r.Nodes))
 	fmt.Fprintf(&b, "\n  ID\tROLE\tSTATE\tRAFT\tAPI\n")
 	for _, n := range r.Nodes {
-		fmt.Fprintf(&b, "  %s\t%s\t%s\t%s\t%s\n", n.ID, n.Role, n.State, n.RaftAddr, n.APIAddr)
+		fmt.Fprintf(&b, "  %s\t%s\t%s\t%s\t%s%s\n", n.ID, n.Role, n.State, n.RaftAddr, n.APIAddr, degradedMark(n.Degraded))
 	}
 	if r.Degraded {
 		fmt.Fprintf(&b, "\nDEGRADED: no quorum — serving stale reads only (§4.10)\n")
@@ -148,6 +163,13 @@ func orNone(s string) string {
 func degradedIf(d bool) string {
 	if d {
 		return " (degraded)"
+	}
+	return ""
+}
+
+func degradedMark(d bool) string {
+	if d {
+		return "  DEGRADED"
 	}
 	return ""
 }

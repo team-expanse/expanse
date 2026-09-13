@@ -171,6 +171,8 @@ type Reconciler struct {
 	runOnce sync.Once
 	stop    chan struct{}
 	stopped chan struct{}
+
+	frozen atomic.Bool // reconcile freeze (§4.10.4)
 }
 
 type resBackoff struct {
@@ -227,6 +229,20 @@ func (r *Reconciler) SetDryRun(on bool) {
 	r.opts.DryRun = on
 	r.mu.Unlock()
 }
+
+// Freeze toggles the reconcile freeze (§4.10.4): a frozen reconciler
+// stops applying new desired state but existing workloads keep running
+// (they are untouched on disk either way). Used when the node cannot
+// reach quorum: availability over consistency for what already runs,
+// consistency for changes.
+func (r *Reconciler) Freeze(on bool) {
+	if r.frozen.Swap(on) != on {
+		r.logger.Info("reconcile freeze toggled", "frozen", on)
+	}
+}
+
+// Frozen reports the current freeze state.
+func (r *Reconciler) Frozen() bool { return r.frozen.Load() }
 
 // Run runs the loop until ctx is canceled: periodic ticks, debounced
 // watch-triggered ticks, and one immediate tick at startup.
@@ -301,6 +317,12 @@ func (r *Reconciler) watchDesired(ctx context.Context) {
 // Tick runs one reconciliation round. It is safe to call concurrently with
 // the loop; only one tick runs at a time (a coarse loop lock serializes).
 func (r *Reconciler) Tick(ctx context.Context) error {
+	// §4.10.4 reconcile freeze: skip the round entirely — no desired
+	// state is applied, no status is written (status writes would fail
+	// anyway on a non-quorum node).
+	if r.frozen.Load() {
+		return nil
+	}
 	tctx, cancel := context.WithTimeout(ctx, r.opts.TickDeadline)
 	defer cancel()
 

@@ -417,3 +417,38 @@ func TestUnknownTypeRecordedAsUnhealthy(t *testing.T) {
 		t.Errorf("status = %q, want unknown-type error", entries[0].Value)
 	}
 }
+
+// TestFreezeSkipsTicks (§4.10.4): a frozen reconciler applies nothing
+// new — desired state written while frozen is left unapplied; existing
+// applied state is untouched; unfreezing converges.
+func TestFreezeSkipsTicks(t *testing.T) {
+	s := testStore(t)
+	m := newFakeManager()
+	r := New(s, Options{NodeID: "n1", Logger: testLogger(), Period: time.Hour})
+	r.Register(m)
+
+	// Freeze BEFORE any desired state exists.
+	r.Freeze(true)
+	if !r.Frozen() {
+		t.Fatal("not frozen after Freeze(true)")
+	}
+	putDesired(t, s, "n1", "a", "")
+	if err := r.Tick(context.Background()); err != nil {
+		t.Fatalf("tick while frozen: %v", err)
+	}
+	if m.applyCount.Load() != 0 {
+		t.Fatalf("frozen tick applied %d actions, want 0", m.applyCount.Load())
+	}
+
+	// Unfreeze: the desired state converges on the next tick.
+	r.Freeze(false)
+	if r.Frozen() {
+		t.Fatal("still frozen after Freeze(false)")
+	}
+	if err := r.Tick(context.Background()); err != nil {
+		t.Fatalf("tick after unfreeze: %v", err)
+	}
+	if m.applyCount.Load() == 0 {
+		t.Fatal("unfrozen tick did not apply")
+	}
+}
