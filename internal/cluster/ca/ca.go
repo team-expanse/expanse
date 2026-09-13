@@ -384,3 +384,40 @@ func SortedIDs(ids []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// PeerTLSConfig is the CLIENT-side config for node↔node connections
+// (§4.4/G3.8): TLS 1.3, mutual TLS with the node's own identity, chain
+// verification against the cluster CA plus the CN-membership check —
+// WITHOUT IP/hostname matching. Node certs carry no IP SANs; peers are
+// authenticated by certificate CN (the node ID) and reached at whatever
+// address the cluster view provides.
+func PeerTLSConfig(bundle *Bundle, ownCert tls.Certificate, knownNodes func() []string) *tls.Config {
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{ownCert},
+		// Chain + CN verification runs in the callback; Go's built-in
+		// IP/hostname matching is disabled for the reason above.
+		InsecureSkipVerify:    true,
+		VerifyPeerCertificate: VerifyPeerChainAndCN(bundle, knownNodes),
+	}
+}
+
+// VerifyPeerChainAndCN verifies the peer's leaf against the cluster CA
+// bundle and the CN-membership check (used when IP/hostname matching is
+// not applicable, see PeerTLSConfig).
+func VerifyPeerChainAndCN(bundle *Bundle, knownNodes func() []string) func([][]byte, [][]*x509.Certificate) error {
+	cnCheck := VerifyPeerCN(knownNodes)
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return errors.New("ca: no peer certificate presented")
+		}
+		cert, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return fmt.Errorf("ca: parse peer cert: %w", err)
+		}
+		if err := bundle.VerifyNode(cert, time.Now()); err != nil {
+			return err
+		}
+		return cnCheck(rawCerts, nil)
+	}
+}

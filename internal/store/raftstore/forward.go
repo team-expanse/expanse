@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
@@ -218,6 +219,16 @@ type GRPCForwarder struct {
 	resolve    PeerResolver
 	mu         sync.Mutex
 	conns      map[string]*grpc.ClientConn
+	dialCreds  credentials.TransportCredentials // nil → plaintext (tests)
+}
+
+// SetDialCreds sets the transport credentials used to dial peer internal
+// endpoints. Must be called before the first Forward; production wiring
+// uses mTLS (G3.8), the conformance tests stay plaintext.
+func (g *GRPCForwarder) SetDialCreds(c credentials.TransportCredentials) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.dialCreds = c
 }
 
 // NewGRPCForwarder returns a Forwarder that asks leaderAddr for the
@@ -232,8 +243,51 @@ func NewGRPCForwarder(leaderAddr func() string, resolve PeerResolver) *GRPCForwa
 	}
 }
 
-// Forward implements Forwarder.
+// leaderlessRetry retries op while the cluster has no known-reachable
+// leader (election in flight, stale leader knowledge): a raft election
+// takes 1-2s+ of heartbeat timeout plus jitter, so a write that lands
+// right at leader death must wait it out instead of failing. Bounded by
+// maxWait and the caller's context; only KindUnavailable retries.
+func (g *GRPCForwarder) leaderlessRetry(ctx context.Context, maxWait time.Duration, op func() error) error {
+	deadline := time.Now().Add(maxWait)
+	var lastErr error
+	for {
+		err := op()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, errors.KindUnavailable) {
+			return err
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// Forward implements Forwarder. A leaderless window (election in
+// flight, stale leader knowledge) is not a hard failure: retry for up
+// to ~2s, re-reading the leader address each hop.
 func (g *GRPCForwarder) Forward(ctx context.Context, c *pb.Command) (store.Revision, error) {
+	var rev store.Revision
+	err := g.leaderlessRetry(ctx, 2*time.Second, func() error {
+		r, err := g.forwardOnce(ctx, c)
+		if err == nil {
+			rev = r
+		}
+		return err
+	})
+	return rev, err
+}
+
+// forwardOnce is one forwarding attempt (no retries).
+func (g *GRPCForwarder) forwardOnce(ctx context.Context, c *pb.Command) (store.Revision, error) {
 	raftAddr := g.leaderAddr()
 	if raftAddr == "" {
 		return 0, errors.New(errors.KindUnavailable, "raftstore.Forward", "no leader known; write dropped (read-only mode)")
@@ -250,7 +304,8 @@ func (g *GRPCForwarder) Forward(ctx context.Context, c *pb.Command) (store.Revis
 	if err != nil {
 		g.invalidate(apiAddr) // stale conn — force redial next time
 		if status.Code(err) == codes.Unavailable {
-			return 0, errors.New(errors.KindUnavailable, "raftstore.Forward", "leader reported not-leader or unreachable; retry")
+			return 0, errors.New(errors.KindUnavailable, "raftstore.Forward",
+				fmt.Sprintf("leader %s reported not-leader or unreachable; retry", apiAddr))
 		}
 		return 0, errors.Wrap(err, errors.KindUnavailable, "raftstore.Forward", "forward rpc failed")
 	}
@@ -270,7 +325,7 @@ type ReadForwarder interface {
 
 // ForwardGet implements ReadForwarder.
 func (g *GRPCForwarder) ForwardGet(ctx context.Context, k store.Key) (*store.Entry, error) {
-	resp, err := g.linearRead(ctx, &pb.LinearReadRequest{
+	resp, err := g.linearReadRetry(ctx, &pb.LinearReadRequest{
 		Query: &pb.LinearReadRequest_GetKey{GetKey: string(k)},
 	})
 	if err != nil {
@@ -281,7 +336,7 @@ func (g *GRPCForwarder) ForwardGet(ctx context.Context, k store.Key) (*store.Ent
 
 // ForwardList implements ReadForwarder.
 func (g *GRPCForwarder) ForwardList(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
-	resp, err := g.linearRead(ctx, &pb.LinearReadRequest{
+	resp, err := g.linearReadRetry(ctx, &pb.LinearReadRequest{
 		Query: &pb.LinearReadRequest_ListPrefix{ListPrefix: string(prefix)},
 	})
 	if err != nil {
@@ -303,6 +358,23 @@ func (g *GRPCForwarder) ForwardRevision(ctx context.Context) (store.Revision, er
 		return 0, err
 	}
 	return store.Revision(resp.GetRevision()), nil
+}
+
+// linearReadRetry wraps linearRead with the same stale-leader retry
+// window as Forward.
+func (g *GRPCForwarder) linearReadRetry(ctx context.Context, req *pb.LinearReadRequest) (*pb.LinearReadResponse, error) {
+	var resp *pb.LinearReadResponse
+	err := g.leaderlessRetry(ctx, 2*time.Second, func() error {
+		r, err := g.linearRead(ctx, req)
+		if err == nil {
+			resp = r
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // linearRead dials the leader (reusing the write path's conn cache) and
@@ -354,8 +426,13 @@ func (g *GRPCForwarder) client(apiAddr string) (pb.InternalStoreServiceClient, e
 	if conn, ok := g.conns[apiAddr]; ok {
 		return pb.NewInternalStoreServiceClient(conn), nil
 	}
-	// Loopback-plaintext for now: mTLS lands with the join service (T10).
-	conn, err := grpc.NewClient(apiAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// mTLS (G3.8) when wired with SetDialCreds; the conformance
+	// tests dial loopback plaintext.
+	creds := g.dialCreds
+	if creds == nil {
+		creds = insecure.NewCredentials()
+	}
+	conn, err := grpc.NewClient(apiAddr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, err
 	}

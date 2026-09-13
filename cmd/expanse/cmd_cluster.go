@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -10,11 +11,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/discovery"
 	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	pb "github.com/expanse/expanse/proto"
 )
 
 func newClusterCmd() *cobra.Command {
@@ -217,18 +221,23 @@ func openClusterStore(dataDir, nodeID string) (*raftstore.Store, func(), error) 
 }
 
 func newClusterStatusCmd() *cobra.Command {
-	var dataDir, nodeID string
+	var (
+		dataDir, nodeID string
+		socket          string
+	)
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show cluster name/ID, quorum, leader, per-node state, generation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			st, cleanup, err := openClusterStore(dataDir, nodeID)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
+			st, cleanup, err := openClusterStore(dataDir, nodeID)
+			if err != nil {
+				// The local daemon holds the bolt lock + raft port: ask
+				// IT for the report instead (socket RPC).
+				return clusterStatusViaSocket(ctx, socket)
+			}
+			defer cleanup()
 			control.WaitForLeader(ctx, st, 10*time.Second)
 			rep, err := control.Status(ctx, st)
 			if err != nil {
@@ -240,7 +249,33 @@ func newClusterStatusCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
+	cmd.Flags().StringVar(&socket, "socket", "/run/expanse/agent.sock", "agent unix socket (used when the daemon holds the store)")
 	return cmd
+}
+
+// clusterStatusViaSocket renders `cluster status` through the local
+// agent's GetClusterStatus RPC (the daemon owns the bolt lock and the
+// raft port while running).
+func clusterStatusViaSocket(ctx context.Context, socket string) error {
+	if _, err := os.Stat(socket); err != nil {
+		return fmt.Errorf("store busy and agent socket %s unavailable (is expansed running?): %w", socket, err)
+	}
+	conn, err := grpc.NewClient("unix://"+filepath.ToSlash(socket),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	res, err := pb.NewNodeServiceClient(conn).GetClusterStatus(ctx, &pb.GetClusterStatusRequest{})
+	if err != nil {
+		return fmt.Errorf("GetClusterStatus: %w", err)
+	}
+	var rep control.Report
+	if err := json.Unmarshal(res.GetReportJson(), &rep); err != nil {
+		return fmt.Errorf("decode report: %w", err)
+	}
+	fmt.Print(control.Render(&rep))
+	return nil
 }
 
 func newClusterLeaveCmd() *cobra.Command {

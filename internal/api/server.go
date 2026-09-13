@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -20,10 +21,12 @@ import (
 
 	"github.com/expanse/expanse/internal/agent/health"
 	"github.com/expanse/expanse/internal/agent/inventory"
+	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
+	"github.com/expanse/expanse/internal/store/raftstore"
 )
 
 // Agent is the narrow interface the server needs from the agent
@@ -525,4 +528,71 @@ func mapErr(op string, err error) error {
 	default:
 		return status.Error(codes.Internal, op+": "+err.Error())
 	}
+}
+
+// ---- kv + cluster status (§5, used by VM tests and scripting) ----
+
+// PutKeyValue writes k→v through the store. In cluster mode this is a
+// Raft write: it fails fast with Unavailable when degraded (§4.10.3).
+func (s *Server) PutKeyValue(ctx context.Context, req *pb.PutKeyValueRequest) (*pb.PutKeyValueResponse, error) {
+	if req.GetKey() == "" {
+		return nil, status.Error(codes.InvalidArgument, "PutKeyValue: empty key")
+	}
+	rev, err := s.store.Put(ctx, store.Key(req.GetKey()), req.GetValue())
+	if err != nil {
+		return nil, mapErr("PutKeyValue", err)
+	}
+	return &pb.PutKeyValueResponse{Revision: int64(rev)}, nil
+}
+
+// GetKeyValue reads a key: linearizable by default (followers forward
+// to the leader), or the local FSM copy when stale is set — the only
+// read path a degraded node still serves (§4.10.3).
+func (s *Server) GetKeyValue(ctx context.Context, req *pb.GetKeyValueRequest) (*pb.GetKeyValueResponse, error) {
+	c := ctx
+	if req.GetStale() {
+		c = store.WithStale(ctx)
+	}
+	e, err := s.store.Get(c, store.Key(req.GetKey()))
+	switch {
+	case errors.Is(err, errors.KindNotFound):
+		return &pb.GetKeyValueResponse{Found: false}, nil
+	case err != nil:
+		return nil, mapErr("GetKeyValue", err)
+	}
+	return &pb.GetKeyValueResponse{Found: true, Value: e.Value, Revision: int64(e.Revision)}, nil
+}
+
+// DeleteKeyValue removes a key through the store (Raft write in
+// cluster mode).
+func (s *Server) DeleteKeyValue(ctx context.Context, req *pb.DeleteKeyValueRequest) (*pb.DeleteKeyValueResponse, error) {
+	if err := s.store.Delete(ctx, store.Key(req.GetKey()), 0); err != nil {
+		return nil, mapErr("DeleteKeyValue", err)
+	}
+	return &pb.DeleteKeyValueResponse{}, nil
+}
+
+// GetClusterStatus builds the §5 cluster report from the local store.
+// Only meaningful in cluster mode (the bolt store of a single node has
+// no cluster records — we still render a minimal report).
+func (s *Server) GetClusterStatus(ctx context.Context, req *pb.GetClusterStatusRequest) (*pb.GetClusterStatusResponse, error) {
+	rs, ok := s.store.(*raftstore.Store)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "GetClusterStatus: not a cluster-mode agent")
+	}
+	rp, err := control.Status(ctx, rs)
+	if err != nil {
+		// A degraded follower can't linearize: status is advisory, so
+		// serve the last-known FSM copy (§4.10.3: stale reads keep
+		// working) rather than failing when it matters most.
+		rp, err = control.Status(store.WithStale(ctx), rs)
+	}
+	if err != nil {
+		return nil, mapErr("GetClusterStatus", err)
+	}
+	b, err := json.Marshal(rp)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "GetClusterStatus: "+err.Error())
+	}
+	return &pb.GetClusterStatusResponse{ReportJson: b}, nil
 }

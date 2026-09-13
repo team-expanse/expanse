@@ -20,9 +20,50 @@ service NodeService {
   rpc GetGeneration(GetGenerationRequest) returns (GenerationInfo);
   rpc DiffGenerations(DiffGenerationsRequest) returns (DiffGenerationsResponse);
   rpc RollbackGeneration(RollbackGenerationRequest) returns (RollbackGenerationResponse);
+  // KV access to the node's store. In cluster mode a Put goes through
+  // Raft (unavailable when degraded, §4.10.3); Get is linearizable by
+  // default, `stale` serves the local FSM copy.
+  rpc PutKeyValue(PutKeyValueRequest) returns (PutKeyValueResponse);
+  rpc GetKeyValue(GetKeyValueRequest) returns (GetKeyValueResponse);
+  rpc DeleteKeyValue(DeleteKeyValueRequest) returns (DeleteKeyValueResponse);
+  // GetClusterStatus renders the §5 cluster report from the local
+  // store (linearizable reads forward to the leader when follower).
+  rpc GetClusterStatus(GetClusterStatusRequest) returns (GetClusterStatusResponse);
 }
 
 message GetStatusRequest {}
+
+message PutKeyValueRequest {
+  string key = 1;
+  bytes value = 2;
+}
+
+message PutKeyValueResponse {
+  int64 revision = 1;
+}
+
+message GetKeyValueRequest {
+  string key = 1;
+  bool stale = 2; // serve the local FSM copy (degraded reads, §4.10.3)
+}
+
+message GetKeyValueResponse {
+  bool found = 1;
+  bytes value = 2;
+  int64 revision = 3;
+}
+
+message DeleteKeyValueRequest {
+  string key = 1;
+}
+
+message DeleteKeyValueResponse {}
+
+message GetClusterStatusRequest {}
+
+message GetClusterStatusResponse {
+  bytes report_json = 1; // JSON-encoded control.Report (§5)
+}
 
 message NodeStatus {
   string node_id = 1;

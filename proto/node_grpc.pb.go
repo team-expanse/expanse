@@ -33,6 +33,10 @@ const (
 	NodeService_GetGeneration_FullMethodName      = "/expanse.node.v1.NodeService/GetGeneration"
 	NodeService_DiffGenerations_FullMethodName    = "/expanse.node.v1.NodeService/DiffGenerations"
 	NodeService_RollbackGeneration_FullMethodName = "/expanse.node.v1.NodeService/RollbackGeneration"
+	NodeService_PutKeyValue_FullMethodName        = "/expanse.node.v1.NodeService/PutKeyValue"
+	NodeService_GetKeyValue_FullMethodName        = "/expanse.node.v1.NodeService/GetKeyValue"
+	NodeService_DeleteKeyValue_FullMethodName     = "/expanse.node.v1.NodeService/DeleteKeyValue"
+	NodeService_GetClusterStatus_FullMethodName   = "/expanse.node.v1.NodeService/GetClusterStatus"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -55,6 +59,15 @@ type NodeServiceClient interface {
 	GetGeneration(ctx context.Context, in *GetGenerationRequest, opts ...grpc.CallOption) (*GenerationInfo, error)
 	DiffGenerations(ctx context.Context, in *DiffGenerationsRequest, opts ...grpc.CallOption) (*DiffGenerationsResponse, error)
 	RollbackGeneration(ctx context.Context, in *RollbackGenerationRequest, opts ...grpc.CallOption) (*RollbackGenerationResponse, error)
+	// KV access to the node's store. In cluster mode a Put goes through
+	// Raft (unavailable when degraded, §4.10.3); Get is linearizable by
+	// default, `stale` serves the local FSM copy.
+	PutKeyValue(ctx context.Context, in *PutKeyValueRequest, opts ...grpc.CallOption) (*PutKeyValueResponse, error)
+	GetKeyValue(ctx context.Context, in *GetKeyValueRequest, opts ...grpc.CallOption) (*GetKeyValueResponse, error)
+	DeleteKeyValue(ctx context.Context, in *DeleteKeyValueRequest, opts ...grpc.CallOption) (*DeleteKeyValueResponse, error)
+	// GetClusterStatus renders the §5 cluster report from the local
+	// store (linearizable reads forward to the leader when follower).
+	GetClusterStatus(ctx context.Context, in *GetClusterStatusRequest, opts ...grpc.CallOption) (*GetClusterStatusResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -223,6 +236,46 @@ func (c *nodeServiceClient) RollbackGeneration(ctx context.Context, in *Rollback
 	return out, nil
 }
 
+func (c *nodeServiceClient) PutKeyValue(ctx context.Context, in *PutKeyValueRequest, opts ...grpc.CallOption) (*PutKeyValueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutKeyValueResponse)
+	err := c.cc.Invoke(ctx, NodeService_PutKeyValue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetKeyValue(ctx context.Context, in *GetKeyValueRequest, opts ...grpc.CallOption) (*GetKeyValueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetKeyValueResponse)
+	err := c.cc.Invoke(ctx, NodeService_GetKeyValue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) DeleteKeyValue(ctx context.Context, in *DeleteKeyValueRequest, opts ...grpc.CallOption) (*DeleteKeyValueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteKeyValueResponse)
+	err := c.cc.Invoke(ctx, NodeService_DeleteKeyValue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetClusterStatus(ctx context.Context, in *GetClusterStatusRequest, opts ...grpc.CallOption) (*GetClusterStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetClusterStatusResponse)
+	err := c.cc.Invoke(ctx, NodeService_GetClusterStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -243,6 +296,15 @@ type NodeServiceServer interface {
 	GetGeneration(context.Context, *GetGenerationRequest) (*GenerationInfo, error)
 	DiffGenerations(context.Context, *DiffGenerationsRequest) (*DiffGenerationsResponse, error)
 	RollbackGeneration(context.Context, *RollbackGenerationRequest) (*RollbackGenerationResponse, error)
+	// KV access to the node's store. In cluster mode a Put goes through
+	// Raft (unavailable when degraded, §4.10.3); Get is linearizable by
+	// default, `stale` serves the local FSM copy.
+	PutKeyValue(context.Context, *PutKeyValueRequest) (*PutKeyValueResponse, error)
+	GetKeyValue(context.Context, *GetKeyValueRequest) (*GetKeyValueResponse, error)
+	DeleteKeyValue(context.Context, *DeleteKeyValueRequest) (*DeleteKeyValueResponse, error)
+	// GetClusterStatus renders the §5 cluster report from the local
+	// store (linearizable reads forward to the leader when follower).
+	GetClusterStatus(context.Context, *GetClusterStatusRequest) (*GetClusterStatusResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -294,6 +356,18 @@ func (UnimplementedNodeServiceServer) DiffGenerations(context.Context, *DiffGene
 }
 func (UnimplementedNodeServiceServer) RollbackGeneration(context.Context, *RollbackGenerationRequest) (*RollbackGenerationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RollbackGeneration not implemented")
+}
+func (UnimplementedNodeServiceServer) PutKeyValue(context.Context, *PutKeyValueRequest) (*PutKeyValueResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutKeyValue not implemented")
+}
+func (UnimplementedNodeServiceServer) GetKeyValue(context.Context, *GetKeyValueRequest) (*GetKeyValueResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetKeyValue not implemented")
+}
+func (UnimplementedNodeServiceServer) DeleteKeyValue(context.Context, *DeleteKeyValueRequest) (*DeleteKeyValueResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteKeyValue not implemented")
+}
+func (UnimplementedNodeServiceServer) GetClusterStatus(context.Context, *GetClusterStatusRequest) (*GetClusterStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetClusterStatus not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -554,6 +628,78 @@ func _NodeService_RollbackGeneration_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_PutKeyValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutKeyValueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).PutKeyValue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_PutKeyValue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).PutKeyValue(ctx, req.(*PutKeyValueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetKeyValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetKeyValueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetKeyValue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetKeyValue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetKeyValue(ctx, req.(*GetKeyValueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_DeleteKeyValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteKeyValueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).DeleteKeyValue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_DeleteKeyValue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).DeleteKeyValue(ctx, req.(*DeleteKeyValueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetClusterStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetClusterStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetClusterStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetClusterStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetClusterStatus(ctx, req.(*GetClusterStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -608,6 +754,22 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RollbackGeneration",
 			Handler:    _NodeService_RollbackGeneration_Handler,
+		},
+		{
+			MethodName: "PutKeyValue",
+			Handler:    _NodeService_PutKeyValue_Handler,
+		},
+		{
+			MethodName: "GetKeyValue",
+			Handler:    _NodeService_GetKeyValue_Handler,
+		},
+		{
+			MethodName: "DeleteKeyValue",
+			Handler:    _NodeService_DeleteKeyValue_Handler,
+		},
+		{
+			MethodName: "GetClusterStatus",
+			Handler:    _NodeService_GetClusterStatus_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

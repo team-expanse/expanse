@@ -151,6 +151,61 @@ func newCtlCmd() *cobra.Command {
 	var follow bool
 	ev.Flags().BoolVarP(&follow, "follow", "f", false, "keep streaming")
 	cmd.AddCommand(ev)
+
+	// kv: raw key/value access to the node's store (§5-adjacent; the
+	// VM tests' `ctl kv put/get`). Cluster mode: puts are Raft writes
+	// (unavailable when degraded); gets are linearizable by default,
+	// --stale serves the local FSM copy.
+	kv := &cobra.Command{Use: "kv", Short: "Raw key/value access to the store"}
+	var kvStale bool
+	kvPut := &cobra.Command{
+		Use:   "put <key> <value>",
+		Short: "Write a key (Raft write in cluster mode)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				res, err := c.PutKeyValue(ctx, &pb.PutKeyValueRequest{Key: args[0], Value: []byte(args[1])})
+				if err != nil {
+					return fmt.Errorf("PutKeyValue: %w", err)
+				}
+				return emit(opts, func() { fmt.Printf("%s\n  revision: %d\n", args[0], res.GetRevision()) }, res)
+			})
+		},
+	}
+	kvGet := &cobra.Command{
+		Use:   "get <key>",
+		Short: "Read a key (linearizable by default; --stale for the local copy)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				res, err := c.GetKeyValue(ctx, &pb.GetKeyValueRequest{Key: args[0], Stale: kvStale})
+				if err != nil {
+					return fmt.Errorf("GetKeyValue: %w", err)
+				}
+				if !res.GetFound() {
+					return fmt.Errorf("key not found: %s", args[0])
+				}
+				fmt.Println(string(res.GetValue()))
+				return nil
+			})
+		},
+	}
+	kvGet.Flags().BoolVar(&kvStale, "stale", false, "serve the local FSM copy (works when degraded, §4.10.3)")
+	kvDel := &cobra.Command{
+		Use:   "delete <key>",
+		Short: "Delete a key (Raft write in cluster mode)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				if _, err := c.DeleteKeyValue(ctx, &pb.DeleteKeyValueRequest{Key: args[0]}); err != nil {
+					return fmt.Errorf("DeleteKeyValue: %w", err)
+				}
+				return nil
+			})
+		},
+	}
+	kv.AddCommand(kvPut, kvGet, kvDel)
+	cmd.AddCommand(kv)
 	return cmd
 }
 

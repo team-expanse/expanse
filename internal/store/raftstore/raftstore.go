@@ -39,6 +39,10 @@ type Config struct {
 	Bootstrap     bool          // bootstrap a brand-new single-node cluster
 	DegradedAfter time.Duration // no quorum for this long → degraded/read-only (default 5s, §4.10.3)
 	Logger        raft.LogStore // unused placeholder (kept nil); logging goes to stderr
+
+	// LogOutput receives hashicorp raft's internal log lines (elections,
+	// step-downs, heartbeat losses). nil → discarded.
+	LogOutput io.Writer
 }
 
 // DefaultDegradedAfter is how long a node tolerates having no raft
@@ -120,8 +124,12 @@ func Open(cfg Config) (*Store, error) {
 	rc.SnapshotInterval = snapshotInterval
 	rc.LeaderLeaseTimeout = 500 * time.Millisecond
 	rc.MaxAppendEntries = 256
-	rc.LogLevel = "ERROR"
-	rc.LogOutput = io.Discard
+	rc.LogLevel = "WARN"
+	if cfg.LogOutput != nil {
+		rc.LogOutput = cfg.LogOutput
+	} else {
+		rc.LogOutput = io.Discard
+	}
 	r, err := raft.NewRaft(rc, fsm, logStore, stableStore, snapshots, trans)
 	if err != nil {
 		_ = logStore.Close()

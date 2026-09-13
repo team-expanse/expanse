@@ -62,6 +62,12 @@
           boot-time = mkTest "boot-time" ./nix/tests/boot-time.nix;
           agent-basic = mkTest "agent-basic" ./nix/tests/agent-basic.nix;
           agent-reconcile = mkTest "agent-reconcile" ./nix/tests/agent-reconcile.nix;
+          # Phase 03 cluster VM tests (§6).
+          cluster-form = mkTest "cluster-form" ./nix/tests/cluster-form.nix;
+          cluster-linearizable = mkTest "cluster-linearizable" ./nix/tests/cluster-linearizable.nix;
+          cluster-leader-failover = mkTest "cluster-leader-failover" ./nix/tests/cluster-leader-failover.nix;
+          cluster-node-loss = mkTest "cluster-node-loss" ./nix/tests/cluster-node-loss.nix;
+          cluster-full-restart = mkTest "cluster-full-restart" ./nix/tests/cluster-full-restart.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })

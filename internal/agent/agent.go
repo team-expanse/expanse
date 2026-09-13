@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	"google.golang.org/grpc/credentials"
 	"gopkg.in/yaml.v3"
 )
 
@@ -108,7 +110,8 @@ type clusterCtl struct {
 	secret  []byte
 	id      string
 	dataDir string
-	role    string // §4.9: "voter" | "witness" (from the node record)
+	role    string                   // §4.9: "voter" | "witness" (from the node record)
+	fwd     *raftstore.GRPCForwarder // node↔node write/read forwarding
 }
 
 type Agent struct {
@@ -150,10 +153,21 @@ func New(cfg Config) (*Agent, error) {
 			return nil, fmt.Errorf("load cluster enrollment: %w", err)
 		}
 		raftBind := cfg.RaftBindAddr
+		raftAdv := cfg.RaftAdvertiseAddr
+		if raftBind == "" || raftAdv == "" {
+			// Prefer the addresses recorded at init/join (§4.4 layout):
+			// the CLI already advertised them to peers.
+			rb, ra := control.LoadRaftAddr(cfg.DataDir)
+			if raftBind == "" {
+				raftBind = rb
+			}
+			if raftAdv == "" {
+				raftAdv = ra
+			}
+		}
 		if raftBind == "" {
 			raftBind = fmt.Sprintf("0.0.0.0:%d", config.PortRaft)
 		}
-		raftAdv := cfg.RaftAdvertiseAddr
 		if raftAdv == "" {
 			host, port, err := net.SplitHostPort(raftBind)
 			advHost := control.LocalIP()
@@ -167,12 +181,42 @@ func New(cfg Config) (*Agent, error) {
 			BindAddr:      raftBind,
 			AdvertiseAddr: raftAdv,
 			DataDir:       filepath.Join(cfg.DataDir, control.RaftDir),
+			// Surface hashicorp raft's internal narrative (elections,
+			// step-downs) in the agent log — invaluable when a
+			// cluster misbehaves.
+			LogOutput: raftLogWriter{log: logger},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("open cluster store: %w", err)
 		}
 		st = rs
 		ctl = &clusterCtl{store: rs, ca: clusterCA, secret: secret, id: clusterID, dataDir: cfg.DataDir}
+		// Node↔node forwarding (§4.1/G3.8): the internal mTLS endpoint
+		// on :7443 hosts the leader-side ForwardServer; this node's
+		// forwarder dials it when it needs the leader to apply/linearize.
+		fwd := raftstore.NewGRPCForwarder(
+			func() string { return rs.Leader() },
+			func(raftAddr string) (string, bool) {
+				host, _, err := net.SplitHostPort(raftAddr)
+				if err != nil {
+					return "", false
+				}
+				// raft :7444 ↔ internal :7443, same host.
+				return net.JoinHostPort(host, fmt.Sprintf("%d", config.PortAPI)), true
+			})
+		// mTLS dial creds: the same node identity + CN-membership
+		// check as the server side. Built synchronously — a forwarded
+		// write can happen the instant the store opens, and a plaintext
+		// dial against the mTLS listener would be rejected (and cached).
+		tlsCfg, err := control.InternalClientTLS(context.Background(), rs, clusterCA, cfg.DataDir)
+		if err != nil {
+			_ = rs.Close()
+			return nil, fmt.Errorf("forwarder mTLS setup: %w", err)
+		}
+		fwd.SetDialCreds(credentials.NewTLS(tlsCfg))
+		rs.SetForwarder(fwd.Forward)
+		rs.SetReadForwarder(fwd)
+		ctl.fwd = fwd
 		// Role (§4.9): explicit config wins; otherwise read it from the
 		// node's own cluster record. Retry while raft restores its FSM —
 		// the record may not be visible in the first moments.
@@ -507,6 +551,19 @@ func (a *Agent) Run(ctx context.Context) error {
 		}()
 	}
 
+	// Cluster mode: the internal mTLS endpoint on :7443 — the
+	// leader-side forwarding service every node runs (G3.8). All
+	// nodes need it: any follower may need to forward, any follower
+	// may become leader.
+	if a.ctl != nil {
+		go func() {
+			if err := control.ServeInternalEndpoint(ctx, a.ctl.store, a.ctl.ca, a.ctl.dataDir); err != nil {
+				a.logger.Error("internal endpoint failed", "err", err)
+			}
+		}()
+		defer func() { _ = a.ctl.fwd.Close() }()
+	}
+
 	// gRPC on the unix socket (filesystem permissions are the auth).
 	srv := api.NewServer(a, a.store, a.logger)
 	serveErr := make(chan error, 1)
@@ -639,4 +696,15 @@ func notify(state string) {
 		// Not fatal: only relevant under systemd.
 		_ = err
 	}
+}
+
+// raftLogWriter feeds hashicorp raft's pre-formatted log lines (one per
+// Write) into the agent's structured logger at warn level.
+type raftLogWriter struct {
+	log *slog.Logger
+}
+
+func (w raftLogWriter) Write(p []byte) (int, error) {
+	w.log.Warn("raft", "msg", strings.TrimSpace(string(p)))
+	return len(p), nil
 }
