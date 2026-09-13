@@ -388,3 +388,34 @@ func (f fakeNotLeader) IsLeader() bool              { return false }
 func (f fakeNotLeader) AddVoter(_, _ string) error  { return nil }
 func (f fakeNotLeader) RemoveServer(_ string) error { return nil }
 func (f fakeNotLeader) Leader() string              { return "127.0.0.1:9999" }
+
+// TestJoinRevokedNodeRejected (§4.8): a removed node's ID is in
+// /cluster/revoked/ — any re-join under that identity is refused
+// before token validation, and the token stays unconsumed.
+func TestJoinRevokedNodeRejected(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	rev := []byte(`{"id":"n5","removed_at":1,"by":"op"}`)
+	if _, err := e.store.Put(ctx, store.Key(join.RevokedKeyPrefix+"n5"), rev); err != nil {
+		t.Fatalf("write revocation: %v", err)
+	}
+
+	token := e.mintToken(ctx, 1)
+	addr, err := e.newJoiner("n5")
+	if err != nil {
+		t.Fatalf("open joiner: %v", err)
+	}
+	_, jerr := e.joinCall(ctx, "n5", addr, token)
+	if !grpcCodeIs(jerr, codes.PermissionDenied) {
+		t.Fatalf("revoked join err = %v, want PermissionDenied", jerr)
+	}
+	// Token untouched.
+	if uses := e.tokenUses(t, token); uses != 0 {
+		t.Errorf("token uses = %d, want 0 (revocation must precede token consumption)", uses)
+	}
+	// No node record appeared.
+	if _, err := e.store.Get(ctx, "/nodes/n5"); !errors.Is(err, errors.KindNotFound) {
+		t.Errorf("node record exists after revoked join: %v", err)
+	}
+}

@@ -89,6 +89,15 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 		return nil, status.Errorf(codes.Unavailable, "join: not leader%s", hint)
 	}
 
+	// Revoked identity (§4.8): a removed node's ID is permanently
+	// rejected, regardless of token validity — checked before anything
+	// else so a revoked re-join can never consume a token.
+	if rev, err := s.St.Get(ctx, store.Key(RevokedKeyPrefix+req.GetNodeId())); err == nil {
+		_ = rev
+		return nil, joinErr(codes.PermissionDenied, errors.New(errors.KindPermission, "join.Join",
+			"node "+req.GetNodeId()+" was removed from this cluster; its identity is revoked"))
+	}
+
 	// 1. Token: HMAC + expiry + cluster binding.
 	claims, err := ParseToken(req.GetToken(), s.Secret)
 	if err != nil {

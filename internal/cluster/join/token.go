@@ -75,7 +75,15 @@ type tokenRecord struct {
 	CreatedAt  int64  `json:"created"` // unix-nano
 }
 
-// NodeRecord is the /nodes/<id> value written at join time.
+//	// RevokedKeyPrefix holds removed node identities: /cluster/revoked/<id>.
+//
+// A record here permanently rejects the node's identity: the join
+// service refuses any re-join under a revoked node ID (§4.8).
+const RevokedKeyPrefix = "/cluster/revoked/"
+
+// NodeRecord is the /nodes/<id> value written at join time. Lifecycle
+// fields (§4.8) are managed by internal/cluster/nodelc and omitted when
+// zero so join-written records stay byte-identical to Phase 03 T10.
 type NodeRecord struct {
 	ID        string `json:"id"`
 	Role      string `json:"role"`
@@ -83,6 +91,8 @@ type NodeRecord struct {
 	APIAddr   string `json:"api_addr"`
 	JoinedAt  int64  `json:"joined_at"` // unix-nano
 	Inventory string `json:"inventory,omitempty"`
+	State     string `json:"state,omitempty"`    // "" | unreachable | failed
+	Cordoned  bool   `json:"cordoned,omitempty"` // no new placements
 }
 
 // base58 (Bitcoin alphabet). Leading zero bytes encode as '1'.

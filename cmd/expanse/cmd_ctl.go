@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,12 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/expanse/expanse/proto"
+
+	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/cluster/join"
+	"github.com/expanse/expanse/internal/cluster/nodelc"
+	"github.com/expanse/expanse/internal/store"
+	"github.com/expanse/expanse/internal/store/raftstore"
 )
 
 const (
@@ -64,6 +71,10 @@ func newCtlCmd() *cobra.Command {
 		Short: "Request a graceful agent shutdown",
 		RunE:  func(cmd *cobra.Command, args []string) error { return ctlShutdown(cmd, opts) },
 	})
+	// §4.8 cluster-node lifecycle: these open the node's raft store
+	// from --data-dir (daemon must not hold the lock) and their
+	// mutations must run on the leader.
+	node.AddCommand(newCtlNodeLifecycleCmds()...)
 	cmd.AddCommand(node)
 
 	res := &cobra.Command{Use: "resource", Short: "Desired-state resources"}
@@ -541,4 +552,256 @@ func ctlEvents(cmd *cobra.Command, opts *ctlOpts) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n",
 			time.Unix(0, ev.TimestampUnixNs).Format(time.Kitchen), ev.Type, ev.Payload)
 	}
+}
+
+// --- Node lifecycle (§4.8) --------------------------------------------
+//
+// These commands operate on the CLUSTER node lifecycle, so — like the
+// `expanse cluster` commands — they open the node's raft-replicated
+// store directly from --data-dir (the daemon must not hold the bolt
+// lock, i.e. run these while expansed is stopped, or from a machine
+// whose daemon is down). Mutations must run on the leader.
+
+// ctlNodeClusterStore opens the cluster store for lifecycle commands.
+func ctlNodeClusterStore(cmd *cobra.Command, dataDir, nodeID string) (*raftstore.Store, func(), error) {
+	st, cleanup, err := openClusterStore(dataDir, nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+	defer cancel()
+	if !control.WaitForLeader(ctx, st, 10*time.Second) {
+		cleanup()
+		return nil, nil, fmt.Errorf("no raft leader — cluster is degraded (§4.10)")
+	}
+	return st, cleanup, nil
+}
+
+// ctlNodeRequireLeader guards mutations: lifecycle writes must run on
+// the leader (the CLI opens a local store; a follower's proposals
+// would need forwarding this path does not provide).
+func ctlNodeRequireLeader(st *raftstore.Store) error {
+	if !st.IsLeader() {
+		lead := st.Leader()
+		hint := ""
+		if lead != "" {
+			hint = " (leader is " + lead + ")"
+		}
+		return fmt.Errorf("this node is not the raft leader%s — run `expanse ctl node …` on the leader", hint)
+	}
+	return nil
+}
+
+type nodeRow struct {
+	ID        string
+	Role      string
+	Lifecycle string
+	Cordoned  bool
+	RaftAddr  string
+	APIAddr   string
+	LastSeen  string
+}
+
+func ctlNodeRows(ctx context.Context, st *raftstore.Store) ([]nodeRow, error) {
+	entries, err := st.List(ctx, store.Key(join.NodesKeyPrefix))
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]nodeRow, 0, len(entries))
+	for _, e := range entries {
+		var r join.NodeRecord
+		if json.Unmarshal(e.Value, &r) != nil || r.ID == "" {
+			continue
+		}
+		lc := r.State
+		if lc == "" {
+			lc = "healthy"
+		}
+		last := time.Unix(0, r.JoinedAt)
+		if se, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+r.ID+"/status")); err == nil {
+			last = time.Unix(0, se.UpdatedAt)
+		}
+		rows = append(rows, nodeRow{
+			ID: r.ID, Role: r.Role, Lifecycle: lc, Cordoned: r.Cordoned,
+			RaftAddr: r.RaftAddr, APIAddr: r.APIAddr,
+			LastSeen: last.UTC().Format(time.RFC3339),
+		})
+	}
+	return rows, nil
+}
+
+func newCtlNodeLifecycleCmds() []*cobra.Command {
+	var dataDir, nodeID string
+	flags := func(c *cobra.Command) {
+		c.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
+		c.Flags().StringVar(&nodeID, "node-id", "", "node ID of the local node (default: enrolled node-id)")
+	}
+
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List cluster nodes with lifecycle state",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, cleanup, err := ctlNodeClusterStore(cmd, dataDir, nodeID)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+			defer cancel()
+			rows, err := ctlNodeRows(ctx, st)
+			if err != nil {
+				return err
+			}
+			w := nodeTable()
+			fmt.Fprintln(w, "ID\tROLE\tLIFECYCLE\tCORDONED\tRAFT\tAPI\tLAST-SEEN")
+			for _, r := range rows {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%v\t%s\t%s\t%s\n",
+					r.ID, orDash(r.Role), r.Lifecycle, r.Cordoned, r.RaftAddr, orDash(r.APIAddr), r.LastSeen)
+			}
+			return w.Flush()
+		},
+	}
+	flags(list)
+
+	inspect := &cobra.Command{
+		Use:   "inspect <node-id>",
+		Short: "Show one node's record, status, and revocation state",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, cleanup, err := ctlNodeClusterStore(cmd, dataDir, nodeID)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+			defer cancel()
+			id := args[0]
+			e, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+id))
+			if err != nil {
+				return fmt.Errorf("node %s: %w", id, err)
+			}
+			var r join.NodeRecord
+			if err := json.Unmarshal(e.Value, &r); err != nil {
+				return fmt.Errorf("corrupt node record: %w", err)
+			}
+			fmt.Printf("id:        %s\nrole:      %s\nlifecycle: %s\ncordoned:  %v\nraft:      %s\napi:       %s\njoined:    %s\n",
+				r.ID, orDash(r.Role), orDash(r.State), r.Cordoned, r.RaftAddr, orDash(r.APIAddr),
+				time.Unix(0, r.JoinedAt).UTC().Format(time.RFC3339))
+			if se, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+id+"/status")); err == nil {
+				fmt.Printf("status:    %s (updated %s)\n", string(se.Value), time.Unix(0, se.UpdatedAt).UTC().Format(time.RFC3339))
+			}
+			if rev, err := st.Get(ctx, store.Key(join.RevokedKeyPrefix+id)); err == nil {
+				fmt.Printf("REVOKED:   %s\n", string(rev.Value))
+			}
+			return nil
+		},
+	}
+	flags(inspect)
+
+	cordonCmd := func(use, short string, cordon bool) *cobra.Command {
+		c := &cobra.Command{
+			Use:   fmt.Sprintf("%s <node-id>", use),
+			Short: short,
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				st, cleanup, err := ctlNodeClusterStore(cmd, dataDir, nodeID)
+				if err != nil {
+					return err
+				}
+				defer cleanup()
+				if err := ctlNodeRequireLeader(st); err != nil {
+					return err
+				}
+				ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+				defer cancel()
+				if cordon {
+					return nodelc.Cordon(ctx, st, args[0])
+				}
+				return nodelc.Uncordon(ctx, st, args[0])
+			},
+		}
+		flags(c)
+		return c
+	}
+
+	drain := &cobra.Command{
+		Use:   "drain <node-id>",
+		Short: "Cordon a node and verify its resources can be re-placed",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ignoreUnplaceable, _ := cmd.Flags().GetBool("ignore-unplaceable")
+			st, cleanup, err := ctlNodeClusterStore(cmd, dataDir, nodeID)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if err := ctlNodeRequireLeader(st); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			defer cancel()
+			n, err := nodelc.Drain(ctx, st, args[0], &nodelc.Options{IgnoreUnplaceable: ignoreUnplaceable})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("drained %s: %d resource(s) to re-place\n", args[0], n)
+			return nil
+		},
+	}
+	drain.Flags().Bool("ignore-unplaceable", false, "drain even if some resources have nowhere else to run")
+	flags(drain)
+
+	remove := &cobra.Command{
+		Use:   "remove <node-id>",
+		Short: "Drain, remove from raft, and revoke a node's identity",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			force, _ := cmd.Flags().GetBool("force")
+			reason, _ := cmd.Flags().GetString("reason")
+			confirmFlag, _ := cmd.Flags().GetString("confirm")
+			id := args[0]
+
+			st, cleanup, err := ctlNodeClusterStore(cmd, dataDir, nodeID)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if err := ctlNodeRequireLeader(st); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+			defer cancel()
+
+			// Interlock (§4.8): quorum-breaking removals require
+			// --force AND typing the node name.
+			confirm := confirmFlag
+			if force && confirm == "" {
+				fmt.Printf("removing %s can break the cluster. Type the node name to confirm: ", id)
+				var line string
+				if _, err := fmt.Scanln(&line); err != nil {
+					return fmt.Errorf("confirmation required")
+				}
+				confirm = strings.TrimSpace(line)
+			}
+			if err := nodelc.Remove(ctx, st, id, &nodelc.Options{Force: force, Confirm: confirm, Reason: reason, By: st.NodeID()}); err != nil {
+				return err
+			}
+			fmt.Printf("removed %s; its identity is revoked (re-join refused)\n", id)
+			return nil
+		},
+	}
+	remove.Flags().Bool("force", false, "permit a quorum-breaking removal (still requires typing the node name)")
+	remove.Flags().String("confirm", "", "typed confirmation (non-interactive equivalent of the prompt)")
+	remove.Flags().String("reason", "", "reason, recorded in the revocation")
+	flags(remove)
+
+	return []*cobra.Command{
+		list, inspect, cordonCmd("cordon", "Cordon a node (no new placements)", true),
+		cordonCmd("uncordon", "Uncordon a node", false), drain, remove,
+	}
+}
+
+// nodeTable renders aligned CLI tables for the node lifecycle commands.
+func nodeTable() *tabwriter.Writer {
+	return tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 }

@@ -97,6 +97,14 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 		if r.RaftAddr == rep.Leader && role == "voter" {
 			state = "leader"
 		}
+		// Lifecycle annotation (§4.8): unreachable/failed from the
+		// failure monitor, cordoned from drain/cordon.
+		if r.State != "" {
+			state += "/" + r.State
+		}
+		if r.Cordoned {
+			state += "/cordoned"
+		}
 		rep.Nodes = append(rep.Nodes, NodeStatus{
 			ID: r.ID, RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, Role: role, State: state,
 		})

@@ -26,6 +26,7 @@ import (
 	"github.com/expanse/expanse/internal/api"
 	"github.com/expanse/expanse/internal/cluster/ca"
 	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/install"
 	"github.com/expanse/expanse/internal/logging"
@@ -362,6 +363,24 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// Reconcile loop (watch-triggered + periodic).
 	go a.recon.Run(ctx)
+
+	// Node-lifecycle failure monitor (§4.8), cluster mode only: the
+	// leader marks silent nodes unreachable (15 s) then failed (5 min).
+	// Only the leader evaluates; on followers this is a no-op ticker.
+	if a.ctl != nil && a.ctl.store != nil {
+		mon := &nodelc.Monitor{
+			St:         a.ctl.store,
+			ThisNodeID: a.cfg.NodeID,
+			Evict: func(nodeID string) {
+				// Placements are not scheduled until the placement
+				// engine lands; the seam stays here (§4.8 "evicts its
+				// placements").
+				a.logger.Warn("node failed; placements evicted (no placement engine yet)", "node", nodeID)
+				_ = a.store.Delete(context.Background(), store.Key("/nodes/"+nodeID+"/status"), 0)
+			},
+		}
+		go mon.Run(ctx)
+	}
 
 	// Inventory: immediately, then every 5 minutes.
 	a.refreshInventory()
