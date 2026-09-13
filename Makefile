@@ -29,5 +29,8 @@ vm-test:         ## Run NixOS VM tests
 perf: build      ## Check performance budgets
 	RUN_PERF=1 go test ./test/perf/... -v
 
+chaos:           ## Run the chaos suite at full length (5 min/scenario)
+	RUN_CHAOS=1 go test -count=1 -timeout 45m ./test/chaos/... -v
+
 clean:           ## Clean build artifacts
 	rm -rf bin result coverage.out

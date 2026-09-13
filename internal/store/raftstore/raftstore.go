@@ -43,6 +43,18 @@ type Config struct {
 	// LogOutput receives hashicorp raft's internal log lines (elections,
 	// step-downs, heartbeat losses). nil → discarded.
 	LogOutput io.Writer
+
+	// StreamLayer overrides the default plain-TCP raft stream layer.
+	// Test hook for network-fault injection (partitions, packet loss);
+	// the chaos harness supplies a filtered layer. nil → TCP. When set,
+	// the caller owns the listener inside the StreamLayer.
+	StreamLayer raft.StreamLayer
+
+	// WrapLogStore wraps the bolt log store after Open creates it.
+	// Test hook for disk-fault injection (fsync latency); the wrapper
+	// must forward Close. nil → unwrapped. The stable store stays the
+	// raw bolt store, matching production (metadata writes are tiny).
+	WrapLogStore func(raft.LogStore) raft.LogStore
 }
 
 // DefaultDegradedAfter is how long a node tolerates having no raft
@@ -94,22 +106,31 @@ func Open(cfg Config) (*Store, error) {
 			return nil, fmt.Errorf("resolve advertise addr: %w", err)
 		}
 	}
-	trans, err := raft.NewTCPTransport(cfg.BindAddr, advAddr, 3, 10*time.Second, os.Stderr)
-	if err != nil {
-		return nil, fmt.Errorf("raft transport: %w", err)
+	var trans *raft.NetworkTransport
+	if cfg.StreamLayer != nil {
+		trans = raft.NewNetworkTransport(cfg.StreamLayer, 3, 10*time.Second, os.Stderr)
+	} else {
+		trans, err = raft.NewTCPTransport(cfg.BindAddr, advAddr, 3, 10*time.Second, os.Stderr)
+		if err != nil {
+			return nil, fmt.Errorf("raft transport: %w", err)
+		}
 	}
 
-	logStore, err := raftboltdb.NewBoltStore(filepath.Join(raftDir, "raft.db"))
+	boltStore, err := raftboltdb.NewBoltStore(filepath.Join(raftDir, "raft.db"))
 	if err != nil {
 		_ = trans.Close()
 		return nil, fmt.Errorf("bolt log store: %w", err)
 	}
 	// raft-boltdb v2 implements both LogStore and StableStore.
-	stableStore := logStore
+	stableStore := boltStore
+	var logStore raft.LogStore = boltStore
+	if cfg.WrapLogStore != nil {
+		logStore = cfg.WrapLogStore(logStore)
+	}
 
 	snapshots, err := raft.NewFileSnapshotStore(filepath.Join(raftDir, "snapshots"), 3, os.Stderr)
 	if err != nil {
-		_ = logStore.Close()
+		_ = boltStore.Close()
 		_ = trans.Close()
 		return nil, fmt.Errorf("snapshot store: %w", err)
 	}
@@ -132,7 +153,7 @@ func Open(cfg Config) (*Store, error) {
 	}
 	r, err := raft.NewRaft(rc, fsm, logStore, stableStore, snapshots, trans)
 	if err != nil {
-		_ = logStore.Close()
+		_ = boltStore.Close()
 		_ = trans.Close()
 		return nil, fmt.Errorf("new raft: %w", err)
 	}
@@ -140,7 +161,7 @@ func Open(cfg Config) (*Store, error) {
 	if cfg.DegradedAfter <= 0 {
 		cfg.DegradedAfter = DefaultDegradedAfter
 	}
-	s := &Store{cfg: cfg, r: r, fsm: fsm, trans: trans, logs: logStore}
+	s := &Store{cfg: cfg, r: r, fsm: fsm, trans: trans, logs: boltStore}
 	s.lastLeader.Store(time.Now().UnixNano())
 	s.stopWatch = make(chan struct{})
 	go s.watchQuorum()
@@ -457,7 +478,20 @@ func (s *Store) RemoveServer(id string) error {
 
 // TransferLeadership attempts to move leadership to id.
 func (s *Store) TransferLeadership(id string) error {
-	return s.r.LeadershipTransferToServer(raft.ServerID(id), raft.ServerAddress(id)).Error()
+	// Resolve the server's raft address from the latest configuration:
+	// TimeoutNow is dialed to the ADDRESS, while the transfer targets
+	// the server ID. (Calling with the ID alone dials "n1:???"; calling
+	// with the address alone fails replState lookup.)
+	f := s.r.GetConfiguration()
+	if err := f.Error(); err != nil {
+		return fmt.Errorf("transfer leadership %s: config: %w", id, err)
+	}
+	for _, srv := range f.Configuration().Servers {
+		if srv.ID == raft.ServerID(id) {
+			return s.r.LeadershipTransferToServer(srv.ID, srv.Address).Error()
+		}
+	}
+	return errors.New(errors.KindNotFound, "raftstore.TransferLeadership", "server not in configuration: "+id)
 }
 
 // Close shuts down Raft and releases resources. Safe to call once.
