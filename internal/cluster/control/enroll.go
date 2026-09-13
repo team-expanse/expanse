@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/expanse/expanse/internal/cluster/ca"
 	"github.com/expanse/expanse/internal/cluster/join"
@@ -56,7 +57,15 @@ type EnrollResult struct {
 // transport (so AddVoter has something to replicate to), generate the
 // key + CSR locally, call the leader's JoinService, persist certs /
 // cluster-id / secret, and return with the raft node still running.
+// joinTimeout bounds the whole enrollment RPC flow (dial + Join +
+// leader redirect). Without it a hung join service (or a redirect
+// loop) hangs the CLI forever; enrollment is a user-facing operation
+// and must terminate.
+const joinTimeout = 30 * time.Second
+
 func Enroll(ctx context.Context, opts EnrollOptions) (*EnrollResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, joinTimeout)
+	defer cancel()
 	if opts.Address == "" {
 		return nil, errors.New(errors.KindInvalid, "control.Enroll", "--address HOST:7446 is required (or --discover once mDNS lands)")
 	}

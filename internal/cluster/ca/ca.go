@@ -322,6 +322,15 @@ func TLSConfig(bundle *Bundle, ownCert tls.Certificate, knownNodes func() []stri
 
 const hkdfInfo = "expanse/ca-seal/v1"
 
+// sealWorkFactor is age's scrypt work-factor exponent for CA-key
+// sealing. The passphrase is HKDF-SHA256 of the 256-bit cluster secret
+// — not a human password — so the KDF adds no real brute-force
+// resistance; it only costs every daemon startup 128·8·2^logN bytes of
+// scrypt state. age's default (2^18) peaks at 256 MiB, which a witness
+// node (§4.9: RSS < 64 MiB) can never afford. 2^12 = 4 MiB.
+// Unsealing stays compatible both ways (the factor is in the header).
+const sealWorkFactor = 12
+
 // deriveSealPassphrase derives the age passphrase from the cluster secret
 // via HKDF-SHA256 (32 bytes, hex-encoded). The passphrase never leaves the
 // sealing layer; rotate by rotating the cluster secret itself.
@@ -346,6 +355,7 @@ func SealKey(priv ed25519.PrivateKey, clusterSecret []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ca: scrypt recipient: %w", err)
 	}
+	recipient.SetWorkFactor(sealWorkFactor)
 	var buf bytes.Buffer
 	w, err := age.Encrypt(&buf, recipient)
 	if err != nil {

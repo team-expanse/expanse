@@ -36,7 +36,10 @@ const (
 	NodeService_PutKeyValue_FullMethodName        = "/expanse.node.v1.NodeService/PutKeyValue"
 	NodeService_GetKeyValue_FullMethodName        = "/expanse.node.v1.NodeService/GetKeyValue"
 	NodeService_DeleteKeyValue_FullMethodName     = "/expanse.node.v1.NodeService/DeleteKeyValue"
+	NodeService_ListKeyValue_FullMethodName       = "/expanse.node.v1.NodeService/ListKeyValue"
 	NodeService_GetClusterStatus_FullMethodName   = "/expanse.node.v1.NodeService/GetClusterStatus"
+	NodeService_HoldLease_FullMethodName          = "/expanse.node.v1.NodeService/HoldLease"
+	NodeService_GetLease_FullMethodName           = "/expanse.node.v1.NodeService/GetLease"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -65,9 +68,20 @@ type NodeServiceClient interface {
 	PutKeyValue(ctx context.Context, in *PutKeyValueRequest, opts ...grpc.CallOption) (*PutKeyValueResponse, error)
 	GetKeyValue(ctx context.Context, in *GetKeyValueRequest, opts ...grpc.CallOption) (*GetKeyValueResponse, error)
 	DeleteKeyValue(ctx context.Context, in *DeleteKeyValueRequest, opts ...grpc.CallOption) (*DeleteKeyValueResponse, error)
+	// ListKeyValue: prefix scan (linearizable unless stale).
+	ListKeyValue(ctx context.Context, in *ListKeyValueRequest, opts ...grpc.CallOption) (*ListKeyValueResponse, error)
 	// GetClusterStatus renders the §5 cluster report from the local
 	// store (linearizable reads forward to the leader when follower).
 	GetClusterStatus(ctx context.Context, in *GetClusterStatusRequest, opts ...grpc.CallOption) (*GetClusterStatusResponse, error)
+	// Leases (§4.3): HoldLease acquires (or takes over an expired lease)
+	// and holds it server-side — renewing at TTL/3 and closing the lease
+	// on renewal failure — streaming lifecycle events with wall-clock
+	// timestamps until the lease is lost or the client disconnects. The
+	// event timestamps are the guard-band evidence (§4.3 safety
+	// argument: old holder stops before TTL, new holder starts after).
+	HoldLease(ctx context.Context, in *HoldLeaseRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LeaseEvent], error)
+	// GetLease reports the stored lease state (even if expired).
+	GetLease(ctx context.Context, in *GetLeaseRequest, opts ...grpc.CallOption) (*LeaseInfo, error)
 }
 
 type nodeServiceClient struct {
@@ -266,10 +280,49 @@ func (c *nodeServiceClient) DeleteKeyValue(ctx context.Context, in *DeleteKeyVal
 	return out, nil
 }
 
+func (c *nodeServiceClient) ListKeyValue(ctx context.Context, in *ListKeyValueRequest, opts ...grpc.CallOption) (*ListKeyValueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListKeyValueResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListKeyValue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodeServiceClient) GetClusterStatus(ctx context.Context, in *GetClusterStatusRequest, opts ...grpc.CallOption) (*GetClusterStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetClusterStatusResponse)
 	err := c.cc.Invoke(ctx, NodeService_GetClusterStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) HoldLease(ctx context.Context, in *HoldLeaseRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LeaseEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[2], NodeService_HoldLease_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[HoldLeaseRequest, LeaseEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_HoldLeaseClient = grpc.ServerStreamingClient[LeaseEvent]
+
+func (c *nodeServiceClient) GetLease(ctx context.Context, in *GetLeaseRequest, opts ...grpc.CallOption) (*LeaseInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LeaseInfo)
+	err := c.cc.Invoke(ctx, NodeService_GetLease_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -302,9 +355,20 @@ type NodeServiceServer interface {
 	PutKeyValue(context.Context, *PutKeyValueRequest) (*PutKeyValueResponse, error)
 	GetKeyValue(context.Context, *GetKeyValueRequest) (*GetKeyValueResponse, error)
 	DeleteKeyValue(context.Context, *DeleteKeyValueRequest) (*DeleteKeyValueResponse, error)
+	// ListKeyValue: prefix scan (linearizable unless stale).
+	ListKeyValue(context.Context, *ListKeyValueRequest) (*ListKeyValueResponse, error)
 	// GetClusterStatus renders the §5 cluster report from the local
 	// store (linearizable reads forward to the leader when follower).
 	GetClusterStatus(context.Context, *GetClusterStatusRequest) (*GetClusterStatusResponse, error)
+	// Leases (§4.3): HoldLease acquires (or takes over an expired lease)
+	// and holds it server-side — renewing at TTL/3 and closing the lease
+	// on renewal failure — streaming lifecycle events with wall-clock
+	// timestamps until the lease is lost or the client disconnects. The
+	// event timestamps are the guard-band evidence (§4.3 safety
+	// argument: old holder stops before TTL, new holder starts after).
+	HoldLease(*HoldLeaseRequest, grpc.ServerStreamingServer[LeaseEvent]) error
+	// GetLease reports the stored lease state (even if expired).
+	GetLease(context.Context, *GetLeaseRequest) (*LeaseInfo, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -366,8 +430,17 @@ func (UnimplementedNodeServiceServer) GetKeyValue(context.Context, *GetKeyValueR
 func (UnimplementedNodeServiceServer) DeleteKeyValue(context.Context, *DeleteKeyValueRequest) (*DeleteKeyValueResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteKeyValue not implemented")
 }
+func (UnimplementedNodeServiceServer) ListKeyValue(context.Context, *ListKeyValueRequest) (*ListKeyValueResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListKeyValue not implemented")
+}
 func (UnimplementedNodeServiceServer) GetClusterStatus(context.Context, *GetClusterStatusRequest) (*GetClusterStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetClusterStatus not implemented")
+}
+func (UnimplementedNodeServiceServer) HoldLease(*HoldLeaseRequest, grpc.ServerStreamingServer[LeaseEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method HoldLease not implemented")
+}
+func (UnimplementedNodeServiceServer) GetLease(context.Context, *GetLeaseRequest) (*LeaseInfo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetLease not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -682,6 +755,24 @@ func _NodeService_DeleteKeyValue_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_ListKeyValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListKeyValueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListKeyValue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListKeyValue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListKeyValue(ctx, req.(*ListKeyValueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _NodeService_GetClusterStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetClusterStatusRequest)
 	if err := dec(in); err != nil {
@@ -696,6 +787,35 @@ func _NodeService_GetClusterStatus_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServiceServer).GetClusterStatus(ctx, req.(*GetClusterStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_HoldLease_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(HoldLeaseRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).HoldLease(m, &grpc.GenericServerStream[HoldLeaseRequest, LeaseEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_HoldLeaseServer = grpc.ServerStreamingServer[LeaseEvent]
+
+func _NodeService_GetLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetLease(ctx, req.(*GetLeaseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -768,8 +888,16 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _NodeService_DeleteKeyValue_Handler,
 		},
 		{
+			MethodName: "ListKeyValue",
+			Handler:    _NodeService_ListKeyValue_Handler,
+		},
+		{
 			MethodName: "GetClusterStatus",
 			Handler:    _NodeService_GetClusterStatus_Handler,
+		},
+		{
+			MethodName: "GetLease",
+			Handler:    _NodeService_GetLease_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -781,6 +909,11 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamEvents",
 			Handler:       _NodeService_StreamEvents_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "HoldLease",
+			Handler:       _NodeService_HoldLease_Handler,
 			ServerStreams: true,
 		},
 	},

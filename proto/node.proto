@@ -26,9 +26,20 @@ service NodeService {
   rpc PutKeyValue(PutKeyValueRequest) returns (PutKeyValueResponse);
   rpc GetKeyValue(GetKeyValueRequest) returns (GetKeyValueResponse);
   rpc DeleteKeyValue(DeleteKeyValueRequest) returns (DeleteKeyValueResponse);
+  // ListKeyValue: prefix scan (linearizable unless stale).
+  rpc ListKeyValue(ListKeyValueRequest) returns (ListKeyValueResponse);
   // GetClusterStatus renders the §5 cluster report from the local
   // store (linearizable reads forward to the leader when follower).
   rpc GetClusterStatus(GetClusterStatusRequest) returns (GetClusterStatusResponse);
+  // Leases (§4.3): HoldLease acquires (or takes over an expired lease)
+  // and holds it server-side — renewing at TTL/3 and closing the lease
+  // on renewal failure — streaming lifecycle events with wall-clock
+  // timestamps until the lease is lost or the client disconnects. The
+  // event timestamps are the guard-band evidence (§4.3 safety
+  // argument: old holder stops before TTL, new holder starts after).
+  rpc HoldLease(HoldLeaseRequest) returns (stream LeaseEvent);
+  // GetLease reports the stored lease state (even if expired).
+  rpc GetLease(GetLeaseRequest) returns (LeaseInfo);
 }
 
 message GetStatusRequest {}
@@ -59,7 +70,47 @@ message DeleteKeyValueRequest {
 
 message DeleteKeyValueResponse {}
 
+message ListKeyValueRequest {
+  string prefix = 1;
+  bool stale = 2; // serve the local FSM copy (degraded reads, §4.10.3)
+}
+
+message KeyValueEntry {
+  string key = 1;
+  bytes value = 2;
+  int64 revision = 3;
+}
+
+message ListKeyValueResponse {
+  repeated KeyValueEntry entries = 1;
+}
+
 message GetClusterStatusRequest {}
+
+// --- Leases (§4.3) ---
+
+message HoldLeaseRequest {
+  string name = 1;
+  int64 ttl_ns = 2; // 0 → lease.DefaultTTL (15 s)
+}
+
+message LeaseEvent {
+  string phase = 1; // acquired | renewed | lost
+  int64 timestamp_unix_ns = 2;
+  string holder = 3;
+  int64 revision = 4;
+}
+
+message GetLeaseRequest {
+  string name = 1;
+}
+
+message LeaseInfo {
+  bool found = 1;
+  string holder = 2;
+  int64 expires_at_unix_ns = 3;
+  int64 revision = 4;
+}
 
 message GetClusterStatusResponse {
   bytes report_json = 1; // JSON-encoded control.Report (§5)

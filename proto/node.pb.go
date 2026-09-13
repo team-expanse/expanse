@@ -128,7 +128,7 @@ func (x NodeStatus_Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use NodeStatus_Status.Descriptor instead.
 func (NodeStatus_Status) EnumDescriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{9, 0}
+	return file_proto_node_proto_rawDescGZIP(), []int{16, 0}
 }
 
 type HealthReport_OverallStatus int32
@@ -180,7 +180,7 @@ func (x HealthReport_OverallStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use HealthReport_OverallStatus.Descriptor instead.
 func (HealthReport_OverallStatus) EnumDescriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{32, 0}
+	return file_proto_node_proto_rawDescGZIP(), []int{39, 0}
 }
 
 type GetStatusRequest struct {
@@ -507,6 +507,162 @@ func (*DeleteKeyValueResponse) Descriptor() ([]byte, []int) {
 	return file_proto_node_proto_rawDescGZIP(), []int{6}
 }
 
+type ListKeyValueRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Prefix        string                 `protobuf:"bytes,1,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	Stale         bool                   `protobuf:"varint,2,opt,name=stale,proto3" json:"stale,omitempty"` // serve the local FSM copy (degraded reads, §4.10.3)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListKeyValueRequest) Reset() {
+	*x = ListKeyValueRequest{}
+	mi := &file_proto_node_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListKeyValueRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListKeyValueRequest) ProtoMessage() {}
+
+func (x *ListKeyValueRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListKeyValueRequest.ProtoReflect.Descriptor instead.
+func (*ListKeyValueRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ListKeyValueRequest) GetPrefix() string {
+	if x != nil {
+		return x.Prefix
+	}
+	return ""
+}
+
+func (x *ListKeyValueRequest) GetStale() bool {
+	if x != nil {
+		return x.Stale
+	}
+	return false
+}
+
+type KeyValueEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         []byte                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Revision      int64                  `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KeyValueEntry) Reset() {
+	*x = KeyValueEntry{}
+	mi := &file_proto_node_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyValueEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyValueEntry) ProtoMessage() {}
+
+func (x *KeyValueEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyValueEntry.ProtoReflect.Descriptor instead.
+func (*KeyValueEntry) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *KeyValueEntry) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *KeyValueEntry) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *KeyValueEntry) GetRevision() int64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+type ListKeyValueResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entries       []*KeyValueEntry       `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListKeyValueResponse) Reset() {
+	*x = ListKeyValueResponse{}
+	mi := &file_proto_node_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListKeyValueResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListKeyValueResponse) ProtoMessage() {}
+
+func (x *ListKeyValueResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListKeyValueResponse.ProtoReflect.Descriptor instead.
+func (*ListKeyValueResponse) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ListKeyValueResponse) GetEntries() []*KeyValueEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
 type GetClusterStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -515,7 +671,7 @@ type GetClusterStatusRequest struct {
 
 func (x *GetClusterStatusRequest) Reset() {
 	*x = GetClusterStatusRequest{}
-	mi := &file_proto_node_proto_msgTypes[7]
+	mi := &file_proto_node_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -527,7 +683,7 @@ func (x *GetClusterStatusRequest) String() string {
 func (*GetClusterStatusRequest) ProtoMessage() {}
 
 func (x *GetClusterStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[7]
+	mi := &file_proto_node_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -540,7 +696,239 @@ func (x *GetClusterStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetClusterStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetClusterStatusRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{7}
+	return file_proto_node_proto_rawDescGZIP(), []int{10}
+}
+
+type HoldLeaseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	TtlNs         int64                  `protobuf:"varint,2,opt,name=ttl_ns,json=ttlNs,proto3" json:"ttl_ns,omitempty"` // 0 → lease.DefaultTTL (15 s)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HoldLeaseRequest) Reset() {
+	*x = HoldLeaseRequest{}
+	mi := &file_proto_node_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HoldLeaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HoldLeaseRequest) ProtoMessage() {}
+
+func (x *HoldLeaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HoldLeaseRequest.ProtoReflect.Descriptor instead.
+func (*HoldLeaseRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *HoldLeaseRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *HoldLeaseRequest) GetTtlNs() int64 {
+	if x != nil {
+		return x.TtlNs
+	}
+	return 0
+}
+
+type LeaseEvent struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Phase           string                 `protobuf:"bytes,1,opt,name=phase,proto3" json:"phase,omitempty"` // acquired | renewed | lost
+	TimestampUnixNs int64                  `protobuf:"varint,2,opt,name=timestamp_unix_ns,json=timestampUnixNs,proto3" json:"timestamp_unix_ns,omitempty"`
+	Holder          string                 `protobuf:"bytes,3,opt,name=holder,proto3" json:"holder,omitempty"`
+	Revision        int64                  `protobuf:"varint,4,opt,name=revision,proto3" json:"revision,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *LeaseEvent) Reset() {
+	*x = LeaseEvent{}
+	mi := &file_proto_node_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LeaseEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LeaseEvent) ProtoMessage() {}
+
+func (x *LeaseEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LeaseEvent.ProtoReflect.Descriptor instead.
+func (*LeaseEvent) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *LeaseEvent) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *LeaseEvent) GetTimestampUnixNs() int64 {
+	if x != nil {
+		return x.TimestampUnixNs
+	}
+	return 0
+}
+
+func (x *LeaseEvent) GetHolder() string {
+	if x != nil {
+		return x.Holder
+	}
+	return ""
+}
+
+func (x *LeaseEvent) GetRevision() int64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+type GetLeaseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetLeaseRequest) Reset() {
+	*x = GetLeaseRequest{}
+	mi := &file_proto_node_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetLeaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetLeaseRequest) ProtoMessage() {}
+
+func (x *GetLeaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetLeaseRequest.ProtoReflect.Descriptor instead.
+func (*GetLeaseRequest) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetLeaseRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type LeaseInfo struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Found           bool                   `protobuf:"varint,1,opt,name=found,proto3" json:"found,omitempty"`
+	Holder          string                 `protobuf:"bytes,2,opt,name=holder,proto3" json:"holder,omitempty"`
+	ExpiresAtUnixNs int64                  `protobuf:"varint,3,opt,name=expires_at_unix_ns,json=expiresAtUnixNs,proto3" json:"expires_at_unix_ns,omitempty"`
+	Revision        int64                  `protobuf:"varint,4,opt,name=revision,proto3" json:"revision,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *LeaseInfo) Reset() {
+	*x = LeaseInfo{}
+	mi := &file_proto_node_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LeaseInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LeaseInfo) ProtoMessage() {}
+
+func (x *LeaseInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LeaseInfo.ProtoReflect.Descriptor instead.
+func (*LeaseInfo) Descriptor() ([]byte, []int) {
+	return file_proto_node_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *LeaseInfo) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+func (x *LeaseInfo) GetHolder() string {
+	if x != nil {
+		return x.Holder
+	}
+	return ""
+}
+
+func (x *LeaseInfo) GetExpiresAtUnixNs() int64 {
+	if x != nil {
+		return x.ExpiresAtUnixNs
+	}
+	return 0
+}
+
+func (x *LeaseInfo) GetRevision() int64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
 }
 
 type GetClusterStatusResponse struct {
@@ -552,7 +940,7 @@ type GetClusterStatusResponse struct {
 
 func (x *GetClusterStatusResponse) Reset() {
 	*x = GetClusterStatusResponse{}
-	mi := &file_proto_node_proto_msgTypes[8]
+	mi := &file_proto_node_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -564,7 +952,7 @@ func (x *GetClusterStatusResponse) String() string {
 func (*GetClusterStatusResponse) ProtoMessage() {}
 
 func (x *GetClusterStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[8]
+	mi := &file_proto_node_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -577,7 +965,7 @@ func (x *GetClusterStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetClusterStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetClusterStatusResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{8}
+	return file_proto_node_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GetClusterStatusResponse) GetReportJson() []byte {
@@ -603,7 +991,7 @@ type NodeStatus struct {
 
 func (x *NodeStatus) Reset() {
 	*x = NodeStatus{}
-	mi := &file_proto_node_proto_msgTypes[9]
+	mi := &file_proto_node_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -615,7 +1003,7 @@ func (x *NodeStatus) String() string {
 func (*NodeStatus) ProtoMessage() {}
 
 func (x *NodeStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[9]
+	mi := &file_proto_node_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -628,7 +1016,7 @@ func (x *NodeStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeStatus.ProtoReflect.Descriptor instead.
 func (*NodeStatus) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{9}
+	return file_proto_node_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *NodeStatus) GetNodeId() string {
@@ -695,7 +1083,7 @@ type GetInventoryRequest struct {
 
 func (x *GetInventoryRequest) Reset() {
 	*x = GetInventoryRequest{}
-	mi := &file_proto_node_proto_msgTypes[10]
+	mi := &file_proto_node_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -707,7 +1095,7 @@ func (x *GetInventoryRequest) String() string {
 func (*GetInventoryRequest) ProtoMessage() {}
 
 func (x *GetInventoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[10]
+	mi := &file_proto_node_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -720,7 +1108,7 @@ func (x *GetInventoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInventoryRequest.ProtoReflect.Descriptor instead.
 func (*GetInventoryRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{10}
+	return file_proto_node_proto_rawDescGZIP(), []int{17}
 }
 
 type Inventory struct {
@@ -742,7 +1130,7 @@ type Inventory struct {
 
 func (x *Inventory) Reset() {
 	*x = Inventory{}
-	mi := &file_proto_node_proto_msgTypes[11]
+	mi := &file_proto_node_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -754,7 +1142,7 @@ func (x *Inventory) String() string {
 func (*Inventory) ProtoMessage() {}
 
 func (x *Inventory) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[11]
+	mi := &file_proto_node_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -767,7 +1155,7 @@ func (x *Inventory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Inventory.ProtoReflect.Descriptor instead.
 func (*Inventory) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{11}
+	return file_proto_node_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Inventory) GetNodeId() string {
@@ -859,7 +1247,7 @@ type OSInfo struct {
 
 func (x *OSInfo) Reset() {
 	*x = OSInfo{}
-	mi := &file_proto_node_proto_msgTypes[12]
+	mi := &file_proto_node_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -871,7 +1259,7 @@ func (x *OSInfo) String() string {
 func (*OSInfo) ProtoMessage() {}
 
 func (x *OSInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[12]
+	mi := &file_proto_node_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -884,7 +1272,7 @@ func (x *OSInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OSInfo.ProtoReflect.Descriptor instead.
 func (*OSInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{12}
+	return file_proto_node_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *OSInfo) GetName() string {
@@ -928,7 +1316,7 @@ type CPUInfo struct {
 
 func (x *CPUInfo) Reset() {
 	*x = CPUInfo{}
-	mi := &file_proto_node_proto_msgTypes[13]
+	mi := &file_proto_node_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -940,7 +1328,7 @@ func (x *CPUInfo) String() string {
 func (*CPUInfo) ProtoMessage() {}
 
 func (x *CPUInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[13]
+	mi := &file_proto_node_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -953,7 +1341,7 @@ func (x *CPUInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CPUInfo.ProtoReflect.Descriptor instead.
 func (*CPUInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{13}
+	return file_proto_node_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CPUInfo) GetModel() string {
@@ -1003,7 +1391,7 @@ type MemoryInfo struct {
 
 func (x *MemoryInfo) Reset() {
 	*x = MemoryInfo{}
-	mi := &file_proto_node_proto_msgTypes[14]
+	mi := &file_proto_node_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1015,7 +1403,7 @@ func (x *MemoryInfo) String() string {
 func (*MemoryInfo) ProtoMessage() {}
 
 func (x *MemoryInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[14]
+	mi := &file_proto_node_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1028,7 +1416,7 @@ func (x *MemoryInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryInfo.ProtoReflect.Descriptor instead.
 func (*MemoryInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{14}
+	return file_proto_node_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *MemoryInfo) GetTotal() int64 {
@@ -1073,7 +1461,7 @@ type DiskInfo struct {
 
 func (x *DiskInfo) Reset() {
 	*x = DiskInfo{}
-	mi := &file_proto_node_proto_msgTypes[15]
+	mi := &file_proto_node_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1085,7 +1473,7 @@ func (x *DiskInfo) String() string {
 func (*DiskInfo) ProtoMessage() {}
 
 func (x *DiskInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[15]
+	mi := &file_proto_node_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1098,7 +1486,7 @@ func (x *DiskInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiskInfo.ProtoReflect.Descriptor instead.
 func (*DiskInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{15}
+	return file_proto_node_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *DiskInfo) GetPath() string {
@@ -1156,7 +1544,7 @@ type NICInfo struct {
 
 func (x *NICInfo) Reset() {
 	*x = NICInfo{}
-	mi := &file_proto_node_proto_msgTypes[16]
+	mi := &file_proto_node_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1168,7 +1556,7 @@ func (x *NICInfo) String() string {
 func (*NICInfo) ProtoMessage() {}
 
 func (x *NICInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[16]
+	mi := &file_proto_node_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1181,7 +1569,7 @@ func (x *NICInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NICInfo.ProtoReflect.Descriptor instead.
 func (*NICInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{16}
+	return file_proto_node_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *NICInfo) GetName() string {
@@ -1232,7 +1620,7 @@ type GPUInfo struct {
 
 func (x *GPUInfo) Reset() {
 	*x = GPUInfo{}
-	mi := &file_proto_node_proto_msgTypes[17]
+	mi := &file_proto_node_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1244,7 +1632,7 @@ func (x *GPUInfo) String() string {
 func (*GPUInfo) ProtoMessage() {}
 
 func (x *GPUInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[17]
+	mi := &file_proto_node_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1257,7 +1645,7 @@ func (x *GPUInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GPUInfo.ProtoReflect.Descriptor instead.
 func (*GPUInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{17}
+	return file_proto_node_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GPUInfo) GetVendor() string {
@@ -1305,7 +1693,7 @@ type TPMInfo struct {
 
 func (x *TPMInfo) Reset() {
 	*x = TPMInfo{}
-	mi := &file_proto_node_proto_msgTypes[18]
+	mi := &file_proto_node_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1317,7 +1705,7 @@ func (x *TPMInfo) String() string {
 func (*TPMInfo) ProtoMessage() {}
 
 func (x *TPMInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[18]
+	mi := &file_proto_node_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1330,7 +1718,7 @@ func (x *TPMInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TPMInfo.ProtoReflect.Descriptor instead.
 func (*TPMInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{18}
+	return file_proto_node_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TPMInfo) GetPresent() bool {
@@ -1356,7 +1744,7 @@ type ListResourcesRequest struct {
 
 func (x *ListResourcesRequest) Reset() {
 	*x = ListResourcesRequest{}
-	mi := &file_proto_node_proto_msgTypes[19]
+	mi := &file_proto_node_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1368,7 +1756,7 @@ func (x *ListResourcesRequest) String() string {
 func (*ListResourcesRequest) ProtoMessage() {}
 
 func (x *ListResourcesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[19]
+	mi := &file_proto_node_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1381,7 +1769,7 @@ func (x *ListResourcesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResourcesRequest.ProtoReflect.Descriptor instead.
 func (*ListResourcesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{19}
+	return file_proto_node_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ListResourcesRequest) GetPrefix() string {
@@ -1405,7 +1793,7 @@ type Resource struct {
 
 func (x *Resource) Reset() {
 	*x = Resource{}
-	mi := &file_proto_node_proto_msgTypes[20]
+	mi := &file_proto_node_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1417,7 +1805,7 @@ func (x *Resource) String() string {
 func (*Resource) ProtoMessage() {}
 
 func (x *Resource) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[20]
+	mi := &file_proto_node_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1430,7 +1818,7 @@ func (x *Resource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resource.ProtoReflect.Descriptor instead.
 func (*Resource) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{20}
+	return file_proto_node_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Resource) GetId() string {
@@ -1484,7 +1872,7 @@ type ListResourcesResponse struct {
 
 func (x *ListResourcesResponse) Reset() {
 	*x = ListResourcesResponse{}
-	mi := &file_proto_node_proto_msgTypes[21]
+	mi := &file_proto_node_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1496,7 +1884,7 @@ func (x *ListResourcesResponse) String() string {
 func (*ListResourcesResponse) ProtoMessage() {}
 
 func (x *ListResourcesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[21]
+	mi := &file_proto_node_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1509,7 +1897,7 @@ func (x *ListResourcesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResourcesResponse.ProtoReflect.Descriptor instead.
 func (*ListResourcesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{21}
+	return file_proto_node_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListResourcesResponse) GetResources() []*Resource {
@@ -1528,7 +1916,7 @@ type GetResourceRequest struct {
 
 func (x *GetResourceRequest) Reset() {
 	*x = GetResourceRequest{}
-	mi := &file_proto_node_proto_msgTypes[22]
+	mi := &file_proto_node_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1540,7 +1928,7 @@ func (x *GetResourceRequest) String() string {
 func (*GetResourceRequest) ProtoMessage() {}
 
 func (x *GetResourceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[22]
+	mi := &file_proto_node_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1553,7 +1941,7 @@ func (x *GetResourceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetResourceRequest.ProtoReflect.Descriptor instead.
 func (*GetResourceRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{22}
+	return file_proto_node_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GetResourceRequest) GetId() string {
@@ -1572,7 +1960,7 @@ type ApplyResourcesRequest struct {
 
 func (x *ApplyResourcesRequest) Reset() {
 	*x = ApplyResourcesRequest{}
-	mi := &file_proto_node_proto_msgTypes[23]
+	mi := &file_proto_node_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1584,7 +1972,7 @@ func (x *ApplyResourcesRequest) String() string {
 func (*ApplyResourcesRequest) ProtoMessage() {}
 
 func (x *ApplyResourcesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[23]
+	mi := &file_proto_node_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1597,7 +1985,7 @@ func (x *ApplyResourcesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyResourcesRequest.ProtoReflect.Descriptor instead.
 func (*ApplyResourcesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{23}
+	return file_proto_node_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ApplyResourcesRequest) GetSpec() []byte {
@@ -1618,7 +2006,7 @@ type ApplyResourcesResponse struct {
 
 func (x *ApplyResourcesResponse) Reset() {
 	*x = ApplyResourcesResponse{}
-	mi := &file_proto_node_proto_msgTypes[24]
+	mi := &file_proto_node_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1630,7 +2018,7 @@ func (x *ApplyResourcesResponse) String() string {
 func (*ApplyResourcesResponse) ProtoMessage() {}
 
 func (x *ApplyResourcesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[24]
+	mi := &file_proto_node_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1643,7 +2031,7 @@ func (x *ApplyResourcesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyResourcesResponse.ProtoReflect.Descriptor instead.
 func (*ApplyResourcesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{24}
+	return file_proto_node_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ApplyResourcesResponse) GetApplied() int64 {
@@ -1676,7 +2064,7 @@ type DeleteResourceRequest struct {
 
 func (x *DeleteResourceRequest) Reset() {
 	*x = DeleteResourceRequest{}
-	mi := &file_proto_node_proto_msgTypes[25]
+	mi := &file_proto_node_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1688,7 +2076,7 @@ func (x *DeleteResourceRequest) String() string {
 func (*DeleteResourceRequest) ProtoMessage() {}
 
 func (x *DeleteResourceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[25]
+	mi := &file_proto_node_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1701,7 +2089,7 @@ func (x *DeleteResourceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteResourceRequest.ProtoReflect.Descriptor instead.
 func (*DeleteResourceRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{25}
+	return file_proto_node_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *DeleteResourceRequest) GetId() string {
@@ -1720,7 +2108,7 @@ type DeleteResourceResponse struct {
 
 func (x *DeleteResourceResponse) Reset() {
 	*x = DeleteResourceResponse{}
-	mi := &file_proto_node_proto_msgTypes[26]
+	mi := &file_proto_node_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1732,7 +2120,7 @@ func (x *DeleteResourceResponse) String() string {
 func (*DeleteResourceResponse) ProtoMessage() {}
 
 func (x *DeleteResourceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[26]
+	mi := &file_proto_node_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1745,7 +2133,7 @@ func (x *DeleteResourceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteResourceResponse.ProtoReflect.Descriptor instead.
 func (*DeleteResourceResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{26}
+	return file_proto_node_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *DeleteResourceResponse) GetDeleted() bool {
@@ -1764,7 +2152,7 @@ type ReconcileRequest struct {
 
 func (x *ReconcileRequest) Reset() {
 	*x = ReconcileRequest{}
-	mi := &file_proto_node_proto_msgTypes[27]
+	mi := &file_proto_node_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1776,7 +2164,7 @@ func (x *ReconcileRequest) String() string {
 func (*ReconcileRequest) ProtoMessage() {}
 
 func (x *ReconcileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[27]
+	mi := &file_proto_node_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1789,7 +2177,7 @@ func (x *ReconcileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconcileRequest.ProtoReflect.Descriptor instead.
 func (*ReconcileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{27}
+	return file_proto_node_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ReconcileRequest) GetDryRun() bool {
@@ -1810,7 +2198,7 @@ type ReconcileEvent struct {
 
 func (x *ReconcileEvent) Reset() {
 	*x = ReconcileEvent{}
-	mi := &file_proto_node_proto_msgTypes[28]
+	mi := &file_proto_node_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1822,7 +2210,7 @@ func (x *ReconcileEvent) String() string {
 func (*ReconcileEvent) ProtoMessage() {}
 
 func (x *ReconcileEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[28]
+	mi := &file_proto_node_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1835,7 +2223,7 @@ func (x *ReconcileEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconcileEvent.ProtoReflect.Descriptor instead.
 func (*ReconcileEvent) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{28}
+	return file_proto_node_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ReconcileEvent) GetPhase() string {
@@ -1868,7 +2256,7 @@ type StreamEventsRequest struct {
 
 func (x *StreamEventsRequest) Reset() {
 	*x = StreamEventsRequest{}
-	mi := &file_proto_node_proto_msgTypes[29]
+	mi := &file_proto_node_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1880,7 +2268,7 @@ func (x *StreamEventsRequest) String() string {
 func (*StreamEventsRequest) ProtoMessage() {}
 
 func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[29]
+	mi := &file_proto_node_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1893,7 +2281,7 @@ func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamEventsRequest.ProtoReflect.Descriptor instead.
 func (*StreamEventsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{29}
+	return file_proto_node_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *StreamEventsRequest) GetPrefix() string {
@@ -1914,7 +2302,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_proto_node_proto_msgTypes[30]
+	mi := &file_proto_node_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1926,7 +2314,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[30]
+	mi := &file_proto_node_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1939,7 +2327,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{30}
+	return file_proto_node_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *Event) GetType() string {
@@ -1971,7 +2359,7 @@ type GetHealthRequest struct {
 
 func (x *GetHealthRequest) Reset() {
 	*x = GetHealthRequest{}
-	mi := &file_proto_node_proto_msgTypes[31]
+	mi := &file_proto_node_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1983,7 +2371,7 @@ func (x *GetHealthRequest) String() string {
 func (*GetHealthRequest) ProtoMessage() {}
 
 func (x *GetHealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[31]
+	mi := &file_proto_node_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1996,7 +2384,7 @@ func (x *GetHealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHealthRequest.ProtoReflect.Descriptor instead.
 func (*GetHealthRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{31}
+	return file_proto_node_proto_rawDescGZIP(), []int{38}
 }
 
 type HealthReport struct {
@@ -2009,7 +2397,7 @@ type HealthReport struct {
 
 func (x *HealthReport) Reset() {
 	*x = HealthReport{}
-	mi := &file_proto_node_proto_msgTypes[32]
+	mi := &file_proto_node_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2021,7 +2409,7 @@ func (x *HealthReport) String() string {
 func (*HealthReport) ProtoMessage() {}
 
 func (x *HealthReport) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[32]
+	mi := &file_proto_node_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2034,7 +2422,7 @@ func (x *HealthReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthReport.ProtoReflect.Descriptor instead.
 func (*HealthReport) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{32}
+	return file_proto_node_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *HealthReport) GetChecks() []*CheckResult {
@@ -2064,7 +2452,7 @@ type CheckResult struct {
 
 func (x *CheckResult) Reset() {
 	*x = CheckResult{}
-	mi := &file_proto_node_proto_msgTypes[33]
+	mi := &file_proto_node_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2076,7 +2464,7 @@ func (x *CheckResult) String() string {
 func (*CheckResult) ProtoMessage() {}
 
 func (x *CheckResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[33]
+	mi := &file_proto_node_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2089,7 +2477,7 @@ func (x *CheckResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckResult.ProtoReflect.Descriptor instead.
 func (*CheckResult) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{33}
+	return file_proto_node_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *CheckResult) GetName() string {
@@ -2135,7 +2523,7 @@ type ShutdownRequest struct {
 
 func (x *ShutdownRequest) Reset() {
 	*x = ShutdownRequest{}
-	mi := &file_proto_node_proto_msgTypes[34]
+	mi := &file_proto_node_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2147,7 +2535,7 @@ func (x *ShutdownRequest) String() string {
 func (*ShutdownRequest) ProtoMessage() {}
 
 func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[34]
+	mi := &file_proto_node_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2160,7 +2548,7 @@ func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownRequest.ProtoReflect.Descriptor instead.
 func (*ShutdownRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{34}
+	return file_proto_node_proto_rawDescGZIP(), []int{41}
 }
 
 type ShutdownResponse struct {
@@ -2173,7 +2561,7 @@ type ShutdownResponse struct {
 
 func (x *ShutdownResponse) Reset() {
 	*x = ShutdownResponse{}
-	mi := &file_proto_node_proto_msgTypes[35]
+	mi := &file_proto_node_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2185,7 +2573,7 @@ func (x *ShutdownResponse) String() string {
 func (*ShutdownResponse) ProtoMessage() {}
 
 func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[35]
+	mi := &file_proto_node_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2198,7 +2586,7 @@ func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownResponse.ProtoReflect.Descriptor instead.
 func (*ShutdownResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{35}
+	return file_proto_node_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ShutdownResponse) GetSuccess() bool {
@@ -2223,7 +2611,7 @@ type ListGenerationsRequest struct {
 
 func (x *ListGenerationsRequest) Reset() {
 	*x = ListGenerationsRequest{}
-	mi := &file_proto_node_proto_msgTypes[36]
+	mi := &file_proto_node_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2235,7 +2623,7 @@ func (x *ListGenerationsRequest) String() string {
 func (*ListGenerationsRequest) ProtoMessage() {}
 
 func (x *ListGenerationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[36]
+	mi := &file_proto_node_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2248,7 +2636,7 @@ func (x *ListGenerationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListGenerationsRequest.ProtoReflect.Descriptor instead.
 func (*ListGenerationsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{36}
+	return file_proto_node_proto_rawDescGZIP(), []int{43}
 }
 
 type ListGenerationsResponse struct {
@@ -2260,7 +2648,7 @@ type ListGenerationsResponse struct {
 
 func (x *ListGenerationsResponse) Reset() {
 	*x = ListGenerationsResponse{}
-	mi := &file_proto_node_proto_msgTypes[37]
+	mi := &file_proto_node_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2272,7 +2660,7 @@ func (x *ListGenerationsResponse) String() string {
 func (*ListGenerationsResponse) ProtoMessage() {}
 
 func (x *ListGenerationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[37]
+	mi := &file_proto_node_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2285,7 +2673,7 @@ func (x *ListGenerationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListGenerationsResponse.ProtoReflect.Descriptor instead.
 func (*ListGenerationsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{37}
+	return file_proto_node_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ListGenerationsResponse) GetGenerations() []*GenerationInfo {
@@ -2305,7 +2693,7 @@ type GetGenerationRequest struct {
 
 func (x *GetGenerationRequest) Reset() {
 	*x = GetGenerationRequest{}
-	mi := &file_proto_node_proto_msgTypes[38]
+	mi := &file_proto_node_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2317,7 +2705,7 @@ func (x *GetGenerationRequest) String() string {
 func (*GetGenerationRequest) ProtoMessage() {}
 
 func (x *GetGenerationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[38]
+	mi := &file_proto_node_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2330,7 +2718,7 @@ func (x *GetGenerationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetGenerationRequest.ProtoReflect.Descriptor instead.
 func (*GetGenerationRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{38}
+	return file_proto_node_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetGenerationRequest) GetNumber() uint64 {
@@ -2363,7 +2751,7 @@ type GenerationInfo struct {
 
 func (x *GenerationInfo) Reset() {
 	*x = GenerationInfo{}
-	mi := &file_proto_node_proto_msgTypes[39]
+	mi := &file_proto_node_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2375,7 +2763,7 @@ func (x *GenerationInfo) String() string {
 func (*GenerationInfo) ProtoMessage() {}
 
 func (x *GenerationInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[39]
+	mi := &file_proto_node_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2388,7 +2776,7 @@ func (x *GenerationInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerationInfo.ProtoReflect.Descriptor instead.
 func (*GenerationInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{39}
+	return file_proto_node_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *GenerationInfo) GetNumber() uint64 {
@@ -2457,7 +2845,7 @@ type DiffGenerationsRequest struct {
 
 func (x *DiffGenerationsRequest) Reset() {
 	*x = DiffGenerationsRequest{}
-	mi := &file_proto_node_proto_msgTypes[40]
+	mi := &file_proto_node_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2469,7 +2857,7 @@ func (x *DiffGenerationsRequest) String() string {
 func (*DiffGenerationsRequest) ProtoMessage() {}
 
 func (x *DiffGenerationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[40]
+	mi := &file_proto_node_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2482,7 +2870,7 @@ func (x *DiffGenerationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiffGenerationsRequest.ProtoReflect.Descriptor instead.
 func (*DiffGenerationsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{40}
+	return file_proto_node_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *DiffGenerationsRequest) GetA() uint64 {
@@ -2510,7 +2898,7 @@ type DiffGenerationsResponse struct {
 
 func (x *DiffGenerationsResponse) Reset() {
 	*x = DiffGenerationsResponse{}
-	mi := &file_proto_node_proto_msgTypes[41]
+	mi := &file_proto_node_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2522,7 +2910,7 @@ func (x *DiffGenerationsResponse) String() string {
 func (*DiffGenerationsResponse) ProtoMessage() {}
 
 func (x *DiffGenerationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[41]
+	mi := &file_proto_node_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2535,7 +2923,7 @@ func (x *DiffGenerationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiffGenerationsResponse.ProtoReflect.Descriptor instead.
 func (*DiffGenerationsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{41}
+	return file_proto_node_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *DiffGenerationsResponse) GetAdded() []string {
@@ -2568,7 +2956,7 @@ type RollbackGenerationRequest struct {
 
 func (x *RollbackGenerationRequest) Reset() {
 	*x = RollbackGenerationRequest{}
-	mi := &file_proto_node_proto_msgTypes[42]
+	mi := &file_proto_node_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2580,7 +2968,7 @@ func (x *RollbackGenerationRequest) String() string {
 func (*RollbackGenerationRequest) ProtoMessage() {}
 
 func (x *RollbackGenerationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[42]
+	mi := &file_proto_node_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2593,7 +2981,7 @@ func (x *RollbackGenerationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollbackGenerationRequest.ProtoReflect.Descriptor instead.
 func (*RollbackGenerationRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{42}
+	return file_proto_node_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *RollbackGenerationRequest) GetTarget() uint64 {
@@ -2612,7 +3000,7 @@ type RollbackGenerationResponse struct {
 
 func (x *RollbackGenerationResponse) Reset() {
 	*x = RollbackGenerationResponse{}
-	mi := &file_proto_node_proto_msgTypes[43]
+	mi := &file_proto_node_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2624,7 +3012,7 @@ func (x *RollbackGenerationResponse) String() string {
 func (*RollbackGenerationResponse) ProtoMessage() {}
 
 func (x *RollbackGenerationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_proto_msgTypes[43]
+	mi := &file_proto_node_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2637,7 +3025,7 @@ func (x *RollbackGenerationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollbackGenerationResponse.ProtoReflect.Descriptor instead.
 func (*RollbackGenerationResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_proto_rawDescGZIP(), []int{43}
+	return file_proto_node_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *RollbackGenerationResponse) GetNewGeneration() uint64 {
@@ -2667,8 +3055,33 @@ const file_proto_node_proto_rawDesc = "" +
 	"\brevision\x18\x03 \x01(\x03R\brevision\")\n" +
 	"\x15DeleteKeyValueRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\"\x18\n" +
-	"\x16DeleteKeyValueResponse\"\x19\n" +
-	"\x17GetClusterStatusRequest\";\n" +
+	"\x16DeleteKeyValueResponse\"C\n" +
+	"\x13ListKeyValueRequest\x12\x16\n" +
+	"\x06prefix\x18\x01 \x01(\tR\x06prefix\x12\x14\n" +
+	"\x05stale\x18\x02 \x01(\bR\x05stale\"S\n" +
+	"\rKeyValueEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\x03R\brevision\"P\n" +
+	"\x14ListKeyValueResponse\x128\n" +
+	"\aentries\x18\x01 \x03(\v2\x1e.expanse.node.v1.KeyValueEntryR\aentries\"\x19\n" +
+	"\x17GetClusterStatusRequest\"=\n" +
+	"\x10HoldLeaseRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x15\n" +
+	"\x06ttl_ns\x18\x02 \x01(\x03R\x05ttlNs\"\x82\x01\n" +
+	"\n" +
+	"LeaseEvent\x12\x14\n" +
+	"\x05phase\x18\x01 \x01(\tR\x05phase\x12*\n" +
+	"\x11timestamp_unix_ns\x18\x02 \x01(\x03R\x0ftimestampUnixNs\x12\x16\n" +
+	"\x06holder\x18\x03 \x01(\tR\x06holder\x12\x1a\n" +
+	"\brevision\x18\x04 \x01(\x03R\brevision\"%\n" +
+	"\x0fGetLeaseRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"\x82\x01\n" +
+	"\tLeaseInfo\x12\x14\n" +
+	"\x05found\x18\x01 \x01(\bR\x05found\x12\x16\n" +
+	"\x06holder\x18\x02 \x01(\tR\x06holder\x12+\n" +
+	"\x12expires_at_unix_ns\x18\x03 \x01(\x03R\x0fexpiresAtUnixNs\x12\x1a\n" +
+	"\brevision\x18\x04 \x01(\x03R\brevision\";\n" +
 	"\x18GetClusterStatusResponse\x12\x1f\n" +
 	"\vreport_json\x18\x01 \x01(\fR\n" +
 	"reportJson\"\xbe\x03\n" +
@@ -2834,7 +3247,7 @@ const file_proto_node_proto_rawDesc = "" +
 	"\x0eHEALTH_HEALTHY\x10\x01\x12\x13\n" +
 	"\x0fHEALTH_DEGRADED\x10\x02\x12\x14\n" +
 	"\x10HEALTH_UNHEALTHY\x10\x03\x12\x12\n" +
-	"\x0eHEALTH_UNKNOWN\x10\x042\xf8\f\n" +
+	"\x0eHEALTH_UNKNOWN\x10\x042\xee\x0e\n" +
 	"\vNodeService\x12K\n" +
 	"\tGetStatus\x12!.expanse.node.v1.GetStatusRequest\x1a\x1b.expanse.node.v1.NodeStatus\x12P\n" +
 	"\fGetInventory\x12$.expanse.node.v1.GetInventoryRequest\x1a\x1a.expanse.node.v1.Inventory\x12^\n" +
@@ -2852,8 +3265,11 @@ const file_proto_node_proto_rawDesc = "" +
 	"\x12RollbackGeneration\x12*.expanse.node.v1.RollbackGenerationRequest\x1a+.expanse.node.v1.RollbackGenerationResponse\x12X\n" +
 	"\vPutKeyValue\x12#.expanse.node.v1.PutKeyValueRequest\x1a$.expanse.node.v1.PutKeyValueResponse\x12X\n" +
 	"\vGetKeyValue\x12#.expanse.node.v1.GetKeyValueRequest\x1a$.expanse.node.v1.GetKeyValueResponse\x12a\n" +
-	"\x0eDeleteKeyValue\x12&.expanse.node.v1.DeleteKeyValueRequest\x1a'.expanse.node.v1.DeleteKeyValueResponse\x12g\n" +
-	"\x10GetClusterStatus\x12(.expanse.node.v1.GetClusterStatusRequest\x1a).expanse.node.v1.GetClusterStatusResponseB\"Z github.com/expanse/expanse/protob\x06proto3"
+	"\x0eDeleteKeyValue\x12&.expanse.node.v1.DeleteKeyValueRequest\x1a'.expanse.node.v1.DeleteKeyValueResponse\x12[\n" +
+	"\fListKeyValue\x12$.expanse.node.v1.ListKeyValueRequest\x1a%.expanse.node.v1.ListKeyValueResponse\x12g\n" +
+	"\x10GetClusterStatus\x12(.expanse.node.v1.GetClusterStatusRequest\x1a).expanse.node.v1.GetClusterStatusResponse\x12M\n" +
+	"\tHoldLease\x12!.expanse.node.v1.HoldLeaseRequest\x1a\x1b.expanse.node.v1.LeaseEvent0\x01\x12H\n" +
+	"\bGetLease\x12 .expanse.node.v1.GetLeaseRequest\x1a\x1a.expanse.node.v1.LeaseInfoB\"Z github.com/expanse/expanse/protob\x06proto3"
 
 var (
 	file_proto_node_proto_rawDescOnce sync.Once
@@ -2868,7 +3284,7 @@ func file_proto_node_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_node_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_proto_node_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_proto_node_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_proto_node_proto_goTypes = []any{
 	(Health)(0),                        // 0: expanse.node.v1.Health
 	(NodeStatus_Status)(0),             // 1: expanse.node.v1.NodeStatus.Status
@@ -2880,102 +3296,116 @@ var file_proto_node_proto_goTypes = []any{
 	(*GetKeyValueResponse)(nil),        // 7: expanse.node.v1.GetKeyValueResponse
 	(*DeleteKeyValueRequest)(nil),      // 8: expanse.node.v1.DeleteKeyValueRequest
 	(*DeleteKeyValueResponse)(nil),     // 9: expanse.node.v1.DeleteKeyValueResponse
-	(*GetClusterStatusRequest)(nil),    // 10: expanse.node.v1.GetClusterStatusRequest
-	(*GetClusterStatusResponse)(nil),   // 11: expanse.node.v1.GetClusterStatusResponse
-	(*NodeStatus)(nil),                 // 12: expanse.node.v1.NodeStatus
-	(*GetInventoryRequest)(nil),        // 13: expanse.node.v1.GetInventoryRequest
-	(*Inventory)(nil),                  // 14: expanse.node.v1.Inventory
-	(*OSInfo)(nil),                     // 15: expanse.node.v1.OSInfo
-	(*CPUInfo)(nil),                    // 16: expanse.node.v1.CPUInfo
-	(*MemoryInfo)(nil),                 // 17: expanse.node.v1.MemoryInfo
-	(*DiskInfo)(nil),                   // 18: expanse.node.v1.DiskInfo
-	(*NICInfo)(nil),                    // 19: expanse.node.v1.NICInfo
-	(*GPUInfo)(nil),                    // 20: expanse.node.v1.GPUInfo
-	(*TPMInfo)(nil),                    // 21: expanse.node.v1.TPMInfo
-	(*ListResourcesRequest)(nil),       // 22: expanse.node.v1.ListResourcesRequest
-	(*Resource)(nil),                   // 23: expanse.node.v1.Resource
-	(*ListResourcesResponse)(nil),      // 24: expanse.node.v1.ListResourcesResponse
-	(*GetResourceRequest)(nil),         // 25: expanse.node.v1.GetResourceRequest
-	(*ApplyResourcesRequest)(nil),      // 26: expanse.node.v1.ApplyResourcesRequest
-	(*ApplyResourcesResponse)(nil),     // 27: expanse.node.v1.ApplyResourcesResponse
-	(*DeleteResourceRequest)(nil),      // 28: expanse.node.v1.DeleteResourceRequest
-	(*DeleteResourceResponse)(nil),     // 29: expanse.node.v1.DeleteResourceResponse
-	(*ReconcileRequest)(nil),           // 30: expanse.node.v1.ReconcileRequest
-	(*ReconcileEvent)(nil),             // 31: expanse.node.v1.ReconcileEvent
-	(*StreamEventsRequest)(nil),        // 32: expanse.node.v1.StreamEventsRequest
-	(*Event)(nil),                      // 33: expanse.node.v1.Event
-	(*GetHealthRequest)(nil),           // 34: expanse.node.v1.GetHealthRequest
-	(*HealthReport)(nil),               // 35: expanse.node.v1.HealthReport
-	(*CheckResult)(nil),                // 36: expanse.node.v1.CheckResult
-	(*ShutdownRequest)(nil),            // 37: expanse.node.v1.ShutdownRequest
-	(*ShutdownResponse)(nil),           // 38: expanse.node.v1.ShutdownResponse
-	(*ListGenerationsRequest)(nil),     // 39: expanse.node.v1.ListGenerationsRequest
-	(*ListGenerationsResponse)(nil),    // 40: expanse.node.v1.ListGenerationsResponse
-	(*GetGenerationRequest)(nil),       // 41: expanse.node.v1.GetGenerationRequest
-	(*GenerationInfo)(nil),             // 42: expanse.node.v1.GenerationInfo
-	(*DiffGenerationsRequest)(nil),     // 43: expanse.node.v1.DiffGenerationsRequest
-	(*DiffGenerationsResponse)(nil),    // 44: expanse.node.v1.DiffGenerationsResponse
-	(*RollbackGenerationRequest)(nil),  // 45: expanse.node.v1.RollbackGenerationRequest
-	(*RollbackGenerationResponse)(nil), // 46: expanse.node.v1.RollbackGenerationResponse
-	nil,                                // 47: expanse.node.v1.CheckResult.DetailsEntry
+	(*ListKeyValueRequest)(nil),        // 10: expanse.node.v1.ListKeyValueRequest
+	(*KeyValueEntry)(nil),              // 11: expanse.node.v1.KeyValueEntry
+	(*ListKeyValueResponse)(nil),       // 12: expanse.node.v1.ListKeyValueResponse
+	(*GetClusterStatusRequest)(nil),    // 13: expanse.node.v1.GetClusterStatusRequest
+	(*HoldLeaseRequest)(nil),           // 14: expanse.node.v1.HoldLeaseRequest
+	(*LeaseEvent)(nil),                 // 15: expanse.node.v1.LeaseEvent
+	(*GetLeaseRequest)(nil),            // 16: expanse.node.v1.GetLeaseRequest
+	(*LeaseInfo)(nil),                  // 17: expanse.node.v1.LeaseInfo
+	(*GetClusterStatusResponse)(nil),   // 18: expanse.node.v1.GetClusterStatusResponse
+	(*NodeStatus)(nil),                 // 19: expanse.node.v1.NodeStatus
+	(*GetInventoryRequest)(nil),        // 20: expanse.node.v1.GetInventoryRequest
+	(*Inventory)(nil),                  // 21: expanse.node.v1.Inventory
+	(*OSInfo)(nil),                     // 22: expanse.node.v1.OSInfo
+	(*CPUInfo)(nil),                    // 23: expanse.node.v1.CPUInfo
+	(*MemoryInfo)(nil),                 // 24: expanse.node.v1.MemoryInfo
+	(*DiskInfo)(nil),                   // 25: expanse.node.v1.DiskInfo
+	(*NICInfo)(nil),                    // 26: expanse.node.v1.NICInfo
+	(*GPUInfo)(nil),                    // 27: expanse.node.v1.GPUInfo
+	(*TPMInfo)(nil),                    // 28: expanse.node.v1.TPMInfo
+	(*ListResourcesRequest)(nil),       // 29: expanse.node.v1.ListResourcesRequest
+	(*Resource)(nil),                   // 30: expanse.node.v1.Resource
+	(*ListResourcesResponse)(nil),      // 31: expanse.node.v1.ListResourcesResponse
+	(*GetResourceRequest)(nil),         // 32: expanse.node.v1.GetResourceRequest
+	(*ApplyResourcesRequest)(nil),      // 33: expanse.node.v1.ApplyResourcesRequest
+	(*ApplyResourcesResponse)(nil),     // 34: expanse.node.v1.ApplyResourcesResponse
+	(*DeleteResourceRequest)(nil),      // 35: expanse.node.v1.DeleteResourceRequest
+	(*DeleteResourceResponse)(nil),     // 36: expanse.node.v1.DeleteResourceResponse
+	(*ReconcileRequest)(nil),           // 37: expanse.node.v1.ReconcileRequest
+	(*ReconcileEvent)(nil),             // 38: expanse.node.v1.ReconcileEvent
+	(*StreamEventsRequest)(nil),        // 39: expanse.node.v1.StreamEventsRequest
+	(*Event)(nil),                      // 40: expanse.node.v1.Event
+	(*GetHealthRequest)(nil),           // 41: expanse.node.v1.GetHealthRequest
+	(*HealthReport)(nil),               // 42: expanse.node.v1.HealthReport
+	(*CheckResult)(nil),                // 43: expanse.node.v1.CheckResult
+	(*ShutdownRequest)(nil),            // 44: expanse.node.v1.ShutdownRequest
+	(*ShutdownResponse)(nil),           // 45: expanse.node.v1.ShutdownResponse
+	(*ListGenerationsRequest)(nil),     // 46: expanse.node.v1.ListGenerationsRequest
+	(*ListGenerationsResponse)(nil),    // 47: expanse.node.v1.ListGenerationsResponse
+	(*GetGenerationRequest)(nil),       // 48: expanse.node.v1.GetGenerationRequest
+	(*GenerationInfo)(nil),             // 49: expanse.node.v1.GenerationInfo
+	(*DiffGenerationsRequest)(nil),     // 50: expanse.node.v1.DiffGenerationsRequest
+	(*DiffGenerationsResponse)(nil),    // 51: expanse.node.v1.DiffGenerationsResponse
+	(*RollbackGenerationRequest)(nil),  // 52: expanse.node.v1.RollbackGenerationRequest
+	(*RollbackGenerationResponse)(nil), // 53: expanse.node.v1.RollbackGenerationResponse
+	nil,                                // 54: expanse.node.v1.CheckResult.DetailsEntry
 }
 var file_proto_node_proto_depIdxs = []int32{
-	1,  // 0: expanse.node.v1.NodeStatus.status:type_name -> expanse.node.v1.NodeStatus.Status
-	15, // 1: expanse.node.v1.Inventory.os:type_name -> expanse.node.v1.OSInfo
-	16, // 2: expanse.node.v1.Inventory.cpu:type_name -> expanse.node.v1.CPUInfo
-	17, // 3: expanse.node.v1.Inventory.memory:type_name -> expanse.node.v1.MemoryInfo
-	18, // 4: expanse.node.v1.Inventory.disks:type_name -> expanse.node.v1.DiskInfo
-	19, // 5: expanse.node.v1.Inventory.nics:type_name -> expanse.node.v1.NICInfo
-	20, // 6: expanse.node.v1.Inventory.gpus:type_name -> expanse.node.v1.GPUInfo
-	21, // 7: expanse.node.v1.Inventory.tpm:type_name -> expanse.node.v1.TPMInfo
-	0,  // 8: expanse.node.v1.Resource.health:type_name -> expanse.node.v1.Health
-	23, // 9: expanse.node.v1.ListResourcesResponse.resources:type_name -> expanse.node.v1.Resource
-	36, // 10: expanse.node.v1.HealthReport.checks:type_name -> expanse.node.v1.CheckResult
-	2,  // 11: expanse.node.v1.HealthReport.overall:type_name -> expanse.node.v1.HealthReport.OverallStatus
-	0,  // 12: expanse.node.v1.CheckResult.status:type_name -> expanse.node.v1.Health
-	47, // 13: expanse.node.v1.CheckResult.details:type_name -> expanse.node.v1.CheckResult.DetailsEntry
-	42, // 14: expanse.node.v1.ListGenerationsResponse.generations:type_name -> expanse.node.v1.GenerationInfo
-	3,  // 15: expanse.node.v1.NodeService.GetStatus:input_type -> expanse.node.v1.GetStatusRequest
-	13, // 16: expanse.node.v1.NodeService.GetInventory:input_type -> expanse.node.v1.GetInventoryRequest
-	22, // 17: expanse.node.v1.NodeService.ListResources:input_type -> expanse.node.v1.ListResourcesRequest
-	25, // 18: expanse.node.v1.NodeService.GetResource:input_type -> expanse.node.v1.GetResourceRequest
-	26, // 19: expanse.node.v1.NodeService.ApplyResources:input_type -> expanse.node.v1.ApplyResourcesRequest
-	28, // 20: expanse.node.v1.NodeService.DeleteResource:input_type -> expanse.node.v1.DeleteResourceRequest
-	30, // 21: expanse.node.v1.NodeService.Reconcile:input_type -> expanse.node.v1.ReconcileRequest
-	32, // 22: expanse.node.v1.NodeService.StreamEvents:input_type -> expanse.node.v1.StreamEventsRequest
-	34, // 23: expanse.node.v1.NodeService.GetHealth:input_type -> expanse.node.v1.GetHealthRequest
-	37, // 24: expanse.node.v1.NodeService.Shutdown:input_type -> expanse.node.v1.ShutdownRequest
-	39, // 25: expanse.node.v1.NodeService.ListGenerations:input_type -> expanse.node.v1.ListGenerationsRequest
-	41, // 26: expanse.node.v1.NodeService.GetGeneration:input_type -> expanse.node.v1.GetGenerationRequest
-	43, // 27: expanse.node.v1.NodeService.DiffGenerations:input_type -> expanse.node.v1.DiffGenerationsRequest
-	45, // 28: expanse.node.v1.NodeService.RollbackGeneration:input_type -> expanse.node.v1.RollbackGenerationRequest
-	4,  // 29: expanse.node.v1.NodeService.PutKeyValue:input_type -> expanse.node.v1.PutKeyValueRequest
-	6,  // 30: expanse.node.v1.NodeService.GetKeyValue:input_type -> expanse.node.v1.GetKeyValueRequest
-	8,  // 31: expanse.node.v1.NodeService.DeleteKeyValue:input_type -> expanse.node.v1.DeleteKeyValueRequest
-	10, // 32: expanse.node.v1.NodeService.GetClusterStatus:input_type -> expanse.node.v1.GetClusterStatusRequest
-	12, // 33: expanse.node.v1.NodeService.GetStatus:output_type -> expanse.node.v1.NodeStatus
-	14, // 34: expanse.node.v1.NodeService.GetInventory:output_type -> expanse.node.v1.Inventory
-	24, // 35: expanse.node.v1.NodeService.ListResources:output_type -> expanse.node.v1.ListResourcesResponse
-	23, // 36: expanse.node.v1.NodeService.GetResource:output_type -> expanse.node.v1.Resource
-	27, // 37: expanse.node.v1.NodeService.ApplyResources:output_type -> expanse.node.v1.ApplyResourcesResponse
-	29, // 38: expanse.node.v1.NodeService.DeleteResource:output_type -> expanse.node.v1.DeleteResourceResponse
-	31, // 39: expanse.node.v1.NodeService.Reconcile:output_type -> expanse.node.v1.ReconcileEvent
-	33, // 40: expanse.node.v1.NodeService.StreamEvents:output_type -> expanse.node.v1.Event
-	35, // 41: expanse.node.v1.NodeService.GetHealth:output_type -> expanse.node.v1.HealthReport
-	38, // 42: expanse.node.v1.NodeService.Shutdown:output_type -> expanse.node.v1.ShutdownResponse
-	40, // 43: expanse.node.v1.NodeService.ListGenerations:output_type -> expanse.node.v1.ListGenerationsResponse
-	42, // 44: expanse.node.v1.NodeService.GetGeneration:output_type -> expanse.node.v1.GenerationInfo
-	44, // 45: expanse.node.v1.NodeService.DiffGenerations:output_type -> expanse.node.v1.DiffGenerationsResponse
-	46, // 46: expanse.node.v1.NodeService.RollbackGeneration:output_type -> expanse.node.v1.RollbackGenerationResponse
-	5,  // 47: expanse.node.v1.NodeService.PutKeyValue:output_type -> expanse.node.v1.PutKeyValueResponse
-	7,  // 48: expanse.node.v1.NodeService.GetKeyValue:output_type -> expanse.node.v1.GetKeyValueResponse
-	9,  // 49: expanse.node.v1.NodeService.DeleteKeyValue:output_type -> expanse.node.v1.DeleteKeyValueResponse
-	11, // 50: expanse.node.v1.NodeService.GetClusterStatus:output_type -> expanse.node.v1.GetClusterStatusResponse
-	33, // [33:51] is the sub-list for method output_type
-	15, // [15:33] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	11, // 0: expanse.node.v1.ListKeyValueResponse.entries:type_name -> expanse.node.v1.KeyValueEntry
+	1,  // 1: expanse.node.v1.NodeStatus.status:type_name -> expanse.node.v1.NodeStatus.Status
+	22, // 2: expanse.node.v1.Inventory.os:type_name -> expanse.node.v1.OSInfo
+	23, // 3: expanse.node.v1.Inventory.cpu:type_name -> expanse.node.v1.CPUInfo
+	24, // 4: expanse.node.v1.Inventory.memory:type_name -> expanse.node.v1.MemoryInfo
+	25, // 5: expanse.node.v1.Inventory.disks:type_name -> expanse.node.v1.DiskInfo
+	26, // 6: expanse.node.v1.Inventory.nics:type_name -> expanse.node.v1.NICInfo
+	27, // 7: expanse.node.v1.Inventory.gpus:type_name -> expanse.node.v1.GPUInfo
+	28, // 8: expanse.node.v1.Inventory.tpm:type_name -> expanse.node.v1.TPMInfo
+	0,  // 9: expanse.node.v1.Resource.health:type_name -> expanse.node.v1.Health
+	30, // 10: expanse.node.v1.ListResourcesResponse.resources:type_name -> expanse.node.v1.Resource
+	43, // 11: expanse.node.v1.HealthReport.checks:type_name -> expanse.node.v1.CheckResult
+	2,  // 12: expanse.node.v1.HealthReport.overall:type_name -> expanse.node.v1.HealthReport.OverallStatus
+	0,  // 13: expanse.node.v1.CheckResult.status:type_name -> expanse.node.v1.Health
+	54, // 14: expanse.node.v1.CheckResult.details:type_name -> expanse.node.v1.CheckResult.DetailsEntry
+	49, // 15: expanse.node.v1.ListGenerationsResponse.generations:type_name -> expanse.node.v1.GenerationInfo
+	3,  // 16: expanse.node.v1.NodeService.GetStatus:input_type -> expanse.node.v1.GetStatusRequest
+	20, // 17: expanse.node.v1.NodeService.GetInventory:input_type -> expanse.node.v1.GetInventoryRequest
+	29, // 18: expanse.node.v1.NodeService.ListResources:input_type -> expanse.node.v1.ListResourcesRequest
+	32, // 19: expanse.node.v1.NodeService.GetResource:input_type -> expanse.node.v1.GetResourceRequest
+	33, // 20: expanse.node.v1.NodeService.ApplyResources:input_type -> expanse.node.v1.ApplyResourcesRequest
+	35, // 21: expanse.node.v1.NodeService.DeleteResource:input_type -> expanse.node.v1.DeleteResourceRequest
+	37, // 22: expanse.node.v1.NodeService.Reconcile:input_type -> expanse.node.v1.ReconcileRequest
+	39, // 23: expanse.node.v1.NodeService.StreamEvents:input_type -> expanse.node.v1.StreamEventsRequest
+	41, // 24: expanse.node.v1.NodeService.GetHealth:input_type -> expanse.node.v1.GetHealthRequest
+	44, // 25: expanse.node.v1.NodeService.Shutdown:input_type -> expanse.node.v1.ShutdownRequest
+	46, // 26: expanse.node.v1.NodeService.ListGenerations:input_type -> expanse.node.v1.ListGenerationsRequest
+	48, // 27: expanse.node.v1.NodeService.GetGeneration:input_type -> expanse.node.v1.GetGenerationRequest
+	50, // 28: expanse.node.v1.NodeService.DiffGenerations:input_type -> expanse.node.v1.DiffGenerationsRequest
+	52, // 29: expanse.node.v1.NodeService.RollbackGeneration:input_type -> expanse.node.v1.RollbackGenerationRequest
+	4,  // 30: expanse.node.v1.NodeService.PutKeyValue:input_type -> expanse.node.v1.PutKeyValueRequest
+	6,  // 31: expanse.node.v1.NodeService.GetKeyValue:input_type -> expanse.node.v1.GetKeyValueRequest
+	8,  // 32: expanse.node.v1.NodeService.DeleteKeyValue:input_type -> expanse.node.v1.DeleteKeyValueRequest
+	10, // 33: expanse.node.v1.NodeService.ListKeyValue:input_type -> expanse.node.v1.ListKeyValueRequest
+	13, // 34: expanse.node.v1.NodeService.GetClusterStatus:input_type -> expanse.node.v1.GetClusterStatusRequest
+	14, // 35: expanse.node.v1.NodeService.HoldLease:input_type -> expanse.node.v1.HoldLeaseRequest
+	16, // 36: expanse.node.v1.NodeService.GetLease:input_type -> expanse.node.v1.GetLeaseRequest
+	19, // 37: expanse.node.v1.NodeService.GetStatus:output_type -> expanse.node.v1.NodeStatus
+	21, // 38: expanse.node.v1.NodeService.GetInventory:output_type -> expanse.node.v1.Inventory
+	31, // 39: expanse.node.v1.NodeService.ListResources:output_type -> expanse.node.v1.ListResourcesResponse
+	30, // 40: expanse.node.v1.NodeService.GetResource:output_type -> expanse.node.v1.Resource
+	34, // 41: expanse.node.v1.NodeService.ApplyResources:output_type -> expanse.node.v1.ApplyResourcesResponse
+	36, // 42: expanse.node.v1.NodeService.DeleteResource:output_type -> expanse.node.v1.DeleteResourceResponse
+	38, // 43: expanse.node.v1.NodeService.Reconcile:output_type -> expanse.node.v1.ReconcileEvent
+	40, // 44: expanse.node.v1.NodeService.StreamEvents:output_type -> expanse.node.v1.Event
+	42, // 45: expanse.node.v1.NodeService.GetHealth:output_type -> expanse.node.v1.HealthReport
+	45, // 46: expanse.node.v1.NodeService.Shutdown:output_type -> expanse.node.v1.ShutdownResponse
+	47, // 47: expanse.node.v1.NodeService.ListGenerations:output_type -> expanse.node.v1.ListGenerationsResponse
+	49, // 48: expanse.node.v1.NodeService.GetGeneration:output_type -> expanse.node.v1.GenerationInfo
+	51, // 49: expanse.node.v1.NodeService.DiffGenerations:output_type -> expanse.node.v1.DiffGenerationsResponse
+	53, // 50: expanse.node.v1.NodeService.RollbackGeneration:output_type -> expanse.node.v1.RollbackGenerationResponse
+	5,  // 51: expanse.node.v1.NodeService.PutKeyValue:output_type -> expanse.node.v1.PutKeyValueResponse
+	7,  // 52: expanse.node.v1.NodeService.GetKeyValue:output_type -> expanse.node.v1.GetKeyValueResponse
+	9,  // 53: expanse.node.v1.NodeService.DeleteKeyValue:output_type -> expanse.node.v1.DeleteKeyValueResponse
+	12, // 54: expanse.node.v1.NodeService.ListKeyValue:output_type -> expanse.node.v1.ListKeyValueResponse
+	18, // 55: expanse.node.v1.NodeService.GetClusterStatus:output_type -> expanse.node.v1.GetClusterStatusResponse
+	15, // 56: expanse.node.v1.NodeService.HoldLease:output_type -> expanse.node.v1.LeaseEvent
+	17, // 57: expanse.node.v1.NodeService.GetLease:output_type -> expanse.node.v1.LeaseInfo
+	37, // [37:58] is the sub-list for method output_type
+	16, // [16:37] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_proto_node_proto_init() }
@@ -2989,7 +3419,7 @@ func file_proto_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_node_proto_rawDesc), len(file_proto_node_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   45,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

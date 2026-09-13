@@ -23,6 +23,7 @@ import (
 	"github.com/expanse/expanse/internal/agent/inventory"
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/generation"
+	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
@@ -570,6 +571,113 @@ func (s *Server) DeleteKeyValue(ctx context.Context, req *pb.DeleteKeyValueReque
 		return nil, mapErr("DeleteKeyValue", err)
 	}
 	return &pb.DeleteKeyValueResponse{}, nil
+}
+
+// ListKeyValue does a prefix scan: linearizable by default (followers
+// forward), or the local FSM copy when stale is set (§4.10.3).
+func (s *Server) ListKeyValue(ctx context.Context, req *pb.ListKeyValueRequest) (*pb.ListKeyValueResponse, error) {
+	c := ctx
+	if req.GetStale() {
+		c = store.WithStale(ctx)
+	}
+	entries, err := s.store.List(c, store.Key(req.GetPrefix()))
+	if err != nil {
+		return nil, mapErr("ListKeyValue", err)
+	}
+	res := &pb.ListKeyValueResponse{}
+	for _, e := range entries {
+		res.Entries = append(res.Entries, &pb.KeyValueEntry{Key: string(e.Key), Value: e.Value, Revision: int64(e.Revision)})
+	}
+	return res, nil
+}
+
+// HoldLease acquires (or takes over an expired) lease and holds it for
+// the life of the stream: the lease.Manager renews at TTL/3 and closes
+// Done() on renewal failure (§4.3); this handler streams lifecycle
+// events with wall-clock timestamps — the guard-band evidence the VM
+// tests assert on — and releases explicitly when the client goes away.
+func (s *Server) HoldLease(req *pb.HoldLeaseRequest, stream pb.NodeService_HoldLeaseServer) error {
+	name := req.GetName()
+	if name == "" {
+		return status.Error(codes.InvalidArgument, "HoldLease: empty name")
+	}
+	ttl := time.Duration(req.GetTtlNs())
+	if ttl <= 0 {
+		ttl = lease.DefaultTTL
+	}
+	mgr := lease.NewManager(s.store, s.agent.NodeID())
+	ctx := stream.Context()
+	h, err := mgr.TryAcquire(ctx, name, ttl)
+	switch {
+	case errors.Is(err, errors.KindConflict):
+		return status.Error(codes.Aborted, "HoldLease: lease held by another holder")
+	case err != nil:
+		return mapErr("HoldLease", err)
+	}
+
+	ev := make(chan *pb.LeaseEvent, 16)
+	emit := func(phase string) {
+		cur := h.CurrentLease()
+		select {
+		case ev <- &pb.LeaseEvent{
+			Phase:           phase,
+			TimestampUnixNs: time.Now().UnixNano(),
+			Holder:          cur.Holder,
+			Revision:        int64(cur.Revision),
+		}:
+		default: // never block the renewal path on a slow stream
+		}
+	}
+	go func() {
+		defer close(ev)
+		emit("acquired")
+		t := time.NewTicker(ttl / 6)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				// Client went away: explicit release (also closes
+				// Done, but the release is what frees the name).
+				rctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_ = mgr.Release(rctx, h) //nolint:errcheck — best effort
+				return
+			case <-h.Done():
+				emit("lost")
+				return
+			case <-t.C:
+				if h.Valid() {
+					emit("renewed")
+				}
+			}
+		}
+	}()
+	for e := range ev {
+		if err := stream.Send(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetLease reports the stored lease state (even if expired).
+func (s *Server) GetLease(ctx context.Context, req *pb.GetLeaseRequest) (*pb.LeaseInfo, error) {
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "GetLease: empty name")
+	}
+	l, err := lease.Inspect(ctx, s.store, req.GetName())
+	if err != nil {
+		return nil, mapErr("GetLease", err)
+	}
+	if l == nil {
+		return &pb.LeaseInfo{Found: false}, nil
+	}
+	return &pb.LeaseInfo{
+		Found:           true,
+		Holder:          l.Holder,
+		ExpiresAtUnixNs: l.ExpiresAt.UnixNano(),
+		Revision:        int64(l.Revision),
+	}, nil
 }
 
 // GetClusterStatus builds the §5 cluster report from the local store.

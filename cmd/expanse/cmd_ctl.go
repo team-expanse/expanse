@@ -204,8 +204,85 @@ func newCtlCmd() *cobra.Command {
 			})
 		},
 	}
-	kv.AddCommand(kvPut, kvGet, kvDel)
+	kvList := &cobra.Command{
+		Use:   "list <prefix>",
+		Short: "List keys under a prefix (linearizable by default; --stale for the local copy)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				res, err := c.ListKeyValue(ctx, &pb.ListKeyValueRequest{Prefix: args[0], Stale: kvStale})
+				if err != nil {
+					return fmt.Errorf("ListKeyValue: %w", err)
+				}
+				for _, e := range res.GetEntries() {
+					fmt.Printf("%s\t%d\t%s\n", e.GetKey(), e.GetRevision(), e.GetValue())
+				}
+				return nil
+			})
+		},
+	}
+	kvList.Flags().BoolVar(&kvStale, "stale", false, "serve the local FSM copy (works when degraded, §4.10.3)")
+	kv.AddCommand(kvPut, kvGet, kvDel, kvList)
 	cmd.AddCommand(kv)
+
+	// lease: §4.3 singleton leases. `hold` runs the holder loop
+	// server-side (renewal at TTL/3, loss detection) and streams the
+	// lifecycle events with timestamps — the guard-band evidence.
+	leaseCmd := &cobra.Command{Use: "lease", Short: "Singleton lease operations (§4.3)"}
+	var leaseTTL string
+	leaseHold := &cobra.Command{
+		Use:   "hold <name>",
+		Short: "Acquire and hold a lease; stream lifecycle events until it is lost",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ttl, err := parseDuration(leaseTTL)
+			if err != nil {
+				return fmt.Errorf("--ttl: %w", err)
+			}
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				stream, err := c.HoldLease(ctx, &pb.HoldLeaseRequest{Name: args[0], TtlNs: int64(ttl)})
+				if err != nil {
+					return fmt.Errorf("HoldLease: %w", err)
+				}
+				for {
+					ev, err := stream.Recv()
+					if err == io.EOF {
+						return nil
+					}
+					if err != nil {
+						return fmt.Errorf("HoldLease: %w", err)
+					}
+					fmt.Printf("%s %d\n", ev.GetPhase(), ev.GetTimestampUnixNs())
+				}
+			})
+		},
+	}
+	leaseHold.Flags().StringVar(&leaseTTL, "ttl", "15s", "lease time-to-live")
+	leaseHolder := &cobra.Command{
+		Use:   "holder <name>",
+		Short: "Show a lease's stored holder and expiry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				res, err := c.GetLease(ctx, &pb.GetLeaseRequest{Name: args[0]})
+				if err != nil {
+					return fmt.Errorf("GetLease: %w", err)
+				}
+				if !res.GetFound() {
+					fmt.Println("(none)")
+					return nil
+				}
+				exp := "never"
+				if res.GetExpiresAtUnixNs() != 0 {
+					exp = time.Unix(0, res.GetExpiresAtUnixNs()).UTC().Format(time.RFC3339Nano)
+				}
+				fmt.Printf("holder:    %s\nexpires:   %s\nrevision:  %d\n", res.GetHolder(), exp, res.GetRevision())
+				return nil
+			})
+		},
+	}
+	leaseCmd.AddCommand(leaseHold, leaseHolder)
+	cmd.AddCommand(leaseCmd)
 	return cmd
 }
 

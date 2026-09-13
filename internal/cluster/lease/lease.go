@@ -232,6 +232,24 @@ func (m *Manager) Holder(ctx context.Context, name string) (string, error) {
 	return v.Holder, nil
 }
 
+// Inspect returns the stored lease state (expired or not), or
+// (nil, nil) when no lease key exists. Read-only — unlike Holder it
+// does not judge expiry, so callers can show the full record.
+func Inspect(ctx context.Context, st store.Store, name string) (*Lease, error) {
+	e, err := st.Get(ctx, store.Key(Prefix+name))
+	if errors.Is(err, errors.KindNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindUnavailable, "lease.Inspect", err.Error())
+	}
+	v, derr := decodeValue(e.Value)
+	if derr != nil {
+		return nil, derr
+	}
+	return &Lease{Name: name, Holder: v.Holder, Term: v.Term, ExpiresAt: time.Unix(0, v.ExpiresAtUnix), Revision: e.Revision}, nil
+}
+
 func mustEncode(name, holder string, term uint64, expires time.Time) []byte {
 	b, err := encodeValue(Lease{Name: name, Holder: holder, Term: term, ExpiresAt: expires})
 	if err != nil {

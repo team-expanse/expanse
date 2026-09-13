@@ -68,6 +68,10 @@
           cluster-leader-failover = mkTest "cluster-leader-failover" ./nix/tests/cluster-leader-failover.nix;
           cluster-node-loss = mkTest "cluster-node-loss" ./nix/tests/cluster-node-loss.nix;
           cluster-full-restart = mkTest "cluster-full-restart" ./nix/tests/cluster-full-restart.nix;
+          cluster-partition = mkTest "cluster-partition" ./nix/tests/cluster-partition.nix;
+          cluster-join-security = mkTest "cluster-join-security" ./nix/tests/cluster-join-security.nix;
+          cluster-witness = mkTest "cluster-witness" ./nix/tests/cluster-witness.nix;
+          cluster-generations = mkTest "cluster-generations" ./nix/tests/cluster-generations.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
