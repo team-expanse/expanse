@@ -219,3 +219,28 @@ func TestRollbackClientSide(t *testing.T) {
 		t.Errorf("rollback to 99: err = %v, want KindInvalid", err)
 	}
 }
+
+// TestGetAndDiffEmpty covers generation metadata reads and the empty
+// diff shape.
+func TestGetAndDiffEmpty(t *testing.T) {
+	ctx := context.Background()
+	st := boltAt(t)
+	writeGen(t, ctx, st, 3, map[store.Key][]byte{store.Key("/x"): []byte("1")})
+
+	g, err := Get(ctx, st, 3)
+	if err != nil {
+		t.Fatalf("Get(3): %v", err)
+	}
+	if g.Number != 3 || g.CreatedBy != "system" {
+		t.Errorf("Get = %+v", g)
+	}
+	if _, err := Get(ctx, st, 99); !errors.Is(err, errors.KindNotFound) {
+		t.Errorf("Get(99) = %v, want not-found", err)
+	}
+	if !(Diff{}).Empty() {
+		t.Error("zero Diff must be empty")
+	}
+	if (Diff{Added: []string{"/x"}}).Empty() {
+		t.Error("non-empty Diff must not be empty")
+	}
+}

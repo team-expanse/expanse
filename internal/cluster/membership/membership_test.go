@@ -276,3 +276,33 @@ func mustState(t *testing.T, a agent, id string) membership.NodeState {
 	}
 	return s
 }
+
+// TestAgentLeave: a graceful Leave announces departure — peers get an
+// EventLeave promptly (vs ~3s crash timeout for Shutdown).
+func TestAgentLeave(t *testing.T) {
+	ports := []int{freePort(t), freePort(t)}
+	nodes := []agent{
+		newAgent(t, "n0", ports[0], secretA),
+		newAgent(t, "n1", ports[1], secretA),
+	}
+	if n, err := nodes[1].a.Join([]string{fmt.Sprintf("127.0.0.1:%d", ports[0])}); err != nil || n == 0 {
+		t.Fatalf("join: %d nodes contacted, err=%v", n, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(nodes[0].a.Members()) == 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if err := nodes[1].a.Leave(2 * time.Second); err != nil {
+		t.Fatalf("Leave: %v", err)
+	}
+	// n0 must see the leave event.
+	select {
+	case <-nodes[0].events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no leave event on survivor within 5s")
+	}
+}

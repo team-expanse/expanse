@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -466,5 +467,93 @@ func TestAcquireBlocksUntilAvailable(t *testing.T) {
 	}
 	if !h.Valid() {
 		t.Error("lease not valid")
+	}
+}
+
+// TestInspect covers the raw record reader: existing, missing, and the
+// rendered log form.
+func TestInspect(t *testing.T) {
+	st := newBoltStore(t)
+	ctx := context.Background()
+
+	// Missing → (nil, nil).
+	got, err := lease.Inspect(ctx, st, "nope")
+	if err != nil || got != nil {
+		t.Fatalf("Inspect(missing) = (%v, %v), want (nil, nil)", got, err)
+	}
+
+	m := lease.NewManager(st, "node-a")
+	h, err := m.Acquire(ctx, "inspect-me", time.Second)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer func() { _ = m.Release(ctx, h) }()
+
+	rec, err := lease.Inspect(ctx, st, "inspect-me")
+	if err != nil || rec == nil {
+		t.Fatalf("Inspect = (%v, %v)", rec, err)
+	}
+	if rec.Holder != "node-a" {
+		t.Errorf("holder = %q", rec.Holder)
+	}
+	if rec.ExpiresAt.Before(time.Now()) {
+		t.Errorf("expiry %v already passed", rec.ExpiresAt)
+	}
+	if s := rec.String(); !strings.Contains(s, "inspect-me") || !strings.Contains(s, "node-a") {
+		t.Errorf("String() = %q", s)
+	}
+}
+
+// TestWithTermFunc covers the fencing-term attachment.
+func TestWithTermFunc(t *testing.T) {
+	st := newBoltStore(t)
+	ctx := context.Background()
+	term := uint64(7)
+	m := lease.NewManager(st, "node-a").WithTermFunc(func() uint64 { return term })
+	h, err := m.Acquire(ctx, "termed", time.Second)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer func() { _ = m.Release(ctx, h) }()
+	rec, err := lease.Inspect(ctx, st, "termed")
+	if err != nil || rec == nil {
+		t.Fatalf("Inspect = (%v, %v)", rec, err)
+	}
+	if rec.Term != 7 {
+		t.Errorf("term = %d, want 7", rec.Term)
+	}
+}
+
+// TestAcquireBlocksThenAcquires covers the blocking Acquire retry
+// loop: a contender waits while the lease is live (holder auto-renews)
+// and acquires as soon as the holder releases.
+func TestAcquireBlocksThenAcquires(t *testing.T) {
+	st := newBoltStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	first := lease.NewManager(st, "node-a")
+	h, err := first.Acquire(ctx, "contention", time.Second)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer func() { _ = first.Release(context.Background(), h) }()
+
+	second := lease.NewManager(st, "node-b")
+	start := time.Now()
+	go func() { // release after the contender has begun waiting
+		time.Sleep(400 * time.Millisecond)
+		_ = first.Release(context.Background(), h)
+	}()
+	h2, err := second.Acquire(ctx, "contention", 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("blocking Acquire: %v", err)
+	}
+	defer func() { _ = second.Release(context.Background(), h2) }()
+	if time.Since(start) < 300*time.Millisecond {
+		t.Errorf("Acquire succeeded too early (%v) — holder may have been bypassed", time.Since(start))
+	}
+	rec, err := lease.Inspect(ctx, st, "contention")
+	if err != nil || rec == nil || rec.Holder != "node-b" {
+		t.Errorf("holder after takeover = %+v %v", rec, err)
 	}
 }

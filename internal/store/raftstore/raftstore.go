@@ -437,6 +437,9 @@ func (s *Store) LinearGet(ctx context.Context, k store.Key) (*store.Entry, error
 // LinearList is the leader-side endpoint of forwarded linearizable reads.
 func (s *Store) LinearList(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
 	if !s.IsLeader() {
+		if s.readFwd != nil {
+			return s.readFwd.ForwardList(ctx, prefix)
+		}
 		return nil, errors.New(errors.KindUnavailable, "raftstore.LinearList", "not leader")
 	}
 	if err := s.barrier(ctx); err != nil {

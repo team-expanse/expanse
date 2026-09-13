@@ -21,10 +21,20 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-// ServeJoinEndpoint runs the leader-side JoinService on :7446 (TLS 1.3
-// with this node's cert) until ctx is canceled. Safe on every node: the
+// ServeJoinEndpoint runs the leader-side JoinService on the fixed join
+// port (config.PortJoin) until ctx is canceled. Safe on every node: the
 // service itself redirects non-leaders with a leader_join hint.
 func ServeJoinEndpoint(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, secret []byte, dataDir, clusterID string) error {
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", config.PortJoin))
+	if err != nil {
+		return errors.Wrap(err, errors.KindUnavailable, "control.ServeJoinEndpoint", "bind :7446: "+err.Error())
+	}
+	return ServeJoinEndpointOn(ctx, st, clusterCA, secret, dataDir, clusterID, ln)
+}
+
+// ServeJoinEndpointOn is ServeJoinEndpoint over a caller-provided
+// listener (tests bind a free loopback port; production binds :7446).
+func ServeJoinEndpointOn(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, secret []byte, dataDir, clusterID string, ln net.Listener) error {
 	certPEM, err := os.ReadFile(filepath.Join(dataDir, NodeCertFile))
 	if err != nil {
 		return errors.New(errors.KindNotFound, "control.ServeJoinEndpoint", "node cert missing: "+err.Error())
@@ -50,10 +60,6 @@ func ServeJoinEndpoint(ctx context.Context, st *raftstore.Store, clusterCA *ca.C
 			}
 			return net.JoinHostPort(host, fmt.Sprintf("%d", config.PortJoin)), true
 		},
-	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", config.PortJoin))
-	if err != nil {
-		return errors.Wrap(err, errors.KindUnavailable, "control.ServeJoinEndpoint", "bind :7446: "+err.Error())
 	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(join.ServerTLSConfig(pair, bundle))))
 	svc.Register(srv)
@@ -136,16 +142,24 @@ func membershipCheck(ctx context.Context, st *raftstore.Store) func() []string {
 // endpoint so followers can forward writes and linearizable reads to
 // the leader. Peers must present a cluster-CA-signed cert whose CN is
 // a current member (live membership check). Blocks until ctx is done.
+// ServeInternalEndpoint runs the node↔node gRPC service on the fixed
+// API port (config.PortAPI) until ctx is done.
 func ServeInternalEndpoint(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, dataDir string) error {
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", config.PortAPI))
+	if err != nil {
+		return errors.Wrap(err, errors.KindUnavailable, "control.ServeInternalEndpoint", "bind :7443: "+err.Error())
+	}
+	return ServeInternalEndpointOn(ctx, st, clusterCA, dataDir, ln)
+}
+
+// ServeInternalEndpointOn is ServeInternalEndpoint over a
+// caller-provided listener (tests bind a free loopback port).
+func ServeInternalEndpointOn(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, dataDir string, ln net.Listener) error {
 	tlsCfg, err := InternalTLS(ctx, st, clusterCA, dataDir)
 	if err != nil {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", config.PortAPI))
-	if err != nil {
-		return errors.Wrap(err, errors.KindUnavailable, "control.ServeInternalEndpoint", "bind :7443: "+err.Error())
-	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 	pb.RegisterInternalStoreServiceServer(srv, raftstore.NewForwardServer(st))
 	go func() {

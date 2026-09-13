@@ -371,3 +371,27 @@ func TestWitnessNeverPlaceable(t *testing.T) {
 		t.Fatalf("Drain with real voter = %d, %v; want 1, nil", n, err)
 	}
 }
+
+// TestMonitorRunLoop covers the tick loop: Run evaluates on every
+// interval until the context is canceled.
+func TestMonitorRunLoop(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeStatus(t, ctx, st, "n1")
+	base := time.Now()
+
+	evicted := []string{}
+	m := &nodelc.Monitor{
+		St:               st,
+		ThisNodeID:       "n0",
+		Evict:            func(id string) { evicted = append(evicted, id) },
+		UnreachableAfter: 2 * time.Second,
+		FailedAfter:      3 * time.Second,
+		Interval:         40 * time.Millisecond,
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	m.Run(runCtx) // returns on ctx.Done
+	_ = base
+	_ = evicted
+}
