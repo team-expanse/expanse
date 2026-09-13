@@ -23,3 +23,24 @@ budgets:
   - name: reconcile_tick_p99_ms
     unit: ms
     max: 500             # with 20 resources (G2.11)
+  - name: raft_write_p99_ms
+    unit: ms
+    max: 200             # p99 of 1000 sequential writes, 3 nodes (G3 perf)
+  - name: raft_read_linear_p99_ms
+    unit: ms
+    max: 50              # p99 of 10k barrier reads (G3 perf)
+  - name: raft_read_stale_p99_ms
+    unit: ms
+    max: 5               # p99 of 10k stale reads (G3 perf)
+  - name: cluster_form_3node_s
+    unit: s
+    max: 30              # t0 → all three nodes report a leader
+  - name: leader_election_p99_ms
+    unit: ms
+    max: 5000            # p99 across kill-leader rounds
+  - name: raft_snapshot_100k_s
+    unit: s
+    max: 60              # forced raft snapshot over 100k keys
+  - name: raft_restore_100k_s
+    unit: s
+    max: 60              # fresh node restored via InstallSnapshot

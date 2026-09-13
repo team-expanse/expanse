@@ -84,6 +84,14 @@ func CheckAll(budgets []Budget) error {
 		case "install_footprint", "boot_time_ms":
 			// Measured inside the VM tests (nix/tests/*), not here.
 			b.Measured = -1
+		case "raft_write_p99_ms", "raft_read_linear_p99_ms", "raft_read_stale_p99_ms",
+			"cluster_form_3node_s", "leader_election_p99_ms",
+			"raft_snapshot_100k_s", "raft_restore_100k_s":
+			// Measured by the dedicated cluster tests in raft_perf_test.go
+			// (real in-process rafts, several minutes of work). CheckAll
+			// leaves them unmeasured (-1 = pass) so TestBudgets does not
+			// re-boot multiple rafts in one run.
+			b.Measured = -1
 		default:
 			b.Measured = -1
 		}
