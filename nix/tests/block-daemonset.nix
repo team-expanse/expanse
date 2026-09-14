@@ -80,12 +80,19 @@ in
 
     with subtest("cordon a node: daemonset stays (ignores cordon)"):
         # The node-lifecycle CLI opens the node's local bolt store, so
-        # it cannot run while the daemon holds the lock (the Phase 03
-        # stop → CLI → start dance). Cordon must run on the leader.
-        n1.succeed("systemctl stop expansed.service")
-        n1.succeed("expanse ctl node cordon n2")
-        n1.succeed("systemctl start expansed.service")
-        n1.wait_for_unit("expansed.service")
+        # it cannot run while that daemon holds the lock (the Phase 03
+        # stop → CLI → start dance), and it must run on the raft
+        # leader — which may have moved to n4 after the join. Find the
+        # leader via the cluster status (agent socket), then run the
+        # cordon there.
+        rc, out = n2.execute(f"expanse cluster status {SOCK}")
+        lip = out.split("leader:")[1].split(":")[0].strip()
+        m = {"192.168.1.1": n1, "192.168.1.2": n2,
+             "192.168.1.3": n3, "192.168.1.4": n4}[lip]
+        m.succeed("systemctl stop expansed.service")
+        m.succeed("expanse ctl node cordon n2")
+        m.succeed("systemctl start expansed.service")
+        m.wait_for_unit("expansed.service")
         # Convergence wait: the leader's own daemon restart makes n1's
         # readiness flap for a pass or two (its daemonset replica may
         # be culled and re-added), so settle first. The INVARIANT under

@@ -71,9 +71,14 @@ in
         ProtectSystem=strict
         ProtectHome=yes
         RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-        SystemCallFilter=@system-service
+        # No SystemCallFilter: some binary-backed workloads (e.g.
+        # node_exporter) use syscall families outside @system-service
+        # and die with SIGSYS; the other sandbox options remain.
         TasksMax=512
         IOWeight=100
+        # Binary-backed blocks exec upstream binaries (nginx, redis,
+        # …) from the system profile (T24 workloads).
+        Environment=PATH=/run/current-system/sw/bin
         ExecStart=${pkgs.expanse}/bin/expanse-block-run %i
       '';
     };

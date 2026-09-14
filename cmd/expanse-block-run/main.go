@@ -6,15 +6,17 @@
 // config) is written by the node agent to
 // /run/expanse/block-replica/<instance>.json before the unit starts.
 //
-// The binary resolves the block type to a workload:
-//   - util/echo: stdlib HTTP echo server (port/body from --config JSON
-//     in the spec's args) — the scheduler/lifecycle test workload.
-//   - anything else: idle placeholder (sleeps forever) until per-type
-//     runtimes land with the shipped-block workloads (T24).
+// The binary resolves the block type to a workload (shipped types in
+// workloads.go):
+//   - util/echo: stdlib HTTP echo server
+//   - web/nginx, db/redis, monitor/node-exporter, ai/ollama: upstream
+//     binaries from PATH (config → flags/generated conf)
+//   - web/static-site: native Go file server from the config index
+//   - anything else: idle placeholder (unknown catalog types have no
+//     runtime contract yet; they come up healthy but idle)
 //
-// Runtime wiring keeps the block catalog's module.nix contract (T05)
-// authoritative for real workloads; this helper only needs to make the
-// pipeline — deploy → placed → unit running → Running — observable.
+// Pipeline (deploy → placed → unit running → Running) observable;
+// module.nix remains the production deployment contract.
 package main
 
 import (
@@ -60,6 +62,31 @@ func main() {
 	switch spec.Type {
 	case "util/echo":
 		if err := runEcho(ctx, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "web/nginx":
+		if err := runNginx(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "db/redis":
+		if err := runRedis(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "monitor/node-exporter":
+		if err := runNodeExporter(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "ai/ollama":
+		if err := runOllama(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "web/static-site":
+		if err := runStaticSite(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
