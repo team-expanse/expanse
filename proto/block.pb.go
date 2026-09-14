@@ -469,6 +469,9 @@ const (
 	Phase_UPDATING          Phase = 8
 	Phase_TERMINATING       Phase = 9
 	Phase_TERMINATED        Phase = 10
+	// Replica is drained (removed from LB pool, §5.2 drain window) but not
+	// yet stopped. Written by the rolling-update controller only.
+	Phase_DRAINING Phase = 11
 )
 
 // Enum value maps for Phase.
@@ -485,6 +488,7 @@ var (
 		8:  "UPDATING",
 		9:  "TERMINATING",
 		10: "TERMINATED",
+		11: "DRAINING",
 	}
 	Phase_value = map[string]int32{
 		"PHASE_UNSPECIFIED": 0,
@@ -498,6 +502,7 @@ var (
 		"UPDATING":          8,
 		"TERMINATING":       9,
 		"TERMINATED":        10,
+		"DRAINING":          11,
 	}
 )
 
@@ -1855,10 +1860,13 @@ func (x *Condition) GetLastTransitionUnixSec() int64 {
 
 // PlacementStatus records where one replica lives.
 type PlacementStatus struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ReplicaIndex  int32                  `protobuf:"varint,1,opt,name=replica_index,json=replicaIndex,proto3" json:"replica_index,omitempty"`
-	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Phase         Phase                  `protobuf:"varint,3,opt,name=phase,proto3,enum=expanse.block.v1.Phase" json:"phase,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ReplicaIndex int32                  `protobuf:"varint,1,opt,name=replica_index,json=replicaIndex,proto3" json:"replica_index,omitempty"`
+	NodeId       string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Phase        Phase                  `protobuf:"varint,3,opt,name=phase,proto3,enum=expanse.block.v1.Phase" json:"phase,omitempty"`
+	// Block-store revision this replica was last started at (§5.2 target
+	// generation for rolling updates). 0 = pre-T15 placement.
+	Generation    int64 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1912,6 +1920,13 @@ func (x *PlacementStatus) GetPhase() Phase {
 		return x.Phase
 	}
 	return Phase_PHASE_UNSPECIFIED
+}
+
+func (x *PlacementStatus) GetGeneration() int64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
 }
 
 // PendingReason explains why a replica could not be placed (§4.3).
@@ -3304,11 +3319,14 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\bR\x06status\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x127\n" +
-	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"~\n" +
+	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"\x9e\x01\n" +
 	"\x0fPlacementStatus\x12#\n" +
 	"\rreplica_index\x18\x01 \x01(\x05R\freplicaIndex\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12-\n" +
-	"\x05phase\x18\x03 \x01(\x0e2\x17.expanse.block.v1.PhaseR\x05phase\"\xc2\x01\n" +
+	"\x05phase\x18\x03 \x01(\x0e2\x17.expanse.block.v1.PhaseR\x05phase\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x04 \x01(\x03R\n" +
+	"generation\"\xc2\x01\n" +
 	"\rPendingReason\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12G\n" +
@@ -3451,7 +3469,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06Spread\x12\x16\n" +
 	"\x12SPREAD_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSPREAD_EVEN\x10\x01\x12\x11\n" +
-	"\rSPREAD_PACKED\x10\x02*\xb1\x01\n" +
+	"\rSPREAD_PACKED\x10\x02*\xbf\x01\n" +
 	"\x05Phase\x12\x15\n" +
 	"\x11PHASE_UNSPECIFIED\x10\x00\x12\v\n" +
 	"\aPENDING\x10\x01\x12\x0e\n" +
@@ -3467,7 +3485,8 @@ const file_proto_block_proto_rawDesc = "" +
 	"\vTERMINATING\x10\t\x12\x0e\n" +
 	"\n" +
 	"TERMINATED\x10\n" +
-	"*_\n" +
+	"\x12\f\n" +
+	"\bDRAINING\x10\v*_\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vEVENT_ADDED\x10\x01\x12\x12\n" +

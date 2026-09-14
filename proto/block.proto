@@ -91,6 +91,9 @@ enum Phase {
   UPDATING = 8;
   TERMINATING = 9;
   TERMINATED = 10;
+  // Replica is drained (removed from LB pool, §5.2 drain window) but not
+  // yet stopped. Written by the rolling-update controller only.
+  DRAINING = 11;
 }
 
 // EventType is the watch verb for BlockEvent.
@@ -278,6 +281,9 @@ message PlacementStatus {
   int32 replica_index = 1;
   string node_id = 2;
   Phase phase = 3;
+  // Block-store revision this replica was last started at (§5.2 target
+  // generation for rolling updates). 0 = pre-T15 placement.
+  int64 generation = 4;
 }
 
 // PendingReason explains why a replica could not be placed (§4.3).

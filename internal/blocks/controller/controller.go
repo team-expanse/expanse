@@ -47,6 +47,9 @@ type Controller struct {
 	Nodes func(ctx context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)
 	// Interval between passes; DefaultInterval when zero.
 	Interval time.Duration
+	// Update carries the §5.2 rolling-update seams; nil fields get
+	// permissive defaults (see UpdateHooks).
+	Update *UpdateHooks
 
 	mu    sync.Mutex
 	wake  chan struct{}
@@ -56,6 +59,14 @@ type Controller struct {
 // New builds a Controller.
 func New(st *raftstore.Store, nodes func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)) *Controller {
 	return &Controller{St: st, Nodes: nodes, wake: make(chan struct{}, 1), calls: map[string]int{}}
+}
+
+// hooks returns the update hooks, defaulting to an empty set.
+func (c *Controller) hooks() *UpdateHooks {
+	if c.Update == nil {
+		return &UpdateHooks{}
+	}
+	return c.Update
 }
 
 // Run drives reconcile passes until ctx is done: on every Interval tick
@@ -164,6 +175,31 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 	}
 
 	status := c.loadStatus(ctx, e.Key)
+	// §5.2 rolling update: when the block is running with placements and
+	// any replica is not at the current revision, run one update step
+	// instead of plain placement. Generation 0 = pre-T15 placement, kept
+	// at-target so old records do not trigger surprise rolls.
+	target := int64(e.Revision)
+	if want > 0 && len(status.GetPlacements()) > 0 &&
+		b.GetSpec().GetStrategy().GetKind() != pb.StrategyKind_DAEMONSET &&
+		(updateNeededLegacy(status, target) || status.GetPhase() == pb.Phase_UPDATING) {
+		changed, err := c.updatePass(ctx, &b, status, target, want, nodes, cfg)
+		if err != nil {
+			return 0, err
+		}
+		if changed {
+			out, err := proto.Marshal(status)
+			if err != nil {
+				return 0, errors.Wrap(err, errors.KindInternal, "controller.placeBlock", "marshal status")
+			}
+			if _, err := c.St.Txn(ctx, []store.Op{
+				{Kind: store.OpPut, Key: statusKey(e.Key), Value: out},
+			}); err != nil {
+				return 0, errors.Wrap(err, errors.KindUnavailable, "controller.placeBlock", "persist update step")
+			}
+		}
+		return 0, nil
+	}
 	// Existing placements feed P9 anti-affinity.
 	var existing []string
 	for _, p := range status.GetPlacements() {
@@ -195,6 +231,7 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 			ReplicaIndex: int32(i),
 			NodeId:       nodeID,
 			Phase:        pb.Phase_SCHEDULING,
+			Generation:   int64(e.Revision),
 		})
 		existing = append(existing, nodeID)
 		placed++
