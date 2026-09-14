@@ -139,6 +139,10 @@ func (c *Controller) NotifyBlockDelete(namespace, name string) {
 // node (§4.3).
 func (c *Controller) NotifyResourceRelease(nodeID string) { c.notify("resource-release:" + nodeID) }
 
+// Wake nudges the run loop (production watches on /blocks/ and /nodes/
+// call this; the interval ticker remains the backstop).
+func (c *Controller) Wake() { c.notify("wake") }
+
 // NotifyCount reports how many times a notify kind fired (tests).
 func (c *Controller) NotifyCount(kind string) int {
 	c.mu.Lock()
@@ -165,6 +169,11 @@ func (c *Controller) Reconcile(ctx context.Context) (int, error) {
 	nodes, cfg, err := c.Nodes(ctx)
 	if err != nil {
 		return 0, errors.Wrap(err, errors.KindUnavailable, "controller.Reconcile", "node view")
+	}
+	// Runtime promotion first (T20.5b): units that reached active get
+	// their RUNNING phase before this pass places new replicas.
+	if err := c.RuntimePass(ctx); err != nil {
+		return 0, err
 	}
 	entries, err := c.St.List(ctx, "/blocks/")
 	if err != nil {

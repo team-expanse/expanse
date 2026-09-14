@@ -30,6 +30,8 @@ import (
 
 	"github.com/expanse/expanse/internal/api"
 	"github.com/expanse/expanse/internal/blocks/catalog"
+	"github.com/expanse/expanse/internal/blocks/controller"
+	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/service"
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/blocks/wire"
@@ -72,6 +74,10 @@ type Config struct {
 	// layout: <category>/<name>/block.yaml...). When empty, the block
 	// API is not served (blocks disabled on this node).
 	BlocksCatalog string
+	// BlocksFlakeRef is the flake reference holding block closures
+	// (attr per type: <category>-<name>, e.g. "util-echo"). Empty =
+	// block replicas are not realized on this node (API-only member).
+	BlocksFlakeRef string
 }
 
 // Role is the node's cluster role (§4.9): "voter" (default) or
@@ -132,6 +138,8 @@ type Agent struct {
 	recon        *reconcile.Reconciler
 	blocks       pb.BlockServiceServer
 	blockCatalog pb.CatalogServiceServer
+	blockCtl     *controller.Controller
+	blockBridge  *wire.Bridge
 	invMu        sync.Mutex
 	invSnapshot  *inventory.Inventory
 	invCollector *inventory.Collector
@@ -278,7 +286,8 @@ func New(cfg Config) (*Agent, error) {
 	} else {
 		r.Register(sd)
 	}
-	r.Register(nixman.New(nix.New(), os.Stdout))
+	nixDriver := nix.New()
+	r.Register(nixman.New(nixDriver, os.Stdout))
 	a.recon = r
 
 	// Block API (T20.5a): served on the agent socket when a block
@@ -296,6 +305,26 @@ func New(cfg Config) (*Agent, error) {
 			a.blocks = blk
 			a.blockCatalog = service.NewCatalogServer(cat)
 			logger.Info("block API enabled", "types", len(cat.Types()))
+
+			// Replica runtime (T20.5b): converge block-replica desired
+			// state into systemd units. Needs both the catalog (type
+			// resolution) and a flake ref (closure builds).
+			if cfg.BlocksFlakeRef != "" {
+				if api, err := systemd.NewDBUSAPI(context.Background()); err != nil {
+					logger.Warn("systemd bus unavailable; block replicas disabled", "err", err)
+				} else {
+					cache, err := systemd.NewCache(filepath.Join(cfg.DataDir, "blocks", "closure-cache.json"))
+					if err != nil {
+						logger.Warn("closure cache unavailable; block replicas disabled", "err", err)
+					} else {
+						r.Register(systemd.NewManager(api, &systemd.Applier{
+							Cache:   cache,
+							Builder: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef},
+						}))
+						logger.Info("block replica runtime enabled", "flake", cfg.BlocksFlakeRef)
+					}
+				}
+			}
 		}
 	}
 
@@ -601,6 +630,31 @@ func (a *Agent) Run(ctx context.Context) error {
 		}()
 	}
 
+	// Block placement controller + desired-state bridge (T20.5b):
+	// leader-only (Reconcile/Sync self-gate on IsLeader), never on
+	// witnesses (§4.9). The store watches Wake the controller; the
+	// 30 s interval is the backstop. Nodes view from the wire adapter.
+	if a.blocks != nil && !witness {
+		if rs, ok := a.store.(*raftstore.Store); ok {
+			a.blockCtl = controller.New(rs, wire.Nodes(a.store))
+			go a.blockCtl.Run(ctx)
+			a.blockBridge = &wire.Bridge{St: rs}
+			go a.blockBridge.Run(ctx)
+			// Fast path: block or node changes wake placement.
+			for _, prefix := range []string{"/blocks/", "/nodes/"} {
+				p := prefix
+				if ch, err := rs.Watch(ctx, store.Key(p), 0); err == nil {
+					go func() {
+						for range ch {
+							a.blockCtl.Wake()
+						}
+					}()
+				}
+			}
+			a.logger.Info("block controller enabled (leader decides)")
+		}
+	}
+
 	// Cluster mode: the internal mTLS endpoint on :7443 — the
 	// leader-side forwarding service every node runs (G3.8). All
 	// nodes need it: any follower may need to forward, any follower
@@ -759,4 +813,17 @@ type raftLogWriter struct {
 func (w raftLogWriter) Write(p []byte) (int, error) {
 	w.log.Warn("raft", "msg", strings.TrimSpace(string(p)))
 	return len(p), nil
+}
+
+// blockBuilder adapts the nix ExecDriver to the block runtime's Builder
+// interface: attr per type is "<category>-<name>" (slashes are not valid
+// in flake attrs), e.g. "util/echo" -> <BlocksFlakeRef>#util-echo.
+type blockBuilder struct {
+	driver   *nix.ExecDriver
+	flakeRef string
+}
+
+func (b *blockBuilder) Build(ctx context.Context, blockType string) (nix.StorePath, error) {
+	attr := strings.ReplaceAll(blockType, "/", "-")
+	return b.driver.Build(ctx, b.flakeRef, attr, os.Stdout)
 }
