@@ -1,0 +1,4 @@
+port: 6379
+maxMemory: 256mb
+maxMemoryPolicy: noeviction
+appendOnly: true

@@ -1,0 +1,5 @@
+name: ollama
+version: 1.0.0
+description: Ollama LLM runtime — GPU/device requests and large model storage
+icon: ollama
+capabilities: [gpu]

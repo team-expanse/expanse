@@ -382,3 +382,108 @@ func TestLoadShippedBlocksBatch1(t *testing.T) {
 		t.Errorf("V19 did not flag unknown nginx config field with path: %v", validate.Validate(b, ctx))
 	}
 }
+
+// TestLoadShippedBlocksBatch2 covers the T20 real block types: db/redis
+// (primary-replica, stateful) and ai/ollama (GPU/devices, large storage).
+// Includes the V7 and V23 admission regressions against these real types
+// with a fake device inventory.
+func TestLoadShippedBlocksBatch2(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	for _, id := range []string{"db/redis", "ai/ollama"} {
+		if !c.HasType(id) {
+			t.Errorf("shipped catalog missing %s; got %v", id, c.Types())
+		}
+	}
+
+	t.Run("redis", func(t *testing.T) {
+		good := mustStruct(t, map[string]any{
+			"port":            6379,
+			"maxMemory":       "256mb",
+			"maxMemoryPolicy": "allkeys-lru",
+			"appendOnly":      true,
+			"replicaOf":       "redis-0.default.svc:6379",
+		})
+		if errs := c.ValidateConfig("db/redis", good); len(errs) != 0 {
+			t.Fatalf("realistic redis config rejected: %v", errs)
+		}
+		if errs := c.ValidateConfig("db/redis", mustStruct(t, map[string]any{"maxMemoryPolicy": "nuke-everything"})); len(errs) != 1 || !strings.Contains(errs[0], "/maxMemoryPolicy") {
+			t.Errorf("bad enum not rejected with path: %v", errs)
+		}
+		d := c.Defaults("db/redis")
+		if d["port"] != int(6379) || d["maxMemory"] != "256mb" {
+			t.Errorf("unexpected redis defaults: %v", d)
+		}
+	})
+
+	t.Run("ollama", func(t *testing.T) {
+		good := mustStruct(t, map[string]any{
+			"port":      11434,
+			"models":    []any{"llama3:8b"},
+			"keepAlive": "5m",
+		})
+		if errs := c.ValidateConfig("ai/ollama", good); len(errs) != 0 {
+			t.Fatalf("realistic ollama config rejected: %v", errs)
+		}
+		if errs := c.ValidateConfig("ai/ollama", mustStruct(t, map[string]any{"gpuLayers": 32})); len(errs) != 1 || !strings.Contains(errs[0], "/gpuLayers") {
+			t.Errorf("unknown ollama field not rejected with path: %v", errs)
+		}
+	})
+
+	// V7 regression: primary-replica through the real db/redis type with
+	// replicas=1 is rejected.
+	one := int32(1)
+	b := &pb.Block{
+		Metadata: &pb.Metadata{Name: "redis-1", Namespace: "default"},
+		Spec: &pb.BlockSpec{
+			Type:     "db/redis",
+			Strategy: &pb.Strategy{Kind: pb.StrategyKind_PRIMARY_REPLICA},
+			Replicas: &one,
+		},
+	}
+	ctx := validate.Context{Catalog: c}
+	if errs := validate.Validate(b, ctx); len(errs) != 1 || errs[0].Rule != "V7" {
+		t.Errorf("primary-replica replicas=1 not rejected as V7: %v", errs)
+	}
+	// replicas >= 2 passes V7.
+	two := int32(2)
+	b.Spec.Replicas = &two
+	for _, e := range validate.Validate(b, ctx) {
+		if e.Rule == "V7" {
+			t.Errorf("replicas=2 wrongly rejected: %v", e)
+		}
+	}
+
+	// V23 regression: ai/ollama requesting a gpu the cluster doesn't
+	// have (empty fake device inventory) is rejected, naming what IS
+	// available; with a gpu in the inventory it passes.
+	b = &pb.Block{
+		Metadata: &pb.Metadata{Name: "ollama-1", Namespace: "default"},
+		Spec: &pb.BlockSpec{
+			Type: "ai/ollama",
+			Resources: &pb.Resources{Devices: []*pb.Device{
+				{Type: "gpu", Count: 1, Vram: "8Gi"},
+			}},
+		},
+	}
+	ctx = validate.Context{Catalog: c, Devices: map[string]int32{}}
+	errs := validate.Validate(b, ctx)
+	found := false
+	for _, e := range errs {
+		if e.Rule == "V23" && strings.Contains(e.Message, "gpu") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("gpu request against empty inventory not rejected as V23: %v", errs)
+	}
+	// Fake device inventory with gpus available — V23 passes.
+	ctx = validate.Context{Catalog: c, Devices: map[string]int32{"gpu": 4}}
+	for _, e := range validate.Validate(b, ctx) {
+		if e.Rule == "V23" {
+			t.Errorf("gpu request wrongly rejected with inventory: %v", e)
+		}
+	}
+}

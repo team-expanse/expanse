@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port redis listens on"
+    },
+    "maxMemory": {
+      "type": "string",
+      "description": "maxmemory setting, e.g. 256mb"
+    },
+    "maxMemoryPolicy": {
+      "type": "string",
+      "enum": ["noeviction", "allkeys-lru", "volatile-lru", "allkeys-random", "volatile-random", "volatile-ttl"],
+      "description": "maxmemory-policy"
+    },
+    "appendOnly": {
+      "type": "boolean",
+      "description": "Enable AOF persistence"
+    },
+    "replicaOf": {
+      "type": "string",
+      "description": "Replicate from this host:port (failover/replication config)"
+    },
+    "password": {
+      "type": "string",
+      "description": "requirepass for authenticated clients"
+    }
+  }
+}

@@ -1,0 +1,3 @@
+port: 11434
+models: []
+keepAlive: 5m

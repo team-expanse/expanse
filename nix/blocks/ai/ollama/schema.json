@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port the Ollama API listens on"
+    },
+    "models": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Model names pulled on start"
+    },
+    "keepAlive": {
+      "type": "string",
+      "description": "Model keep-alive duration, e.g. 5m"
+    }
+  }
+}
