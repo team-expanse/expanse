@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/scheduler"
 	"github.com/expanse/expanse/internal/store"
@@ -54,11 +55,18 @@ type Controller struct {
 	mu    sync.Mutex
 	wake  chan struct{}
 	calls map[string]int // notify kind -> count (test observability)
+
+	// Singleton strategy state (T16): lease manager plus the currently
+	// held singleton leases, keyed by lease name.
+	leaseOnce sync.Once
+	leases    *lease.Manager
+	leaseMu   sync.Mutex
+	held      map[string]*lease.Held
 }
 
 // New builds a Controller.
 func New(st *raftstore.Store, nodes func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)) *Controller {
-	return &Controller{St: st, Nodes: nodes, wake: make(chan struct{}, 1), calls: map[string]int{}}
+	return &Controller{St: st, Nodes: nodes, wake: make(chan struct{}, 1), calls: map[string]int{}, held: map[string]*lease.Held{}}
 }
 
 // hooks returns the update hooks, defaulting to an empty set.
@@ -170,7 +178,9 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 		return 0, errors.Wrap(err, errors.KindInternal, "controller.placeBlock", "unmarshal "+string(e.Key))
 	}
 	want := replicaCount(&b)
-	if want == 0 {
+	// Daemonset has no replica count (V6): its per-node placement runs
+	// regardless of `want`.
+	if want == 0 && b.GetSpec().GetStrategy().GetKind() != pb.StrategyKind_DAEMONSET {
 		return 0, nil
 	}
 
@@ -200,54 +210,16 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 		}
 		return 0, nil
 	}
-	// Existing placements feed P9 anti-affinity.
-	var existing []string
-	for _, p := range status.GetPlacements() {
-		if p.GetReplicaIndex() != -1 {
-			existing = append(existing, p.GetNodeId())
-		}
+	// Strategy dispatch (T16): daemonset places per node, singleton
+	// schedules behind its cluster lease, everything else through the
+	// generic scheduler loop.
+	switch b.GetSpec().GetStrategy().GetKind() {
+	case pb.StrategyKind_DAEMONSET:
+		return c.placeDaemonset(ctx, &b, e, status, nodes)
+	case pb.StrategyKind_SINGLETON:
+		return c.placeSingleton(ctx, &b, e, status, nodes, cfg)
 	}
-
-	placed := 0
-	for i := 0; i < want; i++ {
-		if placementAt(status, int32(i)) != nil {
-			continue
-		}
-		nodeID, pending := scheduler.Schedule(nodes, scheduler.ReplicaRequest{
-			Block:              &b,
-			ReplicaIndex:       i,
-			ExistingPlacements: existing,
-		}, cfg, scheduler.ClusterView{SameBlockReplicas: sameBlockReplicas(existing)})
-		if pending != nil {
-			// Persist the reason but do NOT advance the phase (§4.3):
-			// the replica stays Pending and is retried on the next trigger.
-			status.Phase = pb.Phase_PENDING
-			status.PendingReason = pending
-			break
-		}
-		status.PendingReason = nil
-		status.Phase = pb.Phase_SCHEDULING
-		status.Placements = append(status.Placements, &pb.PlacementStatus{
-			ReplicaIndex: int32(i),
-			NodeId:       nodeID,
-			Phase:        pb.Phase_SCHEDULING,
-			Generation:   int64(e.Revision),
-		})
-		existing = append(existing, nodeID)
-		placed++
-	}
-	if placed > 0 || status.GetPendingReason() != nil {
-		out, err := proto.Marshal(status)
-		if err != nil {
-			return placed, errors.Wrap(err, errors.KindInternal, "controller.placeBlock", "marshal status")
-		}
-		if _, err := c.St.Txn(ctx, []store.Op{
-			{Kind: store.OpPut, Key: statusKey(e.Key), Value: out},
-		}); err != nil {
-			return placed, errors.Wrap(err, errors.KindUnavailable, "controller.placeBlock", "persist placements")
-		}
-	}
-	return placed, nil
+	return c.placeReplicas(ctx, &b, e, status, nodes, cfg)
 }
 
 // loadStatus reads (or seeds) the status record for a block.
@@ -275,7 +247,7 @@ func placementAt(st *pb.BlockStatus, i int32) *pb.PlacementStatus {
 
 // replicaCount resolves the desired replica count for scheduling:
 // spec.replicas, with singleton → 1 (V5). Daemonset placement is
-// per-node and lands with the daemonset lifecycle card; skipped here.
+// per-node (placeDaemonset) and does not use a replica count (V6).
 func replicaCount(b *pb.Block) int {
 	switch b.GetSpec().GetStrategy().GetKind() {
 	case pb.StrategyKind_SINGLETON:

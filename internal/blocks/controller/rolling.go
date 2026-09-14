@@ -286,7 +286,7 @@ func failUpdate(ctx context.Context, h *UpdateHooks, b *pb.Block, status *pb.Blo
 		Reason: strconv.FormatInt(target, 10),
 	}
 	if prev := findCondition(status, abortCondition); prev != nil {
-		*prev = *c
+		prev.Status, prev.Reason, prev.Message = c.Status, c.Reason, c.Message
 	} else {
 		status.Conditions = append(status.Conditions, c)
 	}
