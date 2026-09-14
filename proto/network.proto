@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package expanse.network.v1;
+
+option go_package = "github.com/expanse/expanse/proto";
+
+// Network messages — Phase 05. These are store-marshaled values (mesh peer
+// records, VIP specs/allocations), not a gRPC surface; CLI/API wiring comes
+// later in the phase. Address ranges live in
+// internal/network/addrplan (§3 address plan).
+
+// VIPScope selects where a VIP is announced.
+enum VIPScope {
+  VIP_SCOPE_UNSPECIFIED = 0;
+  // Internal VIPs live in 10.43.0.0/16, cluster-only.
+  VIP_SCOPE_INTERNAL = 1;
+  // External VIPs are allocated from the user-declared LAN pool and
+  // announced on the physical interface (gratuitous ARP).
+  VIP_SCOPE_EXTERNAL = 2;
+}
+
+// WireGuardPeer is the per-node mesh record published to
+// /nodes/<id>/network.wgPublicKey (§4.1). The private key never leaves
+// the node; only the public key is stored.
+message WireGuardPeer {
+  string node_id = 1;
+  // Base64 WireGuard public key.
+  string public_key = 2;
+  // Node's primary LAN address (host:port), refreshed on change.
+  string endpoint = 3;
+  // The node's overlay prefix in CIDR form, e.g. "10.42.1.0/24".
+  string overlay_prefix = 4;
+}
+
+// VIP is one virtual-IP record (§4.2). The spec/allocator fields are
+// written by the controller; Holder is status written by the lease winner.
+message VIP {
+  // Address in CIDR form, e.g. "192.168.1.100/24".
+  string address = 1;
+  // Physical interface to announce on; "" = auto-detect.
+  string interface = 2;
+  VIPScope scope = 3;
+  // Owning block, "<namespace>/<name>".
+  string block_ref = 4;
+  // Current holder node ID (status; empty = unheld).
+  string holder = 5;
+}
+
+// VIPPoolConfig declares the external VIP pool in cluster config (§4.2).
+message VIPPoolConfig {
+  // Inclusive address range, e.g. "192.168.1.100-192.168.1.120".
+  string range = 1;
+  // Physical interface for external VIPs; "" = auto-detect.
+  string external_interface = 2;
+}
