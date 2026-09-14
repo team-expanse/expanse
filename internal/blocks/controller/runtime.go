@@ -80,7 +80,10 @@ func (c *Controller) promoteBlock(ctx context.Context, e store.Entry) error {
 			running++
 			continue
 		}
-		if p.GetPhase() != pb.Phase_SCHEDULING {
+		// SCHEDULING placements await the agent's first health report;
+		// STARTING ones (created by the §5.2 surge/scale-up path) are
+		// promoted the same way — the agent reports health either way.
+		if p.GetPhase() != pb.Phase_SCHEDULING && p.GetPhase() != pb.Phase_STARTING {
 			continue
 		}
 		ok, err := c.replicaUp(ctx, p.GetNodeId(), statusKey2ns(k), statusKey2name(k), int(p.GetReplicaIndex()))
@@ -100,7 +103,22 @@ func (c *Controller) promoteBlock(ctx context.Context, e store.Entry) error {
 	// remaining update steps. Never back: DEGRADED belongs to the
 	// reschedule pass (§4.4).
 	if want > 0 && active == want && running == want &&
-		status.GetPhase() != pb.Phase_RUNNING {
+		status.GetPhase() != pb.Phase_RUNNING &&
+		// Mid-roll placements can all be RUNNING but at the OLD
+		// generation — the §5.2 roll owns the phase until every
+		// replica is at the target revision, else the flip-flop
+		// (RuntimePass RUNNING / updatePass UPDATING) starves the roll.
+		func() bool {
+			for _, p := range status.GetPlacements() {
+				if p.GetReplicaIndex() < 0 || p.GetNodeId() == "" {
+					continue
+				}
+				if p.GetGeneration() != int64(e.Revision) {
+					return false
+				}
+			}
+			return true
+		}() {
 		status.Phase = pb.Phase_RUNNING
 		changed = true
 	}

@@ -89,6 +89,22 @@ func (m *Manager) writeSpec(s Spec) error {
 	return nil
 }
 
+// specOnDiskMatches reports whether the spec file the running unit
+// reads equals the desired spec (canonical JSON comparison). A missing
+// file matches nothing — the unit has never been written for.
+func (m *Manager) specOnDiskMatches(s Spec) bool {
+	path := filepath.Join(m.specDir(), Instance(s.Namespace, s.Name, s.Index)+".json")
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	want, err := json.Marshal(s)
+	if err != nil {
+		return false
+	}
+	return string(onDisk) == string(want)
+}
+
 // removeSpec drops the per-replica spec JSON (resource deletion).
 func (m *Manager) removeSpec(s Spec) error {
 	path := filepath.Join(m.specDir(), Instance(s.Namespace, s.Name, s.Index)+".json")
@@ -129,7 +145,13 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 	if err != nil {
 		return reconcile.Observed{}, errors.Wrap(err, errors.KindInternal, "systemd.Observe", "unit state")
 	}
-	inSync := load != "not-found" && active == "active" && sub != "failed"
+	inSync := load != "not-found" && active == "active" && sub != "failed" &&
+		// Spec drift (e.g. a §5.2 in-place config change): the unit can
+		// be active while running the OLD config — the runtime helper
+		// reads the spec file only at startup, so a mismatch means the
+		// unit must be restarted. Detect by comparing the on-disk spec
+		// the unit was started with against the desired spec.
+		m.specOnDiskMatches(res.spec)
 	h := reconcile.HealthDegraded
 	if inSync {
 		h = reconcile.HealthHealthy

@@ -123,15 +123,17 @@ func runEcho(ctx context.Context, args []string) error {
 		}
 	}
 	port := os.Getenv("ECHO_PORT")
-	if port == "" {
-		port = fmt.Sprintf("%d", int(cfg.Port))
-	}
 	body := os.Getenv("ECHO_BODY")
 	if body == "" {
 		body = cfg.Body
 	}
-	if port == "" || port == "0" {
-		port = "18080"
+	switch {
+	case port != "":
+		// env override wins (module.nix contract)
+	case cfg.Port > 0:
+		port = fmt.Sprintf("%d", int(cfg.Port))
+	default:
+		port = "0" // ephemeral: multiple replicas may share a node
 	}
 
 	mux := http.NewServeMux()

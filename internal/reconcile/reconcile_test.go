@@ -452,3 +452,33 @@ func TestFreezeSkipsTicks(t *testing.T) {
 		t.Fatal("unfrozen tick did not apply")
 	}
 }
+
+// Deletion diff (T22/T23): when a desired-state key vanishes, the
+// previously-applied resource is deleted on the node (Deleter) — a
+// retired block replica's unit must be stopped, not orphaned.
+func TestDeletedDesiredStateRemovesResource(t *testing.T) {
+	r, _ := newDepReconciler(t, map[string][]string{"a": {}})
+	ctx := context.Background()
+	putDesired(t, r.store, "n1", "a", "")
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Remove the desired key; the next tick must undo the resource.
+	e, err := r.store.Get(ctx, r.DesiredPrefix()+store.Key("a"))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if err := r.store.Delete(ctx, e.Key, e.Revision); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// depManager embeds fakeManager; Deleter must have been invoked.
+	r.mu.Lock()
+	left := len(r.applied)
+	r.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("applied = %d entries after deletion, want 0", left)
+	}
+}

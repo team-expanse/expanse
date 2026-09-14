@@ -104,10 +104,6 @@ in
         n3.wait_for_unit("multi-user.target")
         n3.succeed("systemctl start expansed.service")
         n3.wait_for_unit("expansed.service")
-        rc, dbg = n1.execute(f"expanse ctl kv {SOCK} get /nodes/n3 || true")
-        print(f"DBGN3: rc={rc} out={dbg!r}")
-        rc, dbg = n1.execute(f"expanse ctl kv {SOCK} get /nodes/n3/status || true")
-        print(f"DBGN3S: rc={rc} out={dbg!r}")
         # Give the membership + reschedule passes time; the block must
         # end fully Running (on any nodes, but ≤ 1 per node) within 60 s
         # of n3's return.

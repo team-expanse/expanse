@@ -156,8 +156,14 @@ type Reconciler struct {
 	logger   *slog.Logger
 	managers map[string]Manager
 
-	mu       sync.Mutex // guards resState and tickDurations
+	mu       sync.Mutex // guards resState, tickDurations, applied
 	resState map[string]*resBackoff
+
+	// applied remembers the last Resource seen per ID so that a
+	// deleted desired-state key can be undone on the node (§4.4/T22:
+	// a retired block replica's systemd unit must be stopped — the
+	// spec vanishing is the deletion signal).
+	applied map[string]Resource
 
 	ticks          atomic.Int64
 	changes        atomic.Int64
@@ -189,6 +195,7 @@ func New(s store.Store, opts Options) *Reconciler {
 		logger:   opts.Logger.With("component", "reconcile"),
 		managers: map[string]Manager{},
 		resState: map[string]*resBackoff{},
+		applied:  map[string]Resource{},
 		trigger:  make(chan struct{}, 1),
 		stop:     make(chan struct{}),
 		stopped:  make(chan struct{}),
@@ -335,6 +342,31 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 		r.recordStatus(tctx, &Status{ResourceID: id, Health: HealthUnhealthy, Error: err.Error(), UpdatedAt: time.Now()})
 	}
 	r.resourcesTotal.Store(int64(len(resources)))
+
+	// Deletion diff: IDs applied on a previous tick but absent from
+	// desired state now were deleted — undo them via the manager.
+	r.mu.Lock()
+	for id, old := range r.applied {
+		if _, ok := resources[id]; !ok {
+			delete(r.applied, id)
+			r.mu.Unlock()
+			if m := r.managers[old.Type()]; m != nil {
+				if d, ok := m.(Deleter); ok {
+					if err := d.Delete(ctx, old); err != nil {
+						r.logger.Warn("orphan cleanup failed", "id", id, "err", err)
+					} else {
+						r.changes.Add(1)
+						r.logger.Info("removed undesired resource", "id", id, "type", old.Type())
+					}
+				}
+			}
+			r.mu.Lock()
+		}
+	}
+	for id, res := range resources {
+		r.applied[id] = res
+	}
+	r.mu.Unlock()
 
 	order, err := topoSort(resources)
 	if err != nil {

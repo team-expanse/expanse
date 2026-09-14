@@ -176,6 +176,19 @@ func (c *Controller) updatePass(ctx context.Context, b *pb.Block, status *pb.Blo
 	}
 	maxSurge := int(upd.GetMaxSurge())
 
+	// Scale-down (§5.5): more live placements than want+surge can ever
+	// explain — retire the highest-index surplus immediately instead of
+	// rolling it (a scaled-down replica must not be restarted, just
+	// removed). One per pass keeps CAS contention low.
+	if len(active) > want+maxSurge {
+		sort.Slice(active, func(i, j int) bool { return active[i].GetReplicaIndex() > active[j].GetReplicaIndex() })
+		if err := h.stop(ctx, b, active[0]); err != nil {
+			return false, errors.Wrap(err, errors.KindInternal, "controller.update", "stop scaled-down replica")
+		}
+		removePlacement(status, active[0].GetReplicaIndex())
+		return true, nil
+	}
+
 	// Availability gate: never remove or restart while too much is down.
 	readyCount := 0
 	for _, p := range active {
@@ -194,6 +207,12 @@ func (c *Controller) updatePass(ctx context.Context, b *pb.Block, status *pb.Blo
 		return c.surgeCreate(ctx, b, status, target, nodes, cfg)
 	}
 	if len(old) == 0 {
+		// Pure scale-up (§5.5: replicas grew, no old generation to
+		// roll): create the missing replicas. Without this the block
+		// would sit UPDATING forever — nothing rolls, nothing creates.
+		if len(active) < want {
+			return c.surgeCreate(ctx, b, status, target, nodes, cfg)
+		}
 		return false, nil // only surge cleanup pending, handled above
 	}
 

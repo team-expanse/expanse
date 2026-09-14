@@ -9,9 +9,9 @@
     },
     "port": {
       "type": "integer",
-      "minimum": 1,
+      "minimum": 0,
       "maximum": 65535,
-      "description": "TCP port the echo server listens on"
+      "description": "TCP port the echo server listens on; 0 picks an ephemeral port (multiple replicas may share a node)"
     }
   }
 }

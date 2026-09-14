@@ -357,3 +357,60 @@ func TestRollingUpdateFailureNoRollback(t *testing.T) {
 }
 
 var errStartFailed = errors.New("start failed")
+
+// §5.5 scale-up: growing replicas with no config change (no old
+// generation) must still create the missing replicas — the block may
+// not sit UPDATING forever.
+func TestUpdatePassScaleUpCreatesMissingReplicas(t *testing.T) {
+	ctx := context.Background()
+	b := blockFor("web", 1)
+	b.Spec.Strategy = &pb.Strategy{Update: &pb.UpdateStrategy{MaxUnavailable: 1}}
+	st := newStore(t)
+	mustCreate(t, ctx, st, b)
+	h := &updateHarness{clk: newFakeClock()}
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodeViews(4), testCfg(), nil
+	})
+	c.Update = h.hooks()
+	if n, err := c.Reconcile(ctx); err != nil || n == 0 {
+		t.Fatalf("initial Reconcile placed %d (err %v)", n, err)
+	}
+	waitPlaced(t, ctx, c, "default", "web", 1)
+
+	// Scale up: replicas 1 → 3, new version → new revision.
+	three := int32(3)
+	b.Spec.Replicas = &three
+	b.Spec.Version = "v2"
+	out, err := proto.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	e, err := st.Get(ctx, blockKey("default", "web"))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if _, err := st.Txn(ctx, []store.Op{
+		{Kind: store.OpCheck, Key: e.Key, Expect: e.Revision},
+		{Kind: store.OpPut, Key: e.Key, Value: out},
+	}); err != nil {
+		t.Fatalf("put scaled spec: %v", err)
+	}
+
+	var status *pb.BlockStatus
+	for i := 0; i < 100; i++ {
+		if _, err := c.Reconcile(ctx); err != nil {
+			t.Fatalf("Reconcile pass %d: %v", i, err)
+		}
+		status = loadStatus(t, ctx, c.St, "default", "web")
+		if status.GetPhase() == pb.Phase_RUNNING && len(status.GetPlacements()) == 3 {
+			break
+		}
+	}
+	if status.GetPhase() != pb.Phase_RUNNING {
+		t.Fatalf("phase = %v after scale-up passes, want RUNNING; status %+v",
+			status.GetPhase(), status)
+	}
+	if got := len(status.GetPlacements()); got != 3 {
+		t.Fatalf("placements after scale-up = %d, want 3", got)
+	}
+}
