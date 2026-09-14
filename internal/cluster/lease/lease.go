@@ -300,6 +300,19 @@ type Held struct {
 // acting within 1 s of the close.
 func (h *Held) Done() <-chan struct{} { return h.done }
 
+// Abandon stops acting as the holder WITHOUT deleting the record: the
+// renewal/watch loops stop and Done closes, but the stored lease is
+// left to expire naturally (≤ TTL). Use when the holder's authority
+// ended but the lease itself must not be yanked — e.g. a block
+// controller deposed as raft leader keeps its singleton placements
+// fenced until the new leader's takeover CAS succeeds after expiry
+// (Phase 04 T25: a zombie renewal through write forwarding would
+// otherwise pin the lease forever and stall singleton replacement).
+func (h *Held) Abandon() {
+	h.cancel()
+	h.markLost()
+}
+
 // Valid reports whether the lease is currently believed held.
 func (h *Held) Valid() bool {
 	h.mu.Lock()

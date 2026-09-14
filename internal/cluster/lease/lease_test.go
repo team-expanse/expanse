@@ -557,3 +557,60 @@ func TestAcquireBlocksThenAcquires(t *testing.T) {
 		t.Errorf("holder after takeover = %+v %v", rec, err)
 	}
 }
+
+// TestAbandonStopsRenewalKeepsRecord: Abandon stops the renewal loops
+// and closes Done, but the stored record is left untouched — it must
+// expire naturally (TTL), not vanish. A takeover CAS succeeds only
+// after that expiry (the deposed-leader singleton fencing path).
+func TestAbandonStopsRenewalKeepsRecord(t *testing.T) {
+	ctx := context.Background()
+	st := newBoltStore(t)
+	mgr := lease.NewManager(st, "node-a")
+
+	h, err := mgr.TryAcquire(ctx, "fence", time.Second)
+	if err != nil {
+		t.Fatalf("TryAcquire: %v", err)
+	}
+
+	// Record exists with holder node-a before the abandon.
+	rec, err := lease.Inspect(ctx, st, "fence")
+	if err != nil || rec == nil || rec.Holder != "node-a" {
+		t.Fatalf("pre-abandon record = %+v, %v", rec, err)
+	}
+
+	h.Abandon()
+	select {
+	case <-h.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Done not closed after Abandon")
+	}
+	if h.Valid() {
+		t.Error("Held still valid after Abandon")
+	}
+
+	// Record must still exist (left to expire, not deleted)…
+	rec, err = lease.Inspect(ctx, st, "fence")
+	if err != nil || rec == nil {
+		t.Fatalf("post-abandon record missing: %+v, %v", rec, err)
+	}
+	// …and must eventually expire so a takeover succeeds (TTL 1 s;
+	// abandon stops renewals, so expiry lands within ~1 s).
+	second := lease.NewManager(st, "node-b")
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		aerr := func() error {
+			h2, err2 := second.TryAcquire(ctx, "fence", time.Second)
+			if err2 == nil {
+				_ = second.Release(ctx, h2)
+			}
+			return err2
+		}()
+		if aerr == nil {
+			break // takeover succeeded
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("takeover after abandon+expiry never succeeded: %v", aerr)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}

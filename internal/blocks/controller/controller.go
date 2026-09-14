@@ -171,6 +171,22 @@ func blockKey(ns, name string) store.Key {
 	return store.Key("/blocks/" + ns + "/" + name)
 }
 
+// onDemotion runs when this controller observes it is no longer the
+// raft leader: abandon every held singleton lease (stop renewing, leave
+// the record to expire naturally). Without this, the deposed leader's
+// renewal loop would keep the lease alive forever through write
+// forwarding, permanently blocking the new leader's singleton
+// replacement with LeaseHeld (Phase 04 T25 chaos find).
+func (c *Controller) onDemotion() {
+	c.leaseMu.Lock()
+	held := c.held
+	c.held = map[string]*lease.Held{}
+	c.leaseMu.Unlock()
+	for _, h := range held {
+		h.Abandon()
+	}
+}
+
 // statusKey is the observed-state key holding the pb.BlockStatus.
 func statusKey(k store.Key) store.Key {
 	return store.Key(string(k) + StatusSuffix)
@@ -180,6 +196,7 @@ func statusKey(k store.Key) store.Key {
 // Followers and non-leaders are no-ops.
 func (c *Controller) Reconcile(ctx context.Context) (int, error) {
 	if !c.St.IsLeader() {
+		c.onDemotion()
 		return 0, nil
 	}
 	nodes, cfg, err := c.Nodes(ctx)
