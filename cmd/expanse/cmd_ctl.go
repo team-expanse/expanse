@@ -22,6 +22,7 @@ import (
 
 	pb "github.com/expanse/expanse/proto"
 
+	"github.com/expanse/expanse/internal/blocks/logs"
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/cluster/nodelc"
@@ -106,6 +107,25 @@ func newCtlCmd() *cobra.Command {
 	}
 	res.AddCommand(del)
 	cmd.AddCommand(res)
+
+	block := &cobra.Command{Use: "block", Short: "Block lifecycle and logs (§7)"}
+	logsCmd := &cobra.Command{
+		Use:   "logs <namespace/name>",
+		Short: "Stream block logs from journald (SYSLOG_IDENTIFIER=expanse-block-<ns>-<name>-<idx>)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(cmd *cobra.Command, args []string) error { return ctlBlockLogs(cmd, opts, args[0]) },
+	}
+	var logReplica int32
+	var logAllReplicas, logFollow bool
+	var logTail int
+	var logSince string
+	logsCmd.Flags().Int32Var(&logReplica, "replica", 0, "replica index")
+	logsCmd.Flags().BoolVar(&logAllReplicas, "all-replicas", false, "interleave all replicas (per-line replica prefix)")
+	logsCmd.Flags().BoolVarP(&logFollow, "follow", "f", false, "follow the log stream")
+	logsCmd.Flags().IntVar(&logTail, "tail", 0, "number of past lines to start from")
+	logsCmd.Flags().StringVar(&logSince, "since", "", "start point: duration (1h) or RFC3339 timestamp")
+	block.AddCommand(logsCmd)
+	cmd.AddCommand(block)
 
 	gen := &cobra.Command{Use: "generation", Short: "Desired-state generation history and rollback"}
 	gen.AddCommand(&cobra.Command{
@@ -292,6 +312,86 @@ func dial(opts *ctlOpts) (*grpc.ClientConn, error) {
 	}
 	return grpc.NewClient("unix://"+filepath.ToSlash(opts.socket),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+// ctlBlockLogs streams block logs (§7: expanse ctl block logs <name>
+// [--replica N] [-f] [--tail N] [--since 1h] [--all-replicas]).
+// --all-replicas walks replica indexes sequentially, prefixing every line
+// with the replica index; the hosting agent's journal filter does the rest.
+func ctlBlockLogs(cmd *cobra.Command, opts *ctlOpts, ref string) error {
+	ns, name := "default", ref
+	if i := strings.IndexByte(ref, '/'); i >= 0 {
+		ns, name = ref[:i], ref[i+1:]
+	}
+	q, err := logs.ParseFlags(logs.Flags{
+		Replica:     logReplicaOf(cmd),
+		AllReplicas: flagBool(cmd, "all-replicas"),
+		Follow:      flagBool(cmd, "follow"),
+		Tail:        flagInt(cmd, "tail"),
+		Since:       flagString(cmd, "since"),
+	})
+	if err != nil {
+		return err
+	}
+	q.Namespace, q.Name = ns, name
+	conn, err := dial(opts)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithTimeout(cmd.Context(), opts.timeout)
+	defer cancel()
+	client := pb.NewBlockServiceClient(conn)
+
+	// Single replica, or --all-replicas: sequential streams per index
+	// (interleave order = replica index) with a per-line prefix.
+	w := cmd.OutOrStdout()
+	lastIdx := int32(0)
+	if q.AllReplicas {
+		lastIdx = 63 // sanity cap; we stop at the first unhosted replica
+	}
+	for idx := q.Replica; ; idx++ {
+		if q.AllReplicas && idx > lastIdx {
+			break
+		}
+		stream, serr := client.StreamLogs(ctx, &pb.LogsRequest{
+			Namespace: q.Namespace, Name: q.Name, Replica: idx,
+			Follow: q.Follow, Tail: int32(q.Tail), Since: q.Since,
+		})
+		if serr != nil {
+			if q.AllReplicas && idx > q.Replica {
+				return nil // walked past the last hosted replica
+			}
+			return fmt.Errorf("StreamLogs: %w", serr)
+		}
+		prefix := ""
+		if q.AllReplicas {
+			prefix = fmt.Sprintf("[%d] ", idx)
+		}
+		for {
+			line, rerr := stream.Recv()
+			if rerr != nil {
+				break // this replica's stream ended; next replica
+			}
+			fmt.Fprintf(w, "%s%s\n", prefix, line.GetLine())
+		}
+		if !q.AllReplicas {
+			break // single replica: one stream, done
+		}
+	}
+	return nil
+}
+
+func logReplicaOf(cmd *cobra.Command) int32 {
+	v, _ := cmd.Flags().GetInt32("replica")
+	return v
+}
+
+func flagBool(cmd *cobra.Command, name string) bool { v, _ := cmd.Flags().GetBool(name); return v }
+func flagInt(cmd *cobra.Command, name string) int   { v, _ := cmd.Flags().GetInt(name); return v }
+func flagString(cmd *cobra.Command, name string) string {
+	v, _ := cmd.Flags().GetString(name)
+	return v
 }
 
 func withClient(cmd *cobra.Command, opts *ctlOpts, fn func(ctx context.Context, c pb.NodeServiceClient) error) error {
