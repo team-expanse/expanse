@@ -44,3 +44,15 @@ budgets:
   - name: raft_restore_100k_s
     unit: s
     max: 60              # fresh node restored via InstallSnapshot
+  - name: schedule_100x3_ms
+    unit: ms
+    max: 500              # 100 blocks x 3 replicas on 10 simulated nodes (G4.4)
+  - name: block_deploy_p99_s
+    unit: s
+    max: 10               # spec accepted -> RUNNING, cached closure (G4.5)
+  - name: agent_rss_per_block_bytes
+    unit: bytes
+    max: 1048576          # <= 1 MiB resident overhead per block
+  - name: block_list_500_ms
+    unit: ms
+    max: 100              # List over 500 blocks in the store
