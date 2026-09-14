@@ -31,6 +31,7 @@ import (
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // BlockPrefix is the replicated-store prefix for all blocks.
@@ -223,7 +224,7 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 }
 
 // Delete removes a block. Same single-Raft-txn generation contract.
-func (s *Server) Delete(ctx context.Context, r *pb.DeleteBlockRequest) (*pb.Block, error) {
+func (s *Server) Delete(ctx context.Context, r *pb.DeleteBlockRequest) (*emptypb.Empty, error) {
 	if r.GetName() == "" {
 		return nil, errors.New(errors.KindInvalid, "blocks.service.Delete", "name is required")
 	}
@@ -248,7 +249,7 @@ func (s *Server) Delete(ctx context.Context, r *pb.DeleteBlockRequest) (*pb.Bloc
 		return nil, errors.Wrap(err, errors.KindConflict, "blocks.service.Delete",
 			fmt.Sprintf("block %s/%s modified concurrently", ns, r.GetName()))
 	}
-	return &b, nil
+	return &emptypb.Empty{}, nil
 }
 
 // namesInNamespace lists existing block names in ns, excluding the named

@@ -26,7 +26,13 @@ import (
 	"github.com/expanse/expanse/internal/agent/managers/sysctlman"
 	"github.com/expanse/expanse/internal/agent/managers/systemdman"
 	"github.com/expanse/expanse/internal/agent/nix"
+	pb "github.com/expanse/expanse/proto"
+
 	"github.com/expanse/expanse/internal/api"
+	"github.com/expanse/expanse/internal/blocks/catalog"
+	"github.com/expanse/expanse/internal/blocks/service"
+	"github.com/expanse/expanse/internal/blocks/validate"
+	"github.com/expanse/expanse/internal/blocks/wire"
 	"github.com/expanse/expanse/internal/cluster/ca"
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/nodelc"
@@ -62,6 +68,10 @@ type Config struct {
 	// advertised address from the node record).
 	RaftBindAddr      string
 	RaftAdvertiseAddr string
+	// BlocksCatalog is the shipped block-type directory (nix/blocks
+	// layout: <category>/<name>/block.yaml...). When empty, the block
+	// API is not served (blocks disabled on this node).
+	BlocksCatalog string
 }
 
 // Role is the node's cluster role (§4.9): "voter" (default) or
@@ -120,6 +130,8 @@ type Agent struct {
 	store        store.Store
 	logger       *slog.Logger
 	recon        *reconcile.Reconciler
+	blocks       pb.BlockServiceServer
+	blockCatalog pb.CatalogServiceServer
 	invMu        sync.Mutex
 	invSnapshot  *inventory.Inventory
 	invCollector *inventory.Collector
@@ -269,6 +281,24 @@ func New(cfg Config) (*Agent, error) {
 	r.Register(nixman.New(nix.New(), os.Stdout))
 	a.recon = r
 
+	// Block API (T20.5a): served on the agent socket when a block
+	// catalog is configured. Admission runs the full V1–V24 rules with
+	// the real catalog; NodeCount comes from the store's node records.
+	if cfg.BlocksCatalog != "" {
+		cat, err := catalog.Load(cfg.BlocksCatalog)
+		if err != nil {
+			logger.Warn("block catalog unavailable; block API disabled", "dir", cfg.BlocksCatalog, "err", err)
+		} else {
+			blk := service.New(st, func() validate.Context {
+				return validate.Context{Catalog: cat, NodeCount: a.nodeCount()}
+			})
+			blk.Nodes = wire.Nodes(st)
+			a.blocks = blk
+			a.blockCatalog = service.NewCatalogServer(cat)
+			logger.Info("block API enabled", "types", len(cat.Types()))
+		}
+	}
+
 	// Inventory + health.
 	a.invCollector = &inventory.Collector{}
 	a.healthR = &health.Runner{Checks: []health.Check{
@@ -290,6 +320,26 @@ func New(cfg Config) (*Agent, error) {
 
 // Store exposes the agent's store (used by the API server).
 func (a *Agent) Store() store.Store { return a.store }
+
+// nodeCount counts node records for admission (V12/V16 need a node
+// count; the adapter's NodeView list would need a context).
+func (a *Agent) nodeCount() int {
+	entries, err := a.store.List(store.WithStale(context.Background()), "/nodes/")
+	if err != nil {
+		return 1
+	}
+	n := 0
+	for _, e := range entries {
+		rest := strings.TrimPrefix(string(e.Key), "/nodes/")
+		if rest != "" && !strings.Contains(rest, "/") {
+			n++
+		}
+	}
+	if n == 0 {
+		n = 1
+	}
+	return n
+}
 
 // lookupRole reads the node's role from its cluster record (§4.9);
 // empty when there is no record yet (pre-init bootstrap).
@@ -566,6 +616,8 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// gRPC on the unix socket (filesystem permissions are the auth).
 	srv := api.NewServer(a, a.store, a.logger)
+	srv.Blocks = a.blocks
+	srv.Catalog = a.blockCatalog
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ctx, a.cfg.Socket) }()
 

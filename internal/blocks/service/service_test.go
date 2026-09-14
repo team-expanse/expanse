@@ -185,13 +185,12 @@ func TestGetListDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("full list = %d blocks (err %v), want 3", len(all.GetBlocks()), err)
 	}
 
-	// Delete round-trips the deleted block back.
-	del, err := s.Delete(ctx, &pb.DeleteBlockRequest{Namespace: "default", Name: "a"})
-	if err != nil {
+	// Delete removes the block (spec §7: returns google.protobuf.Empty).
+	if _, err := s.Delete(ctx, &pb.DeleteBlockRequest{Namespace: "default", Name: "a"}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if del.GetMetadata().GetName() != "a" {
-		t.Errorf("deleted block = %+v", del.GetMetadata())
+	if _, err := s.Get(ctx, &pb.GetBlockRequest{Namespace: "default", Name: "a"}); err == nil {
+		t.Error("deleted block still gettable")
 	}
 	if _, err := s.Get(ctx, &pb.GetBlockRequest{Namespace: "default", Name: "a"}); err == nil {
 		t.Error("Get after Delete succeeded")

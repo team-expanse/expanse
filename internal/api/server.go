@@ -71,6 +71,11 @@ type Server struct {
 	agent  Agent
 	store  store.Store
 	logger *slog.Logger
+	// Blocks, when set, is registered alongside NodeService (T20.5a):
+	// the BlockService/CatalogService pair for the block stack. nil in
+	// minimal builds (no block catalog configured).
+	Blocks  pb.BlockServiceServer
+	Catalog pb.CatalogServiceServer
 }
 
 // NewServer creates the NodeService server.
@@ -106,6 +111,12 @@ func (s *Server) Serve(ctx context.Context, socketPath string) error {
 		),
 	)
 	pb.RegisterNodeServiceServer(gs, s)
+	if s.Blocks != nil {
+		pb.RegisterBlockServiceServer(gs, s.Blocks)
+	}
+	if s.Catalog != nil {
+		pb.RegisterCatalogServiceServer(gs, s.Catalog)
+	}
 	s.logger.Info("grpc listening", "socket", socketPath)
 
 	errCh := make(chan error, 1)
