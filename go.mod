@@ -16,6 +16,7 @@ require (
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/sys v0.47.0
+	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
