@@ -288,3 +288,97 @@ func TestLoadRealBlocks(t *testing.T) {
 		t.Errorf("V19 message %q does not name the unknown field", v19)
 	}
 }
+
+// TestLoadShippedBlocksBatch1 covers the T19 real block types: nginx,
+// static-site, node-exporter (plus util/echo = 4 loadable real types).
+// Each schema validates a realistic config and rejects a bad field with
+// a path-qualified message — the V19 regression against real types, not
+// the fixture.
+func TestLoadShippedBlocksBatch1(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	for _, id := range []string{"util/echo", "web/nginx", "web/static-site", "monitor/node-exporter"} {
+		if !c.HasType(id) {
+			t.Errorf("shipped catalog missing %s; got %v", id, c.Types())
+		}
+	}
+
+	t.Run("nginx", func(t *testing.T) {
+		good := mustStruct(t, map[string]any{
+			"serverName": "web.example.internal",
+			"root":       "/var/www",
+			"port":       8080,
+			"tls":        map[string]any{"cert": "/run/secrets/tls/cert.pem", "key": "/run/secrets/tls/key.pem"},
+		})
+		if errs := c.ValidateConfig("web/nginx", good); len(errs) != 0 {
+			t.Fatalf("realistic nginx config rejected: %v", errs)
+		}
+		// Unknown field rejected with its path.
+		bad := mustStruct(t, map[string]any{"serverName": "x", "worker_processes": 4})
+		if errs := c.ValidateConfig("web/nginx", bad); len(errs) != 1 || !strings.Contains(errs[0], "/worker_processes") {
+			t.Errorf("unknown nginx field not rejected with path: %v", errs)
+		}
+		// TLS present but missing the key path is rejected at /tls.
+		badTLS := mustStruct(t, map[string]any{
+			"serverName": "x",
+			"tls":        map[string]any{"cert": "/cert.pem"},
+		})
+		if errs := c.ValidateConfig("web/nginx", badTLS); len(errs) != 1 || !strings.Contains(errs[0], "/tls") {
+			t.Errorf("incomplete tls not rejected with path: %v", errs)
+		}
+		d := c.Defaults("web/nginx")
+		if d["serverName"] != "web.example.internal" || d["port"] != int(8080) {
+			t.Errorf("unexpected nginx defaults: %v", d)
+		}
+	})
+
+	t.Run("static-site", func(t *testing.T) {
+		good := mustStruct(t, map[string]any{
+			"index": "<html><body>hi</body></html>",
+			"port":  8081,
+		})
+		if errs := c.ValidateConfig("web/static-site", good); len(errs) != 0 {
+			t.Fatalf("realistic static-site config rejected: %v", errs)
+		}
+		if errs := c.ValidateConfig("web/static-site", mustStruct(t, map[string]any{"port": "80"})); len(errs) != 1 || !strings.Contains(errs[0], "/port") {
+			t.Errorf("string port not rejected with path: %v", errs)
+		}
+	})
+
+	t.Run("node-exporter", func(t *testing.T) {
+		good := mustStruct(t, map[string]any{"port": 9100, "webTelemetryPath": "/metrics"})
+		if errs := c.ValidateConfig("monitor/node-exporter", good); len(errs) != 0 {
+			t.Fatalf("realistic node-exporter config rejected: %v", errs)
+		}
+		if errs := c.ValidateConfig("monitor/node-exporter", mustStruct(t, map[string]any{"extraFlags": []any{"--foo"}})); len(errs) != 1 || !strings.Contains(errs[0], "/extraFlags") {
+			t.Errorf("unknown node-exporter field not rejected with path: %v", errs)
+		}
+		d := c.Defaults("monitor/node-exporter")
+		if d["port"] != int(9100) || d["webTelemetryPath"] != "/metrics" {
+			t.Errorf("unexpected node-exporter defaults: %v", d)
+		}
+	})
+
+	// V19 admission through a real shipped type (nginx), not the fixture.
+	b := &pb.Block{
+		Metadata: &pb.Metadata{Name: "web-1", Namespace: "default"},
+		Spec: &pb.BlockSpec{
+			Type: "web/nginx",
+			Config: mustStruct(t, map[string]any{
+				"serverName": "ok", "oops": 1,
+			}),
+		},
+	}
+	ctx := validate.Context{Catalog: c}
+	var v19 string
+	for _, e := range validate.Validate(b, ctx) {
+		if e.Rule == "V19" && strings.Contains(e.Message, "/oops") {
+			v19 = e.Message
+		}
+	}
+	if v19 == "" {
+		t.Errorf("V19 did not flag unknown nginx config field with path: %v", validate.Validate(b, ctx))
+	}
+}

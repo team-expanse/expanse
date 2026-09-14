@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "index": {
+      "type": "string",
+      "description": "HTML written to <mountPath>/index.html on start"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port the site is served on"
+    }
+  }
+}

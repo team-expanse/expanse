@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["serverName"],
+  "properties": {
+    "serverName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ServerName for the nginx vhost"
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Document root served by nginx"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port nginx listens on"
+    },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cert", "key"],
+      "properties": {
+        "cert": { "type": "string", "minLength": 1, "description": "Path to the TLS certificate" },
+        "key": { "type": "string", "minLength": 1, "description": "Path to the TLS private key" }
+      },
+      "description": "Optional TLS termination"
+    }
+  }
+}

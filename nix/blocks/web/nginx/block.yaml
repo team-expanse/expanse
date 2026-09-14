@@ -1,0 +1,5 @@
+name: nginx
+version: 1.0.0
+description: nginx web server with templated config and optional TLS
+icon: nginx
+capabilities: []

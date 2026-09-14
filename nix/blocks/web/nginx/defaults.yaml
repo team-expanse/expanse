@@ -1,0 +1,3 @@
+serverName: web.example.internal
+root: /var/www
+port: 8080

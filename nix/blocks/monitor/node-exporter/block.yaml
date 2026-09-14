@@ -1,0 +1,5 @@
+name: node-exporter
+version: 1.0.0
+description: Prometheus node exporter — daemonset strategy, one per node
+icon: node-exporter
+capabilities: []
