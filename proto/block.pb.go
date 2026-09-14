@@ -472,6 +472,9 @@ const (
 	// Replica is drained (removed from LB pool, §5.2 drain window) but not
 	// yet stopped. Written by the rolling-update controller only.
 	Phase_DRAINING Phase = 11
+	// Replica's node is unreachable past unreachable_grace (§4.4). The
+	// record is retired (index freed) once a replacement is scheduled.
+	Phase_LOST Phase = 12
 )
 
 // Enum value maps for Phase.
@@ -489,6 +492,7 @@ var (
 		9:  "TERMINATING",
 		10: "TERMINATED",
 		11: "DRAINING",
+		12: "LOST",
 	}
 	Phase_value = map[string]int32{
 		"PHASE_UNSPECIFIED": 0,
@@ -503,6 +507,7 @@ var (
 		"TERMINATING":       9,
 		"TERMINATED":        10,
 		"DRAINING":          11,
+		"LOST":              12,
 	}
 )
 
@@ -3469,7 +3474,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06Spread\x12\x16\n" +
 	"\x12SPREAD_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSPREAD_EVEN\x10\x01\x12\x11\n" +
-	"\rSPREAD_PACKED\x10\x02*\xbf\x01\n" +
+	"\rSPREAD_PACKED\x10\x02*\xc9\x01\n" +
 	"\x05Phase\x12\x15\n" +
 	"\x11PHASE_UNSPECIFIED\x10\x00\x12\v\n" +
 	"\aPENDING\x10\x01\x12\x0e\n" +
@@ -3486,7 +3491,8 @@ const file_proto_block_proto_rawDesc = "" +
 	"\n" +
 	"TERMINATED\x10\n" +
 	"\x12\f\n" +
-	"\bDRAINING\x10\v*_\n" +
+	"\bDRAINING\x10\v\x12\b\n" +
+	"\x04LOST\x10\f*_\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vEVENT_ADDED\x10\x01\x12\x12\n" +

@@ -94,6 +94,9 @@ enum Phase {
   // Replica is drained (removed from LB pool, §5.2 drain window) but not
   // yet stopped. Written by the rolling-update controller only.
   DRAINING = 11;
+  // Replica's node is unreachable past unreachable_grace (§4.4). The
+  // record is retired (index freed) once a replacement is scheduled.
+  LOST = 12;
 }
 
 // EventType is the watch verb for BlockEvent.
