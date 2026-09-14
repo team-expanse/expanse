@@ -24,11 +24,19 @@ type NodeView struct {
 	FreeCPU      quantity.CPU
 	FreeMem      quantity.Bytes
 	FreeDisk     quantity.Bytes
+	CapacityCPU  quantity.CPU // 0 = unknown (S1 neutral)
 	Capabilities []string
 	Labels       map[string]string
 	Devices      map[string]int32 // device type -> free count
 	Taints       []string
 	Arch         string
+	// Volumes lists volume names whose data is realized locally (S3).
+	Volumes []string
+	// RealizedTypes lists block type IDs ("category/name") whose nix
+	// closure is already on the node (S4).
+	RealizedTypes []string
+	// RecentFailures counts recent node failures (S6; fewer is better).
+	RecentFailures int
 }
 
 // ReplicaRequest describes one replica of one block to place.
