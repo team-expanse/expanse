@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -246,6 +247,7 @@ func TestManagerConverges(t *testing.T) {
 	mb := &mockBuilder{}
 	switches := 0
 	m := NewManager(api, &Applier{Cache: newTestCache(t), Builder: mb})
+	m.SpecDir = t.TempDir()
 	m.Switch = func(ctx context.Context, p string) error { switches++; return nil }
 
 	specBytes, err := json.Marshal(sampleSpec())
@@ -301,5 +303,62 @@ func TestManagerConverges(t *testing.T) {
 	}
 	if mb.builds != 1 || switches != 1 || api.starts != 1 {
 		t.Errorf("pass2 touched the system: builds=%d switches=%d starts=%d", mb.builds, switches, api.starts)
+	}
+}
+
+// The manager writes the per-replica spec JSON for expanse-block-run
+// before starting the unit (the static template only carries %i), and
+// Delete stops the unit + removes the spec file.
+func TestManagerSpecFileLifecycle(t *testing.T) {
+	ctx := context.Background()
+	api := &fakeUnitAPI{states: map[string][3]string{}}
+	mb := &mockBuilder{}
+	m := NewManager(api, &Applier{Cache: newTestCache(t), Builder: mb})
+	m.SpecDir = t.TempDir()
+
+	specBytes, err := json.Marshal(sampleSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.Load("block-replica:default/web/0", specBytes)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	o, err := m.Observe(ctx, res)
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	acts, err := m.Plan(ctx, res, o)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	for _, a := range acts {
+		if err := m.Apply(ctx, a); err != nil {
+			t.Fatalf("Apply %s: %v", a.Kind, err)
+		}
+	}
+	specPath := filepath.Join(m.SpecDir,
+		Instance(sampleSpec().Namespace, sampleSpec().Name, sampleSpec().Index)+".json")
+	raw, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("spec file missing after converge: %v", err)
+	}
+	var s Spec
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("bad spec file: %v", err)
+	}
+	if s.Type != sampleSpec().Type || s.Index != sampleSpec().Index {
+		t.Errorf("spec file content wrong: %+v", s)
+	}
+
+	// Delete: unit stopped, spec file gone.
+	if err := m.Delete(ctx, res); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(specPath); !os.IsNotExist(err) {
+		t.Errorf("spec file survived Delete: %v", err)
+	}
+	if api.states[UnitName("default", "web", 0)][1] != "inactive" {
+		t.Errorf("unit not stopped: %v", api.states[UnitName("default", "web", 0)])
 	}
 }

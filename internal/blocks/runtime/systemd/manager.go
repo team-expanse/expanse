@@ -12,6 +12,8 @@ package systemd
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
@@ -54,6 +56,46 @@ type Manager struct {
 	// Switch, when set, runs after a real build (nix driver switch).
 	// nil in dry-run/test.
 	Switch func(ctx context.Context, storePath string) error
+	// SpecDir is where per-replica desired-state JSON is written for
+	// expanse-block-run (default DefaultSpecDir); empty = default.
+	SpecDir string
+}
+
+// DefaultSpecDir is the runtime directory expanse-block-run reads its
+// per-replica spec from (the static template unit only carries %i).
+const DefaultSpecDir = "/run/expanse/block-replica"
+
+// specDir returns the configured spec directory.
+func (m *Manager) specDir() string {
+	if m.SpecDir != "" {
+		return m.SpecDir
+	}
+	return DefaultSpecDir
+}
+
+// writeSpec persists the per-replica spec JSON for the helper binary.
+func (m *Manager) writeSpec(s Spec) error {
+	if err := os.MkdirAll(m.specDir(), 0o755); err != nil {
+		return errors.Wrap(err, errors.KindInternal, "systemd.writeSpec", m.specDir())
+	}
+	out, err := json.Marshal(s)
+	if err != nil {
+		return errors.Wrap(err, errors.KindInternal, "systemd.writeSpec", "marshal")
+	}
+	path := filepath.Join(m.specDir(), Instance(s.Namespace, s.Name, s.Index)+".json")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return errors.Wrap(err, errors.KindInternal, "systemd.writeSpec", path)
+	}
+	return nil
+}
+
+// removeSpec drops the per-replica spec JSON (resource deletion).
+func (m *Manager) removeSpec(s Spec) error {
+	path := filepath.Join(m.specDir(), Instance(s.Namespace, s.Name, s.Index)+".json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return errors.Wrap(err, errors.KindInternal, "systemd.removeSpec", path)
+	}
+	return nil
 }
 
 // NewManager wires a Manager.
@@ -117,6 +159,9 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 		Kind:        "update",
 		Description: "resolve block closure (cache-checked build)",
 		Fn: func(ctx context.Context) error {
+			if err := m.writeSpec(spec); err != nil {
+				return err
+			}
 			res2, built, err := m.apply(ctx, spec)
 			if err != nil {
 				return err
@@ -145,6 +190,21 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 // Apply implements reconcile.Manager.
 func (m *Manager) Apply(ctx context.Context, a reconcile.Action) error {
 	return a.Fn(ctx)
+}
+
+// Delete implements reconcile.Deleter: stop the unit and drop its spec
+// file (removal of the desired state removes the replica).
+func (m *Manager) Delete(ctx context.Context, r reconcile.Resource) error {
+	res, ok := r.(*Resource)
+	if !ok {
+		return errors.New(errors.KindInvalid, "systemd.Delete", "wrong resource type")
+	}
+	// Best-effort stop: the unit may never have started (desired state
+	// removed before the first converge). A stale unit that keeps
+	// running on a failed stop is caught by the next pass; the spec
+	// file removal is strict — it decides expanse-block-run's behavior.
+	_ = m.API.Stop(ctx, UnitName(res.spec.Namespace, res.spec.Name, res.spec.Index))
+	return m.removeSpec(res.spec)
 }
 
 // apply resolves the closure through the cache.

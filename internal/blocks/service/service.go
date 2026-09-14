@@ -144,7 +144,26 @@ func (s *Server) get(ctx context.Context, ns, name string) (*pb.Block, error) {
 	if err := proto.Unmarshal(e.Value, &b); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, "blocks.service.Get", "unmarshal block")
 	}
+	// The placement controller owns the separate observed-state record
+	// (/blocks/<ns>/<name>/status, T10); overlay it over the embedded
+	// create-time seed so readers see placements and phases.
+	if obs := s.observedStatus(ctx, ns, name); obs != nil {
+		b.Status = obs
+	}
 	return &b, nil
+}
+
+// observedStatus reads the controller-owned observed-state record.
+func (s *Server) observedStatus(ctx context.Context, ns, name string) *pb.BlockStatus {
+	e, err := s.St.Get(ctx, store.Key(key(ns, name)+"/status"))
+	if err != nil {
+		return nil
+	}
+	var st pb.BlockStatus
+	if err := proto.Unmarshal(e.Value, &st); err != nil {
+		return nil
+	}
+	return &st
 }
 
 // List returns blocks, optionally filtered by namespace (empty = all).
@@ -159,9 +178,22 @@ func (s *Server) List(ctx context.Context, r *pb.ListBlocksRequest) (*pb.ListBlo
 	}
 	resp := &pb.ListBlocksResponse{}
 	for _, e := range entries {
+		// Skip the controller-owned observed-state subtrees.
+		if strings.HasSuffix(string(e.Key), "/status") {
+			continue
+		}
 		var b pb.Block
 		if err := proto.Unmarshal(e.Value, &b); err != nil {
 			return nil, errors.Wrap(err, errors.KindInternal, "blocks.service.List", "unmarshal "+string(e.Key))
+		}
+		// Overlay the observed-state record when present (mirror of Get).
+		if i := strings.Index(string(e.Key), "/blocks/"); i >= 0 {
+			rest := string(e.Key[i+len("/blocks/"):])
+			if dot := strings.LastIndex(rest, "/"); dot > 0 {
+				if obs := s.observedStatus(ctx, rest[:dot], rest[dot+1:]); obs != nil {
+					b.Status = obs
+				}
+			}
 		}
 		resp.Blocks = append(resp.Blocks, &b)
 	}

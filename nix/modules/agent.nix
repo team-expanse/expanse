@@ -22,10 +22,63 @@ in
       default = "30s";
       description = "Base reconcile tick interval.";
     };
+
+    blocksCatalog = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Shipped block-type directory (nix/blocks layout). null = block API disabled.";
+    };
+
+    blocksFlakeRef = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = ''Flake reference holding block closures (attr per type:
+        <category>-<name>). Empty = replicas are not realized on this
+        node (API-only member).'';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     users.groups.expanse = { };
+
+    # Block replica runtime (Phase 04 T21): one static template unit —
+    # per-replica identity arrives via %i, and the node agent writes the
+    # per-replica spec JSON (type, --config args) to
+    # /run/expanse/block-replica/<instance>.json before starting the
+    # unit, so expanse-block-run can resolve the workload.
+    systemd.units."expanse-block@.service" = {
+      enable = true;
+      text = ''
+        [Unit]
+        Description=expanse block %i
+        After=network-online.target
+        StartLimitIntervalSec=60
+        StartLimitBurst=3
+
+        [Service]
+        Slice=expanse-blocks.slice
+        Restart=on-failure
+        RestartSec=5s
+        DynamicUser=yes
+        NoNewPrivileges=yes
+        PrivateTmp=yes
+        ProtectSystem=strict
+        ProtectHome=yes
+        RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+        SystemCallFilter=@system-service
+        TasksMax=512
+        IOWeight=100
+        ExecStart=${pkgs.expanse}/bin/expanse-block-run %i
+      '';
+    };
+
+    systemd.units."expanse-blocks.slice" = {
+      enable = true;
+      text = ''
+        [Slice]
+        Description=expanse block replicas
+      '';
+    };
 
     systemd.services.expansed = {
       description = "Expanse Node Agent";
@@ -37,7 +90,10 @@ in
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
-        ExecStart = "${pkgs.expanse}/bin/expanse agent --data-dir ${cfg.persistDir}/expanse --period ${cfg.period}";
+        ExecStart = with lib;
+          "${pkgs.expanse}/bin/expanse agent --data-dir ${cfg.persistDir}/expanse --period ${cfg.period}" +
+          optionalString (cfg.blocksCatalog != null) " --blocks-catalog ${cfg.blocksCatalog}" +
+          optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}";
         Restart = "always";
         RestartSec = "5s";
         TimeoutStopSec = "30s";
@@ -46,7 +102,7 @@ in
         User = "root";
         StateDirectory = "expanse";
         RuntimeDirectory = "expanse";
-        RuntimeDirectoryMode = "0750";
+        RuntimeDirectoryMode = "0755";
 
         # Hardening (tightened further in Phase 14). sysctl writes need
         # kernel tunables; the store lives under /persist.

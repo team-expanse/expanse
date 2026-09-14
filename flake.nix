@@ -72,6 +72,11 @@
           cluster-join-security = mkTest "cluster-join-security" ./nix/tests/cluster-join-security.nix;
           cluster-witness = mkTest "cluster-witness" ./nix/tests/cluster-witness.nix;
           cluster-generations = mkTest "cluster-generations" ./nix/tests/cluster-generations.nix;
+
+          # Phase 04 blocks (§8).
+          block-deploy = mkTest "block-deploy" ./nix/tests/block-deploy.nix;
+          block-antiaffinity = mkTest "block-antiaffinity" ./nix/tests/block-antiaffinity.nix;
+          block-reschedule = mkTest "block-reschedule" ./nix/tests/block-reschedule.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })

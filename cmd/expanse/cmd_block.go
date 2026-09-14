@@ -22,10 +22,21 @@ import (
 // (PHASE04.md §7). All commands ride the agent unix socket's gRPC API.
 func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	block := &cobra.Command{Use: "block", Short: "Block lifecycle, logs, and events (§7)"}
+	// Persistent so every subcommand accepts -n/-o at parse time.
+	block.PersistentFlags().StringP("namespace", "n", "default", "namespace")
+	block.PersistentFlags().StringP("output", "o", "", "output format override")
+	block.PersistentPreRunE = func(c *cobra.Command, _ []string) error {
+		if v, _ := c.Flags().GetString("output"); v != "" {
+			opts.output = v
+		}
+		return nil
+	}
 
+	// Flags are registered at command construction; nsFlag/outputFlag
+	// only look them up at Run time (cobra rejects flags registered
+	// after parsing started).
 	nsFlag := func(c *cobra.Command) *string {
-		var ns string
-		c.Flags().StringVarP(&ns, "namespace", "n", "default", "namespace")
+		ns, _ := c.Flags().GetString("namespace")
 		return &ns
 	}
 	outputFlag := func(c *cobra.Command, def string) *string {

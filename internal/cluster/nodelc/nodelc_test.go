@@ -395,3 +395,30 @@ func TestMonitorRunLoop(t *testing.T) {
 	_ = base
 	_ = evicted
 }
+
+// §4.8 node restart: a failed/unreachable node that reports fresh again
+// recovers — the detector state clears and the node is placeable.
+func TestMonitorRecoveryClearsState(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeStatus(t, ctx, st, "n1")
+	base := time.Now()
+	m := &nodelc.Monitor{St: st, ThisNodeID: "n0"}
+
+	if ts := m.Evaluate(ctx, base.Add(6*time.Minute)); len(ts) == 0 {
+		t.Fatal("expected a transition at t+6min")
+	}
+	if got := record(t, ctx, st, "n1").State; got != nodelc.StateFailed {
+		t.Fatalf("state = %q, want failed", got)
+	}
+	// The node restarts and its health loop refreshes the status entry.
+	// The store stamps entries with the REAL clock; evaluate just past
+	// it (silent ≈ 0 → want cleared).
+	writeStatus(t, ctx, st, "n1")
+	if ts := m.Evaluate(ctx, time.Now().Add(time.Second)); len(ts) != 1 || ts[0].To != "" {
+		t.Fatalf("recovery transitions = %+v, want one to \"\"", ts)
+	}
+	if got := record(t, ctx, st, "n1").State; got != "" {
+		t.Fatalf("state = %q, want cleared after fresh status", got)
+	}
+}

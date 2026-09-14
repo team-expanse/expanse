@@ -13,7 +13,7 @@ import time
 # order. Raft binds 0.0.0.0 (IPv4), so advertise the v4 addr — node
 # NAMEs resolve to the driver's IPv6 addrs, which the v4-only raft
 # transport can never dial.
-IP = {"n1": "192.168.1.1", "n2": "192.168.1.2", "n3": "192.168.1.3"}
+IP = {"n1": "192.168.1.1", "n2": "192.168.1.2", "n3": "192.168.1.3", "n4": "192.168.1.4"}
 
 
 def addr(m):
@@ -21,8 +21,10 @@ def addr(m):
 
 
 
-def form(name="test", role3="voter"):
-    """Bootstrap the 3-node cluster and wait for full quorum."""
+def form(name="test", role3="voter", uses=3):
+    """Bootstrap the 3-node cluster and wait for full quorum. `uses`
+    is the join-token budget; a higher value leaves joins for later
+    (the token persists at /root/join-token on each node)."""
     start_all()
     for m in [n1, n2, n3]:
         m.wait_for_unit("multi-user.target")
@@ -35,7 +37,7 @@ def form(name="test", role3="voter"):
     token = ""
     for _ in range(30):
         rc, out = n1.execute(
-            "expanse cluster token --data-dir /persist/expanse create --uses 3 2>/dev/null || true"
+            f"expanse cluster token --data-dir /persist/expanse create --uses {uses} 2>/dev/null || true"
         )
         match = re.search(r"expanse-join-[A-Za-z0-9_-]+", out)
         if match:

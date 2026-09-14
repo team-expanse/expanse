@@ -174,7 +174,7 @@ func Enroll(ctx context.Context, opts EnrollOptions) (*EnrollResult, error) {
 	// The sealed CA key lets this node serve joins when it becomes
 	// leader (§4.4 layout; sealed to the cluster secret it already has).
 	if len(resp.GetSealedCaKey()) > 0 {
-		if err := os.WriteFile(filepath.Join(opts.DataDir, CAKeyFile), resp.GetSealedCaKey(), 0o600); err != nil {
+		if err := writeFileSync(filepath.Join(opts.DataDir, CAKeyFile), resp.GetSealedCaKey(), 0o600); err != nil {
 			_ = st.Close()
 			return nil, errors.New(errors.KindInternal, "control.Enroll", "save sealed CA key: "+err.Error())
 		}
@@ -200,7 +200,7 @@ func saveCAFiles(dataDir string, caPEM []byte, caCert *x509.Certificate) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dataDir, CAFile), caPEM, 0o644)
+	return writeFileSync(filepath.Join(dataDir, CAFile), caPEM, 0o644)
 }
 
 // Leave removes a node from the cluster: raft.RemoveServer + delete

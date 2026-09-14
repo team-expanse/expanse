@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/scheduler"
@@ -102,6 +103,17 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 			if err != nil {
 				return nil, scheduler.OvercommitConfig{}, err
 			}
+			// The §4.8 failure detector's state gates placement: an
+			// unreachable/failed (or cordoned) node is not a candidate,
+			// regardless of its (possibly stale) status leaf.
+			if ready {
+				var placeable bool
+				placeable, err = nodePlaceable(ctx, st, id)
+				if err != nil {
+					return nil, scheduler.OvercommitConfig{}, err
+				}
+				ready = placeable
+			}
 			u := used[id]
 			views = append(views, scheduler.NodeView{
 				ID:       id,
@@ -171,7 +183,35 @@ func nodeReady(ctx context.Context, st storeReader, id string) (bool, error) {
 		return false, errors.Wrap(err, errors.KindInternal, "wire.Nodes", "node status")
 	}
 	v := strings.TrimSpace(string(e.Value))
-	return v == "idle" || v == "healthy", nil
+	if v == "idle" || v == "healthy" {
+		return true, nil
+	}
+	// Health-reporter form: "health=<overall> [degraded=true ...]" —
+	// degraded nodes are not placement candidates (§4.10.3).
+	for _, tok := range strings.Fields(v) {
+		if strings.HasPrefix(tok, "health=") {
+			return tok[len("health="):] == "healthy", nil
+		}
+	}
+	return false, nil
+}
+
+// nodePlaceable reads the node record's §4.8 detector state (written by
+// nodelc.Monitor: state "" = up, "unreachable" past 15 s silent,
+// "failed" past 5 min) and cordon flag; nodelc.placeable semantics.
+func nodePlaceable(ctx context.Context, st storeReader, id string) (bool, error) {
+	e, err := st.Get(ctx, store.Key("/nodes/"+id))
+	if err != nil {
+		return false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "node record")
+	}
+	var r join.NodeRecord
+	if err := json.Unmarshal(e.Value, &r); err != nil {
+		return false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "unmarshal node record")
+	}
+	if r.Role == "witness" || r.Cordoned {
+		return false, nil
+	}
+	return r.State != "unreachable" && r.State != "failed", nil
 }
 
 // overcommitConfig reads /config/scheduler if present, else defaults

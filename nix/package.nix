@@ -10,6 +10,10 @@ buildGoModule {
     "-X main.buildVersion=${version}"
     "-X main.buildCommit=${rev}"
   ];
+  # The block runtime helper (Phase 04) builds alongside expanse and is
+  # installed next to it at /run/current-system/sw/bin.
+  subPackages = [ "cmd/expanse" "cmd/expanse-block-run" ];
+
   meta = {
     mainProgram = "expanse";
   };

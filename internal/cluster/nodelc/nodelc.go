@@ -356,9 +356,6 @@ func (m *Monitor) Evaluate(ctx context.Context, now time.Time) []Transition {
 		if json.Unmarshal(e.Value, &r) != nil || r.ID == "" {
 			continue
 		}
-		if r.State == StateFailed {
-			continue
-		}
 		// Last seen: the status entry's store timestamp (FSM-assigned,
 		// from the leader's command clock), falling back to join time.
 		last := time.Unix(0, r.JoinedAt)
@@ -374,7 +371,11 @@ func (m *Monitor) Evaluate(ctx context.Context, now time.Time) []Transition {
 		case silent >= unr:
 			want = StateUnreachable
 		}
-		if want == "" || want == r.State {
+		// want == r.State (including both empty): nothing to do. A
+		// non-empty state with want == "" is a RECOVERY — the node is
+		// reporting again, so clear the detector state (§4.8 node
+		// restart).
+		if want == r.State {
 			continue
 		}
 		from := r.State

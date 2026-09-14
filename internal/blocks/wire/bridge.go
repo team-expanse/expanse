@@ -123,7 +123,9 @@ func (b *Bridge) Sync(ctx context.Context) error {
 			}
 			key := resourcePrefix + p.GetNodeId() + "/resources/" +
 				controller.ReplicaResourceID(ns, name, int(p.GetReplicaIndex()))
-			want[key] = spec
+			// Canonical reconciler format: "type: <type>" header then
+			// the payload (Phase 02 convention).
+			want[key] = append([]byte("type: "+systemd.TypeBlockReplica+"\n"), spec...)
 		}
 	}
 

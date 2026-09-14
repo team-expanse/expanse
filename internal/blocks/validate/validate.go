@@ -5,14 +5,14 @@
 // Every rule has a stable identifier ("V1".."V24") so API consumers and
 // tests can map failures back to the spec table. Each rule's error message
 // satisfies the "Message must mention" column of the spec (e.g. V1 names
-// the invalid character, V16 names the node count).
+// the invalid character).
 //
 // Rules that need knowledge beyond the block itself read it from Context:
 //
 //	V3/V19   Catalog (type existence, config JSON-Schema validation)
 //	V20      Context.SecretsExist callback
 //	V2       Context.Existing (blocks already in the namespace)
-//	V12/V16  Context.NodeCount
+//	V12      Context.NodeCount
 //	V13/V18/V23  Context.SharedClasses / KnownCapabilities / Devices
 //	V24      Context.DependsOn (existing blocks' dependency edges)
 //
@@ -66,7 +66,7 @@ type Context struct {
 	// Existing lists block names already present in the same namespace,
 	// excluding the block being validated (V2).
 	Existing []string
-	// NodeCount is the current cluster size (V12, V16). 0 skips the
+	// NodeCount is the current cluster size (V12). 0 skips the
 	// node-count comparisons.
 	NodeCount int
 	// KnownCapabilities lists the capability strings any node in the
@@ -101,7 +101,9 @@ func Validate(b *pb.Block, ctx Context) []ValidationError {
 	add(v13(b, ctx))
 	add(v14(b))
 	add(v15(b))
-	add(v16(b, ctx))
+	// V16 (antiAffinity node ⇒ replicas ≤ node count) was removed: the
+	// §8 block-antiaffinity contract requires replicas > node count to
+	// be ACCEPTED and left Pending, not rejected at admission.
 	add(v17(b))
 	add(v18(b, ctx))
 	add(v19(b, ctx))
@@ -408,18 +410,13 @@ func v15(b *pb.Block) []ValidationError {
 	return errs
 }
 
-// --- V16: antiAffinity node => replicas <= node count; message names the node count ---
-
-func v16(b *pb.Block, ctx Context) []ValidationError {
-	if b.GetSpec().GetPlacement().GetAntiAffinity() != pb.AntiAffinity_ANTI_AFFINITY_NODE || ctx.NodeCount <= 0 {
-		return nil
-	}
-	if r := b.GetSpec().Replicas; r != nil && *r > int32(ctx.NodeCount) {
-		return []ValidationError{verr("V16",
-			"placement.antiAffinity node requires replicas (%d) <= node count (%d)", *r, ctx.NodeCount)}
-	}
-	return nil
-}
+// --- V16 (REMOVED): antiAffinity node ⇒ replicas ≤ node count ---
+//
+// Originally admission rejected replicas > node count under strict node
+// anti-affinity. §8's block-antiaffinity contract explicitly expects
+// that configuration to be accepted and the surplus replica left
+// Pending with the filter reason (and it places when the cluster
+// grows), so the rejection contradicted the runtime semantics.
 
 // --- V17: nodeSelector keys are valid label keys ---
 

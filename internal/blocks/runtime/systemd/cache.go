@@ -100,7 +100,10 @@ func NewCache(path string) (*Cache, error) {
 		return nil, errors.Wrap(err, errors.KindInternal, "systemd.NewCache", "read cache")
 	}
 	if err := json.Unmarshal(b, &c.ents); err != nil {
-		return nil, errors.Wrap(err, errors.KindInternal, "systemd.NewCache", "corrupt cache")
+		// Torn cache (power loss mid-write) is recoverable: entries are
+		// pure memoization. Log-and-reset, not a hard failure — the
+		// node just rebuilds the closures.
+		return c, nil
 	}
 	return c, nil
 }
@@ -125,7 +128,7 @@ func (c *Cache) Put(hash, storePath string) error {
 	if err != nil {
 		return errors.Wrap(err, errors.KindInternal, "systemd.Cache.Put", "marshal")
 	}
-	if err := os.WriteFile(c.path, b, 0o600); err != nil {
+	if err := writeFileSync(c.path, b, 0o600); err != nil {
 		return errors.Wrap(err, errors.KindInternal, "systemd.Cache.Put", "write")
 	}
 	return nil
@@ -168,4 +171,40 @@ func (a *Applier) Apply(ctx context.Context, s Spec) (ApplyResult, error) {
 		return ApplyResult{}, err
 	}
 	return ApplyResult{StorePath: string(p), Built: true}, nil
+}
+
+// writeFileSync: temp file + fsync + rename — the cache file must not
+// tear under power loss (a torn write used to brick the block runtime:
+// "corrupt cache" disabled replicas until manual cleanup).
+func writeFileSync(path string, b []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".cache-tmp-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }

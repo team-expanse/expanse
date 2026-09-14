@@ -10,14 +10,16 @@ import (
 
 func newAgentCmd() *cobra.Command {
 	var (
-		dataDir   string
-		socket    string
-		period    string
-		dryRun    bool
-		enableTCP bool
-		role      string
-		raftBind  string
-		raftAdv   string
+		dataDir    string
+		socket     string
+		period     string
+		dryRun     bool
+		enableTCP  bool
+		role       string
+		raftBind   string
+		raftAdv    string
+		blockCat   string
+		blockFlake string
 	)
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -31,6 +33,8 @@ func newAgentCmd() *cobra.Command {
 				Role:              role,
 				RaftBindAddr:      raftBind,
 				RaftAdvertiseAddr: raftAdv,
+				BlocksCatalog:     blockCat,
+				BlocksFlakeRef:    blockFlake,
 				LogLevel:          cmd.Root().PersistentFlags().Lookup("log-level").Value.String(),
 			}
 			if period != "" {
@@ -55,5 +59,7 @@ func newAgentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&role, "role", "", "cluster role override (§4.9: voter | witness; default: from the node record)")
 	cmd.Flags().StringVar(&raftBind, "raft-bind", "", "raft transport bind addr (default 0.0.0.0:7444; must match the join-time bind)")
 	cmd.Flags().StringVar(&raftAdv, "raft-advertise", "", "raft transport advertised addr (default: the bind host or local IP, port 7444)")
+	cmd.Flags().StringVar(&blockCat, "blocks-catalog", "", "shipped block-type directory (nix/blocks layout); empty = block API disabled")
+	cmd.Flags().StringVar(&blockFlake, "blocks-flake-ref", "", "flake ref holding block closures (attr per type: <category>-<name>); empty = replicas not realized on this node")
 	return cmd
 }

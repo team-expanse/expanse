@@ -2,6 +2,7 @@ package wire
 
 // Bridge (T20.5b) tests: placements → per-node desired-state keys.
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strconv"
@@ -81,8 +82,12 @@ func TestBridgeSyncWritesSpecs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("missing desired key %s: %v", key, err)
 		}
+		payload, ok := bytes.CutPrefix(e.Value, []byte("type: "+systemd.TypeBlockReplica+"\n"))
+		if !ok {
+			t.Fatalf("spec %s: missing canonical header: %q", key, e.Value)
+		}
 		var spec systemd.Spec
-		if err := json.Unmarshal(e.Value, &spec); err != nil {
+		if err := json.Unmarshal(payload, &spec); err != nil {
 			t.Fatalf("spec %s: %v", key, err)
 		}
 		if spec.Namespace != "default" || spec.Name != "web" || spec.Index != want.index {

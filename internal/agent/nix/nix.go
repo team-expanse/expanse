@@ -97,9 +97,16 @@ func (d *ExecDriver) cmd(ctx context.Context, name string, args ...string) *exec
 func (d *ExecDriver) nixCmd(ctx context.Context, args ...string) *exec.Cmd {
 	args = append([]string{
 		"--extra-experimental-features", "nix-command flakes",
-		"--no-write-lock-file",
 	}, args...)
-	return d.cmd(ctx, "nix", args...)
+	nixBin := "nix"
+	if _, err := exec.LookPath(nixBin); err != nil {
+		nixBin = "/run/current-system/sw/bin/nix"
+	}
+	c := d.cmd(ctx, nixBin, args...)
+	// The agent may run with a read-only HOME (impermanence); nix needs
+	// a writable cache dir. /tmp is always available.
+	c.Env = append(os.Environ(), "XDG_CACHE_HOME=/var/cache/expanse-nix")
+	return c
 }
 
 // Build implements Driver. Output is streamed line-by-line to logs so

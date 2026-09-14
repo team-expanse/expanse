@@ -21,6 +21,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -44,8 +45,10 @@ const StatusSuffix = "/status"
 // entries (Phase 05 wires the real adapter), in tests it returns a fixed
 // NodeView slice.
 type Controller struct {
-	St    *raftstore.Store
-	Nodes func(ctx context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)
+	// Logger receives reconcile failures; nil = discard.
+	Logger *slog.Logger
+	St     *raftstore.Store
+	Nodes  func(ctx context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)
 	// Interval between passes; DefaultInterval when zero.
 	Interval time.Duration
 	// Update carries the §5.2 rolling-update seams; nil fields get
@@ -106,10 +109,23 @@ func (c *Controller) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			c.Reconcile(ctx)
+			if placed, err := c.Reconcile(ctx); err != nil {
+				c.logReconcileErr(err)
+			} else if c.Logger != nil {
+				c.Logger.Info("placement pass", "placed", placed)
+			}
 		case <-c.wake:
-			c.Reconcile(ctx)
+			if _, err := c.Reconcile(ctx); err != nil {
+				c.logReconcileErr(err)
+			}
 		}
+	}
+}
+
+// logReconcileErr reports a failed placement pass (nil logger = discard).
+func (c *Controller) logReconcileErr(err error) {
+	if c.Logger != nil {
+		c.Logger.Error("placement reconcile failed", "err", err)
 	}
 }
 

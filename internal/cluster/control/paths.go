@@ -87,6 +87,43 @@ func LoadCluster(dataDir string) (clusterID string, secret []byte, clusterCA *ca
 	return trimSpace(idb), secret, &ca.CA{Priv: priv, Cert: cert}, nil
 }
 
+// writeFileSync writes atomically: temp file + fsync + rename + parent
+// dir fsync. Enrollment material (cluster secret, sealed CA key, TLS)
+// must survive a hard power loss (§4.8 node restart): a torn write to
+// any of these files bricks the node's re-enrollment.
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".expanse-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after successful rename
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}
+
 // trimSpace strips surrounding whitespace from file contents.
 func trimSpace(b []byte) string { return strings.TrimSpace(string(b)) }
 
@@ -96,14 +133,14 @@ func saveCA(dataDir string, clusterCA *ca.CA, secret []byte) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, CAFile), ca.MarshalCert(clusterCA.Cert), 0o644); err != nil {
+	if err := writeFileSync(filepath.Join(dataDir, CAFile), ca.MarshalCert(clusterCA.Cert), 0o644); err != nil {
 		return err
 	}
 	sealed, err := ca.SealKey(clusterCA.Priv, secret)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dataDir, CAKeyFile), sealed, 0o600)
+	return writeFileSync(filepath.Join(dataDir, CAKeyFile), sealed, 0o600)
 }
 
 // saveSecret persists the hex cluster secret (0600).
@@ -111,7 +148,7 @@ func saveSecret(dataDir string, secret []byte) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dataDir, SecretFile), []byte(hex.EncodeToString(secret)), 0o600)
+	return writeFileSync(filepath.Join(dataDir, SecretFile), []byte(hex.EncodeToString(secret)), 0o600)
 }
 
 // saveNodeTLS persists the joiner's cert + key.
@@ -120,10 +157,10 @@ func saveNodeTLS(dataDir string, certPEM, keyPEM []byte) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, NodeCertFile), certPEM, 0o644); err != nil {
+	if err := writeFileSync(filepath.Join(dataDir, NodeCertFile), certPEM, 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dataDir, NodeKeyFile), keyPEM, 0o600)
+	return writeFileSync(filepath.Join(dataDir, NodeKeyFile), keyPEM, 0o600)
 }
 
 // SaveNodeID persists the enrolled node ID (used by CLI reopen paths).
@@ -131,7 +168,7 @@ func SaveNodeID(dataDir, nodeID string) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dataDir, NodeIDFile), []byte(nodeID), 0o644)
+	return writeFileSync(filepath.Join(dataDir, NodeIDFile), []byte(nodeID), 0o644)
 }
 
 // LoadNodeID reads the persisted node ID ("" if not enrolled).
@@ -147,7 +184,7 @@ func saveClusterID(dataDir, id string) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dataDir, ClusterIDFile), []byte(id), 0o644)
+	return writeFileSync(filepath.Join(dataDir, ClusterIDFile), []byte(id), 0o644)
 }
 
 // localIP returns a routable non-loopback IPv4 for advertise defaults,

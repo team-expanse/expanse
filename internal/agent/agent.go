@@ -319,7 +319,7 @@ func New(cfg Config) (*Agent, error) {
 					} else {
 						r.Register(systemd.NewManager(api, &systemd.Applier{
 							Cache:   cache,
-							Builder: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef},
+							Builder: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef, logger: logger},
 						}))
 						logger.Info("block replica runtime enabled", "flake", cfg.BlocksFlakeRef)
 					}
@@ -637,6 +637,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.blocks != nil && !witness {
 		if rs, ok := a.store.(*raftstore.Store); ok {
 			a.blockCtl = controller.New(rs, wire.Nodes(a.store))
+			a.blockCtl.Logger = a.logger
 			go a.blockCtl.Run(ctx)
 			a.blockBridge = &wire.Bridge{St: rs}
 			go a.blockBridge.Run(ctx)
@@ -821,9 +822,15 @@ func (w raftLogWriter) Write(p []byte) (int, error) {
 type blockBuilder struct {
 	driver   *nix.ExecDriver
 	flakeRef string
+	logger   *slog.Logger
 }
 
 func (b *blockBuilder) Build(ctx context.Context, blockType string) (nix.StorePath, error) {
 	attr := strings.ReplaceAll(blockType, "/", "-")
-	return b.driver.Build(ctx, b.flakeRef, attr, os.Stdout)
+	p, err := b.driver.Build(ctx, b.flakeRef, attr, os.Stdout)
+	if err != nil {
+		b.logger.Error("block closure build failed", "type", blockType, "attr", attr,
+			"flake", b.flakeRef, "cause", fmt.Sprint(err))
+	}
+	return p, err
 }

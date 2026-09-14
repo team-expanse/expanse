@@ -459,27 +459,16 @@ func TestV15ExecProbeNeedsCommand(t *testing.T) {
 	}
 }
 
-func TestV16AntiAffinityNodeCount(t *testing.T) {
+// V16 was removed: replicas > node count under strict node
+// anti-affinity must be ACCEPTED (the surplus replica goes Pending at
+// placement time, §8 block-antiaffinity).
+func TestV16AntiAffinityOverCountAccepted(t *testing.T) {
 	ctx := baseCtx()
-	if errs := Validate(validBlock(), ctx); byRule(errs, "V16") != nil {
-		t.Fatalf("valid block failed V16: %v", byRule(errs, "V16"))
-	}
-
 	b := validBlock()
 	b.Spec.Placement.AntiAffinity = pb.AntiAffinity_ANTI_AFFINITY_NODE
 	b.Spec.Replicas = i32(6)
-	e := byRule(Validate(b, ctx), "V16")
-	if e == nil {
-		t.Fatal("expected V16 failure for replicas > node count")
-	}
-	// V16: message must name the node count.
-	if !strings.Contains(e.Message, "node count (5)") {
-		t.Errorf("V16 message %q does not name the node count", e.Message)
-	}
-
-	b.Spec.Replicas = i32(5)
-	if errs := Validate(b, ctx); byRule(errs, "V16") != nil {
-		t.Fatalf("replicas == node count failed V16: %v", byRule(errs, "V16"))
+	if errs := Validate(b, ctx); len(errs) != 0 {
+		t.Fatalf("anti-affinity replicas > node count rejected: %v", errs)
 	}
 }
 
