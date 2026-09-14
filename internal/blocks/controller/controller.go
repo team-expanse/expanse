@@ -62,11 +62,26 @@ type Controller struct {
 	leases    *lease.Manager
 	leaseMu   sync.Mutex
 	held      map[string]*lease.Held
+
+	// Node-failure rescheduling (T17): §4.4 knobs and seams. Grace
+	// defaults to DefaultUnreachableGrace when zero; StorageAvailable
+	// defaults to true (Phase 06 wires the real volume check).
+	UnreachableGrace time.Duration
+	StorageAvailable func(volumeID string) bool
+	unreachableMu    sync.Mutex
+	unreachableSince map[string]time.Time // blockKey\x00nodeID → first unreachable
 }
 
 // New builds a Controller.
 func New(st *raftstore.Store, nodes func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)) *Controller {
-	return &Controller{St: st, Nodes: nodes, wake: make(chan struct{}, 1), calls: map[string]int{}, held: map[string]*lease.Held{}}
+	return &Controller{
+		St:               st,
+		Nodes:            nodes,
+		wake:             make(chan struct{}, 1),
+		calls:            map[string]int{},
+		held:             map[string]*lease.Held{},
+		unreachableSince: map[string]time.Time{},
+	}
 }
 
 // hooks returns the update hooks, defaulting to an empty set.
@@ -185,6 +200,17 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 	}
 
 	status := c.loadStatus(ctx, e.Key)
+	// §4.4 node-failure rescheduling runs before everything else: mark
+	// Lost past the grace period, retire (free the index) when a
+	// replacement is permitted, then schedule the replacement through
+	// the normal strategy path (singleton lease gate applies there).
+	freed, err := c.reschedulePass(ctx, &b, e, status, nodes)
+	if err != nil {
+		return 0, err
+	}
+	if freed || hasRetired(status) {
+		return c.scheduleReplacement(ctx, &b, e, status, nodes, cfg)
+	}
 	// §5.2 rolling update: when the block is running with placements and
 	// any replica is not at the current revision, run one update step
 	// instead of plain placement. Generation 0 = pre-T15 placement, kept
