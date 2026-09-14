@@ -192,6 +192,7 @@ type thresholdCounter struct {
 	streak           int // consecutive same-result count (negative = failing)
 	healthy          bool
 	seen             bool // false until the first result seeds state
+	initDone         bool // thresholds copied from the probe spec
 }
 
 func (c *thresholdCounter) observe(ok bool) (transitioned bool) {
@@ -302,20 +303,29 @@ func (r *Runner) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			res := r.Prober.Probe(ctx, r.Target)
-			if r.st.observe(res.OK) {
-				r.write(ctx, Record{
-					OK: res.OK, Detail: res.Detail, At: r.now(),
-					LatencyNs: int64(res.Latency),
-				})
-				r.fire(res.OK)
-			}
+			r.ProbeOnce(ctx)
 		case <-beatTick.C:
 			if r.now().Sub(r.last) >= beat {
 				// Unconditional heartbeat carrying unchanged state (§5.4).
 				r.write(ctx, Record{OK: r.st.healthy, Detail: "heartbeat", At: r.now(), Heartbeat: true})
 			}
 		}
+	}
+}
+
+// ProbeOnce performs one probe cycle: probe, and on a threshold-crossing
+// transition publish + fire the lifecycle event. Exposed so tests can
+// drive the state machine deterministically without wall-clock races;
+// Run calls it every tick.
+func (r *Runner) ProbeOnce(ctx context.Context) {
+	r.init()
+	res := r.Prober.Probe(ctx, r.Target)
+	if r.st.observe(res.OK) {
+		r.write(ctx, Record{
+			OK: res.OK, Detail: res.Detail, At: r.now(),
+			LatencyNs: int64(res.Latency),
+		})
+		r.fire(res.OK)
 	}
 }
 
@@ -346,6 +356,16 @@ func (r *Runner) now() time.Time {
 		return r.Now()
 	}
 	return time.Now()
+}
+
+// init seeds the threshold counter from r.Probe exactly once.
+func (r *Runner) init() {
+	if r.st.seen || r.st.initDone {
+		return
+	}
+	r.st.successThreshold = int(r.Probe.GetSuccessThreshold())
+	r.st.failureThreshold = int(r.Probe.GetFailureThreshold())
+	r.st.initDone = true
 }
 
 func (r *Runner) period() time.Duration {

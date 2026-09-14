@@ -241,46 +241,66 @@ func TestTransitionWrite(t *testing.T) {
 	}
 }
 
-// Threshold counting drives the expected event: failureThreshold=2 means
-// one fail is absorbed, two consecutive fails emit EventReadinessFail.
+// Threshold counting drives the expected event — driven synchronously via
+// ProbeOnce so no wall-clock races: failureThreshold=2 absorbs one fail
+// and fires exactly one EventReadinessFail on the second consecutive fail.
 func TestThresholdCountingDrivesEvents(t *testing.T) {
-	p := &fakeProbe{pass: true}
 	var mu sync.Mutex
 	var events []lifecycle.Event
-	pub := &memPublisher{}
 	r := &Runner{
-		Publisher: pub.publish,
-		Prober:    p,
-		Probe:     &pb.HealthProbe{SuccessThreshold: 1, FailureThreshold: 2},
-		Period:    10 * time.Millisecond,
-		Heartbeat: time.Hour,
+		Prober: &fakeProbe{pass: true},
+		Probe:  &pb.HealthProbe{SuccessThreshold: 1, FailureThreshold: 2},
 		OnEvent: func(ev lifecycle.Event) {
 			mu.Lock()
 			events = append(events, ev)
 			mu.Unlock()
 		},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { r.Run(ctx); close(done) }()
+	ctx := context.Background()
+	r.ProbeOnce(ctx) // seed healthy, silent
+	r.ProbeOnce(ctx) // still pass: no event
+	mu.Lock()
+	if len(events) != 0 {
+		t.Fatalf("passing probes fired events: %v", events)
+	}
+	mu.Unlock()
 
-	time.Sleep(30 * time.Millisecond)
-	p.mu.Lock()
-	p.pass = false
-	p.mu.Unlock()
-	time.Sleep(10 * time.Millisecond)
+	r.Prober = &fakeProbe{pass: false}
+	r.ProbeOnce(ctx) // fail 1: absorbed
 	mu.Lock()
 	if len(events) != 0 {
 		t.Errorf("event fired after 1 fail with failureThreshold=2: %v", events)
 	}
 	mu.Unlock()
-	time.Sleep(30 * time.Millisecond)
-	cancel()
-	<-done
+
+	r.ProbeOnce(ctx) // fail 2: fires
 	mu.Lock()
 	defer mu.Unlock()
 	if len(events) != 1 || events[0] != lifecycle.EventReadinessFail {
 		t.Errorf("events = %v, want exactly one EventReadinessFail", events)
+	}
+}
+
+// successThreshold: consecutive passes required to re-fire readiness pass.
+func TestSuccessThreshold(t *testing.T) {
+	var events []lifecycle.Event
+	r := &Runner{
+		Prober: &fakeProbe{pass: false},
+		Probe:  &pb.HealthProbe{SuccessThreshold: 2, FailureThreshold: 1},
+		OnEvent: func(ev lifecycle.Event) {
+			events = append(events, ev)
+		},
+	}
+	ctx := context.Background()
+	r.ProbeOnce(ctx) // seeds unhealthy silently
+	r.Prober = &fakeProbe{pass: true}
+	r.ProbeOnce(ctx) // pass 1: absorbed
+	if len(events) != 0 {
+		t.Fatalf("event after 1 pass with successThreshold=2: %v", events)
+	}
+	r.ProbeOnce(ctx) // pass 2: fires
+	if len(events) != 1 || events[0] != lifecycle.EventReadinessPass {
+		t.Errorf("events = %v, want exactly one EventReadinessPass", events)
 	}
 }
 
