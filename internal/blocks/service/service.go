@@ -27,6 +27,7 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/scheduler"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
@@ -46,6 +47,9 @@ type Server struct {
 	// context with nil Catalog skips V3/V19 (test-only escape hatch);
 	// production wires the real catalog.
 	Admission func() validate.Context
+	// Nodes supplies the current cluster view for Explain (T18).
+	// Production wiring arrives with the Phase 05 node adapter.
+	Nodes func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)
 }
 
 // New builds a Server.

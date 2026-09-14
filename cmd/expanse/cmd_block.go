@@ -13,6 +13,7 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/apply"
 	"github.com/expanse/expanse/internal/blocks/logs"
+	"github.com/expanse/expanse/internal/blocks/service"
 	"github.com/expanse/expanse/internal/blocks/validate"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -237,7 +238,24 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	logsCmd.Flags().IntVar(&logTail, "tail", 0, "number of past lines to start from")
 	logsCmd.Flags().StringVar(&logSince, "since", "", "start point: duration (1h) or RFC3339 timestamp")
 
-	block.AddCommand(list, get, applyCmd, del, scale, restart, events, logsCmd)
+	explain := &cobra.Command{
+		Use:   "explain <name>",
+		Short: "Why is this block pending? Per-node filter/score breakdown (§7)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ns := nsFlag(cmd)
+			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
+				resp, err := c.Explain(ctx, &pb.ExplainRequest{Namespace: *ns, Name: args[0]})
+				if err != nil {
+					return fmt.Errorf("Explain: %w", err)
+				}
+				fmt.Fprint(cmd.OutOrStdout(), service.RenderExplain(resp))
+				return nil
+			})
+		},
+	}
+
+	block.AddCommand(list, get, applyCmd, del, scale, restart, events, explain, logsCmd)
 
 	catalog := &cobra.Command{Use: "catalog", Short: "Block type catalog (§6)"}
 	catalog.AddCommand(&cobra.Command{

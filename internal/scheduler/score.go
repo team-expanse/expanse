@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strings"
 
 	pb "github.com/expanse/expanse/proto"
 )
@@ -207,4 +208,33 @@ func tieBreakHash(blockID string, replicaIndex int, nodeID string) uint64 {
 	h := fnv.New64a()
 	fmt.Fprintf(h, "%s#%d#%s", blockID, replicaIndex, nodeID)
 	return h.Sum64() & 0xffffffff
+}
+
+// ScoreBreakdown returns, per candidate node, the human-readable S1–S6
+// contributions ("S1 least-loaded=78 (+390), ...") used by the explain
+// table. Same inputs and arithmetic as Score; the max-failure anchor is
+// computed across the candidate set so breakdown numbers match Score.
+func ScoreBreakdown(candidates []NodeView, req ReplicaRequest, cluster ClusterView) map[string]string {
+	blockVolumes := blockVolumeNames(req)
+	deviceReqs := requestedDevices(req)
+	maxFailures := 0
+	for i := range candidates {
+		if candidates[i].RecentFailures > maxFailures {
+			maxFailures = candidates[i].RecentFailures
+		}
+	}
+	out := make(map[string]string, len(candidates))
+	for i := range candidates {
+		n := candidates[i]
+		parts := []string{
+			fmt.Sprintf("S1 least-loaded=%d (+%d)", s1LeastLoaded(n), wLeastLoaded*s1LeastLoaded(n)),
+			fmt.Sprintf("S2 spread=%d (+%d)", s2SpreadTopology(n.ID, cluster), wSpreadTopology*s2SpreadTopology(n.ID, cluster)),
+			fmt.Sprintf("S3 locality=%d (+%d)", s3DataLocality(n, blockVolumes), wDataLocality*s3DataLocality(n, blockVolumes)),
+			fmt.Sprintf("S4 image=%d (+%d)", s4ImageLocality(n, req.Block.GetSpec().GetType()), wImageLocality*s4ImageLocality(n, req.Block.GetSpec().GetType())),
+			fmt.Sprintf("S5 device=%d (+%d)", s5DeviceFit(n, deviceReqs), wDeviceFit*s5DeviceFit(n, deviceReqs)),
+			fmt.Sprintf("S6 stability=%d (+%d)", s6Stability(n, maxFailures), wStability*s6Stability(n, maxFailures)),
+		}
+		out[n.ID] = strings.Join(parts, ", ")
+	}
+	return out
 }
