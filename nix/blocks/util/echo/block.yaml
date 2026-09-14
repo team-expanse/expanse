@@ -1,0 +1,5 @@
+name: echo
+version: 1.0.0
+description: Trivial HTTP echo service — the scheduler and lifecycle test workload
+icon: echo
+capabilities: []

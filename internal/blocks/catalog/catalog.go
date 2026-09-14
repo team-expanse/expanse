@@ -230,5 +230,13 @@ func fieldErrors(parent string, e *jsonschema.ValidationError) []string {
 		}
 		return out
 	}
+	if strings.HasSuffix(e.KeywordLocation, "/additionalProperties") &&
+		strings.HasPrefix(e.Message, "additionalProperties '") {
+		// additionalProperties leaves sit at the object root with message
+		// `additionalProperties 'x' not allowed`; lift the property into the
+		// path so the field is named.
+		prop := e.Message[len("additionalProperties '") : len(e.Message)-len("' not allowed")]
+		return []string{fmt.Sprintf("%s/%s: %s", loc, prop, e.Message)}
+	}
 	return []string{fmt.Sprintf("%s: %s", loc, e.Message)}
 }

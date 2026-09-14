@@ -228,3 +228,63 @@ func mustStruct(t *testing.T, m map[string]any) *structpb.Struct {
 	}
 	return s
 }
+
+// TestLoadRealBlocks loads the shipped block catalog from the repository
+// (nix/blocks, not the test fixture) and exercises the util/echo schema.
+func TestLoadRealBlocks(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	if !c.HasType("util/echo") {
+		t.Fatalf("shipped catalog missing util/echo; got %v", c.Types())
+	}
+
+	// A minimal config validates.
+	if errs := c.ValidateConfig("util/echo", mustStruct(t, map[string]any{"port": 18080})); len(errs) != 0 {
+		t.Fatalf("minimal echo config rejected: %v", errs)
+	}
+	// nil config validates (no required fields).
+	if errs := c.ValidateConfig("util/echo", nil); len(errs) != 0 {
+		t.Fatalf("nil echo config rejected: %v", errs)
+	}
+	// An unknown field is rejected, naming its path.
+	errs := c.ValidateConfig("util/echo", mustStruct(t, map[string]any{"bogus": "x"}))
+	if len(errs) != 1 || !strings.Contains(errs[0], "/bogus") {
+		t.Errorf("unknown field not rejected with path: %v", errs)
+	}
+	// Out-of-range port rejected with its path.
+	errs = c.ValidateConfig("util/echo", mustStruct(t, map[string]any{"port": 70000}))
+	if len(errs) != 1 || !strings.Contains(errs[0], "/port") {
+		t.Errorf("bad port not rejected with path: %v", errs)
+	}
+	// Defaults parse.
+	d := c.Defaults("util/echo")
+	if d["port"] != int(18080) || d["body"] != "expanse echo test workload" {
+		t.Errorf("unexpected echo defaults: %v", d)
+	}
+
+	// V3/V19 through the admission rules against the shipped type.
+	b := &pb.Block{
+		Metadata: &pb.Metadata{Name: "echo-1", Namespace: "default"},
+		Spec: &pb.BlockSpec{
+			Type:     "util/echo",
+			Replicas: func() *int32 { i := int32(2); return &i }(),
+			Config:   mustStruct(t, map[string]any{"port": 18081, "body": "hi"}),
+		},
+	}
+	ctx := validate.Context{Catalog: c}
+	if errs := validate.Validate(b, ctx); len(errs) != 0 {
+		t.Fatalf("valid echo block rejected: %v", errs)
+	}
+	b.Spec.Config = mustStruct(t, map[string]any{"nope": true})
+	var v19 string
+	for _, e := range validate.Validate(b, ctx) {
+		if e.Rule == "V19" {
+			v19 = e.Message
+		}
+	}
+	if v19 == "" || !strings.Contains(v19, "/nope") {
+		t.Errorf("V19 message %q does not name the unknown field", v19)
+	}
+}
