@@ -120,7 +120,6 @@ func Transition(from Phase, ev Event) (to Phase, ok bool) {
 	if ev == EventDelete && isLive(from) {
 		return Terminating, true
 	}
-func Transition(from Phase, ev Event) (to Phase, ok bool) {
 	row, ok := transitions[from]
 	if !ok {
 		return pb.Phase_PHASE_UNSPECIFIED, false
