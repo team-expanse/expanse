@@ -1,0 +1,453 @@
+syntax = "proto3";
+
+package expanse.block.v1;
+
+option go_package = "github.com/expanse/expanse/proto";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+// Block service — Phase 04. The canonical internal representation is
+// protobuf (PHASE04.md §3.1); users author YAML or Nix and both convert to
+// Block. Status fields are written by the system, never by users.
+
+// StrategyKind selects the replication model.
+enum StrategyKind {
+  STRATEGY_KIND_UNSPECIFIED = 0;
+  ACTIVE_ACTIVE = 1;
+  PRIMARY_REPLICA = 2;
+  SINGLETON = 3;
+  DAEMONSET = 4;
+}
+
+// UpdateMode selects the update strategy (§5.2).
+enum UpdateMode {
+  UPDATE_MODE_UNSPECIFIED = 0;
+  UPDATE_MODE_ROLLING = 1;
+  UPDATE_MODE_RECREATE = 2;
+  UPDATE_MODE_CANARY = 3;
+}
+
+// Runtime selects how the block is executed on a node.
+enum Runtime {
+  RUNTIME_UNSPECIFIED = 0;
+  RUNTIME_SYSTEMD = 1;
+  RUNTIME_MICROVM = 2;
+  RUNTIME_OCI = 3;
+}
+
+// AntiAffinity spreads replicas across failure domains (§4.1 predicate P9).
+enum AntiAffinity {
+  ANTI_AFFINITY_UNSPECIFIED = 0;
+  ANTI_AFFINITY_NONE = 1;
+  ANTI_AFFINITY_NODE = 2;
+  ANTI_AFFINITY_RACK = 3;
+  ANTI_AFFINITY_ZONE = 4;
+}
+
+// Expose selects how a port is published.
+enum Expose {
+  EXPOSE_UNSPECIFIED = 0;
+  EXPOSE_NONE = 1;
+  EXPOSE_VIP = 2;
+  EXPOSE_HOST = 3;
+  EXPOSE_CLUSTER = 4;
+}
+
+// ProbeType selects the health-check mechanism (§5.4).
+enum ProbeType {
+  PROBE_TYPE_UNSPECIFIED = 0;
+  PROBE_TCP = 1;
+  PROBE_HTTP = 2;
+  PROBE_EXEC = 3;
+  PROBE_NONE = 4;
+}
+
+// AccessMode for storage volumes.
+enum AccessMode {
+  ACCESS_MODE_UNSPECIFIED = 0;
+  ACCESS_MODE_RWO = 1;
+  ACCESS_MODE_RWX = 2;
+}
+
+// Spread across eligible nodes.
+enum Spread {
+  SPREAD_UNSPECIFIED = 0;
+  SPREAD_EVEN = 1;
+  SPREAD_PACKED = 2;
+}
+
+// Phase is the block lifecycle state machine (§5.1). Block-level phase is
+// derived from replica phases; replica-level phase is written by the agent.
+enum Phase {
+  PHASE_UNSPECIFIED = 0;
+  PENDING = 1;
+  SCHEDULING = 2;
+  PROVISIONING = 3;
+  STARTING = 4;
+  RUNNING = 5;
+  DEGRADED = 6;
+  FAILED = 7;
+  UPDATING = 8;
+  TERMINATING = 9;
+  TERMINATED = 10;
+}
+
+// EventType is the watch verb for BlockEvent.
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_ADDED = 1;
+  EVENT_MODIFIED = 2;
+  EVENT_DELETED = 3;
+}
+
+// Metadata identifies a block.
+message Metadata {
+  // DNS-1123 label, 1–63 chars, unique per namespace (V1, V2).
+  string name = 1;
+  string namespace = 2;
+  map<string, string> labels = 3;
+  map<string, string> annotations = 4;
+}
+
+// UpdateStrategy carries the rolling-update knobs (§5.2).
+message UpdateStrategy {
+  UpdateMode mode = 1;
+  int32 max_unavailable = 2;
+  int32 max_surge = 3;
+  int32 min_ready_seconds = 4;
+  bool auto_rollback = 5;
+  // Seconds to wait after LB removal before stopping a replica.
+  // Default 15 when unset (§5.2).
+  int32 connection_drain_seconds = 6;
+}
+
+// Strategy combines the replication model with update knobs.
+message Strategy {
+  StrategyKind kind = 1;
+  UpdateStrategy update = 2;
+}
+
+// ResourcePair holds cpu/memory quantities as strings — they parse at
+// admission time (V9); keep the raw form so validation errors can quote it.
+message ResourcePair {
+  // e.g. "500m", "2", "1.5".
+  string cpu = 1;
+  // e.g. "256Mi", "1Gi".
+  string memory = 2;
+}
+
+// Device is an extra hardware request (e.g. GPU).
+message Device {
+  string type = 1; // e.g. "gpu"
+  int32 count = 2;
+  // e.g. "8Gi" (V9 quantities).
+  string vram = 3;
+}
+
+// Resources are the scheduling inputs (§4.1 predicates, §4.2 overcommit).
+message Resources {
+  ResourcePair requests = 1;
+  // Must be >= requests for every resource (V8).
+  ResourcePair limits = 2;
+  repeated Device devices = 3;
+}
+
+// Storage claims a volume. Fully implemented Phase 06 (§3.1).
+message Storage {
+  string name = 1;
+  // e.g. "10Gi" (V12).
+  string size = 2;
+  string class = 3;
+  // 1–5, and <= cluster node count (V12).
+  int32 replication = 4;
+  string mount_path = 5;
+  // rwx requires a shared-capable class (V13).
+  AccessMode access_mode = 6;
+}
+
+// Placement constrains scheduling.
+message Placement {
+  AntiAffinity anti_affinity = 1;
+  // Matched against node labels (V17: keys must be valid label keys).
+  map<string, string> node_selector = 2;
+  // e.g. ["kvm"], ["nvidia"] (V18: must be known capability strings).
+  repeated string required_capabilities = 3;
+  // Taint keys this block tolerates. (Shape deliberately simple — the spec
+  // lists tolerations without defining per-taint semantics.)
+  repeated string tolerations = 4;
+  Spread spread = 5;
+}
+
+// Port publishes a network endpoint.
+message Port {
+  string name = 1; // unique within the block (V10)
+  int32 port = 2;  // 1–65535, unique within the block (V10)
+  int32 target_port = 3;
+  string protocol = 4; // "tcp" | "udp"
+  Expose expose = 5;
+}
+
+// HealthProbe is a single readiness/liveness probe definition (§5.4).
+message HealthProbe {
+  ProbeType type = 1;
+  // http: required together with port (V14).
+  string path = 2;
+  int32 port = 3;
+  int32 initial_delay_seconds = 4;
+  int32 period_seconds = 5;
+  int32 timeout_seconds = 6;
+  int32 success_threshold = 7;
+  int32 failure_threshold = 8;
+  // exec: required (V15). Runs in the block's namespace.
+  repeated string command = 9;
+}
+
+// HealthCheck pairs readiness and liveness probes.
+message HealthCheck {
+  HealthProbe readiness = 1;
+  HealthProbe liveness = 2;
+}
+
+// Backup schedules block-level backups (V21 validates the cron schedule).
+message Backup {
+  bool enabled = 1;
+  // Standard 5-field cron expression.
+  string schedule = 2;
+  // e.g. "30d".
+  string retention = 3;
+  string pre_hook = 4;
+  string post_hook = 5;
+}
+
+// SecretRef mounts a cluster secret into the block via systemd credentials
+// (never env vars, never files in /nix/store — §5.3).
+message SecretRef {
+  string name = 1; // must exist in the cluster (V20)
+  string path = 2;
+}
+
+// BlockSpec is the user-authored desired state.
+message BlockSpec {
+  // Catalog type: <category>/<name>, e.g. "web/nginx" (V3).
+  string type = 1;
+  string version = 2;
+  // Absent (not set) means "auto" — only valid for daemonset (V6).
+  // When present: >= 0 (V4); singleton forces == 1 (V5); primary-replica
+  // requires >= 2 (V7).
+  optional int32 replicas = 3;
+  Strategy strategy = 4;
+  Runtime runtime = 5;
+  Resources resources = 6;
+  repeated Storage storage = 7;
+  Placement placement = 8;
+  Network network = 9;
+  // Type-specific configuration, validated against the block type's
+  // JSON Schema (draft 2020-12, decision D4.1) at admission (V19).
+  google.protobuf.Struct config = 10;
+  repeated SecretRef secrets = 11;
+  Backup backup = 12;
+  // Names of other blocks this one depends on; must be acyclic (V24).
+  repeated string depends_on = 13;
+}
+
+// Network groups ports and health checks.
+message Network {
+  repeated Port ports = 1;
+  HealthCheck health_check = 2;
+}
+
+// StatusReplicas is the desired/ready/updated triplet.
+message StatusReplicas {
+  int32 desired = 1;
+  int32 ready = 2;
+  int32 updated = 3;
+}
+
+// Condition is a coarse-grained status flag.
+message Condition {
+  string type = 1;
+  bool status = 2;
+  string reason = 3;
+  string message = 4;
+  int64 last_transition_unix_sec = 5;
+}
+
+// PlacementStatus records where one replica lives.
+message PlacementStatus {
+  int32 replica_index = 1;
+  string node_id = 2;
+  Phase phase = 3;
+}
+
+// PendingReason explains why a replica could not be placed (§4.3).
+message PendingReason {
+  string code = 1;
+  string message = 2;
+  // Per-node rejection reason, node ID → reason.
+  map<string, string> per_node = 3;
+}
+
+// BlockStatus is system-written observed state.
+message BlockStatus {
+  Phase phase = 1;
+  int64 observed_generation = 2;
+  StatusReplicas replicas = 3;
+  repeated Condition conditions = 4;
+  repeated PlacementStatus placements = 5;
+  string message = 6;
+  PendingReason pending_reason = 7;
+}
+
+// Block is the top-level resource: user spec + system status.
+message Block {
+  Metadata metadata = 1;
+  BlockSpec spec = 2;
+  BlockStatus status = 3;
+}
+
+// ---- BlockService request/response messages ----
+
+message GetBlockRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+// Empty namespace lists across all namespaces.
+message ListBlocksRequest {
+  string namespace = 1;
+}
+
+message ListBlocksResponse {
+  repeated Block blocks = 1;
+}
+
+message DeleteBlockRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message ScaleRequest {
+  string namespace = 1;
+  string name = 2;
+  int32 replicas = 3;
+}
+
+// replica -1 means "restart all replicas".
+message RestartRequest {
+  string namespace = 1;
+  string name = 2;
+  int32 replica = 3;
+}
+
+// Empty name watches all blocks in the namespace.
+message WatchBlocksRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message BlockEvent {
+  EventType type = 1;
+  Block block = 2;
+}
+
+message LogsRequest {
+  string namespace = 1;
+  string name = 2;
+  int32 replica = 3;
+  bool follow = 4;
+  int32 tail = 5;
+  // Duration or RFC3339 timestamp, e.g. "1h".
+  string since = 6;
+}
+
+message LogLine {
+  int32 replica_index = 1;
+  int64 timestamp_unix_ns = 2;
+  string line = 3;
+}
+
+// ---- Explain (§7 flagship) ----
+
+message ExplainRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+// NodeExplanation reports one node's filter result and score for a replica.
+message NodeExplanation {
+  string node = 1;
+  bool ok = 2;
+  // Set when !ok: which predicate rejected the node, and why.
+  string reason = 3;
+  // Set when ok: the total score and its breakdown.
+  double score = 4;
+  string score_detail = 5;
+}
+
+// ReplicaExplanation is the per-replica section of the explain output.
+message ReplicaExplanation {
+  int32 replica_index = 1;
+  Phase phase = 2;
+  // Set when the replica is placed.
+  string node = 3;
+  repeated NodeExplanation nodes = 4;
+  // One-line actionable hint when the rejection pattern is uniform.
+  string suggestion = 5;
+}
+
+message ExplainResponse {
+  string namespace = 1;
+  string name = 2;
+  Phase phase = 3;
+  PendingReason pending_reason = 4;
+  repeated ReplicaExplanation replicas = 5;
+}
+
+// ---- CatalogService ----
+
+// BlockType describes one catalog entry (one shipped block type).
+message BlockType {
+  // "<category>/<name>", e.g. "web/nginx".
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  string icon = 4;
+  repeated string capabilities = 5;
+  // The type's JSON Schema (draft 2020-12) for spec.config.
+  bytes schema_json = 6;
+}
+
+message ListTypesRequest {}
+
+message ListTypesResponse {
+  repeated BlockType types = 1;
+}
+
+message GetTypeRequest {
+  string name = 1; // "<category>/<name>"
+}
+
+// BlockService is the block CRUD + lifecycle API (§7). Rides the existing
+// mTLS gRPC API port (7443) — no new fixed ports in Phase 04.
+service BlockService {
+  // Create validates at admission, persists the spec, and creates a
+  // generation entry — all in one Raft transaction.
+  rpc Create(Block) returns (Block);
+  rpc Get(GetBlockRequest) returns (Block);
+  rpc List(ListBlocksRequest) returns (ListBlocksResponse);
+  rpc Update(Block) returns (Block);
+  rpc Delete(DeleteBlockRequest) returns (google.protobuf.Empty);
+  rpc Scale(ScaleRequest) returns (Block);
+  rpc Restart(RestartRequest) returns (Block);
+  rpc Watch(WatchBlocksRequest) returns (stream BlockEvent);
+  rpc StreamLogs(LogsRequest) returns (stream LogLine);
+  // Explain reports why a block is pending or unhealthy, per node.
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+}
+
+// CatalogService exposes the shipped block catalog (nix/blocks/*/).
+service CatalogService {
+  rpc ListTypes(ListTypesRequest) returns (ListTypesResponse);
+  rpc GetType(GetTypeRequest) returns (BlockType);
+}
