@@ -79,6 +79,8 @@
           block-reschedule = mkTest "block-reschedule" ./nix/tests/block-reschedule.nix;
           block-rolling-update = mkTest "block-rolling-update" ./nix/tests/block-rolling-update.nix;
           block-scale = mkTest "block-scale" ./nix/tests/block-scale.nix;
+          block-singleton = mkTest "block-singleton" ./nix/tests/block-singleton.nix;
+          block-daemonset = mkTest "block-daemonset" ./nix/tests/block-daemonset.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })

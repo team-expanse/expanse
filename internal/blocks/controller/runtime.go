@@ -101,8 +101,15 @@ func (c *Controller) promoteBlock(ctx context.Context, e store.Entry) error {
 	// want+1 live placements and the roll owns the phase (§5.2); a
 	// premature RUNNING would stop placeBlock from dispatching the
 	// remaining update steps. Never back: DEGRADED belongs to the
-	// reschedule pass (§4.4).
-	if want > 0 && active == want && running == want &&
+	// reschedule pass (§4.4). Daemonsets (want == 0, V6) promote when
+	// every live placement is RUNNING (active == running > 0) — the
+	// per-node set changes without a phase reset (§4.4: daemonsets
+	// place regardless of drain state, extension is additive).
+	done := want > 0 && active == want && running == want
+	if want == 0 {
+		done = active > 0 && running == active
+	}
+	if done &&
 		status.GetPhase() != pb.Phase_RUNNING &&
 		// Mid-roll placements can all be RUNNING but at the OLD
 		// generation — the §5.2 roll owns the phase until every

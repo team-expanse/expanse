@@ -138,7 +138,10 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 func (c *Controller) placeDaemonset(ctx context.Context, b *pb.Block, e store.Entry, status *pb.BlockStatus, nodes []scheduler.NodeView) (int, error) {
 	desired := map[string]bool{}
 	for _, n := range nodes {
-		if n.Ready && !n.Witness {
+		// §4.4: daemonsets ignore cordon by default — a cordoned but
+		// healthy node still hosts its per-node replica (the wire
+		// marks Ready=false for cordoned nodes, so check Cordoned).
+		if (n.Ready || n.Cordoned) && !n.Witness {
 			desired[n.ID] = true
 		}
 	}

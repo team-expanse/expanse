@@ -55,7 +55,10 @@ type Config struct {
 	DataDir string        // default /persist/expanse
 	Socket  string        // default /run/expanse/agent.sock
 	Period  time.Duration // reconcile period, default 30s
-	DryRun  bool
+	// ControllerPeriod is the block placement controller's backstop pass
+	// interval (§4.3 retry timer, default 30s). Shorter in tests.
+	ControllerPeriod time.Duration
+	DryRun           bool
 	// EnableTCP enables the :7443 listener — disabled in Phase 02 (no
 	// mTLS yet); Phase 03 enables it with mTLS.
 	EnableTCP  bool
@@ -638,6 +641,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		if rs, ok := a.store.(*raftstore.Store); ok {
 			a.blockCtl = controller.New(rs, wire.Nodes(a.store))
 			a.blockCtl.Logger = a.logger
+			if a.cfg.ControllerPeriod > 0 {
+				a.blockCtl.Interval = a.cfg.ControllerPeriod
+			}
 			go a.blockCtl.Run(ctx)
 			a.blockBridge = &wire.Bridge{St: rs}
 			go a.blockBridge.Run(ctx)

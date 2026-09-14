@@ -10,13 +10,20 @@ SOCK = "--socket /run/expanse/agent.sock"
 # Valid util/echo manifest with anti-affinity (each replica on its own
 # node; the canonical §8 test block). `body` distinguishes generations
 # in rolling tests; `port` must be free on every node.
-def echo_yaml(name="web", replicas=3, port=18080, body="hi\n", antiaffinity=True):
+def echo_yaml(name="web", replicas=3, port=18080, body="hi\n", antiaffinity=True,
+              strategy=None):
     aa = "  placement:\n    antiAffinity: ANTI_AFFINITY_NODE\n" if antiaffinity else ""
+    # strategy: None (default active-active), "SINGLETON" (V5: replicas
+    # must be 1) or "DAEMONSET" (V6: replicas key must be absent).
+    st = ""
+    if strategy is not None:
+        st = f"  strategy:\n    kind: {strategy}\n"
+    reps = f"  replicas: {replicas}\n" if replicas is not None else ""
     return (
         "apiVersion: expanse.io/v1\nkind: Block\n"
         f"metadata:\n  name: {name}\n  namespace: default\n"
         "spec:\n  type: util/echo\n"
-        f"  replicas: {replicas}\n{aa}"
+        f"{reps}{st}{aa}"
         "  resources:\n    requests:\n      cpu: 100m\n      memory: 64Mi\n"
         "  config:\n"
         f"    port: {port}\n"

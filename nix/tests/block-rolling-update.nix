@@ -20,14 +20,26 @@ let
   # before the first successful response are skipped (nothing to
   # protect yet), so the service can be started at any time.
   clientScript = pkgs.writeShellScript "block-client" ''
-    while :; do
-      ok=0
+    probe() {
+      local ok=0 h b
       for h in 192.168.1.1 192.168.1.2 192.168.1.3; do
         if b=$(${pkgs.curl}/bin/curl -sS --max-time 2 http://$h:18081/ 2>/dev/null); then
           ok=$((ok+1))
           echo $b >> /tmp/cl.bodies
         fi
       done
+      echo $ok
+    }
+    while :; do
+      ok=$(probe)
+      # A sample that straddles two sequential in-place restarts
+      # (~100 ms apart) can transiently see < 2 up — that outage is
+      # exactly what the maxUnavailable=1 budget covers. One in-sample
+      # retry: only a PERSISTENT < 2 counts as a bad sample.
+      if [ $ok -lt 2 ] && [ -f /tmp/cl.up ]; then
+        ${pkgs.coreutils}/bin/sleep 0.3
+        ok=$(probe)
+      fi
       if [ $ok -ge 2 ]; then touch /tmp/cl.up; fi
       if [ -f /tmp/cl.up ]; then
         if [ $ok -ge 2 ]; then echo SAMPLE_OK >> /tmp/cl.stat; else echo SAMPLE_BAD >> /tmp/cl.stat; fi

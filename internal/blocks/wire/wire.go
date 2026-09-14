@@ -105,10 +105,14 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 			}
 			// The §4.8 failure detector's state gates placement: an
 			// unreachable/failed (or cordoned) node is not a candidate,
-			// regardless of its (possibly stale) status leaf.
+			// regardless of its (possibly stale) status leaf. The
+			// cordon flag travels separately — daemonsets ignore it
+			// (§4.4), so they can distinguish "cordoned but healthy"
+			// from "unreachable".
+			var cordoned bool
 			if ready {
 				var placeable bool
-				placeable, err = nodePlaceable(ctx, st, id)
+				placeable, cordoned, err = nodePlaceable(ctx, st, id)
 				if err != nil {
 					return nil, scheduler.OvercommitConfig{}, err
 				}
@@ -118,6 +122,7 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 			views = append(views, scheduler.NodeView{
 				ID:       id,
 				Ready:    ready,
+				Cordoned: cordoned,
 				FreeCPU:  quantity.CPU{Milli: DefaultCapacity.CPU.Milli - u.cpu},
 				FreeMem:  quantity.Bytes{N: DefaultCapacity.Mem.N - u.mem},
 				FreeDisk: quantity.Bytes{N: DefaultCapacity.Disk.N - u.dsk},
@@ -199,19 +204,20 @@ func nodeReady(ctx context.Context, st storeReader, id string) (bool, error) {
 // nodePlaceable reads the node record's §4.8 detector state (written by
 // nodelc.Monitor: state "" = up, "unreachable" past 15 s silent,
 // "failed" past 5 min) and cordon flag; nodelc.placeable semantics.
-func nodePlaceable(ctx context.Context, st storeReader, id string) (bool, error) {
+func nodePlaceable(ctx context.Context, st storeReader, id string) (placeable bool, cordoned bool, err error) {
 	e, err := st.Get(ctx, store.Key("/nodes/"+id))
 	if err != nil {
-		return false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "node record")
+		return false, false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "node record")
 	}
 	var r join.NodeRecord
 	if err := json.Unmarshal(e.Value, &r); err != nil {
-		return false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "unmarshal node record")
+		return false, false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "unmarshal node record")
 	}
+	cordoned = r.Cordoned
 	if r.Role == "witness" || r.Cordoned {
-		return false, nil
+		return false, cordoned, nil
 	}
-	return r.State != "unreachable" && r.State != "failed", nil
+	return r.State != "unreachable" && r.State != "failed", cordoned, nil
 }
 
 // overcommitConfig reads /config/scheduler if present, else defaults

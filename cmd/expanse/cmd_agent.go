@@ -13,6 +13,7 @@ func newAgentCmd() *cobra.Command {
 		dataDir    string
 		socket     string
 		period     string
+		ctlPeriod  string
 		dryRun     bool
 		enableTCP  bool
 		role       string
@@ -44,6 +45,13 @@ func newAgentCmd() *cobra.Command {
 				}
 				cfg.Period = d
 			}
+			if ctlPeriod != "" {
+				d, err := parseDuration(ctlPeriod)
+				if err != nil {
+					return fmt.Errorf("--controller-period: %w", err)
+				}
+				cfg.ControllerPeriod = d
+			}
 			a, err := agent.New(cfg)
 			if err != nil {
 				return fmt.Errorf("init agent: %w", err)
@@ -54,6 +62,7 @@ func newAgentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
 	cmd.Flags().StringVar(&socket, "socket", "/run/expanse/agent.sock", "gRPC unix socket path")
 	cmd.Flags().StringVar(&period, "period", "30s", "reconcile tick period")
+	cmd.Flags().StringVar(&ctlPeriod, "controller-period", "", "block placement controller pass interval (default 30s)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "plan but never apply changes")
 	cmd.Flags().BoolVar(&enableTCP, "enable-tcp", false, "enable the TCP gRPC listener (no mTLS yet; off by default)")
 	cmd.Flags().StringVar(&role, "role", "", "cluster role override (§4.9: voter | witness; default: from the node record)")

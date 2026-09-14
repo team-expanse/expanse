@@ -23,6 +23,12 @@ in
       description = "Base reconcile tick interval.";
     };
 
+    controllerPeriod = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Block placement controller pass interval. Empty = daemon default (30s).";
+    };
+
     blocksCatalog = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -92,6 +98,7 @@ in
         NotifyAccess = "main";
         ExecStart = with lib;
           "${pkgs.expanse}/bin/expanse agent --data-dir ${cfg.persistDir}/expanse --period ${cfg.period}" +
+          optionalString (cfg.controllerPeriod != "") " --controller-period ${cfg.controllerPeriod}" +
           optionalString (cfg.blocksCatalog != null) " --blocks-catalog ${cfg.blocksCatalog}" +
           optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}";
         Restart = "always";
