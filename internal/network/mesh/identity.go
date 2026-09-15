@@ -9,9 +9,9 @@ package mesh
 
 import (
 	"context"
-	"crypto/subtle"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/expanse/expanse/internal/errors"
@@ -28,6 +28,11 @@ const (
 	// (/persist/expanse by default in production). Never leaves the node.
 	KeyRelPath = "network/wg.key"
 )
+
+// Endpoint formats a WireGuard endpoint "host:port".
+func Endpoint(host string, port int) string {
+	return host + ":" + strconv.Itoa(port)
+}
 
 // PublicKeyKey returns the store key for node's published peer record.
 func PublicKeyKey(nodeID string) store.Key {
@@ -49,21 +54,23 @@ type Identity struct {
 //     /persist/expanse/network/wg.key). Created 0600 in a 0700 directory
 //     if missing; reused verbatim if present — a restart must never rotate
 //     the key, or every peer's AllowedIPs go stale.
-//   - nodeIndex: this node's index in the address plan (1-based), used for
-//     the published OverlayPrefix.
 //
 // Publication rules: the store record is written with CAS expect-missing;
 // if a record already exists it must match the local public key exactly —
 // a mismatch means the private key was regenerated or the store record is
 // corrupt, and proceeding silently would blackhole the node's overlay
 // traffic. That case is a hard error, not an overwrite.
-func EnsureIdentity(ctx context.Context, st store.Store, nodeID string, nodeIndex int, privFile string) (*Identity, error) {
+func EnsureIdentity(ctx context.Context, st store.Store, nodeID string, privFile string, endpoint string) (*Identity, error) {
 	priv, err := loadOrCreateKey(privFile)
 	if err != nil {
 		return nil, err
 	}
 
-	prefix, err := addrplan.OverlayPrefix(nodeIndex)
+	idx, err := ClaimIndex(ctx, st, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	prefix, err := addrplan.OverlayPrefix(idx)
 	if err != nil {
 		return nil, errors.New(errors.KindInvalid, "mesh.identity", err.Error())
 	}
@@ -72,6 +79,7 @@ func EnsureIdentity(ctx context.Context, st store.Store, nodeID string, nodeInde
 		NodeId:        nodeID,
 		PublicKey:     priv.PublicKey().String(),
 		OverlayPrefix: prefix.String(),
+		Endpoint:      endpoint,
 	}
 	if err := publish(ctx, st, nodeID, peer); err != nil {
 		return nil, err
@@ -138,8 +146,12 @@ func loadOrCreateKey(path string) (wgtypes.Key, error) {
 	}
 }
 
-// publish CAS-writes the peer record; an existing record must match the
-// local key exactly (see EnsureIdentity for the rationale).
+// publish CAS-writes the peer record. An existing record must carry the
+// same identity (node, key, prefix) as the local one — a mismatch means
+// the private key was regenerated or the store record is corrupt, and
+// proceeding would blackhole the node's overlay traffic (hard error).
+// The endpoint, though, may legitimately change (DHCP renewal), so an
+// otherwise-identical record is CAS-updated to the current endpoint.
 func publish(ctx context.Context, st store.Store, nodeID string, peer *proto.WireGuardPeer) error {
 	b, err := pbproto.Marshal(peer)
 	if err != nil {
@@ -149,15 +161,29 @@ func publish(ctx context.Context, st store.Store, nodeID string, peer *proto.Wir
 	if _, casErr := st.CompareAndSwap(ctx, k, 0, b); casErr == nil {
 		return nil
 	}
-	// Exists already: it must be byte-identical to what we'd publish.
-	cur, getErr := st.Get(ctx, k)
-	if getErr != nil {
-		return errors.New(errors.KindConflict, "mesh.publish",
-			"peer record exists but unreadable: "+getErr.Error())
+	for attempt := 0; attempt < 10; attempt++ {
+		cur, getErr := st.Get(ctx, k)
+		if getErr != nil {
+			return errors.New(errors.KindConflict, "mesh.publish",
+				"peer record exists but unreadable: "+getErr.Error())
+		}
+		var have proto.WireGuardPeer
+		if unmarshalErr := pbproto.Unmarshal(cur.Value, &have); unmarshalErr != nil {
+			return errors.New(errors.KindConflict, "mesh.publish",
+				"stored peer record for "+nodeID+" is corrupt")
+		}
+		if have.NodeId != peer.NodeId || have.PublicKey != peer.PublicKey ||
+			have.OverlayPrefix != peer.OverlayPrefix {
+			return errors.New(errors.KindConflict, "mesh.publish",
+				"stored public key for "+nodeID+" does not match the local private key — regenerate identity manually")
+		}
+		if have.Endpoint == peer.Endpoint {
+			return nil // fully in sync
+		}
+		if _, casErr := st.CompareAndSwap(ctx, k, cur.Revision, b); casErr == nil {
+			return nil // endpoint refresh
+		}
 	}
-	if subtle.ConstantTimeCompare(cur.Value, b) != 1 {
-		return errors.New(errors.KindConflict, "mesh.publish",
-			"stored public key for "+nodeID+" does not match the local private key — regenerate identity manually")
-	}
-	return nil
+	return errors.New(errors.KindConflict, "mesh.publish",
+		"could not refresh endpoint for "+nodeID)
 }

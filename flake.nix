@@ -73,6 +73,9 @@
           cluster-witness = mkTest "cluster-witness" ./nix/tests/cluster-witness.nix;
           cluster-generations = mkTest "cluster-generations" ./nix/tests/cluster-generations.nix;
 
+          # Phase 05 (network).
+          net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
+
           # Phase 04 blocks (§8).
           block-deploy = mkTest "block-deploy" ./nix/tests/block-deploy.nix;
           block-antiaffinity = mkTest "block-antiaffinity" ./nix/tests/block-antiaffinity.nix;

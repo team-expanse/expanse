@@ -561,6 +561,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		go a.recon.Run(ctx)
 	}
 
+	// WireGuard mesh (§4.1): identity + exp0 peer reconciliation from
+	// the store. Cluster nodes only; witnesses skip (zero capacity).
+	if a.ctl != nil && !witness {
+		go a.meshLoop(ctx)
+	}
+
 	// Node-lifecycle failure monitor (§4.8), cluster mode only: the
 	// leader marks silent nodes unreachable (15 s) then failed (5 min).
 	// Only the leader evaluates; on followers this is a no-op ticker.

@@ -55,6 +55,11 @@ func (c *LinuxController) EnsureDevice(mtu int) error {
 			return errors.New(errors.KindUnavailable, "mesh.linkGet", err.Error())
 		}
 	}
+	if link.Attrs().OperState != netlink.OperUp {
+		if err := netlink.LinkSetUp(link); err != nil {
+			return errors.New(errors.KindUnavailable, "mesh.linkUp", err.Error())
+		}
+	}
 	if link.Attrs().MTU != mtu {
 		if err := netlink.LinkSetMTU(link, mtu); err != nil {
 			return errors.New(errors.KindUnavailable, "mesh.setMTU", err.Error())
@@ -65,6 +70,33 @@ func (c *LinuxController) EnsureDevice(mtu int) error {
 		ListenPort:   &c.port,
 		ReplacePeers: false,
 	})
+}
+
+// EnsureAddr idempotently assigns the overlay address to exp0.
+func (c *LinuxController) EnsureAddr(addr netip.Addr) error {
+	link, err := netlink.LinkByName(c.iface)
+	if err != nil {
+		return errors.New(errors.KindUnavailable, "mesh.linkGet", err.Error())
+	}
+	want := netlink.Addr{
+		IPNet: &net.IPNet{
+			IP:   addr.AsSlice(),
+			Mask: net.CIDRMask(addr.BitLen(), addr.BitLen()),
+		},
+	}
+	existing, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return errors.New(errors.KindUnavailable, "mesh.addrList", err.Error())
+	}
+	for _, a := range existing {
+		if a.IP.Equal(want.IP) {
+			return nil
+		}
+	}
+	if err := netlink.AddrAdd(link, &want); err != nil {
+		return errors.New(errors.KindUnavailable, "mesh.addrAdd", err.Error())
+	}
+	return nil
 }
 
 // Peers snapshots the device's peers into PeerState values.
@@ -126,19 +158,77 @@ func (c *LinuxController) SetPeer(spec PeerSpec) error {
 	if pc.PersistentKeepaliveInterval != nil && spec.Keepalive == 0 {
 		pc.PersistentKeepaliveInterval = nil
 	}
-	return c.configure(&wgtypes.Config{Peers: []wgtypes.PeerConfig{pc}, ReplacePeers: false})
+	if err := c.configure(&wgtypes.Config{Peers: []wgtypes.PeerConfig{pc}, ReplacePeers: false}); err != nil {
+		return err
+	}
+	// wgctrl handles crypto-key routing only; the kernel still needs
+	// routes for the peer's prefixes (wg-quick's job, done here).
+	return c.ensureRoutes(spec.AllowedIPs)
 }
 
-// RemovePeer deletes exactly one peer.
+// ensureRoutes installs a route per prefix via exp0. RouteReplace is
+// idempotent and updates an existing route's link in place — never a
+// full table flush.
+func (c *LinuxController) ensureRoutes(ps []netip.Prefix) error {
+	link, err := netlink.LinkByName(c.iface)
+	if err != nil {
+		return errors.New(errors.KindUnavailable, "mesh.linkGet", err.Error())
+	}
+	for _, p := range ps {
+		dst := toIPNet(p)
+		route := netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       dst,
+			Scope:     netlink.SCOPE_LINK,
+		}
+		if err := netlink.RouteReplace(&route); err != nil {
+			return errors.New(errors.KindUnavailable, "mesh.routeReplace",
+				p.String()+": "+err.Error())
+		}
+	}
+	return nil
+}
+
+// RemovePeer deletes exactly one peer and its routes.
 func (c *LinuxController) RemovePeer(publicKey string) error {
 	pub, err := wgtypes.ParseKey(publicKey)
 	if err != nil {
 		return errors.New(errors.KindInvalid, "mesh.removePeer", err.Error())
 	}
-	return c.configure(&wgtypes.Config{
+	// Capture the peer's prefixes first so the routes can go too.
+	var doomed []netip.Prefix
+	for _, p := range mustPeers(c) {
+		if p.PublicKey == publicKey {
+			doomed = p.AllowedIPs
+		}
+	}
+	if err := c.configure(&wgtypes.Config{
 		Peers:        []wgtypes.PeerConfig{{PublicKey: pub, Remove: true}},
 		ReplacePeers: false,
-	})
+	}); err != nil {
+		return err
+	}
+	link, linkErr := netlink.LinkByName(c.iface)
+	if linkErr != nil {
+		return nil // interface gone; routes went with it
+	}
+	for _, p := range doomed {
+		_ = netlink.RouteDel(&netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       toIPNet(p),
+		})
+	}
+	return nil
+}
+
+// mustPeers is Peers() ignoring errors (used for prefix bookkeeping
+// before a removal).
+func mustPeers(c *LinuxController) []PeerState {
+	ps, err := c.Peers()
+	if err != nil {
+		return nil
+	}
+	return ps
 }
 
 func (c *LinuxController) configure(cfg *wgtypes.Config) error {
@@ -151,16 +241,20 @@ func (c *LinuxController) configure(cfg *wgtypes.Config) error {
 func toIPNets(ps []netip.Prefix) []net.IPNet {
 	out := make([]net.IPNet, 0, len(ps))
 	for _, p := range ps {
-		ip := p.Addr()
-		if ip.Is4() && p.Addr().Is4In6() {
-			ip = netip.AddrFrom4(ip.As4())
-		}
-		out = append(out, net.IPNet{
-			IP:   ip.AsSlice(),
-			Mask: net.CIDRMask(p.Bits(), ip.BitLen()),
-		})
+		out = append(out, *toIPNet(p))
 	}
 	return out
+}
+
+func toIPNet(p netip.Prefix) *net.IPNet {
+	ip := p.Addr()
+	if ip.Is4In6() {
+		ip = netip.AddrFrom4(ip.As4())
+	}
+	return &net.IPNet{
+		IP:   ip.AsSlice(),
+		Mask: net.CIDRMask(p.Bits(), ip.BitLen()),
+	}
 }
 
 // detectPhysicalMTU picks the MTU of the interface carrying the default

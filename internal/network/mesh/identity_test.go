@@ -31,7 +31,7 @@ func TestEnsureIdentityGenerateOnceStable(t *testing.T) {
 
 	// First start: generates and publishes.
 	st := newTestStore(t)
-	id1, err := EnsureIdentity(context.Background(), st, "n1", 1, keyFile)
+	id1, err := EnsureIdentity(context.Background(), st, "n1", keyFile, "192.168.1.1:51820")
 	if err != nil {
 		t.Fatalf("EnsureIdentity (generate): %v", err)
 	}
@@ -67,7 +67,7 @@ func TestEnsureIdentityGenerateOnceStable(t *testing.T) {
 	// Restart with a fresh store view (simulating a re-join against an
 	// existing record): same key file → same public key, no rotation,
 	// publish is idempotent.
-	id2, err := EnsureIdentity(context.Background(), st, "n1", 1, keyFile)
+	id2, err := EnsureIdentity(context.Background(), st, "n1", keyFile, "192.168.1.1:51820")
 	if err != nil {
 		t.Fatalf("EnsureIdentity (restart): %v", err)
 	}
@@ -82,24 +82,34 @@ func TestEnsureIdentityRejectsKeyMismatch(t *testing.T) {
 
 	// Node publishes under key file A...
 	dirA := t.TempDir()
-	if _, err := EnsureIdentity(ctx, st, "n1", 1, filepath.Join(dirA, "wg.key")); err != nil {
+	if _, err := EnsureIdentity(ctx, st, "n1", filepath.Join(dirA, "wg.key"), "192.168.1.1:51820"); err != nil {
 		t.Fatalf("EnsureIdentity A: %v", err)
 	}
 
 	// ...then a different key file (simulated regenerated key / lost
 	// private key) must hard-fail, not silently overwrite the record.
 	dirB := t.TempDir()
-	_, err := EnsureIdentity(ctx, st, "n1", 1, filepath.Join(dirB, "wg.key"))
+	_, err := EnsureIdentity(ctx, st, "n1", filepath.Join(dirB, "wg.key"), "192.168.1.1:51820")
 	if err == nil {
 		t.Fatal("expected conflict error for mismatched published key, got nil")
 	}
 }
 
-func TestEnsureIdentityInvalidNodeIndex(t *testing.T) {
+// Index claim: second node gets the next index; same node is stable.
+func TestClaimIndexStableAndSequential(t *testing.T) {
 	st := newTestStore(t)
-	_, err := EnsureIdentity(context.Background(), st, "n1", 255, filepath.Join(t.TempDir(), "wg.key"))
-	if err == nil {
-		t.Error("expected error for node index 255, got nil")
+	ctx := context.Background()
+	for i, node := range []string{"n1", "n2", "n3"} {
+		idx, err := ClaimIndex(ctx, st, node)
+		if err != nil {
+			t.Fatalf("ClaimIndex(%s): %v", node, err)
+		}
+		if idx != i+1 {
+			t.Errorf("ClaimIndex(%s) = %d, want %d", node, idx, i+1)
+		}
+	}
+	if idx, _ := ClaimIndex(ctx, st, "n2"); idx != 2 {
+		t.Errorf("re-claim for n2 = %d, want 2", idx)
 	}
 }
 
@@ -112,7 +122,7 @@ func TestEnsureIdentityConvergesUnderRace(t *testing.T) {
 	errs := make(chan error, racers)
 	for i := 0; i < racers; i++ {
 		go func() {
-			id, err := EnsureIdentity(context.Background(), st, "n1", 1, keyFile)
+			id, err := EnsureIdentity(context.Background(), st, "n1", keyFile, "192.168.1.1:51820")
 			if err == nil && id.Peer.PublicKey == "" {
 				err = os.ErrInvalid // empty key published
 			}

@@ -19,6 +19,7 @@ import (
 type fakeCtrl struct {
 	mu        sync.Mutex
 	deviceMTU int
+	addrs     []netip.Addr         // assigned overlay addresses
 	peers     map[string]PeerState // by public key
 	ops       []string             // applied-op log for incremental assertions
 	failNext  string               // op kind to fail once
@@ -37,6 +38,19 @@ func (f *fakeCtrl) EnsureDevice(mtu int) error {
 		f.ops = append(f.ops, fmt.Sprintf("mtu %d->%d", f.deviceMTU, mtu))
 	}
 	f.deviceMTU = mtu
+	return nil
+}
+
+func (f *fakeCtrl) EnsureAddr(a netip.Addr) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, x := range f.addrs {
+		if x == a {
+			return nil
+		}
+	}
+	f.addrs = append(f.addrs, a)
+	f.ops = append(f.ops, "addr "+a.String())
 	return nil
 }
 
@@ -225,6 +239,9 @@ func TestReconcileConverges(t *testing.T) {
 	if ctrl.deviceMTU != 1420 { // 1500 physical − 80
 		t.Errorf("MTU = %d, want 1420", ctrl.deviceMTU)
 	}
+	if len(ctrl.addrs) != 1 || ctrl.addrs[0].String() != "10.42.1.1" {
+		t.Errorf("addrs = %v, want [10.42.1.1]", ctrl.addrs)
+	}
 
 	// Idempotent: second pass is a no-op.
 	before := len(ctrl.ops)
@@ -248,8 +265,8 @@ func TestReconcileMeshReforms(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctrl := f.rec.ctrl.(*fakeCtrl)
-	if got := ctrl.ops; len(got) != 2 || !strings.HasPrefix(got[0], "create") || !strings.Contains(got[0], "mtu=1420") || !strings.HasPrefix(got[1], "add") {
-		t.Errorf("first pass ops = %v, want create mtu=1420 + 1 add (self excluded)", got)
+	if got := ctrl.ops; len(got) != 3 || !strings.HasPrefix(got[0], "create") || !strings.Contains(got[0], "mtu=1420") || got[1] != "addr 10.42.1.1" || !strings.HasPrefix(got[2], "add") {
+		t.Errorf("first pass ops = %v, want create mtu=1420 + addr + 1 add (self excluded)", got)
 	}
 	before := len(ctrl.ops)
 

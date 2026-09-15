@@ -40,6 +40,9 @@ type Config struct {
 type Controller interface {
 	// EnsureDevice creates the interface if missing and sets its MTU.
 	EnsureDevice(mtu int) error
+	// EnsureAddr idempotently assigns this node's own overlay address
+	// (10.42.N.1) to the interface.
+	EnsureAddr(addr netip.Addr) error
 	// Peers returns the currently configured peers.
 	Peers() ([]PeerState, error)
 	// SetPeer adds or updates exactly one peer, incrementally.
@@ -79,12 +82,21 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	delete(peers, r.cfg.SelfNodeID)
-	specs := BuildSpecs(peers, holders)
-
 	if err := r.ctrl.EnsureDevice(r.mtu()); err != nil {
 		return errors.New(errors.KindUnavailable, "mesh.ensureDevice", err.Error())
 	}
+
+	// Own overlay address: from this node's published record.
+	if self := peers[r.cfg.SelfNodeID]; self != nil {
+		if selfPrefix, pErr := netip.ParsePrefix(self.OverlayPrefix); pErr == nil {
+			selfAddr := netip.AddrFrom4(selfPrefix.Addr().As4()).Next() // N.0 → N.1
+			if err := r.ctrl.EnsureAddr(selfAddr); err != nil {
+				return errors.New(errors.KindUnavailable, "mesh.ensureAddr", err.Error())
+			}
+		}
+	}
+	delete(peers, r.cfg.SelfNodeID)
+	specs := BuildSpecs(peers, holders)
 
 	state, err := r.ctrl.Peers()
 	if err != nil {
