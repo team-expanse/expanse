@@ -42,6 +42,18 @@ in
         <category>-<name>). Empty = replicas are not realized on this
         node (API-only member).'';
     };
+
+    externalVIPPool = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "External VIP pool (§4.2), e.g. 192.168.1.100-192.168.1.120. Empty = internal VIPs only.";
+    };
+
+    externalInterface = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Physical interface to announce external VIPs on. Empty = auto (default route).";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -105,7 +117,9 @@ in
           "${pkgs.expanse}/bin/expanse agent --data-dir ${cfg.persistDir}/expanse --period ${cfg.period}" +
           optionalString (cfg.controllerPeriod != "") " --controller-period ${cfg.controllerPeriod}" +
           optionalString (cfg.blocksCatalog != null) " --blocks-catalog ${cfg.blocksCatalog}" +
-          optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}";
+          optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}" +
+          optionalString (cfg.externalVIPPool != "") " --external-vip-pool ${cfg.externalVIPPool}" +
+          optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}";
         Restart = "always";
         RestartSec = "5s";
         TimeoutStopSec = "30s";

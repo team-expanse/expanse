@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +22,8 @@ func newAgentCmd() *cobra.Command {
 		raftAdv    string
 		blockCat   string
 		blockFlake string
+		extPool    string
+		extIface   string
 	)
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -36,6 +39,8 @@ func newAgentCmd() *cobra.Command {
 				RaftAdvertiseAddr: raftAdv,
 				BlocksCatalog:     blockCat,
 				BlocksFlakeRef:    blockFlake,
+				ExternalVIPPool:   extPool,
+				ExternalInterface: extIface,
 				LogLevel:          cmd.Root().PersistentFlags().Lookup("log-level").Value.String(),
 			}
 			if period != "" {
@@ -67,6 +72,10 @@ func newAgentCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&enableTCP, "enable-tcp", false, "enable the TCP gRPC listener (no mTLS yet; off by default)")
 	cmd.Flags().StringVar(&role, "role", "", "cluster role override (§4.9: voter | witness; default: from the node record)")
 	cmd.Flags().StringVar(&raftBind, "raft-bind", "", "raft transport bind addr (default 0.0.0.0:7444; must match the join-time bind)")
+	cmd.Flags().StringVar(&extPool, "external-vip-pool", os.Getenv("EXPANSE_EXTERNAL_VIP_POOL"),
+		"external VIP pool (§4.2), e.g. 192.168.1.100-192.168.1.120; empty = internal VIPs only")
+	cmd.Flags().StringVar(&extIface, "external-interface", "",
+		"physical interface to announce external VIPs on (default: auto = default route)")
 	cmd.Flags().StringVar(&raftAdv, "raft-advertise", "", "raft transport advertised addr (default: the bind host or local IP, port 7444)")
 	cmd.Flags().StringVar(&blockCat, "blocks-catalog", "", "shipped block-type directory (nix/blocks layout); empty = block API disabled")
 	cmd.Flags().StringVar(&blockFlake, "blocks-flake-ref", "", "flake ref holding block closures (attr per type: <category>-<name>); empty = replicas not realized on this node")

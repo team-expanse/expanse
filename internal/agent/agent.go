@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,8 @@ import (
 	"github.com/expanse/expanse/internal/agent/managers/sysctlman"
 	"github.com/expanse/expanse/internal/agent/managers/systemdman"
 	"github.com/expanse/expanse/internal/agent/nix"
+	"github.com/expanse/expanse/internal/cluster/lease"
+	"github.com/expanse/expanse/internal/network/vip"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -81,6 +84,13 @@ type Config struct {
 	// (attr per type: <category>-<name>, e.g. "util-echo"). Empty =
 	// block replicas are not realized on this node (API-only member).
 	BlocksFlakeRef string
+	// ExternalVIPPool is the cluster.network.externalVIPPool value
+	// (§4.2): e.g. "192.168.1.100-192.168.1.120". Empty = no external
+	// VIPs; VIP-exposed blocks allocate from the internal range.
+	ExternalVIPPool string
+	// ExternalInterface is the physical interface to announce external
+	// VIPs on ("" / "auto" = the default route's interface).
+	ExternalInterface string
 }
 
 // Role is the node's cluster role (§4.9): "voter" (default) or
@@ -147,6 +157,14 @@ type Agent struct {
 	invSnapshot  *inventory.Inventory
 	invCollector *inventory.Collector
 	healthR      *health.Runner
+
+	// VIP management (§4.2, internal/agent/vip.go).
+	vipMu     sync.Mutex
+	extPool   []netip.Prefix
+	extIface  string
+	vipCands  map[string][]vip.Candidate
+	holders   map[string]*holderRun
+	vipLeases *lease.Manager
 
 	status   atomic.Value // string
 	shutdown atomic.Value // chan struct{}
@@ -565,6 +583,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	// the store. Cluster nodes only; witnesses skip (zero capacity).
 	if a.ctl != nil && !witness {
 		go a.meshLoop(ctx)
+	}
+
+	// VIP holders (§4.2). Cluster nodes only; witnesses never host
+	// replicas so they are never candidates.
+	if a.ctl != nil && !witness {
+		go a.vipLoop(ctx)
 	}
 
 	// Node-lifecycle failure monitor (§4.8), cluster mode only: the

@@ -75,6 +75,7 @@
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
+          net-vip-basic = mkTest "net-vip-basic" ./nix/tests/net-vip-basic.nix;
 
           # Phase 04 blocks (§8).
           block-deploy = mkTest "block-deploy" ./nix/tests/block-deploy.nix;

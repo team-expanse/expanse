@@ -111,15 +111,21 @@ type Seams struct {
 
 // HolderConfig configures one VIP holder loop.
 type HolderConfig struct {
-	Leases  *lease.Manager
-	Self    string // node ID
-	VIP     netip.Prefix
-	Block   string // owning block ref
-	Cands   func() []Candidate
-	Seams   Seams
-	Retry   time.Duration // default AcquireRetry
-	TTL     time.Duration // default LeaseTTL
-	NowFunc func() time.Time
+	Leases *lease.Manager
+	Self   string // node ID
+	VIP    netip.Prefix
+	Block  string // owning block ref
+	Cands  func() []Candidate
+	Seams  Seams
+	Retry  time.Duration // default AcquireRetry
+	TTL    time.Duration // default LeaseTTL
+	// OnAcquired / OnLost fire after a full becomeHolder and at the
+	// START of onLeaseLost respectively. The agent publishes/clears
+	// the /network/vips/<addr>/holder record through them (mesh
+	// AllowedIPs read that record — publish only once actually serving).
+	OnAcquired func(p netip.Prefix)
+	OnLost     func(p netip.Prefix)
+	NowFunc    func() time.Time
 }
 
 // Holder runs the §4.2 acquisition flow for one VIP: while a ready
@@ -174,6 +180,7 @@ func (h *Holder) Run(ctx context.Context) error {
 					hld.Abandon()
 					return err
 				}
+				h.onAcquired()
 				state = st
 			}
 			// ErrNotAcquired (held elsewhere) and store-level errors
@@ -218,12 +225,21 @@ func (h *Holder) becomeHolder(hld *lease.Held) (*holderState, error) {
 	return &holderState{held: hld, listener: lc}, nil
 }
 
+func (h *Holder) onAcquired() {
+	if h.cfg.OnAcquired != nil {
+		h.cfg.OnAcquired(h.cfg.VIP)
+	}
+}
+
 // onLeaseLost is the dangerous part (§4.2, verbatim order):
 //
 //  1. DelAddr  — FIRST. Packets stop being delivered; clients retry.
 //  2. listener.Close — then stop serving.
 //  3. Tracker.CloseAll — then drop in-flight connections.
 func (h *Holder) onLeaseLost(state *holderState) {
+	if h.cfg.OnLost != nil {
+		h.cfg.OnLost(h.cfg.VIP) // clear the holder record FIRST (we may already be stale)
+	}
 	s := h.cfg.Seams
 	_ = s.DelAddr(h.cfg.VIP) // FIRST
 	if state.listener != nil {
