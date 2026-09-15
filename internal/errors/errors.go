@@ -15,6 +15,10 @@ const (
 	KindInternal    Kind = "internal"
 	KindPermission  Kind = "permission"
 	KindTimeout     Kind = "timeout"
+	// KindResourceExhausted: a finite resource (VIP pool addresses,
+	// storage quota) has run out; retrying will not help until capacity
+	// is freed.
+	KindResourceExhausted Kind = "resource_exhausted"
 )
 
 // Error is a typed error used cluster-wide.
