@@ -208,6 +208,28 @@ func (m *Manager) TryAcquire(ctx context.Context, name string, ttl time.Duration
 	return m.newHeld(name, m.nodeID, m.term(), now.Add(ttl), rev, ttl), nil
 }
 
+// Inspect returns the stored lease state without acquiring. A
+// preferred candidate uses this to time its takeover attempt at the
+// recorded expiry instead of polling on a fixed interval, so failover
+// lands promptly after the fence expires rather than up to a full
+// retry tick later.
+func (m *Manager) Inspect(ctx context.Context, name string) (Lease, bool, error) {
+	e, err := m.st.Get(ctx, store.Key(Prefix+name))
+	if err != nil {
+		if errors.Is(err, errors.KindNotFound) {
+			return Lease{}, false, nil
+		}
+		return Lease{}, false, err
+	}
+	v, derr := decodeValue(e.Value)
+	if derr != nil {
+		return Lease{}, false, derr
+	}
+	return Lease{Holder: v.Holder, Term: v.Term,
+		ExpiresAt: time.Unix(0, v.ExpiresAtUnix), Revision: e.Revision,
+	}, true, nil
+}
+
 // Release removes the lease key (explicit release closes Done).
 func (m *Manager) Release(ctx context.Context, h *Held) error {
 	return h.release(ctx, m)

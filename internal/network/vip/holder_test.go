@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
+	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 )
 
@@ -59,21 +60,28 @@ type tracker struct {
 
 func (t *tracker) CloseAll() { t.rec.record("ConnCloseAll") }
 
-func newLeaseStore(t *testing.T) *lease.Manager {
+func newLeaseStore(t *testing.T) (store.Store, *lease.Manager) {
 	t.Helper()
 	st, err := boltstore.New(filepath.Join(t.TempDir(), "bolt.db"))
 	if err != nil {
 		t.Fatalf("boltstore.New: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	return lease.NewManager(st, "n1")
+	return st, lease.NewManager(st, "n1")
+}
+
+// mustLeases adapts newLeaseStore to HolderConfig (which only needs the
+// manager).
+func mustLeases(t *testing.T) *lease.Manager {
+	_, m := newLeaseStore(t)
+	return m
 }
 
 func TestOnLeaseLostShutdownOrder(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 	h := NewHolder(HolderConfig{
-		Leases: newLeaseStore(t),
+		Leases: mustLeases(t),
 		Self:   "n1",
 		VIP:    vipAddr,
 		Cands:  func() []Candidate { return []Candidate{{NodeID: "n1", ReadyReplicas: 1}} },
@@ -120,7 +128,7 @@ func TestHolderNoReadyReplicaNeverAcquires(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 	h := NewHolder(HolderConfig{
-		Leases: newLeaseStore(t),
+		Leases: mustLeases(t),
 		Self:   "n1",
 		VIP:    vipAddr,
 		Cands:  func() []Candidate { return nil }, // no ready replicas
@@ -144,7 +152,7 @@ func TestHolderReacquiresAfterLeaseLoss(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 	h := NewHolder(HolderConfig{
-		Leases: newLeaseStore(t),
+		Leases: mustLeases(t),
 		Self:   "n1",
 		VIP:    vipAddr,
 		Cands:  func() []Candidate { return []Candidate{{NodeID: "n1", ReadyReplicas: 2}} },
@@ -296,12 +304,13 @@ func TestShutdownOrderIsAddrDelFirstCloseThenConns(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 	h := NewHolder(HolderConfig{
-		Leases: newLeaseStore(t),
+		Leases: mustLeases(t),
 		Self:   "n1",
 		VIP:    vipAddr,
 		Seams:  rec.seams(&tracker{rec: rec}),
 	})
-	hld, err := newLeaseStore(t).TryAcquire(context.Background(), LeaseName(vipAddr.Addr()), lease.DefaultTTL)
+	_, seedMgr := newLeaseStore(t)
+	hld, err := seedMgr.TryAcquire(context.Background(), LeaseName(vipAddr.Addr()), lease.DefaultTTL)
 	if err != nil {
 		t.Fatalf("seed lease: %v", err)
 	}
@@ -334,4 +343,114 @@ func waitFor(t *testing.T, d time.Duration, f func() bool, msg string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timeout: %s", msg)
+}
+
+// TestExpiryTimedTakeover locks the failover-latency property: when the
+// preferred candidate finds the lease held, it must time its retry at
+// the recorded expiry (fence + slippage) rather than waiting for a full
+// retry interval. With Retry deliberately LONGER than the TTL, only the
+// expiry-timed path can acquire promptly.
+func TestExpiryTimedTakeover(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	ttl := 300 * time.Millisecond
+	st, m1 := newLeaseStore(t)
+	held, err := m1.TryAcquire(context.Background(), LeaseName(vipAddr.Addr()), ttl)
+	if err != nil {
+		t.Fatalf("TryAcquire: %v", err)
+	}
+	// Old holder stops renewing but leaves the record to expire
+	// naturally (the frozen-node path: Abandon, not Release).
+	held.Abandon()
+
+	h := NewHolder(HolderConfig{
+		Leases: lease.NewManager(st, "n2"),
+		Self:   "n2",
+		VIP:    vipAddr,
+		Cands:  func() []Candidate { return []Candidate{{NodeID: "n2", ReadyReplicas: 1}} },
+		Seams:  rec.seams(nil),
+		Retry:  5 * time.Second, // a blind tick would be far too late
+		TTL:    ttl,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx) }()
+
+	start := time.Now()
+	waitFor(t, 2*time.Second, func() bool {
+		calls := rec.snapshot()
+		return len(calls) >= 1 && calls[0] == "AddrAdd "+vipAddr.String()
+	}, "takeover at lease expiry, not at the 5 s retry tick")
+	took := time.Since(start)
+	if took > ttl+1500*time.Millisecond {
+		t.Fatalf("takeover took %v; expiry-timed retry should land ≈TTL+slippage", took)
+	}
+	cancel()
+	<-done
+}
+
+// TestDeadPreferredHolderTakeover covers the VM-observed failover shape:
+// the dead holder is STILL in the candidate set (its placement phase
+// remains RUNNING), so ShouldAttempt defers to it — but once the lease
+// expires, the survivors must race for it (expiry = liveness proof).
+func TestDeadPreferredHolderTakeover(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	ttl := 300 * time.Millisecond
+	st, m1 := newLeaseStore(t)
+	held, err := m1.TryAcquire(context.Background(), LeaseName(vipAddr.Addr()), ttl)
+	if err != nil {
+		t.Fatalf("TryAcquire: %v", err)
+	}
+	// The frozen holder: no Abandon at all — the record simply stops
+	// being renewed (VM power-off). held is garbage-collected; its
+	// renewal loop dies with the process. For the unit test, drop the
+	// reference without Abandon by cancelling nothing: use a fresh
+	// manager write instead to emulate "no renewal, record stays".
+	_ = held
+
+	// Seed exactly what a frozen node leaves behind: a lease record that
+	// expires soon and is never renewed.
+	expiry := time.Now().Add(ttl)
+	b, err := lease.EncodeForTest(lease.Lease{Name: LeaseName(vipAddr.Addr()), Holder: "n1", Term: 1, ExpiresAt: expiry})
+	if err != nil {
+		t.Fatalf("EncodeForTest: %v", err)
+	}
+	// Replace the record created above (same CAS-less overwrite via
+	// delete+create for determinism).
+	ctx := context.Background()
+	_ = st.Delete(ctx, store.Key(lease.Prefix+LeaseName(vipAddr.Addr())), 0)
+	if _, err := st.Put(ctx, store.Key(lease.Prefix+LeaseName(vipAddr.Addr())), b); err != nil {
+		t.Fatalf("seed lease record: %v", err)
+	}
+
+	h := NewHolder(HolderConfig{
+		// n2's candidate view: the dead n1 still holds a RUNNING
+		// placement, so PickPreferred says n1.
+		Cands: func() []Candidate {
+			return []Candidate{{NodeID: "n1", ReadyReplicas: 1}, {NodeID: "n2", ReadyReplicas: 1}}
+		},
+		Leases: lease.NewManager(st, "n2"),
+		Self:   "n2",
+		VIP:    vipAddr,
+		Seams:  rec.seams(nil),
+		Retry:  100 * time.Millisecond,
+		TTL:    ttl,
+	})
+	ctx2, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx2) }()
+
+	start := time.Now()
+	waitFor(t, 2*time.Second, func() bool {
+		calls := rec.snapshot()
+		return len(calls) >= 1 && calls[0] == "AddrAdd "+vipAddr.String()
+	}, "takeover at expiry despite dead preferred holder")
+	if time.Since(start) > ttl+1500*time.Millisecond {
+		t.Fatalf("takeover took %v; should land at the lease fence", time.Since(start))
+	}
+	cancel()
+	<-done
 }

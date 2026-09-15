@@ -169,8 +169,10 @@ func firstVIPPort(b *pb.Block) *pb.Port {
 }
 
 // readyCandidates maps placements to §4.2 preference candidates: a
-// placement counts when RUNNING and the node's runtime health is
-// healthy.
+// placement counts while its phase is RUNNING. Liveness is NOT part of
+// this gate: a dead node's failure is proven by its lease expiring
+// (renewal every TTL/3), not by placement bookkeeping, and the holder
+// takes over the moment the fence is gone (see Holder.Run).
 func readyCandidates(b *pb.Block) []vip.Candidate {
 	byNode := map[string]int{}
 	for _, pl := range b.GetStatus().GetPlacements() {
@@ -202,6 +204,7 @@ func (a *Agent) startHolder(ctx context.Context, key string, vb vipBlock) *holde
 		Self:   a.cfg.NodeID,
 		VIP:    vb.prefix,
 		Block:  vb.blockKey,
+		Logger: a.logger.With("component", "vip"),
 		Cands: func() []vip.Candidate {
 			a.vipMu.Lock()
 			defer a.vipMu.Unlock()

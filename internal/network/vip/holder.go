@@ -3,6 +3,7 @@ package vip
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/netip"
 	"time"
 
@@ -126,6 +127,8 @@ type HolderConfig struct {
 	OnAcquired func(p netip.Prefix)
 	OnLost     func(p netip.Prefix)
 	NowFunc    func() time.Time
+	// Logger is optional; nil disables VIP lease logging.
+	Logger *slog.Logger
 }
 
 // Holder runs the §4.2 acquisition flow for one VIP: while a ready
@@ -159,10 +162,17 @@ type holderState struct {
 // Run drives the acquisition loop until ctx is done. It returns when
 // the context is canceled or the block loses all ready replicas
 // (release, then exit — the caller restarts Run if replicas return).
+func (h *Holder) log(level func(string, ...any), msg string, args ...any) {
+	if h.cfg.Logger != nil {
+		level(msg, append([]any{"vip", h.cfg.VIP.Addr(), "node", h.cfg.Self}, args...)...)
+	}
+}
+
 func (h *Holder) Run(ctx context.Context) error {
 	retry := h.cfg.Retry
-	tick := time.NewTicker(retry)
-	defer tick.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	waitC := timer.C
 
 	var state *holderState
 	defer func() {
@@ -173,23 +183,57 @@ func (h *Holder) Run(ctx context.Context) error {
 
 	for {
 		// Acquisition attempt: only while a ready replica exists locally.
-		if state == nil && h.cfg.Cands != nil && ShouldAttempt(h.cfg.Self, lease.Lease{}, h.cfg.Cands()) {
-			if hld, err := h.cfg.Leases.TryAcquire(ctx, LeaseName(h.cfg.VIP.Addr()), h.cfg.TTL); err == nil {
-				st, err := h.becomeHolder(hld)
-				if err != nil {
-					hld.Abandon()
-					return err
-				}
-				h.onAcquired()
-				state = st
+		wait := retry
+		cands := h.cfg.Cands()
+		if state == nil && cands != nil {
+			// Read the recorded lease so the preference decision sees
+			// the real holder. A dead holder has no ready-replica count
+			// in the candidate set (holderReady = 0), so a survivor
+			// becomes eligible the moment the fence expires — the lease
+			// expiry itself is the liveness proof; no separate failure
+			// detection is needed.
+			l, _, gerr := h.cfg.Leases.Inspect(ctx, LeaseName(h.cfg.VIP.Addr()))
+			should := gerr == nil && ShouldAttempt(h.cfg.Self, l, cands)
+			if !should && gerr == nil && l.Holder != "" && !l.ExpiresAt.IsZero() {
+				// Expired lease overrides preference: a holder that has
+				// failed to renew for a full TTL is dead by definition
+				// (renewal runs at TTL/3). Any live candidate may race
+				// for it via the takeover CAS — the fence still prevents
+				// split brain, and the winner is whoever commits first.
+				should = time.Now().After(l.ExpiresAt)
 			}
-			// ErrNotAcquired (held elsewhere) and store-level errors
-			// both resolve to "retry on the next tick".
+			if should {
+				h.log(h.cfg.Logger.Debug, "acquire attempt")
+				if hld, err := h.cfg.Leases.TryAcquire(ctx, LeaseName(h.cfg.VIP.Addr()), h.cfg.TTL); err == nil {
+					st, err := h.becomeHolder(hld)
+					if err != nil {
+						h.log(h.cfg.Logger.Warn, "becomeHolder failed", "err", err)
+						hld.Abandon()
+						return err
+					}
+					h.log(h.cfg.Logger.Info, "acquired VIP lease")
+					h.onAcquired()
+					state = st
+				} else if err == lease.ErrNotAcquired {
+					h.log(h.cfg.Logger.Debug, "lease held elsewhere")
+					// Preferred-but-held: retry exactly at the recorded
+					// expiry (+ slippage) instead of the next blind tick
+					// — failover is bounded by the lease fence, not by
+					// fence + retry interval. The wait can also shorten
+					// or lengthen relative to the retry interval.
+					if d := time.Until(l.ExpiresAt) + 100*time.Millisecond; d > time.Second/10 {
+						wait = d
+					}
+				}
+				// Other store-level errors resolve to "retry on the
+				// next tick".
+			}
 		}
 
 		if state != nil {
 			select {
 			case <-state.held.Done():
+				h.log(h.cfg.Logger.Warn, "lost VIP lease")
 				h.onLeaseLost(state)
 				state = nil
 				// Immediately eligible for re-acquisition on the next
@@ -201,13 +245,12 @@ func (h *Holder) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-tick.C:
+		case <-waitC:
+			timer.Reset(wait)
 		}
 	}
 }
 
-// becomeHolder executes the §4.2 step 2 sequence: address, announce,
-// listen. Order matters — announce only after the address exists.
 func (h *Holder) becomeHolder(hld *lease.Held) (*holderState, error) {
 	s := h.cfg.Seams
 	if err := s.AddAddr(h.cfg.VIP); err != nil {
