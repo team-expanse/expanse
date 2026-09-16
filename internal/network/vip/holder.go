@@ -15,7 +15,13 @@ import (
 const (
 	// LeaseTTL is the VIP lease TTL (renewed at TTL/3 by the lease
 	// package). Lease loss closes Done within ~TTL/3 + 2 s < TTL.
-	LeaseTTL = 15 * time.Second
+	// 10 s (not the lease package's 15 s default) bounds failover to
+	// G5.4's ≤ 15 s measured from the external client: takeover waits
+	// out the expiry (uniform in [TTL/3, TTL] after holder death), plus
+	// slippage, election if the leader died, and announcement — worst
+	// case ~14 s at TTL 10, ~20 s at TTL 15 (measured 16.7–21.3 s in
+	// the m3-demo/net-vip-failover VM tests).
+	LeaseTTL = 10 * time.Second
 	// AcquireRetry is the candidate retry cadence: every 2 s while a
 	// ready replica exists locally.
 	AcquireRetry = 2 * time.Second

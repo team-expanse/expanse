@@ -106,11 +106,13 @@ func Open(cfg Config) (*Store, error) {
 			return nil, fmt.Errorf("resolve advertise addr: %w", err)
 		}
 	}
+	const rpcTimeout = 2 * time.Second // a dead peer's hung TCP conn must not stall an election round for the default 10 s (G5.4: failover ≤ 15 s needs leader election in single-digit seconds)
+
 	var trans *raft.NetworkTransport
 	if cfg.StreamLayer != nil {
-		trans = raft.NewNetworkTransport(cfg.StreamLayer, 3, 10*time.Second, os.Stderr)
+		trans = raft.NewNetworkTransport(cfg.StreamLayer, 3, rpcTimeout, os.Stderr)
 	} else {
-		trans, err = raft.NewTCPTransport(cfg.BindAddr, advAddr, 3, 10*time.Second, os.Stderr)
+		trans, err = raft.NewTCPTransport(cfg.BindAddr, advAddr, 3, rpcTimeout, os.Stderr)
 		if err != nil {
 			return nil, fmt.Errorf("raft transport: %w", err)
 		}

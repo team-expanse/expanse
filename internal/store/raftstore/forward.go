@@ -286,6 +286,15 @@ func (g *GRPCForwarder) Forward(ctx context.Context, c *pb.Command) (store.Revis
 	return rev, err
 }
 
+// rpcCallTimeout bounds one forwarded RPC. Callers may pass a
+// context with no deadline (a lease holder's acquisition loop runs on
+// the agent context); without this, a cached connection to a leader
+// that died abruptly (VM power-off: the TCP conn neither errors nor
+// closes, it just hangs) blocks the RPC forever — the holder's write
+// never fails, leaderlessRetry never retries, and the cluster never
+// converges onto the new leader.
+const rpcCallTimeout = 3 * time.Second
+
 // forwardOnce is one forwarding attempt (no retries).
 func (g *GRPCForwarder) forwardOnce(ctx context.Context, c *pb.Command) (store.Revision, error) {
 	raftAddr := g.leaderAddr()
@@ -300,7 +309,9 @@ func (g *GRPCForwarder) forwardOnce(ctx context.Context, c *pb.Command) (store.R
 	if err != nil {
 		return 0, errors.Wrap(err, errors.KindUnavailable, "raftstore.Forward", "dial leader")
 	}
-	resp, err := client.ForwardCommand(ctx, c)
+	cctx, cancel := context.WithTimeout(ctx, rpcCallTimeout)
+	defer cancel()
+	resp, err := client.ForwardCommand(cctx, c)
 	if err != nil {
 		g.invalidate(apiAddr) // stale conn — force redial next time
 		if status.Code(err) == codes.Unavailable {
@@ -392,7 +403,9 @@ func (g *GRPCForwarder) linearRead(ctx context.Context, req *pb.LinearReadReques
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindUnavailable, "raftstore.ForwardRead", "dial leader")
 	}
-	resp, err := client.LinearRead(ctx, req)
+	cctx, cancel := context.WithTimeout(ctx, rpcCallTimeout)
+	defer cancel()
+	resp, err := client.LinearRead(cctx, req)
 	if err != nil {
 		g.invalidate(apiAddr)
 		if status.Code(err) == codes.Unavailable {
