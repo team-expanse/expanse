@@ -15,8 +15,9 @@ import (
 // Budget represents a performance constraint.
 type Budget struct {
 	Name     string  `yaml:"name"`
-	Unit     string  `yaml:"unit"` // "bytes", "ms", "percent"
+	Unit     string  `yaml:"unit"` // "bytes", "ms", "percent", "rps", "us", "ratio"
 	Max      float64 `yaml:"max"`
+	Min      float64 `yaml:"min"` // floors (e.g. lb_rps ≥ 20k); 0 = none
 	Measured float64 `yaml:"-"`
 }
 
@@ -84,6 +85,16 @@ func CheckAll(budgets []Budget) error {
 		case "install_footprint", "boot_time_ms":
 			// Measured inside the VM tests (nix/tests/*), not here.
 			b.Measured = -1
+		case "lb_rps", "lb_added_latency_p99_us", "dns_query_p99_us", "l4_throughput_ratio":
+			// Measured by the §6 network tests in networkperf_test.go
+			// (they share one fixture; CheckAll leaves them unmeasured
+			// so TestBudgets does not re-run the load windows).
+			b.Measured = -1
+		case "proxy_rss_bytes", "vip_failover_ms":
+			// VM-only: RSS needs the isolated expanse-agent process
+			// (G5.14), failover needs real lease/ARP churn
+			// (net-vip-failover). See budgets.yaml.
+			b.Measured = -1
 		case "raft_write_p99_ms", "raft_read_linear_p99_ms", "raft_read_stale_p99_ms",
 			"cluster_form_3node_s", "leader_election_p99_ms",
 			"raft_snapshot_100k_s", "raft_restore_100k_s":
@@ -95,9 +106,18 @@ func CheckAll(budgets []Budget) error {
 		default:
 			b.Measured = -1
 		}
-		if b.Measured > b.Max {
+		// Measured < 0 = not measured in this run (VM-only or dedicated
+		// test) — never a violation.
+		if b.Measured < 0 {
+			continue
+		}
+		if b.Max > 0 && b.Measured > b.Max {
 			msgs = append(msgs, fmt.Sprintf("budget %s violated: %.0f %s > %.0f %s",
 				b.Name, b.Measured, b.Unit, b.Max, b.Unit))
+		}
+		if b.Min > 0 && b.Measured < b.Min {
+			msgs = append(msgs, fmt.Sprintf("budget %s violated: %.0f %s < %.0f %s",
+				b.Name, b.Measured, b.Unit, b.Min, b.Unit))
 		}
 	}
 	if len(msgs) > 0 {

@@ -293,7 +293,7 @@ func TestAgentRSSPerBlock(t *testing.T) {
 	runtime.GC()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	perBlock := float64(after.HeapAlloc - before.HeapAlloc) / 500
+	perBlock := float64(after.HeapAlloc-before.HeapAlloc) / 500
 	t.Logf("heap growth holding 500 blocks+statuses: %.0f bytes/block", perBlock)
 	assertBudget(t, "agent_rss_per_block_bytes", perBlock)
 }

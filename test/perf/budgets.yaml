@@ -56,3 +56,25 @@ budgets:
   - name: block_list_500_ms
     unit: ms
     max: 100              # List over 500 blocks in the store
+  # Phase 05 network budgets (§6). lb_rps is a MINIMUM (floor); the
+  # rest are ceilings. proxy_rss_bytes and vip_failover_ms are
+  # VM-measured (net-vip-failover / agent tests) — CheckAll leaves
+  # them unmeasured (-1).
+  - name: lb_rps
+    unit: rps
+    min: 20000           # wrk -t4 -c100 -d30s through the L7 LB, 3 replicas
+  - name: lb_added_latency_p99_us
+    unit: us
+    max: 1000            # p99 through the LB minus direct-to-backend p99
+  - name: proxy_rss_bytes
+    unit: bytes
+    max: 31457280        # expanse-proxy RSS under 100 concurrent connections (G5.14, VM-only)
+  - name: vip_failover_ms
+    unit: ms
+    max: 5000            # lease loss → new holder announcing (VM-only; net-vip-failover)
+  - name: dns_query_p99_us
+    unit: us
+    max: 1000            # 10k authoritative queries, p99
+  - name: l4_throughput_ratio
+    unit: ratio
+    min: 0.8             # L4 proxy throughput vs direct loopback (iperf3 stand-in)
