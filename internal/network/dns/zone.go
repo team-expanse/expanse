@@ -79,6 +79,8 @@ type BlockInfo struct {
 	VIP netip.Prefix
 	// Ports is the declared port list (spec order preserved).
 	Ports []PortInfo
+	// MDNS mirrors the block's network.mdns opt-in for the bridge.
+	MDNS bool
 	// Replicas is the placement list (any order; output is sorted).
 	Replicas []Replica
 }

@@ -1752,9 +1752,12 @@ func (x *BlockSpec) GetDependsOn() []string {
 
 // Network groups ports and health checks.
 type Network struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ports         []*Port                `protobuf:"bytes,1,rep,name=ports,proto3" json:"ports,omitempty"`
-	HealthCheck   *HealthCheck           `protobuf:"bytes,2,opt,name=health_check,json=healthCheck,proto3" json:"health_check,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Ports       []*Port                `protobuf:"bytes,1,rep,name=ports,proto3" json:"ports,omitempty"`
+	HealthCheck *HealthCheck           `protobuf:"bytes,2,opt,name=health_check,json=healthCheck,proto3" json:"health_check,omitempty"`
+	// MDNS opts the block into the mDNS bridge: its name is answered on
+	// the LAN via multicast (<block>.<ns>.local).
+	Mdns          bool `protobuf:"varint,3,opt,name=mdns,proto3" json:"mdns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1801,6 +1804,13 @@ func (x *Network) GetHealthCheck() *HealthCheck {
 		return x.HealthCheck
 	}
 	return nil
+}
+
+func (x *Network) GetMdns() bool {
+	if x != nil {
+		return x.Mdns
+	}
+	return false
 }
 
 // StatusReplicas is the desired/ready/updated triplet.
@@ -3396,10 +3406,11 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06backup\x18\f \x01(\v2\x18.expanse.block.v1.BackupR\x06backup\x12\x1d\n" +
 	"\n" +
 	"depends_on\x18\r \x03(\tR\tdependsOnB\v\n" +
-	"\t_replicas\"y\n" +
+	"\t_replicas\"\x8d\x01\n" +
 	"\aNetwork\x12,\n" +
 	"\x05ports\x18\x01 \x03(\v2\x16.expanse.block.v1.PortR\x05ports\x12@\n" +
-	"\fhealth_check\x18\x02 \x01(\v2\x1d.expanse.block.v1.HealthCheckR\vhealthCheck\"Z\n" +
+	"\fhealth_check\x18\x02 \x01(\v2\x1d.expanse.block.v1.HealthCheckR\vhealthCheck\x12\x12\n" +
+	"\x04mdns\x18\x03 \x01(\bR\x04mdns\"Z\n" +
 	"\x0eStatusReplicas\x12\x18\n" +
 	"\adesired\x18\x01 \x01(\x05R\adesired\x12\x14\n" +
 	"\x05ready\x18\x02 \x01(\x05R\x05ready\x12\x18\n" +

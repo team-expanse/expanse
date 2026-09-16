@@ -600,6 +600,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.initLB()
 		go a.lbPoolLoop(ctx)
 		go a.vipLoop(ctx)
+		a.initDNS(ctx)
 	}
 
 	// Node-lifecycle failure monitor (§4.8), cluster mode only: the

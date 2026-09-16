@@ -278,6 +278,9 @@ message BlockSpec {
 message Network {
   repeated Port ports = 1;
   HealthCheck health_check = 2;
+  // MDNS opts the block into the mDNS bridge: its name is answered on
+  // the LAN via multicast (<block>.<ns>.local).
+  bool mdns = 3;
 }
 
 // StatusReplicas is the desired/ready/updated triplet.
