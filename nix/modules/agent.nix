@@ -60,6 +60,12 @@ in
       default = "";
       description = "DNS forwarders (T17), comma-separated ip:port. Empty = /etc/resolv.conf.";
     };
+
+    firewall = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Apply the §4.5 nftables ruleset (static skeleton + store-driven dynamic sets).";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -126,7 +132,8 @@ in
           optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}" +
           optionalString (cfg.externalVIPPool != "") " --external-vip-pool ${cfg.externalVIPPool}" +
           optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}" +
-          optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}";
+          optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}" +
+          optionalString cfg.firewall " --firewall";
         Restart = "always";
         RestartSec = "5s";
         TimeoutStopSec = "30s";

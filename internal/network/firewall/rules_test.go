@@ -120,9 +120,9 @@ func TestBootstrapShape(t *testing.T) {
 		t.Fatalf("want 4 dynamic sets, got %v", f.addedSets)
 	}
 	// §4.5 rule inventory: 2 ct + lo + icmp + icmpv6 + mesh + 4 tcp svc +
-	// 2 udp svc + 3 mgmt + 2 vip + 1 log = 18.
-	if f.rules != 18 {
-		t.Fatalf("want 18 static rules, got %d", f.rules)
+	// 2 udp svc + 3 mgmt + 2 vip + 4 peer-any-iface cluster rules + 1 log = 22.
+	if f.rules != 22 {
+		t.Fatalf("want 22 static rules, got %d", f.rules)
 	}
 }
 

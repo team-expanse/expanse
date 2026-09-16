@@ -95,6 +95,11 @@ type Config struct {
 	// DNSUpstreams overrides the DNS forwarders (T17): comma-separated
 	// "ip:port" list. Empty = parsed from /etc/resolv.conf.
 	DNSUpstreams string
+	// Firewall enables the §4.5 nftables ruleset (T19/T20): static
+	// skeleton at start, store-driven dynamic sets after. Off by
+	// default — deployments that manage the host firewall themselves
+	// (or run inside a dedicated network namespace) opt out.
+	Firewall bool
 }
 
 // Role is the node's cluster role (§4.9): "voter" (default) or
@@ -604,6 +609,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		go a.lbPoolLoop(ctx)
 		go a.vipLoop(ctx)
 		a.initDNS(ctx)
+	}
+	if a.ctl != nil && a.cfg.Firewall && !witness {
+		a.initFirewall(ctx)
 	}
 
 	// Node-lifecycle failure monitor (§4.8), cluster mode only: the

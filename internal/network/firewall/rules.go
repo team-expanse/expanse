@@ -128,13 +128,15 @@ func Bootstrap(c Conn) error {
 	}
 	c.AddChain(ch)
 
-	for _, r := range staticRules(t, ch) {
-		c.AddRule(r)
-	}
+	// Sets first: the kernel processes batch messages in order, and the
+	// static rules' lookup expressions resolve their sets by name.
 	for _, s := range sets(t) {
 		if err := c.AddSet(s, nil); err != nil {
 			return fmt.Errorf("firewall: add set %s: %w", s.Name, err)
 		}
+	}
+	for _, r := range staticRules(t, ch) {
+		c.AddRule(r)
 	}
 	return c.Flush()
 }
@@ -217,6 +219,19 @@ func staticRules(t *nftables.Table, ch *nftables.Chain) []*nftables.Rule {
 
 	// cluster mesh — only from known peers
 	add(append(dportEq(PortMesh, unix.IPPROTO_UDP), append(saddrSet(SetPeers), &expr.Verdict{Kind: expr.VerdictAccept})...)...)
+
+	// cluster services — from known peers on any interface (peers dial
+	// each other's advertised endpoints, which may be LAN addresses;
+	// §4.5's exp0-only rules below remain for overlay sources). Still
+	// store-driven known peers only.
+	for _, p := range []uint16{PortCA, PortRaft, PortJoin} {
+		add(append(dportEq(p, unix.IPPROTO_TCP), append(saddrSet(SetPeers), &expr.Verdict{Kind: expr.VerdictAccept})...)...)
+	}
+	// 7446 is the join/control-plane endpoint: token- and mTLS-
+	// authenticated, and by definition reachable to not-yet-peers. The
+	// spec's off-overlay forbidden list (7443/7444/7445) omits it for
+	// exactly this reason.
+	add(append(dportEq(PortMgmt, unix.IPPROTO_TCP), &expr.Verdict{Kind: expr.VerdictAccept})...)
 
 	// cluster services — only over the overlay (exp0)
 	for _, p := range []uint16{PortCA, PortRaft, PortJoin, PortMgmt} {
