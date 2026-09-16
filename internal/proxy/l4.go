@@ -24,6 +24,10 @@ const (
 const (
 	DefaultDrainTimeout = 30 * time.Second
 	DefaultDialTimeout  = 5 * time.Second
+
+	// L7 response/idle defaults (§4.3).
+	DefaultResponseHeaderTimeout = 30 * time.Second
+	DefaultIdleTimeout           = 90 * time.Second
 )
 
 // Resolver maps a backend to its dial address ("host:port"). The

@@ -1,13 +1,25 @@
 package proxy
 
 import (
+	"crypto/rand"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
+
+	experrors "github.com/expanse/expanse/internal/errors"
 )
 
 // DefaultHostSuffix is the cluster-internal FQDN suffix each block's
@@ -140,9 +152,9 @@ func cleanPath(p string) string {
 
 // L7 is one HTTP reverse-proxy instance bound to a VIP:port. It reads
 // the pool table per request (fresh snapshot), resolves the route via
-// HTTPTable.Lookup, picks a healthy backend round-robin, and proxies
-// with httputil.ReverseProxy. Headers, timeouts and idempotent-method
-// retries are T14.
+// HTTPTable.Lookup, and proxies with httputil.ReverseProxy. Backend
+// selection, header injection, timeouts and idempotent-method retries
+// live in the per-request transport (T14).
 type L7 struct {
 	Pool    TableSource
 	Resolve Resolver // required
@@ -150,10 +162,29 @@ type L7 struct {
 	// from Pool. Injections in tests.
 	Routes func() *HTTPTable
 
-	rr atomic.Uint64
+	// Timeouts (§4.3): connect 5 s, response header 30 s, idle 90 s
+	// by default; configurable per L7 instance (per-route configuration
+	// lands with explicit route declarations).
+	ConnectTimeout        time.Duration // default 5 s
+	ResponseHeaderTimeout time.Duration // default 30 s
+	IdleTimeout           time.Duration // default 90 s
 
-	server http.Server
-	closed atomic.Bool
+	// MaxRetries caps retries for idempotent methods (§9 D5.7):
+	// GET/HEAD/OPTIONS only, connection errors only, never on 5xx.
+	// Default 2.
+	MaxRetries int
+
+	// GetCertificate is the TLS/SNI termination hook point, deferred
+	// to Phase 10's cert manager. Until then callers wiring TLS should
+	// use NoCertYet (returns KindUnavailable); L7 ships plain
+	// HTTP/h2c — no self-signed stand-ins (T14 contract).
+	GetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
+	rr        atomic.Uint64
+	transport http.RoundTripper
+	initOnce  sync.Once
+	server    http.Server
+	closed    atomic.Bool
 }
 
 // RoutesFrom returns a Routes func building from the pool table each
@@ -184,22 +215,180 @@ func (l *L7) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no backends", http.StatusBadGateway)
 		return
 	}
-	// Round-robin over healthy backends (index order rotated by the
-	// per-instance counter).
-	idx := int(l.rr.Add(1)-1) % len(cands)
-	backend := cands[idx]
-
-	target := &url.URL{
-		Scheme: "http",
-		Host:   l.Resolve(backend, rt.TargetPort),
+	l.initOnce.Do(l.initTransport)
+	maxRetries := l.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = DefaultMaxRetries
 	}
 	rp := &httputil.ReverseProxy{
+		// Rewrite only touches per-client state (headers, Host); the
+		// backend target is chosen per attempt by l7Transport so
+		// idempotent requests can rotate on connection errors.
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(target)
+			injectForwardedHeaders(pr, r)
 			pr.Out.Host = r.Host
 		},
-		// Transport is T14 (timeouts); http.DefaultTransport stands in
-		// for the core card.
+		Transport: &l7Transport{
+			inner:      l.transport,
+			resolve:    l.Resolve,
+			candidates: cands,
+			targetPort: rt.TargetPort,
+			rr:         &l.rr,
+			maxRetries: maxRetries,
+		},
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			// Connection-level failures surface as 502, not 500.
+			slog.Debug("l7 proxy error", "error", err)
+			w.WriteHeader(http.StatusBadGateway)
+		},
 	}
 	rp.ServeHTTP(w, r)
+}
+
+// DefaultMaxRetries is the §4.3 retry budget for idempotent methods.
+const DefaultMaxRetries = 2
+
+// idempotentMethods are the only methods that may be retried (D5.7:
+// a retried non-idempotent request can duplicate side effects).
+func idempotentMethod(m string) bool {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	return false
+}
+
+// l7Transport performs backend selection per attempt: it starts the
+// request at the L7-wide round-robin cursor and, for idempotent
+// methods only, rotates to the next candidate on CONNECTION errors
+// (never after a response — a 5xx is passed through untouched; see
+// §9 D5.7). Non-idempotent methods use the first selected backend
+// only.
+type l7Transport struct {
+	inner      http.RoundTripper
+	resolve    Resolver
+	candidates []Backend
+	targetPort int32
+	rr         *atomic.Uint64
+	maxRetries int
+}
+
+func (t *l7Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := int(t.rr.Add(1) % uint64(len(t.candidates)))
+	idem := idempotentMethod(req.Method)
+	var lastErr error
+	for attempt := 0; attempt <= t.maxRetries; attempt++ {
+		b := t.candidates[(start+attempt)%len(t.candidates)]
+		addr := t.resolve(b, t.targetPort)
+		tr := req.Clone(req.Context())
+		tr.URL = &url.URL{
+			Scheme:   "http",
+			Host:     addr,
+			Path:     req.URL.Path,
+			RawQuery: req.URL.RawQuery,
+		}
+		resp, err := t.inner.RoundTrip(tr)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !idem || attempt == t.maxRetries || !isConnErr(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// isConnErr reports whether err is a connection-level failure (dial
+// refused/reset/timeout) as opposed to a response the backend sent.
+func isConnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var op *net.OpError
+	if errors.As(err, &op) {
+		switch op.Op {
+		case "dial", "read", "write":
+			return true
+		}
+	}
+	return errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, io.EOF) // server closed conn before response
+}
+
+// injectForwardedHeaders sets the §4.3 header set on the outbound
+// request: X-Forwarded-For (append the client IP to any existing
+// chain), X-Forwarded-Proto (https iff the inbound request arrived
+// over TLS), X-Forwarded-Host, and X-Request-ID (generated UUIDv4
+// unless the client supplied one).
+func injectForwardedHeaders(pr *httputil.ProxyRequest, in *http.Request) {
+	clientIP, _, _ := net.SplitHostPort(in.RemoteAddr)
+	if clientIP == "" {
+		clientIP = in.RemoteAddr
+	}
+	prior := in.Header.Get("X-Forwarded-For")
+	if prior != "" {
+		pr.Out.Header.Set("X-Forwarded-For", prior+", "+clientIP)
+	} else {
+		pr.Out.Header.Set("X-Forwarded-For", clientIP)
+	}
+	proto := "http"
+	if in.TLS != nil {
+		proto = "https"
+	}
+	pr.Out.Header.Set("X-Forwarded-Proto", proto)
+	pr.Out.Header.Set("X-Forwarded-Host", in.Host)
+	xreq := in.Header.Get("X-Request-ID")
+	if xreq == "" {
+		xreq = newRequestID()
+	}
+	pr.Out.Header.Set("X-Request-ID", xreq)
+}
+
+// newRequestID returns a random UUIDv4-formatted request id.
+func newRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Crypto randomness failure is unrecoverable; fall back to a
+		// time-unique id rather than failing the request.
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// initTransport builds the shared outbound transport with the §4.3
+// timeouts: connect DialContext timeout, response-header timeout, and
+// idle-connection timeout. Built once per L7 instance.
+func (l *L7) initTransport() {
+	connect := l.ConnectTimeout
+	if connect == 0 {
+		connect = DefaultDialTimeout
+	}
+	rh := l.ResponseHeaderTimeout
+	if rh == 0 {
+		rh = DefaultResponseHeaderTimeout
+	}
+	idle := l.IdleTimeout
+	if idle == 0 {
+		idle = DefaultIdleTimeout
+	}
+	l.transport = &http.Transport{
+		Proxy:                 nil, // direct to backends, never via env proxy
+		DialContext:           (&net.Dialer{Timeout: connect}).DialContext,
+		ResponseHeaderTimeout: rh,
+		IdleConnTimeout:       idle,
+		MaxIdleConnsPerHost:   64,
+	}
+}
+
+// NoCertYet is the Phase 10 placeholder for L7.GetCertificate: TLS
+// termination is explicitly deferred — callers get a KindUnavailable
+// error, never a self-signed substitute.
+func NoCertYet(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return nil, experrors.New(experrors.KindUnavailable, "l7.GetCertificate",
+		"TLS termination arrives with the Phase 10 cert manager")
 }
