@@ -5,11 +5,13 @@ go 1.25.0
 require (
 	filippo.io/age v1.3.2
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/google/nftables v0.3.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/mdns v1.0.7
 	github.com/hashicorp/memberlist v0.5.4
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
+	github.com/miekg/dns v1.1.72
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/spf13/cobra v1.10.2
@@ -40,13 +42,11 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/golang-lru v0.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/josharian/native v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/mdlayher/genetlink v1.3.2 // indirect
-	github.com/mdlayher/netlink v1.7.2 // indirect
+	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect
-	github.com/miekg/dns v1.1.72 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
