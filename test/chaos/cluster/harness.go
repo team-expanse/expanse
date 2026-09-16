@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
@@ -36,6 +38,8 @@ type Harness struct {
 	net   *faultNet
 	slow  *slowLogStore
 	delay atomic.Int64 // log-fsync latency, ns
+
+	peerKeys map[int]wgtypes.Key // per-node WG private keys (chaosnet.go)
 }
 
 // NewHarness starts an n-node cluster and waits for a leader.

@@ -12,36 +12,6 @@ import (
 	"time"
 )
 
-// scenarioDuration returns the length of one chaos scenario. Default 20 s
-// (fast suite); RUN_CHAOS=1 scales to the spec's 5 minutes per scenario.
-func scenarioDuration() time.Duration {
-	if os.Getenv("RUN_CHAOS") == "1" {
-		return 5 * time.Minute
-	}
-	if d, err := time.ParseDuration(os.Getenv("CHAOS_DURATION")); err == nil && d > 0 {
-		return d
-	}
-	return 20 * time.Second
-}
-
-// faultInterval scales a fault cadence to the scenario duration: at the
-// full 5 minutes the intervals match the spec table (kills every 10–60 s,
-// partitions every 20–90 s, transfers every 15 s); short runs compress
-// the same number of fault events.
-func faultInterval(scenario time.Duration, min, max time.Duration) time.Duration {
-	d := scenario / 12
-	if d < 300*time.Millisecond {
-		d = 300 * time.Millisecond
-	}
-	if d > max {
-		d = max
-	}
-	if d < min {
-		d = min
-	}
-	return d
-}
-
 // startChecker runs a checker goroutine over every live node probe.
 func startChecker(ctx context.Context, h *Harness, interval time.Duration) *Checker {
 	probes := make([]NodeProbe, h.n)
