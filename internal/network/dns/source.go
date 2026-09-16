@@ -193,7 +193,11 @@ func (z *ZoneSource) rebuild() {
 			Name:      ref[slash+1:],
 			MDNS:      b.GetSpec().GetNetwork().GetMdns(),
 		}
-		if vip, ok := z.vips["internal/"+ref]; ok {
+		// External pool first (§4.2: VIP-exposed blocks allocate from
+		// the configured external pool when one exists), then internal.
+		if vip, ok := z.vips["external/"+ref]; ok {
+			bi.VIP = vip
+		} else if vip, ok := z.vips["internal/"+ref]; ok {
 			bi.VIP = vip
 		}
 		for _, p := range b.GetSpec().GetNetwork().GetPorts() {

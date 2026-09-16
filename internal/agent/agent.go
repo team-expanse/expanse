@@ -92,6 +92,9 @@ type Config struct {
 	// ExternalInterface is the physical interface to announce external
 	// VIPs on ("" / "auto" = the default route's interface).
 	ExternalInterface string
+	// DNSUpstreams overrides the DNS forwarders (T17): comma-separated
+	// "ip:port" list. Empty = parsed from /etc/resolv.conf.
+	DNSUpstreams string
 }
 
 // Role is the node's cluster role (§4.9): "voter" (default) or

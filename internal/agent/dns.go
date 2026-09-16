@@ -39,7 +39,7 @@ var dnsSkipNameservers = map[string]bool{
 // Called from Run; every piece runs in its own retried goroutine.
 func (a *Agent) initDNS(ctx context.Context) {
 	srv := dns.NewServer()
-	srv.Upstreams = dnsUpstreams()
+	srv.Upstreams = dnsUpstreams(a.cfg.DNSUpstreams)
 
 	zs := dns.NewZoneSource(a.store, srv)
 	go func() {
@@ -70,7 +70,11 @@ func (a *Agent) initDNS(ctx context.Context) {
 	addrs := []string{"127.0.0.53:53"}
 	if idx, err := mesh.ClaimIndex(ctx, a.store, a.cfg.NodeID); err == nil {
 		if pfx, err := addrplan.OverlayPrefix(idx); err == nil {
-			addrs = append(addrs, netip.PrefixFrom(pfx.Addr(), 32).Addr().String()+":53")
+			// The node's own address is the prefix base +1 (§3: node N
+			// holds 10.42.N.1 on exp0).
+			b := pfx.Addr().As4()
+			b[3] = 1
+			addrs = append(addrs, netip.AddrFrom4(b).String()+":53")
 		}
 	}
 	for _, addr := range addrs {
@@ -85,10 +89,21 @@ func (a *Agent) initDNS(ctx context.Context) {
 	}
 }
 
-// dnsUpstreams reads the node's resolvers from /etc/resolv.conf,
-// skipping our own stub address.
-func dnsUpstreams() []string {
+// dnsUpstreams resolves the forwarder list: the explicit config first,
+// else /etc/resolv.conf (skipping our own stub address).
+func dnsUpstreams(cfg string) []string {
 	var out []string
+	for _, up := range strings.Split(cfg, ",") {
+		if up = strings.TrimSpace(up); up != "" {
+			if !strings.Contains(up, ":") {
+				up += ":53"
+			}
+			out = append(out, up)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
 	f, err := os.Open("/etc/resolv.conf")
 	if err != nil {
 		return []string{dnsUpstreamFallback}

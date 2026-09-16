@@ -24,6 +24,7 @@ func newAgentCmd() *cobra.Command {
 		blockFlake string
 		extPool    string
 		extIface   string
+		dnsUp      string
 	)
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -41,6 +42,7 @@ func newAgentCmd() *cobra.Command {
 				BlocksFlakeRef:    blockFlake,
 				ExternalVIPPool:   extPool,
 				ExternalInterface: extIface,
+				DNSUpstreams:      dnsUp,
 				LogLevel:          cmd.Root().PersistentFlags().Lookup("log-level").Value.String(),
 			}
 			if period != "" {
@@ -76,6 +78,8 @@ func newAgentCmd() *cobra.Command {
 		"external VIP pool (§4.2), e.g. 192.168.1.100-192.168.1.120; empty = internal VIPs only")
 	cmd.Flags().StringVar(&extIface, "external-interface", "",
 		"physical interface to announce external VIPs on (default: auto = default route)")
+	cmd.Flags().StringVar(&dnsUp, "dns-upstreams", "",
+		"DNS forwarders (T17), comma-separated ip:port; empty = /etc/resolv.conf")
 	cmd.Flags().StringVar(&raftAdv, "raft-advertise", "", "raft transport advertised addr (default: the bind host or local IP, port 7444)")
 	cmd.Flags().StringVar(&blockCat, "blocks-catalog", "", "shipped block-type directory (nix/blocks layout); empty = block API disabled")
 	cmd.Flags().StringVar(&blockFlake, "blocks-flake-ref", "", "flake ref holding block closures (attr per type: <category>-<name>); empty = replicas not realized on this node")

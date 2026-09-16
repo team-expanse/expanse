@@ -82,6 +82,7 @@
           net-lb-health = mkTest "net-lb-health" ./nix/tests/net-lb-health.nix;
           net-lb-drain = mkTest "net-lb-drain" ./nix/tests/net-lb-drain.nix;
           net-l7-routing = mkTest "net-l7-routing" ./nix/tests/net-l7-routing.nix;
+          net-dns = mkTest "net-dns" ./nix/tests/net-dns.nix;
 
           # Phase 04 blocks (§8).
           block-deploy = mkTest "block-deploy" ./nix/tests/block-deploy.nix;

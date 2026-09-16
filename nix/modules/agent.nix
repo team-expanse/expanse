@@ -54,6 +54,12 @@ in
       default = "";
       description = "Physical interface to announce external VIPs on. Empty = auto (default route).";
     };
+
+    dnsUpstreams = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "DNS forwarders (T17), comma-separated ip:port. Empty = /etc/resolv.conf.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -119,7 +125,8 @@ in
           optionalString (cfg.blocksCatalog != null) " --blocks-catalog ${cfg.blocksCatalog}" +
           optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}" +
           optionalString (cfg.externalVIPPool != "") " --external-vip-pool ${cfg.externalVIPPool}" +
-          optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}";
+          optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}" +
+          optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}";
         Restart = "always";
         RestartSec = "5s";
         TimeoutStopSec = "30s";
