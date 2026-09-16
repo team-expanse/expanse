@@ -259,3 +259,42 @@ func TestL7RoundRobinAcrossBackends(t *testing.T) {
 }
 
 var _ TableSource = (*fakeTableSource)(nil)
+
+func TestBuildHTTPRoutesDeclared(t *testing.T) {
+	tbl := svcTable(
+		&Service{
+			Key: "default/a", Namespace: "default", Name: "a", TargetPort: 8080,
+			HTTPRoutes: []HTTPRouteDecl{
+				{Host: "a.test.local", PathPrefix: "/"},
+				{Host: "b.test.local", PathPrefix: "/", Service: "b"},
+				{Host: "b.test.local", PathPrefix: "/api", Service: "b"},
+			},
+			Backends: []Backend{{ReplicaIndex: 0, NodeID: "n1", Healthy: true}},
+		},
+		&Service{
+			Key: "default/b", Namespace: "default", Name: "b", TargetPort: 9090,
+			Backends: []Backend{{ReplicaIndex: 0, NodeID: "n2", Healthy: true}},
+		},
+		&Service{Key: "default/c", Namespace: "default", Name: "c", TargetPort: 7070},
+	)
+	ht := BuildHTTPRoutes(tbl)
+	// Declared service (a): exactly its three routes, cross-service
+	// targeting resolves to default/b with b's target port.
+	if got := ht.Lookup("a.test.local", "/x"); got == nil || got.ServiceKey != "default/a" || got.TargetPort != 8080 {
+		t.Errorf("a.test.local: %+v", got)
+	}
+	if got := ht.Lookup("b.test.local", "/api/x"); got == nil || got.ServiceKey != "default/b" || got.TargetPort != 9090 {
+		t.Errorf("b.test.local/api: %+v", got)
+	}
+	if got := ht.Lookup("b.test.local", "/"); got == nil || got.ServiceKey != "default/b" || got.TargetPort != 9090 {
+		t.Errorf("b.test.local/: %+v", got)
+	}
+	// A declared service must NOT also emit its default host route.
+	if got := ht.Lookup("a.default.expanse.internal", "/"); got != nil {
+		t.Errorf("declared service leaked default route: %+v", got)
+	}
+	// Undeclared service still gets the default host route.
+	if got := ht.Lookup("c.default.expanse.internal", "/"); got == nil || got.ServiceKey != "default/c" {
+		t.Errorf("c default route: %+v", got)
+	}
+}

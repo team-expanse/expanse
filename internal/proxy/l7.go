@@ -66,6 +66,28 @@ func BuildHTTPRoutes(t *Table) *HTTPTable {
 	sort.Strings(keys)
 	for _, k := range keys {
 		svc := t.Services[k]
+		if len(svc.HTTPRoutes) > 0 {
+			for _, decl := range svc.HTTPRoutes {
+				key := svc.Key
+				target := int32(0)
+				if decl.Service != "" {
+					key = svc.Namespace + "/" + decl.Service
+					if ts := t.Service(key); ts != nil {
+						target = ts.TargetPort
+					}
+				}
+				if target == 0 {
+					target = svc.TargetPort
+				}
+				tb.routes = append(tb.routes, HTTPRoute{
+					Host:       decl.Host,
+					PathPrefix: cleanPath(decl.PathPrefix),
+					ServiceKey: key,
+					TargetPort: target,
+				})
+			}
+			continue
+		}
 		tb.routes = append(tb.routes, HTTPRoute{
 			Host:       svc.Name + "." + svc.Namespace + "." + DefaultHostSuffix,
 			PathPrefix: "/",

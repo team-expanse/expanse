@@ -62,6 +62,19 @@ type Service struct {
 	TargetPort int32 // the replica port the VIP forwards to
 	// Backends sorted by ReplicaIndex; never mutated after publish.
 	Backends []Backend
+	// HTTPRoutes are the L7 route declarations of the service's VIP
+	// port (§4.3). Empty = L4 only (the default host route the L7
+	// builder derives is never used for this service).
+	HTTPRoutes []HTTPRouteDecl
+}
+
+// HTTPRouteDecl is one store-declared L7 route: Host + PathPrefix
+// select requests; Service names the target block in the same
+// namespace (empty = the declaring block itself).
+type HTTPRouteDecl struct {
+	Host       string
+	PathPrefix string
+	Service    string
 }
 
 // Table is an immutable snapshot of the routing state. Readers get the
@@ -224,6 +237,13 @@ func (p *Pool) publish() {
 			Name:       ref[slash+1:],
 			Port:       port.GetPort(),
 			TargetPort: target,
+		}
+		for _, decl := range port.GetHttpRoutes() {
+			svc.HTTPRoutes = append(svc.HTTPRoutes, HTTPRouteDecl{
+				Host:       decl.GetHost(),
+				PathPrefix: decl.GetPathPrefix(),
+				Service:    decl.GetService(),
+			})
 		}
 		for _, pl := range st.GetPlacements() {
 			if pl.GetPhase() != pb.Phase_RUNNING {

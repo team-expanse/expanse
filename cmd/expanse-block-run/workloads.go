@@ -252,10 +252,18 @@ func runWhoami(ctx context.Context, index int, args []string) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	greeting := ""
+	if v, ok := cfg["greeting"].(string); ok {
+		greeting = v
+	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// The LB tests assert X-Forwarded-For propagation (G5.8); the
+		// header mirror keeps the body shape ("replica-N") stable for
+		// the distribution assertions.
+		w.Header().Set("X-Seen-XFF", r.Header.Get("X-Forwarded-For"))
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fmt.Sprintf("replica-%d\n", index)))
+		_, _ = w.Write([]byte(fmt.Sprintf("%sreplica-%d\n", greeting, index)))
 	})
 	srv := &http.Server{
 		Addr:              ":" + port,

@@ -8,6 +8,10 @@
       "minimum": 1,
       "maximum": 65535,
       "description": "TCP port whoami listens on"
+    },
+    "greeting": {
+      "type": "string",
+      "description": "prefix written before the replica index"
     }
   }
 }

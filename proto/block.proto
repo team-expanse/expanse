@@ -192,6 +192,23 @@ message Port {
   int32 target_port = 3;
   string protocol = 4; // "tcp" | "udp"
   Expose expose = 5;
+  // L7 route declarations (§4.3): a port with http_routes is served by
+  // the L7 reverse proxy instead of the L4 splice. Routes may point at
+  // other blocks in the same namespace (the edge-proxy pattern), not
+  // just the owning block.
+  repeated HttpRoute http_routes = 6;
+}
+
+// HttpRoute is one L7 routing rule: requests whose Host matches host
+// and whose path has path_prefix as a segment-boundary prefix route to
+// the named service. host and path_prefix are optional — host "" is a
+// catch-all default route, path_prefix "" means "/". service names a
+// block in the same namespace; empty service = the owning block. The
+// target port is the target service's own target_port.
+message HttpRoute {
+  string host = 1;
+  string path_prefix = 2;
+  string service = 3;
 }
 
 // HealthProbe is a single readiness/liveness probe definition (§5.4).

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"strconv"
 	"sync"
@@ -112,6 +113,24 @@ func (a *Agent) lbListen(p netip.Prefix, exposedPort int32, svcKey string) (io.C
 	if err != nil {
 		return nil, err
 	}
+	// L4 vs L7 decision: a port with http_routes (§4.3) is served by
+	// the reverse proxy; everything else is the L4 splice. The pool
+	// watches /blocks/ independently of the VIP reconcile loop, so at
+	// holder-start time the table may not have ingested the block yet —
+	// wait briefly; a service that never appears falls back to L4 (the
+	// pre-L7 behavior) and the reconcile loop re-decides on the next
+	// scan if the block lands later.
+	var svc *proxy.Service
+	for i := 0; i < 50; i++ {
+		if s := a.lbPool.Table().Service(svcKey); s != nil {
+			svc = s
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if svc != nil && len(svc.HTTPRoutes) > 0 {
+		return a.listenL7(ln, svcKey)
+	}
 	l4 := &proxy.L4{
 		Pool: a.lbPool,
 		Key:  svcKey,
@@ -132,6 +151,32 @@ func (a *Agent) lbListen(p netip.Prefix, exposedPort int32, svcKey string) (io.C
 		_ = ln.Close()
 		cancel()
 		return nil
+	}), nil
+}
+
+// listenL7 serves one VIP:port with the reverse proxy (T13/T14): Host
+// then longest path-prefix routing over the shared pool table — the
+// same Resolve seam and drain/lease discipline as L4.
+func (a *Agent) listenL7(ln net.Listener, svcKey string) (io.Closer, error) {
+	l7 := &proxy.L7{
+		Pool:    a.lbPool,
+		Resolve: a.lbResolve,
+		Routes:  proxy.RoutesFrom(a.lbPool),
+		// TLS termination is Phase 10 (cert manager); the hook is
+		// wired but fails closed until then.
+		GetCertificate: proxy.NoCertYet,
+	}
+	srv := &http.Server{Handler: l7.Handler()}
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			a.logger.Warn("l7 listener exited", "service", svcKey, "err", err)
+		}
+	}()
+	return closerFunc(func() error {
+		shut, shutCancel := context.WithTimeout(context.Background(), proxy.DefaultDrainTimeout)
+		defer shutCancel()
+		_ = srv.Shutdown(shut) // graceful: in-flight requests finish
+		return ln.Close()
 	}), nil
 }
 
