@@ -78,6 +78,8 @@
           net-vip-basic = mkTest "net-vip-basic" ./nix/tests/net-vip-basic.nix;
           net-vip-failover = mkTest "net-vip-failover" ./nix/tests/net-vip-failover.nix;
           net-vip-no-duplicate = mkTest "net-vip-no-duplicate" ./nix/tests/net-vip-no-duplicate.nix;
+          net-lb-distribution = mkTest "net-lb-distribution" ./nix/tests/net-lb-distribution.nix;
+          net-lb-health = mkTest "net-lb-health" ./nix/tests/net-lb-health.nix;
 
           # Phase 04 blocks (§8).
           block-deploy = mkTest "block-deploy" ./nix/tests/block-deploy.nix;

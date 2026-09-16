@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
@@ -38,6 +39,10 @@ func (a *Agent) initVIP() error {
 	}
 	a.extPool = pool
 	a.holders = map[string]*holderRun{}
+	a.nodeAddr = map[string]nodeAddr{}
+	if a.lbPool == nil {
+		a.initLB()
+	}
 	a.vipLeases = lease.NewManager(a.store, a.cfg.NodeID)
 	// Pre-resolve the announce interface once ("auto" → default route
 	// device); re-resolving per pass would fight with the mesh.
@@ -194,10 +199,11 @@ func (a *Agent) startHolder(ctx context.Context, key string, vb vipBlock) *holde
 		a.logger.Warn("vip seams unavailable", "vip", key, "err", err)
 		return nil
 	}
-	proxy := &vip.TCPProxy{Target: fmt.Sprintf("127.0.0.1:%d", vb.targetPort)}
 	seams.Listen = func(p netip.Prefix) (io.Closer, error) {
-		// Bind VIP:exposedPort and splice to the local replica.
-		return proxy.ListenOn(fmt.Sprintf("%s:%d", p.Addr(), vb.exposedPort))
+		// Bind VIP:exposedPort and load-balance across ALL healthy
+		// backends cluster-wide (§4.3, wired to the lb pool's atomic
+		// table — T10/T11). Fails over with the lease.
+		return a.lbListen(p, vb.exposedPort, strings.TrimPrefix(vb.blockKey, "/blocks/"))
 	}
 	hc := vip.HolderConfig{
 		Leases: a.leaseManager(),

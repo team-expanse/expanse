@@ -233,3 +233,48 @@ func runStaticSite(ctx context.Context, instance string, args []string) error {
 		return nil
 	}
 }
+
+// runWhoami serves web/whoami: an in-process HTTP server that reports
+// the replica index (from the per-replica spec the agent wrote) — the
+// load-balancer distribution tests' distinguishing backend. Binds all
+// interfaces so cross-node backends are reachable through the LAN.
+func runWhoami(ctx context.Context, index int, args []string) error {
+	cfg, err := cfgMap(args)
+	if err != nil {
+		return err
+	}
+	port := cfgPort(cfg)
+	if port == "0" {
+		port = "8080"
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(fmt.Sprintf("replica-%d\n", index)))
+	})
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+	fmt.Printf("expanse-block-run: whoami(replica-%d) serving on :%s\n", index, port)
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+		return nil
+	}
+}

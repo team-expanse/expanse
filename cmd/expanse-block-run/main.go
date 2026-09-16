@@ -70,6 +70,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
+	case "web/whoami":
+		if err := runWhoami(ctx, spec.Index, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
 	case "db/redis":
 		if err := runRedis(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
@@ -100,8 +105,9 @@ func main() {
 
 // spec mirrors the agent's systemd.Spec (the fields the helper needs).
 type spec struct {
-	Type string   `json:"type"`
-	Args []string `json:"args,omitempty"`
+	Type  string   `json:"type"`
+	Args  []string `json:"args,omitempty"`
+	Index int      `json:"index"`
 }
 
 // loadSpec reads the desired-state JSON the agent wrote for this

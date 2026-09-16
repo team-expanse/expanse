@@ -1,0 +1,5 @@
+name: whoami
+version: 1.0.0
+description: Replica-index reporter for load-balancer tests
+icon: whoami
+capabilities: []

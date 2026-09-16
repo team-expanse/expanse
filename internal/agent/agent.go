@@ -29,6 +29,7 @@ import (
 	"github.com/expanse/expanse/internal/agent/nix"
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/network/vip"
+	"github.com/expanse/expanse/internal/proxy"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -165,6 +166,11 @@ type Agent struct {
 	vipCands  map[string][]vip.Candidate
 	holders   map[string]*holderRun
 	vipLeases *lease.Manager
+
+	// LB wiring (§4.3, internal/agent/lb.go).
+	lbPool   *proxy.Pool
+	nodeMu   sync.Mutex
+	nodeAddr map[string]nodeAddr
 
 	status   atomic.Value // string
 	shutdown atomic.Value // chan struct{}
@@ -588,6 +594,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	// VIP holders (§4.2). Cluster nodes only; witnesses never host
 	// replicas so they are never candidates.
 	if a.ctl != nil && !witness {
+		// The LB pool must exist before lbPoolLoop/vipLoop start:
+		// both goroutines dereference it (a nil pool segfaults the
+		// first watch).
+		a.initLB()
+		go a.lbPoolLoop(ctx)
 		go a.vipLoop(ctx)
 	}
 
