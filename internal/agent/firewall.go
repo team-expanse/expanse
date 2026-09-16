@@ -8,11 +8,14 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/netip"
 	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/network/addrplan"
+	"github.com/expanse/expanse/internal/network/mesh"
 	"github.com/google/nftables"
 
 	fw "github.com/expanse/expanse/internal/network/firewall"
@@ -50,13 +53,137 @@ func (a *Agent) firewallLoop(ctx context.Context) {
 }
 
 // fwSync recomputes the desired dynamic sets from the store and diffs
-// them into the kernel.
+// them into the kernel, then maintains the §4.6 policy chains.
 func (a *Agent) fwSync(ctx context.Context, conn *nftables.Conn) error {
 	d, err := a.fwDesired(ctx)
 	if err != nil {
 		return err
 	}
-	return fw.Sync(conn, d)
+	if err := fw.Sync(conn, d); err != nil {
+		return err
+	}
+	pols, peerBlocks, err := a.fwPolicies(ctx)
+	if err != nil {
+		return err
+	}
+	k, err := fw.SyncPolicies(conn, pols, peerBlocks, a.fwPolKey)
+	if err != nil {
+		return err
+	}
+	a.fwPolKey = k
+	return nil
+}
+
+// fwPolicies compiles §4.6 per-block policies from the store:
+// /blocks/<ns>/<name> specs that declare network.policy become
+// BlockPolicy entries keyed on this node's overlay address, with
+// from.blocks resolved through each block's placement status (replica
+// node → its overlay 10.42.N.1).
+func (a *Agent) fwPolicies(ctx context.Context) ([]fw.BlockPolicy, map[string][]netip.Addr, error) {
+	peers := map[string][]netip.Addr{} // block name → replica overlay addrs
+	var pols []fw.BlockPolicy
+
+	self, err := mesh.ClaimIndex(ctx, a.store, a.cfg.NodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	selfPfx, err := addrplan.OverlayPrefix(self)
+	if err != nil {
+		return nil, nil, err
+	}
+	selfAddrB := selfPfx.Addr().As4()
+	selfAddrB[3] = 1
+	selfAddr := netip.AddrFrom4(selfAddrB)
+
+	// node ID → overlay address (for replica placement lookups).
+	nodeIdx := map[string]netip.Addr{}
+	if ents, err := a.store.List(ctx, store.Key("/network/nodeIndexes/")); err == nil {
+		for _, e := range ents {
+			var idx int
+			if _, err := fmt.Sscanf(string(e.Key), "/network/nodeIndexes/%d", &idx); err != nil {
+				continue
+			}
+			if pfx, err := addrplan.OverlayPrefix(idx); err == nil {
+				b := pfx.Addr().As4()
+				b[3] = 1
+				nodeIdx[string(e.Value)] = netip.AddrFrom4(b)
+			}
+		}
+	}
+
+	ents, err := a.store.List(ctx, store.Key("/blocks/"))
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range ents {
+		parts := strings.Split(string(e.Key), "/")
+		// /blocks/<ns>/<name> (spec); skip status keys.
+		if len(parts) != 4 {
+			continue
+		}
+		var blk pb.Block
+		if err := proto.Unmarshal(e.Value, &blk); err != nil {
+			continue
+		}
+		pol := blk.GetSpec().GetNetwork().GetPolicy()
+		if pol == nil {
+			continue // default allow
+		}
+		name := parts[3]
+		// Replica overlay addresses (for other blocks' from.blocks).
+		for _, pl := range blk.GetStatus().GetPlacements() {
+			if addr, ok := nodeIdx[pl.GetNodeId()]; ok {
+				peers[name] = append(peers[name], addr)
+			}
+		}
+
+		bp := fw.BlockPolicy{
+			Key:     parts[1] + "/" + name,
+			Overlay: selfAddr,
+		}
+		for _, p := range blk.GetSpec().GetNetwork().GetPorts() {
+			proto := "tcp"
+			if strings.EqualFold(p.GetProtocol(), "udp") {
+				proto = "udp"
+			}
+			bp.Ports = append(bp.Ports, fw.PolicyPort{Port: uint16(p.GetPort()), Protocol: proto})
+		}
+		for _, r := range pol.GetIngress() {
+			ir := fw.IngressRule{Ports: policyPorts(r.GetPorts())}
+			if f := r.GetFrom(); f != nil {
+				ir.From.Blocks = f.GetBlocks()
+				for _, c := range f.GetCidrs() {
+					if pfx, err := netip.ParsePrefix(c); err == nil {
+						ir.From.CIDRs = append(ir.From.CIDRs, pfx)
+					}
+				}
+			}
+			bp.Ingress = append(bp.Ingress, ir)
+		}
+		for _, r := range pol.GetEgress() {
+			er := fw.EgressRule{Ports: policyPorts(r.GetPorts())}
+			if t := r.GetTo(); t != nil {
+				er.To.External = t.GetExternal()
+				er.To.Blocks = t.GetBlocks()
+				for _, c := range t.GetCidrs() {
+					if pfx, err := netip.ParsePrefix(c); err == nil {
+						er.To.CIDRs = append(er.To.CIDRs, pfx)
+					}
+				}
+			}
+			bp.Egress = append(bp.Egress, er)
+		}
+		pols = append(pols, bp)
+	}
+	return pols, peers, nil
+}
+
+func policyPorts(pps []*pb.PolicyPort) []fw.PolicyPort {
+	var out []fw.PolicyPort
+	for _, p := range pps {
+		out = append(out, fw.PolicyPort{Port: uint16(p.GetPort()), Protocol: p.GetProtocol()})
+	}
+	return out
 }
 
 // fwDesired reads node peer records, VIP allocations, and block

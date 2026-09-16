@@ -26,6 +26,10 @@ func newFakeConn() *fakeConn {
 	}}
 }
 
+func (f *fakeConn) FlushChain(c *nftables.Chain) {
+	f.ops = append(f.ops, "flushChain "+c.Name)
+}
+
 func (f *fakeConn) AddTable(*nftables.Table) *nftables.Table {
 	f.tables++
 	f.ops = append(f.ops, "addTable")
@@ -87,7 +91,7 @@ func (f *fakeConn) SetDeleteElements(s *nftables.Set, vals []nftables.SetElement
 
 func (f *fakeConn) Flush() error {
 	f.ops = append(f.ops, "flush")
-	return nil
+	return f.err
 }
 
 func keyStr(k []byte) string {

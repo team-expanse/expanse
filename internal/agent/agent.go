@@ -167,6 +167,10 @@ type Agent struct {
 	invCollector *inventory.Collector
 	healthR      *health.Runner
 
+	// §4.6 network policy: cached compiled-ruleset key so unchanged
+	// passes skip kernel traffic entirely.
+	fwPolKey string
+
 	// VIP management (§4.2, internal/agent/vip.go).
 	vipMu     sync.Mutex
 	extPool   []netip.Prefix

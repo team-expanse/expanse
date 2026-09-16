@@ -274,13 +274,60 @@ message BlockSpec {
   repeated string depends_on = 13;
 }
 
-// Network groups ports and health checks.
+// Network groups ports, health checks, and the basic §4.6 policy.
 message Network {
   repeated Port ports = 1;
   HealthCheck health_check = 2;
   // MDNS opts the block into the mDNS bridge: its name is answered on
   // the LAN via multicast (<block>.<ns>.local).
   bool mdns = 3;
+  // Policy is §4.6 basic per-block network policy. Absent = allow all
+  // (compatibility); present = default deny per direction that has
+  // rules. Phase 05 enforces ingress IP-keyed on the node's overlay
+  // address and block ports; full micro-segmentation is Phase 14.
+  NetworkPolicy policy = 4;
+}
+
+// PolicyFrom names the allowed ingress sources: other blocks (by name,
+// same namespace) and/or IP CIDRs.
+message PolicyFrom {
+  repeated string blocks = 1;
+  repeated string cidrs = 2;
+}
+
+// PolicyTo names the allowed egress destinations.
+message PolicyTo {
+  // External = any destination outside the cluster overlay.
+  bool external = 1;
+  repeated string blocks = 2;
+  repeated string cidrs = 3;
+}
+
+// PolicyPort constrains a rule to one transport port; protocol is
+// "tcp" (default) or "udp". Empty rule ports = all the block's ports.
+message PolicyPort {
+  int32 port = 1;
+  string protocol = 2;
+}
+
+// IngressRule is one accept entry inside a block's ingress policy.
+message IngressRule {
+  PolicyFrom from = 1;
+  repeated PolicyPort ports = 2;
+}
+
+// EgressRule is one accept entry inside a block's egress policy.
+message EgressRule {
+  PolicyTo to = 1;
+  repeated PolicyPort ports = 2;
+}
+
+// NetworkPolicy is §4.6: ingress/egress accept lists. Each direction
+// present switches that direction to default deny (with enforcement
+// granularity as documented on Network.policy).
+message NetworkPolicy {
+  repeated IngressRule ingress = 1;
+  repeated EgressRule egress = 2;
 }
 
 // StatusReplicas is the desired/ready/updated triplet.

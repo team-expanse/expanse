@@ -47,6 +47,7 @@ type Conn interface {
 	AddChain(*nftables.Chain) *nftables.Chain
 	AddRule(*nftables.Rule) *nftables.Rule
 	AddSet(*nftables.Set, []nftables.SetElement) error
+	FlushChain(*nftables.Chain)
 	GetSetElements(*nftables.Set) ([]nftables.SetElement, error)
 	SetAddElements(*nftables.Set, []nftables.SetElement) error
 	SetDeleteElements(*nftables.Set, []nftables.SetElement) error
