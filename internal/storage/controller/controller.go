@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
@@ -102,6 +103,12 @@ type Controller struct {
 	lastScrub time.Time
 
 	noCandRounds map[string]int // volID → consecutive no-evidence rounds
+
+	// candLatched marks volumes whose NeedsManualRecovery was set by
+	// the no-current-candidate path (not §9 divergence): unlike a
+	// divergence latch, it is exitable — a live candidate with probe
+	// evidence clears it (see Reconcile's manual-recovery case).
+	candLatched map[string]bool
 }
 
 // New builds the controller. Call Run in a goroutine.
@@ -118,7 +125,7 @@ func New(opts Options) *Controller {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Controller{opts: opts, log: opts.Logger, rebuilds: map[string]int{}, noCandRounds: map[string]int{}}
+	return &Controller{opts: opts, log: opts.Logger, rebuilds: map[string]int{}, noCandRounds: map[string]int{}, candLatched: map[string]bool{}}
 }
 
 // Run reconciles every tick until the context ends.
@@ -168,7 +175,22 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			c.finalizeDelete(ctx, id, &spec, &status)
 			continue
 		case storage.StateNeedsManualRecovery:
-			continue // §9: a human decides; the controller never touches it
+			// §9: a human decides; the controller never touches a
+			// DIVERGED volume. But a latch set by the no-candidate path
+			// (transient multi-node churn: leases lapse under raft
+			// leader loss, nodes reboot) must not turn into permanent
+			// unavailability — when a meshed placement node presents
+			// live probe evidence, the volume is provably intact and
+			// election may proceed.
+			if c.candLatched[id] && c.liveCandidateExists(ctx, id, &status, meshed) {
+				delete(c.candLatched, id)
+				c.noCandRounds[id] = 0
+				status.State = storage.StateDegraded
+				if err := storage.CompareAndSwapStatus(ctx, c.opts.St, id, rev, status); err == nil {
+					c.log.Info("manual-recovery latch cleared: live candidate presented probe evidence", "vol", id)
+				}
+			}
+			continue
 		}
 		c.electPrimary(ctx, id, &status, rev, meshed)
 		if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
@@ -442,21 +464,44 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 		// Currency gate (T17.4): only nodes whose durable copy answers
 		// a live probe are eligible, and only at the highest probed
 		// sequence — a node whose oplog is behind must be leveled by
-		// recovery, not handed the write path.
+		// recovery, not handed the write path. Probes run IN PARALLEL
+		// under one round deadline: a sequential probe lets a dead
+		// candidate consume the whole budget before a live one is ever
+		// asked (observed in the durability VM run — the dead node's
+		// dial timeout starved the live replica, refusing elections
+		// that had a perfectly good candidate).
 		pctx, cancel := context.WithTimeout(ctx, probeBudget)
-		for _, p := range status.Placement {
-			if !meshed[p.NodeID] {
-				continue
-			}
-			seq, err := c.opts.ProbeSeq(pctx, volID, p.NodeID)
-			if err != nil {
-				c.log.Warn("election probe failed; candidate not eligible",
-					"vol", volID, "node", p.NodeID, "err", err)
-				continue
-			}
-			cands = append(cands, cand{p.NodeID, seq})
+		type probeRes struct {
+			node string
+			seq  uint64
+			err  error
 		}
+		var live []string // meshed placement order, for deterministic probe list
+		for _, p := range status.Placement {
+			if meshed[p.NodeID] {
+				live = append(live, p.NodeID)
+			}
+		}
+		results := make([]probeRes, len(live))
+		var wg sync.WaitGroup
+		for i, node := range live {
+			wg.Add(1)
+			go func(i int, node string) {
+				defer wg.Done()
+				seq, err := c.opts.ProbeSeq(pctx, volID, node)
+				results[i] = probeRes{node: node, seq: seq, err: err}
+			}(i, node)
+		}
+		wg.Wait()
 		cancel()
+		for _, pr := range results {
+			if pr.err != nil {
+				c.log.Warn("election probe failed; candidate not eligible",
+					"vol", volID, "node", pr.node, "err", pr.err)
+				continue
+			}
+			cands = append(cands, cand{pr.node, pr.seq})
+		}
 		if len(cands) == 0 {
 			c.noCurrentCandidate(ctx, volID, status, rev)
 			return
@@ -522,10 +567,33 @@ func (c *Controller) noCurrentCandidate(ctx context.Context, volID string, statu
 	}
 	if status.State != storage.StateNeedsManualRecovery {
 		status.State = storage.StateNeedsManualRecovery
+		c.candLatched[volID] = true
 		if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err == nil {
 			c.log.Error("election: no current candidate — manual recovery required", "vol", volID, "rounds", rounds)
 		}
 	}
+}
+
+// liveCandidateExists reports whether any meshed placement node answers
+// a live currency probe. Used ONLY to exit the no-candidate manual-
+// recovery latch: presence of a live, provable durable copy is the
+// strongest evidence the volume is intact, so keeping the volume
+// fenced would trade a transient outage for a permanent one.
+func (c *Controller) liveCandidateExists(ctx context.Context, volID string, status *storage.Status, meshed map[string]bool) bool {
+	if c.opts.ProbeSeq == nil {
+		return false
+	}
+	pctx, cancel := context.WithTimeout(ctx, probeBudget)
+	defer cancel()
+	for _, p := range status.Placement {
+		if !meshed[p.NodeID] {
+			continue
+		}
+		if _, err := c.opts.ProbeSeq(pctx, volID, p.NodeID); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // volLeaseExpired reports whether the volume's primary lease exists
