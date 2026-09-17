@@ -320,3 +320,24 @@ func TestRunNewestSnapshotNumeric(t *testing.T) {
 		t.Fatalf("adopted seq %d, want 10", res.Adopt)
 	}
 }
+
+// TestRunDegenerateSameNameSnapshot: a target claiming the SAME newest
+// snapshot name as the source is not proof of shared generation — two
+// independent primaries can snapshot the same seq independently (VM
+// run 8), and `zfs send -i x x` fails on real ZFS ("not an earlier
+// snapshot from the same fs"), leaving the replica stale forever. Run
+// must degrade to a FULL send in that case.
+func TestRunDegenerateSameNameSnapshot(t *testing.T) {
+	z := newFakeZFS()
+	src := []string{"resync-0"}
+	sink := &fakeSink{snaps: []string{"resync-0"}}
+	z.sent["volumes/vol-same|"+"|resync-0"] = []byte("FULL")
+
+	res, err := Run(context.Background(), z, "volumes/vol-same", src, sink, slog.Default())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Full || res.From != "" {
+		t.Fatalf("res = %+v, want degenerate case forced to full send", res)
+	}
+}

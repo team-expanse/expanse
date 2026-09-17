@@ -162,7 +162,19 @@ func Run(ctx context.Context, z ZFS, dataset string, sourceSnaps []string, sink 
 		return res, fmt.Errorf("resync: list target snapshots: %w", err)
 	}
 	from, common := CommonAncestor(sourceSnaps, targetSnaps)
-	if common {
+	if from == to && common {
+		// Degenerate: the target claims the SAME newest snapshot name
+		// the source would send. Names collide across independent
+		// primary lineages (two primaries snapshot the same seq
+		// independently — VM run 8), and `zfs send -i x x` fails with
+		// "not an earlier snapshot from the same fs". A name match is
+		// NOT proof of shared generation, so send the full image: if
+		// the target's history really is identical content the receive
+		// is a no-op-equivalent; if it is not (the collision case), the
+		// full image is the only honest convergence.
+		from = ""
+		res.Full = true
+	} else if common {
 		res.From = from
 	} else {
 		res.Full = true
@@ -186,6 +198,9 @@ func Run(ctx context.Context, z ZFS, dataset string, sourceSnaps []string, sink 
 	n, rerr := sink.Receive(ctx, pr)
 	res.Bytes = n
 	if serr := <-errC; serr != nil {
+		if res.Full {
+			return res, fmt.Errorf("resync: zfs send (full): %w", serr)
+		}
 		return res, fmt.Errorf("resync: zfs send: %w", serr)
 	}
 	if rerr != nil {

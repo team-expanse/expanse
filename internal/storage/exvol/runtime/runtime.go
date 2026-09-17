@@ -1051,6 +1051,18 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 		r.opts.Logger.Info("local copy filled from survivors", "vol", volID,
 			"from", localLast, "to", res.MaxSeq)
 	}
+	// The caller's own durable oplog is evidence too: probes can ALL
+	// under-report (the only secondary of the acking quorum crashed;
+	// an ex-primary's reboots lose its coordinator memory but NOT its
+	// durable oplog). VM run 8: the elected node held ops 1–10 in its
+	// own oplog, every probe reported 0/unreachable, and it resumed at
+	// seq 0 — re-issuing sequence numbers that already existed. A
+	// resume point below the local oplog is never honest.
+	if localLast > res.MaxSeq {
+		r.opts.Logger.Warn("recovery resume raised to local oplog", "vol", volID,
+			"probe_max", res.MaxSeq, "local_last", localLast)
+		return res, localLast, nil
+	}
 	return res, res.MaxSeq, nil
 }
 
