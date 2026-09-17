@@ -34,6 +34,7 @@ import (
 
 	networkmesh "github.com/expanse/expanse/internal/network/mesh"
 	volctlc "github.com/expanse/expanse/internal/storage/controller"
+	expmount "github.com/expanse/expanse/internal/storage/exvol/mount"
 	exvolrt "github.com/expanse/expanse/internal/storage/exvol/runtime"
 	expzfs "github.com/expanse/expanse/internal/storage/zfs"
 	pb "github.com/expanse/expanse/proto"
@@ -339,6 +340,9 @@ func New(cfg Config) (*Agent, error) {
 	}
 	nixDriver := nix.New()
 	r.Register(nixman.New(nixDriver, os.Stdout))
+	// Exvol volume attach/mount (T14 §4.7): wait for the device,
+	// format only if blank (never reformat), mount noatime.
+	r.Register(expmount.New(nil, ""))
 	a.recon = r
 
 	// Exvol volume runtime (Phase 06 T10): per-node zvol + secondary /

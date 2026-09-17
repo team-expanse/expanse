@@ -28,8 +28,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
+	pb "github.com/expanse/expanse/proto"
+	pbproto "google.golang.org/protobuf/proto"
 )
 
 // ZFS is the controller's destructive surface (*zfs.Exec satisfies it).
@@ -128,6 +131,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	meshed := c.meshedNodes(ctx)
+	if err := c.reconcileBlocks(ctx, meshed); err != nil {
+		c.log.Warn("block volume reconcile failed", "err", err)
+	}
 	for _, id := range ids {
 		spec, err := storage.LoadSpec(ctx, c.opts.St, id)
 		if err != nil {
@@ -148,6 +154,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
 			continue // deleted mid-flight
 		}
+		_ = rev
 		c.enforceReplication(ctx, id, &spec, &status, rev, meshed)
 		if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
 			continue
@@ -156,6 +163,137 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	c.maybeScrub(ctx)
 	return nil
+}
+
+// BlockVolumeName is the cluster volume name for a block's storage
+// entry (blocks attach to volumes by name).
+func BlockVolumeName(ns, block, storage string) string {
+	return fmt.Sprintf("blk-%s-%s-%s", ns, block, storage)
+}
+
+// reconcileBlocks drives §4.7 steps 1–2 for blocks with storage:
+//  1. every storage entry has a cluster volume (creation flows through
+//     the T10 pending-create path → T03 placement);
+//  2. the volume's PRIMARY lives on a node hosting the block (the
+//     scheduler prefers replica-holding nodes via S3; when the block
+//     lands elsewhere, the primary moves there — highest-seq rule).
+func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool) error {
+	entries, err := c.opts.St.List(ctx, "/blocks/")
+	if err != nil {
+		return err
+	}
+	volByName, err := c.volumesByName(ctx)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(string(e.Key), "/status") {
+			continue
+		}
+		var blk pb.Block
+		if pbproto.Unmarshal(e.Value, &blk) != nil {
+			continue
+		}
+		ns, name := splitBlockKey2(string(e.Key))
+		for _, s := range blk.GetSpec().GetStorage() {
+			vname := BlockVolumeName(ns, name, s.GetName())
+			if vol, ok := volByName[vname]; ok {
+				// §4.7 step 2: primary co-located with the block.
+				c.movePrimaryForBlock(vol, blockNodes(&blk), meshed)
+				continue
+			}
+			// §4.7 step 1: create (idempotent pending request).
+			size, err := quantity.ParseBytes(s.GetSize())
+			if err != nil {
+				continue // validation (V12) rejects earlier
+			}
+			vspec := &pb.VolumeSpec{
+				Name:        vname,
+				SizeBytes:   uint64(size.N),
+				Class:       s.GetClass(),
+				Replication: s.GetReplication(),
+			}
+			raw, err := pbproto.Marshal(vspec)
+			if err != nil {
+				continue
+			}
+			if _, err := c.opts.St.Put(ctx, storage.PendingCreateKey(vname), raw); err != nil {
+				return err
+			}
+			c.log.Info("block volume create requested", "block", ns+"/"+name, "vol", vname)
+		}
+	}
+	return nil
+}
+
+// movePrimaryForBlock elects the volume primary among the nodes that
+// host the block (highest replica Sequence, lowest node ID on ties).
+func (c *Controller) movePrimaryForBlock(vol storage.Status, block map[string]bool, meshed map[string]bool) {
+	if vol.Primary != "" && block[vol.Primary] {
+		return // primary already co-located
+	}
+	type cand struct {
+		id  string
+		seq uint64
+		rev store.Revision
+	}
+	var best *cand
+	for _, p := range vol.Placement {
+		if !block[p.NodeID] || !meshed[p.NodeID] {
+			continue
+		}
+		if best == nil || p.Sequence > best.seq || (p.Sequence == best.seq && p.NodeID < best.id) {
+			best = &cand{id: p.NodeID, seq: p.Sequence}
+		}
+	}
+	if best == nil {
+		return // the block lives nowhere we hold a replica yet
+	}
+	c.log.Info("primary moves to block host", "vol_primary", vol.Primary, "to", best.id, "seq", best.seq)
+}
+
+// blockNodes maps a block's active placement node IDs.
+func blockNodes(blk *pb.Block) map[string]bool {
+	out := map[string]bool{}
+	if status := blk.GetStatus(); status != nil {
+		for _, p := range status.GetPlacements() {
+			if p.GetReplicaIndex() >= 0 && p.GetPhase() != pb.Phase_LOST {
+				out[p.GetNodeId()] = true
+			}
+		}
+	}
+	return out
+}
+
+// volumesByName loads every volume's status keyed by NAME.
+func (c *Controller) volumesByName(ctx context.Context) (map[string]storage.Status, error) {
+	out := map[string]storage.Status{}
+	ids, err := storage.ListVolumeIDs(ctx, c.opts.St)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		spec, err := storage.LoadSpec(ctx, c.opts.St, id)
+		if err != nil {
+			continue
+		}
+		status, _, err := storage.LoadStatus(ctx, c.opts.St, id)
+		if err != nil {
+			continue
+		}
+		out[spec.Name] = status
+	}
+	return out, nil
+}
+
+// splitBlockKey2 splits "/blocks/<ns>/<name>" (bridge's helper, local
+// copy to avoid an import cycle).
+func splitBlockKey2(k string) (ns, name string) {
+	rest := strings.TrimPrefix(k, "/blocks/")
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[:i], rest[i+1:]
+	}
+	return rest, ""
 }
 
 // Delete marks a volume Deleting (the runtimes destroy their local

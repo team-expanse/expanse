@@ -25,6 +25,12 @@ func sampleSpec() Spec {
 			"/persist/expanse/blocks/web/z",
 			"/persist/expanse/blocks/web/a",
 		},
+		// T14 §4.7: exvol volume mounts bind into the unit namespace
+		// as host:declared-mount-path pairs.
+		BindPaths: []string{
+			"/var/lib/expanse/volumes/vol-b/mnt:/var/lib/postgresql",
+			"/var/lib/expanse/volumes/vol-a/mnt:/var/lib/db",
+		},
 		Credentials: map[string]string{"db_password": "/persist/expanse/secrets/db_password"},
 	}
 }
@@ -47,6 +53,10 @@ func TestUnitFileProperties(t *testing.T) {
 		if !strings.Contains(u, want+"\n") {
 			t.Errorf("unit file missing %q\n---\n%s", want, u)
 		}
+	}
+	// Volume binds sorted into BindPaths (host:in-unit pairs).
+	if !strings.Contains(u, "BindPaths=/var/lib/expanse/volumes/vol-a/mnt:/var/lib/db /var/lib/expanse/volumes/vol-b/mnt:/var/lib/postgresql\n") {
+		t.Errorf("BindPaths not sorted/present:\n%s", u)
 	}
 	// Volume mounts sorted into ReadWritePaths.
 	if !strings.Contains(u, "ReadWritePaths=/persist/expanse/blocks/web/a /persist/expanse/blocks/web/z") {

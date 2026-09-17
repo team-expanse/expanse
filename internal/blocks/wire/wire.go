@@ -22,9 +22,11 @@ import (
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/scheduler"
+	expstorage "github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
+	pbproto "google.golang.org/protobuf/proto"
 )
 
 // DefaultCapacity is the conservative per-node capacity used until
@@ -97,8 +99,20 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 		if err != nil {
 			return nil, scheduler.OvercommitConfig{}, err
 		}
+		// §4.1 S3 data locality (weight 15): which nodes hold replicas
+		// of which volumes (volume NAME → replica node set).
+		volNodes, err := volumeLocality(ctx, st)
+		if err != nil {
+			return nil, scheduler.OvercommitConfig{}, err
+		}
 		views := make([]scheduler.NodeView, 0, len(ids))
 		for _, id := range ids {
+			local := []string{}
+			for name, nodes := range volNodes {
+				if nodes[id] {
+					local = append(local, name)
+				}
+			}
 			ready, err := nodeReady(ctx, st, id)
 			if err != nil {
 				return nil, scheduler.OvercommitConfig{}, err
@@ -123,6 +137,7 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 				ID:       id,
 				Ready:    ready,
 				Cordoned: cordoned,
+				Volumes:  local,
 				FreeCPU:  quantity.CPU{Milli: DefaultCapacity.CPU.Milli - u.cpu},
 				FreeMem:  quantity.Bytes{N: DefaultCapacity.Mem.N - u.mem},
 				FreeDisk: quantity.Bytes{N: DefaultCapacity.Disk.N - u.dsk},
@@ -130,6 +145,50 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 		}
 		return views, cfg, nil
 	}
+}
+
+// volumeLocality maps volume NAME → set of nodes holding a replica.
+// It reads the raw volume records directly (storeReader surface).
+func volumeLocality(ctx context.Context, st storeReader) (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
+	entries, err := st.List(ctx, store.Key(expstorage.VolumePrefix))
+	if err != nil {
+		return nil, err
+	}
+	// Walk unique volume IDs from /volumes/<id>/spec|status keys.
+	ids := map[string]bool{}
+	for _, e := range entries {
+		parts := strings.SplitN(strings.TrimPrefix(string(e.Key), expstorage.VolumePrefix), "/", 2)
+		if len(parts) == 2 && parts[1] == "spec" {
+			ids[parts[0]] = true
+		}
+	}
+	for id := range ids {
+		se, err := st.Get(ctx, expstorage.SpecKey(id))
+		if err != nil {
+			continue
+		}
+		var spb pb.VolumeSpec
+		if pbproto.Unmarshal(se.Value, &spb) != nil {
+			continue
+		}
+		te, err := st.Get(ctx, expstorage.StatusKey(id))
+		if err != nil {
+			continue
+		}
+		var tpb pb.VolumeStatus
+		if pbproto.Unmarshal(te.Value, &tpb) != nil {
+			continue
+		}
+		spec := expstorage.SpecFromProto(&spb)
+		status := expstorage.StatusFromProto(&tpb)
+		nodes := map[string]bool{}
+		for _, p := range status.Placement {
+			nodes[p.NodeID] = true
+		}
+		out[spec.Name] = nodes
+	}
+	return out, nil
 }
 
 // requestsOf sums a block's requests: cpu/mem from resources.requests,
