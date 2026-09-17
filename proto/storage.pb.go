@@ -335,10 +335,16 @@ type VolumeStatus struct {
 	// Node ID holding the primary lease.
 	Primary string `protobuf:"bytes,3,opt,name=primary,proto3" json:"primary,omitempty"`
 	// Last acked write sequence.
-	Sequence      uint64     `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	Placement     []*Replica `protobuf:"bytes,5,rep,name=placement,proto3" json:"placement,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Sequence  uint64     `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Placement []*Replica `protobuf:"bytes,5,rep,name=placement,proto3" json:"placement,omitempty"`
+	// Set when an operator chose a branch after §9 divergence
+	// (`expanse ctl volume diverged --choose`): the next primary
+	// bring-up adopts this status's sequence instead of re-running the
+	// automatic recovery algorithm (which would re-detect the
+	// divergence). Cleared once the primary is up.
+	ManualRecovered bool `protobuf:"varint,6,opt,name=manual_recovered,json=manualRecovered,proto3" json:"manual_recovered,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *VolumeStatus) Reset() {
@@ -406,6 +412,13 @@ func (x *VolumeStatus) GetPlacement() []*Replica {
 	return nil
 }
 
+func (x *VolumeStatus) GetManualRecovered() bool {
+	if x != nil {
+		return x.ManualRecovered
+	}
+	return false
+}
+
 var File_proto_storage_proto protoreflect.FileDescriptor
 
 const file_proto_storage_proto_rawDesc = "" +
@@ -426,7 +439,7 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\tzvol_path\x18\x03 \x01(\tR\bzvolPath\x12\x1a\n" +
 	"\bsequence\x18\x04 \x01(\x04R\bsequence\x12-\n" +
 	"\x13last_seen_unix_nano\x18\x05 \x01(\x03R\x10lastSeenUnixNano\x12\x18\n" +
-	"\ahealthy\x18\x06 \x01(\bR\ahealthy\"\xd6\x01\n" +
+	"\ahealthy\x18\x06 \x01(\bR\ahealthy\"\x81\x02\n" +
 	"\fVolumeStatus\x12\x1e\n" +
 	"\n" +
 	"generation\x18\x01 \x01(\x04R\n" +
@@ -434,7 +447,8 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\x05state\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.VolumeStateR\x05state\x12\x18\n" +
 	"\aprimary\x18\x03 \x01(\tR\aprimary\x12\x1a\n" +
 	"\bsequence\x18\x04 \x01(\x04R\bsequence\x129\n" +
-	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacement*\x8e\x02\n" +
+	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacement\x12)\n" +
+	"\x10manual_recovered\x18\x06 \x01(\bR\x0fmanualRecovered*\x8e\x02\n" +
 	"\vVolumeState\x12\x1c\n" +
 	"\x18VOLUME_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15VOLUME_STATE_CREATING\x10\x01\x12\x18\n" +

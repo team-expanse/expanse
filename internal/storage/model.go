@@ -159,6 +159,12 @@ type Status struct {
 	Primary    string
 	Sequence   uint64
 	Placement  []Replica
+	// ManualRecovered: an operator chose a branch after §9 divergence
+	// (`expanse ctl volume diverged --choose`); the next primary
+	// bring-up adopts Sequence instead of re-running the automatic
+	// recovery algorithm (which would re-detect the divergence).
+	// Cleared once the primary is up.
+	ManualRecovered bool
 }
 
 // Spec returns the spec half of the volume.
@@ -251,10 +257,11 @@ func replicaFromProto(p *pb.Replica) Replica {
 // StatusToProto marshals a status into its store representation.
 func StatusToProto(s Status) *pb.VolumeStatus {
 	p := &pb.VolumeStatus{
-		Generation: s.Generation,
-		State:      s.State.proto(),
-		Primary:    s.Primary,
-		Sequence:   s.Sequence,
+		Generation:      s.Generation,
+		State:           s.State.proto(),
+		Primary:         s.Primary,
+		Sequence:        s.Sequence,
+		ManualRecovered: s.ManualRecovered,
 	}
 	for _, r := range s.Placement {
 		p.Placement = append(p.Placement, replicaToProto(r))
@@ -265,10 +272,11 @@ func StatusToProto(s Status) *pb.VolumeStatus {
 // StatusFromProto unmarshals a status from its store representation.
 func StatusFromProto(p *pb.VolumeStatus) Status {
 	s := Status{
-		Generation: p.GetGeneration(),
-		State:      stateFromProto(p.GetState()),
-		Primary:    p.GetPrimary(),
-		Sequence:   p.GetSequence(),
+		Generation:      p.GetGeneration(),
+		State:           stateFromProto(p.GetState()),
+		Primary:         p.GetPrimary(),
+		Sequence:        p.GetSequence(),
+		ManualRecovered: p.GetManualRecovered(),
 	}
 	for _, r := range p.GetPlacement() {
 		s.Placement = append(s.Placement, replicaFromProto(r))

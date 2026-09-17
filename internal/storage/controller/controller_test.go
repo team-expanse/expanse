@@ -297,3 +297,62 @@ func TestNonLeaderInert(t *testing.T) {
 		t.Fatalf("non-leader elected a primary: %+v", got)
 	}
 }
+
+// TestOpsDeleteAndMovePrimary (T15 §4.8): the op records the ctl writes
+// are consumed by the leader's controller — delete by volume NAME, and
+// move-primary only to a node that already holds a replica.
+func TestOpsDeleteAndMovePrimary(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-op", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	destroyed := map[string]bool{}
+	c := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true },
+		ZFS: fakeCtlZFS{destroyed: destroyed},
+	})
+
+	// move-primary: legal target (n2 holds a replica).
+	op := []byte(`{"target":"vol-op","to":"n2"}`)
+	if _, err := st.Put(ctx, store.Key("/volumes/_ops/move-primary/vol-op"), op); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := storage.LoadStatus(ctx, st, "vol-op")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Primary != "n2" {
+		t.Fatalf("primary = %s, want n2", status.Primary)
+	}
+	if _, err := st.Get(ctx, store.Key("/volumes/_ops/move-primary/vol-op")); err == nil {
+		t.Fatal("move-primary op not consumed")
+	}
+
+	// move-primary refused: n9 holds no replica.
+	if _, err := st.Put(ctx, store.Key("/volumes/_ops/move-primary/vol-op"), []byte(`{"target":"vol-op","to":"n9"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, _ = storage.LoadStatus(ctx, st, "vol-op"); status.Primary != "n2" {
+		t.Fatalf("primary moved to non-replica node: %s", status.Primary)
+	}
+
+	// delete by NAME → volume gone + zvol destroyed.
+	if _, err := st.Put(ctx, store.Key("/volumes/_ops/delete/vol-op"), []byte(`{"target":"vol-op"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := storage.LoadStatus(ctx, st, "vol-op"); err == nil {
+		t.Fatal("volume should be deleted via op record")
+	}
+	if !destroyed["pool/volumes/vol-op"] {
+		t.Fatal("zvol not destroyed via delete op")
+	}
+}

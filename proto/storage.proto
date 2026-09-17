@@ -72,4 +72,10 @@ message VolumeStatus {
   // Last acked write sequence.
   uint64 sequence = 4;
   repeated Replica placement = 5;
+  // Set when an operator chose a branch after §9 divergence
+  // (`expanse ctl volume diverged --choose`): the next primary
+  // bring-up adopts this status's sequence instead of re-running the
+  // automatic recovery algorithm (which would re-detect the
+  // divergence). Cleared once the primary is up.
+  bool manual_recovered = 6;
 }

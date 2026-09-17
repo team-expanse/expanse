@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -200,6 +201,12 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 			continue
 		}
 		seen[id] = true
+		if status.State == storage.StateNeedsManualRecovery {
+			// §9: an operator must choose a branch; the runtime never
+			// auto-recovers a diverged volume (T15 `volume diverged`).
+			r.maybeManualRecovery(ctx, spec.ID)
+			continue
+		}
 		if status.State == storage.StateDeleting {
 			// Deletion (T13 controller marks it): destroy the local
 			// zvol, stop local roles; the controller drops the records.
@@ -229,8 +236,156 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	r.processResyncOps(ctx, seen)
+	r.publishPoolStatus(ctx)
 	r.pruneNotIn(seen)
 	return nil
+}
+
+// opsOf lists the operation records under /volumes/_ops/<kind>/<volID>.
+func opsOf(ctx context.Context, st store.Store, kind string) (map[string]*store.Entry, error) {
+	res, err := st.List(ctx, store.Key("/volumes/_ops/"+kind+"/"))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]*store.Entry{}
+	for _, e := range res {
+		id := strings.TrimPrefix(strings.TrimPrefix(string(e.Key), "/volumes/_ops/"+kind+"/"), "/")
+		out[id] = e
+	}
+	return out, nil
+}
+
+// delOp removes a consumed operation record.
+func delOp(ctx context.Context, st store.Store, kind, volID string) {
+	_ = st.Delete(ctx, store.Key("/volumes/_ops/"+kind+"/"+volID), 0)
+}
+
+// maybeManualRecovery consumes an operator's `diverged --choose`
+// decision (§9's human-in-the-loop valve). The record
+// /volumes/_ops/recover/<volID> holds {"choose": "<nodeID>"}; only the
+// chosen node acts: it adopts ITS durable branch as the volume's truth
+// (its secondary oplog's last seq), becomes primary, and lets T12
+// resync bring the other replicas in line. All copies are preserved —
+// the losing branch's data is never touched by this path.
+func (r *Runtime) maybeManualRecovery(ctx context.Context, volID string) {
+	ops, err := opsOf(ctx, r.opts.St, "recover")
+	if err != nil {
+		return
+	}
+	e, ok := ops[volID]
+	if !ok {
+		return
+	}
+	var req struct {
+		Choose string `json:"choose"`
+	}
+	if json.Unmarshal(e.Value, &req) != nil || req.Choose == "" {
+		r.opts.Logger.Warn("malformed recover op — ignoring", "vol", volID)
+		return
+	}
+	if req.Choose != r.opts.NodeID {
+		return // some other node is the chosen branch holder
+	}
+	r.mu.Lock()
+	sec := r.secs[volID]
+	r.mu.Unlock()
+	if sec == nil {
+		// The chosen node must hold a replica with an oplog; without
+		// one we cannot know where its branch ends. The operator should
+		// choose a node that holds a replica.
+		r.opts.Logger.Error("diverged volume chosen here but no local replica/oplog; refusing", "vol", volID)
+		return
+	}
+	lastSeq := sec.LastSeq()
+	status, rev, err := storage.LoadStatus(ctx, r.opts.St, volID)
+	if err != nil {
+		return
+	}
+	status.State = storage.StateDegraded // healthy once resync converges
+	status.Primary = r.opts.NodeID
+	status.Sequence = lastSeq
+	status.ManualRecovered = true
+	if err := storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, status); err != nil {
+		r.opts.Logger.Warn("manual recovery CAS failed", "vol", volID, "err", err)
+		return
+	}
+	delOp(ctx, r.opts.St, "recover", volID)
+	r.opts.Logger.Info("operator chose this branch — adopting as truth",
+		"vol", volID, "seq", lastSeq)
+}
+
+// resyncOp is a forced `volume resync` request (T15 §4.8).
+type resyncOp struct {
+	Replica string `json:"replica"`
+	Full    bool   `json:"full"`
+}
+
+// processResyncOps handles forced resyncs for volumes this node is
+// primary of. The op's full flag maps to T12's runResync (full = no
+// common-ancestor increment, with the spec-required WARNING).
+func (r *Runtime) processResyncOps(ctx context.Context, seen map[string]bool) {
+	ops, err := opsOf(ctx, r.opts.St, "resync")
+	if err != nil {
+		return
+	}
+	for volID, e := range ops {
+		if !seen[volID] {
+			continue
+		}
+		var op resyncOp
+		if json.Unmarshal(e.Value, &op) != nil || op.Replica == "" {
+			delOp(ctx, r.opts.St, "resync", volID)
+			continue
+		}
+		status, _, err := storage.LoadStatus(ctx, r.opts.St, volID)
+		if err != nil || status.Primary != r.opts.NodeID {
+			continue // not the primary — the primary's runtime consumes it
+		}
+		zp := r.zvolOf[volID]
+		if zp == "" {
+			continue // zvol not ensured yet; next tick
+		}
+		if r.resyncInFlight(op.Replica) >= 2 {
+			continue // §4.6 cap
+		}
+		if err := r.runResync(ctx, volID, op.Replica, zp, status); err != nil {
+			r.opts.Logger.Warn("forced resync failed", "vol", volID, "target", op.Replica, "err", err)
+			continue // keep the op for retry
+		}
+		delOp(ctx, r.opts.St, "resync", volID)
+	}
+}
+
+// lastPoolPub gates pool-status publication to once a minute.
+var lastPoolPub struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+// publishPoolStatus writes this node's zpool health into the cluster
+// store (`expanse ctl storage pools` reads it; §4.8).
+func (r *Runtime) publishPoolStatus(ctx context.Context) {
+	lastPoolPub.mu.Lock()
+	due := time.Since(lastPoolPub.at) >= time.Minute
+	if due {
+		lastPoolPub.at = time.Now()
+	}
+	lastPoolPub.mu.Unlock()
+	if !due || r.opts.Pool == "" {
+		return
+	}
+	ps, err := r.zfs.PoolStatus(ctx, r.opts.Pool)
+	if err != nil {
+		return // no pool yet (VM tests start before mkpool)
+	}
+	info, err := json.Marshal(map[string]any{
+		"pool": r.opts.Pool, "health": ps.Health, "errors": ps.Errors,
+	})
+	if err != nil {
+		return
+	}
+	_, _ = r.opts.St.Put(ctx, store.Key("/nodes/"+r.opts.NodeID+"/storage/pool"), info)
 }
 
 // processPendingCreates performs placement for pending volume-creation
@@ -524,7 +679,12 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	// failover algorithm has run (4a probes, 4b pulls, 4c leveling,
 	// 4d stale marks). Sequence 0 = freshly created, nothing to recover.
 	startSeq := status.Sequence
-	if startSeq > 0 {
+	if status.ManualRecovered {
+		// §9 via T15: the operator chose this branch; adopt the
+		// recorded sequence without re-running automatic recovery
+		// (it would re-detect the divergence we were told to accept).
+		r.opts.Logger.Info("manual recovery: adopting branch as primary", "vol", spec.ID, "seq", startSeq)
+	} else if startSeq > 0 {
 		startSeq, err = r.recoverVol(ctx, spec.ID, w, conns)
 		if err != nil {
 			w.Close()
@@ -568,8 +728,22 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	r.mu.Lock()
 	r.prim[spec.ID] = &volPrimary{coord: coord, dev: dev, nsrv: nsrv, held: held, writer: w, conns: conns}
 	r.mu.Unlock()
+	r.clearManualRecovered(ctx, spec.ID)
 	r.opts.Logger.Info("primary serving", "vol", spec.ID, "zvol", zvolPath, "replicas", len(reps), "seq", startSeq)
 	return nil
+}
+
+// clearManualRecovered drops the one-shot §9 operator-choice flag once
+// the primary is up (a later divergence must re-trigger manual mode).
+func (r *Runtime) clearManualRecovered(ctx context.Context, volID string) {
+	status, rev, err := storage.LoadStatus(ctx, r.opts.St, volID)
+	if err != nil || !status.ManualRecovered {
+		return
+	}
+	status.ManualRecovered = false
+	if err := storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, status); err != nil {
+		r.opts.Logger.Warn("clear manual_recovered failed", "vol", volID, "err", err)
+	}
 }
 
 // recoverVol runs the §4.3 failover recovery algorithm (4a–4d) against

@@ -22,6 +22,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -134,6 +135,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err := c.reconcileBlocks(ctx, meshed); err != nil {
 		c.log.Warn("block volume reconcile failed", "err", err)
 	}
+	if err := c.processVolumeOps(ctx, ids); err != nil {
+		c.log.Warn("volume ops failed", "err", err)
+	}
 	for _, id := range ids {
 		spec, err := storage.LoadSpec(ctx, c.opts.St, id)
 		if err != nil {
@@ -163,6 +167,85 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	c.maybeScrub(ctx)
 	return nil
+}
+
+// processVolumeOps consumes operator requests written by
+// `expanse ctl volume` (§4.8): delete and move-primary. Each op record
+// is one JSON value under /volumes/_ops/<kind>/<volID>.
+func (c *Controller) processVolumeOps(ctx context.Context, ids []string) error {
+	type op struct {
+		Target string `json:"target"` // volume NAME (CLI-side lookup)
+		To     string `json:"to"`     // move-primary destination node
+	}
+	byName, err := c.volumesByName2(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, kind := range []string{"delete", "move-primary"} {
+		res, err := c.opts.St.List(ctx, store.Key("/volumes/_ops/"+kind+"/"))
+		if err != nil {
+			continue
+		}
+		for _, e := range res {
+			volID := strings.TrimPrefix(string(e.Key), "/volumes/_ops/"+kind+"/")
+			var o op
+			if json.Unmarshal(e.Value, &o) == nil && o.Target != "" {
+				if id, ok := c.volIDByName(byName, o.Target); ok {
+					volID = id
+				}
+			}
+			status, rev, err := storage.LoadStatus(ctx, c.opts.St, volID)
+			if err != nil {
+				continue // unknown volume; drop below
+			}
+			switch kind {
+			case "delete":
+				if err := c.Delete(ctx, volID); err != nil {
+					c.log.Warn("delete op failed", "vol", volID, "err", err)
+					continue // retry next tick
+				}
+			case "move-primary":
+				// The destination must already hold a replica; the new
+				// primary's runtime runs T11 recovery on bring-up.
+				legal := false
+				for _, p := range status.Placement {
+					if p.NodeID == o.To {
+						legal = true
+						break
+					}
+				}
+				if !legal {
+					c.log.Warn("move-primary refused: target holds no replica", "vol", volID, "to", o.To)
+				} else if o.To != status.Primary {
+					status.Primary = o.To
+					if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, status); err != nil {
+						continue
+					}
+					c.log.Info("primary moved", "vol", volID, "to", o.To)
+				}
+			}
+			_ = c.opts.St.Delete(ctx, store.Key(string(e.Key)), 0)
+		}
+	}
+	return nil
+}
+
+// volumesByName2 maps volume NAME → ID for the op router.
+func (c *Controller) volumesByName2(ctx context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, id := range ids {
+		spec, err := storage.LoadSpec(ctx, c.opts.St, id)
+		if err != nil {
+			continue
+		}
+		out[spec.Name] = id
+	}
+	return out, nil
+}
+
+func (c *Controller) volIDByName(m map[string]string, name string) (string, bool) {
+	id, ok := m[name]
+	return id, ok
 }
 
 // BlockVolumeName is the cluster volume name for a block's storage

@@ -119,7 +119,7 @@ func newVolumeCmd(opts *ctlOpts) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list)
+	cmd.AddCommand(append([]*cobra.Command{create, list}, newVolumeOpsCmds(opts)...)...)
 	return cmd
 }
 
