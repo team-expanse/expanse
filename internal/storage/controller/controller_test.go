@@ -394,3 +394,145 @@ func TestExpiredLeaseReElectsPrimary(t *testing.T) {
 		t.Fatalf("state = %s, want Degraded until recovery levels it", got.State)
 	}
 }
+
+// TestElectionRequiresLiveProbeEvidence (§4.3 step 2, T17.4): with
+// ProbeSeq wired, a candidate must present LIVE evidence that its
+// durable copy reaches the highest probed sequence. The store's
+// placement.Sequence is asynchronous — here it names n3 (11), but
+// n3's probe fails (its zvol is gone) and n2 proves seq 9: n2 wins,
+// the dishonest placement row loses.
+func TestElectionRequiresLiveProbeEvidence(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-probe", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	status, _, _ := storage.LoadStatus(ctx, st, "vol-probe")
+	status.Placement[2].Sequence = 11 // n3 claims the highest seq...
+	_ = storage.SaveStatus(ctx, st, "vol-dead", status)
+	status, _, _ = storage.LoadStatus(ctx, st, "vol-probe")
+	_ = status
+
+	// n1's liveness lease: expired (hard kill).
+	expired := []byte(`{"h":"n1","e":-1}`)
+	if _, err := st.Put(ctx, store.Key("/leases/node-n1"), expired); err != nil {
+		t.Fatal(err)
+	}
+
+	probes := map[string]struct {
+		seq uint64
+		err error
+	}{
+		"n1": {0, context.DeadlineExceeded}, // dead primary: unreachable
+		"n2": {9, nil},                      // live, current
+		"n3": {0, context.DeadlineExceeded}, // meshed but zvol lost
+	}
+	c := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true },
+		ProbeSeq: func(ctx context.Context, volID, node string) (uint64, error) {
+			p := probes[node]
+			return p.seq, p.err
+		},
+		Alert: func(AlertEvent) {},
+	})
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := storage.LoadStatus(ctx, st, "vol-probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Primary != "n2" {
+		t.Fatalf("primary = %s, want n2 (only candidate with live evidence at the highest probed seq)", got.Primary)
+	}
+}
+
+// TestElectionNoLiveCandidateRefuses (§4.3/§9, T17.4): when no
+// candidate presents live probe evidence, election must NOT hand the
+// volume to an unproven node; after NoCandidateRounds consecutive
+// evidence-less rounds the volume is flagged NeedsManualRecovery.
+func TestElectionNoLiveCandidateRefuses(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-none", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	expired := []byte(`{"h":"n1","e":-1}`)
+	if _, err := st.Put(ctx, store.Key("/leases/node-n1"), expired); err != nil {
+		t.Fatal(err)
+	}
+
+	var alerts []AlertEvent
+	c := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true },
+		ProbeSeq: func(ctx context.Context, volID, node string) (uint64, error) {
+			return 0, context.DeadlineExceeded // nobody answers honestly
+		},
+		NoCandidateRounds: 2,
+		Alert:             func(e AlertEvent) { alerts = append(alerts, e) },
+	})
+	for i := 0; i < 2; i++ {
+		if err := c.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _, err := storage.LoadStatus(ctx, st, "vol-none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != storage.StateNeedsManualRecovery {
+		t.Fatalf("state = %s, want NeedsManualRecovery (no live candidate)", got.State)
+	}
+	if got.Primary != "n1" {
+		t.Fatalf("primary = %s, want unchanged n1 (refusal must not elect an unproven node)", got.Primary)
+	}
+	if len(alerts) == 0 {
+		t.Fatal("expected a no-current-candidate alert")
+	}
+}
+
+// TestElectionHysteresisNoChurn (T17.4): an election round that would
+// change nothing (same primary, same state) must not CAS the status —
+// revision churn from a sticky re-election re-triggers the runtimes'
+// demotion paths every tick (the VM flap).
+func TestElectionHysteresisNoChurn(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-hyst", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	// n1's VOLUME lease expired (fence lapsed) but its LIVENESS lease
+	// is current (it is meshed), and the probes confirm n1 is STILL
+	// current — the round must be a no-op, not a churn CAS.
+	live := []byte(`{"h":"n1","e":9223372036854775807}`)
+	if _, err := st.Put(ctx, store.Key("/leases/node-n1"), live); err != nil {
+		t.Fatal(err)
+	}
+	expired := []byte(`{"h":"n1","e":-1}`)
+	if _, err := st.Put(ctx, store.Key("/leases/exvol-vol-vol-hyst"), expired); err != nil {
+		t.Fatal(err)
+	}
+	before, beforeRev, err := storage.LoadStatus(ctx, st, "vol-hyst")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true },
+		ProbeSeq: func(ctx context.Context, volID, node string) (uint64, error) {
+			return uint64(10), nil // everyone current; n1 wins the tie
+		},
+		Alert: func(AlertEvent) {},
+	})
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, afterRev, err := storage.LoadStatus(ctx, st, "vol-hyst")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Primary != before.Primary || after.State != before.State {
+		t.Fatalf("status changed unexpectedly: primary=%s state=%s (was %s/%s)",
+			after.Primary, after.State, before.Primary, before.State)
+	}
+	if afterRev != beforeRev {
+		t.Fatalf("revision %d → %d: hysteresis violated (CAS without a delta)", beforeRev, afterRev)
+	}
+}

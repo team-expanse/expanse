@@ -70,6 +70,19 @@ type Options struct {
 	// MaxRebuildsPerNode bounds concurrent rebuilds scheduled onto one
 	// node (spec: max 2 resync-class operations per node).
 	MaxRebuildsPerNode int
+
+	// ProbeSeq asks a candidate node for the LIVE last sequence of its
+	// durable copy of volID (recovery 4a QuerySeq over the exvol
+	// transport). When set, election requires probe evidence of
+	// currency — the store's placement.Sequence is written
+	// asynchronously and is not trusted. nil (unit tests) falls back
+	// to placement.Sequence.
+	ProbeSeq func(ctx context.Context, volID, nodeID string) (uint64, error)
+
+	// NoCandidateRounds is how many consecutive election rounds with
+	// zero live probe evidence flag NeedsManualRecovery (§9). Default
+	// 3 — one bad probe round must not flip a volume to manual mode.
+	NoCandidateRounds int
 }
 
 // AlertEvent is a controller-raised alert.
@@ -87,6 +100,8 @@ type Controller struct {
 	log       *slog.Logger
 	rebuilds  map[string]int // node ID → scheduled rebuilds in flight
 	lastScrub time.Time
+
+	noCandRounds map[string]int // volID → consecutive no-evidence rounds
 }
 
 // New builds the controller. Call Run in a goroutine.
@@ -103,7 +118,7 @@ func New(opts Options) *Controller {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Controller{opts: opts, log: opts.Logger, rebuilds: map[string]int{}}
+	return &Controller{opts: opts, log: opts.Logger, rebuilds: map[string]int{}, noCandRounds: map[string]int{}}
 }
 
 // Run reconciles every tick until the context ends.
@@ -405,12 +420,16 @@ func (c *Controller) finalizeDelete(ctx context.Context, volID string, spec *sto
 }
 
 // electPrimary keeps a valid primary elected by the highest-seq rule
-// (§4.3 failover step 2): among placement nodes still meshed, the
-// highest replica Sequence wins; ties break by lowest node ID. The
-// elected node's runtime acquires the volume lease and runs T11's
-// recovery (steps 4a–5) before serving.
+// (§4.3 failover step 2). With ProbeSeq wired (production), a
+// candidate must present LIVE probe evidence (4a QuerySeq) that its
+// durable copy reaches the highest probed sequence — the store's
+// placement.Sequence is asynchronous and can elect a node whose zvol
+// was lost (the VM runs elected a torn zvol this way). Ties break by
+// lowest node ID. The elected node's runtime acquires the volume lease
+// and runs T11's recovery (steps 4a–5) before serving.
 func (c *Controller) electPrimary(ctx context.Context, volID string, status *storage.Status, rev store.Revision, meshed map[string]bool) {
 	if status.Primary != "" && meshed[status.Primary] && !c.volLeaseExpired(ctx, volID) {
+		c.noCandRounds[volID] = 0
 		return // healthy primary: meshed, and its lease is either valid
 		// or not yet acquired (a fresh election is still mid-handshake)
 	}
@@ -419,13 +438,39 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 		seq uint64
 	}
 	var cands []cand
-	for _, p := range status.Placement {
-		if meshed[p.NodeID] {
-			cands = append(cands, cand{p.NodeID, p.Sequence})
+	if c.opts.ProbeSeq != nil {
+		// Currency gate (T17.4): only nodes whose durable copy answers
+		// a live probe are eligible, and only at the highest probed
+		// sequence — a node whose oplog is behind must be leveled by
+		// recovery, not handed the write path.
+		pctx, cancel := context.WithTimeout(ctx, probeBudget)
+		for _, p := range status.Placement {
+			if !meshed[p.NodeID] {
+				continue
+			}
+			seq, err := c.opts.ProbeSeq(pctx, volID, p.NodeID)
+			if err != nil {
+				c.log.Warn("election probe failed; candidate not eligible",
+					"vol", volID, "node", p.NodeID, "err", err)
+				continue
+			}
+			cands = append(cands, cand{p.NodeID, seq})
 		}
-	}
-	if len(cands) == 0 {
-		return // no meshed replica can serve; under-replication covers
+		cancel()
+		if len(cands) == 0 {
+			c.noCurrentCandidate(ctx, volID, status, rev)
+			return
+		}
+		c.noCandRounds[volID] = 0
+	} else {
+		for _, p := range status.Placement {
+			if meshed[p.NodeID] {
+				cands = append(cands, cand{p.NodeID, p.Sequence})
+			}
+		}
+		if len(cands) == 0 {
+			return // no meshed replica can serve; under-replication covers
+		}
 	}
 	sort.Slice(cands, func(i, j int) bool {
 		if cands[i].seq != cands[j].seq {
@@ -433,12 +478,53 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 		}
 		return cands[i].id < cands[j].id // ties → lowest node ID
 	})
-	status.Primary = cands[0].id
-	if status.State == storage.StateHealthy {
-		status.State = storage.StateDegraded // recovery (T11) levels it first
+	// Hysteresis: a re-election that changes nothing (same primary,
+	// same state) must not CAS — revision churn from a sticky
+	// situation re-triggers the runtimes' demotion paths every tick.
+	wantState := status.State
+	if status.State == storage.StateHealthy && (status.Primary == "" || status.Primary != cands[0].id) {
+		wantState = storage.StateDegraded // recovery (T11) levels it first
 	}
+	if status.Primary == cands[0].id && status.State == wantState {
+		return
+	}
+	status.Primary = cands[0].id
+	status.State = wantState
 	if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err == nil {
 		c.log.Info("primary elected", "vol", volID, "primary", status.Primary, "seq", cands[0].seq)
+	}
+}
+
+// probeBudget bounds one full election round's probes; the wired probe
+// dial inherits this deadline.
+const probeBudget = 3 * time.Second
+
+// noCurrentCandidate is the §9 refusal path: the old primary is gone
+// (or fenced) and NO candidate presented live evidence of a current
+// durable copy. Electing one anyway would serve a possibly-stale zvol;
+// electing nobody keeps the volume read-only-fenced. After
+// NoCandidateRounds consecutive evidence-less rounds the volume is
+// flagged NeedsManualRecovery — suspected data loss, a human decides.
+func (c *Controller) noCurrentCandidate(ctx context.Context, volID string, status *storage.Status, rev store.Revision) {
+	c.noCandRounds[volID]++
+	rounds := c.noCandRounds[volID]
+	limit := c.opts.NoCandidateRounds
+	if limit <= 0 {
+		limit = 3
+	}
+	c.log.Warn("election refused: no candidate with live probe evidence",
+		"vol", volID, "rounds", rounds)
+	if c.opts.Alert != nil {
+		c.opts.Alert(AlertEvent{VolID: volID, Kind: "no-current-candidate", Detail: fmt.Sprintf("round %d of %d", rounds, limit)})
+	}
+	if rounds < limit {
+		return
+	}
+	if status.State != storage.StateNeedsManualRecovery {
+		status.State = storage.StateNeedsManualRecovery
+		if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err == nil {
+			c.log.Error("election: no current candidate — manual recovery required", "vol", volID, "rounds", rounds)
+		}
 	}
 }
 
