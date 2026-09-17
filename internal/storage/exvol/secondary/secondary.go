@@ -65,9 +65,10 @@ type Secondary struct {
 	proto  *protocol.Secondary // owns lastSeq/pending/CRC state (T04)
 	events chan ResyncEvent
 
-	// oplogMu guards oplog/reader separately from s.mu: the apply hook
-	// runs INSIDE proto.Handle while s.mu is held.
+	// oplogMu guards writer/reader/oplog separately from s.mu: the
+	// apply hook runs INSIDE proto.Handle while s.mu is held.
 	oplogMu   sync.Mutex
+	writer    LocalWriter // durable local replica (swappable)
 	oplog     map[uint64]OpRecord
 	reader    Reader
 	oplogFile *os.File // durable append log (nil = memory-only)
@@ -108,6 +109,44 @@ func (s *Secondary) SetOplogStore(path string) error {
 	return nil
 }
 
+// currentWriter returns the active local writer (and durable-copy
+// reader). The writer can be swapped out from under a live secondary
+// (SwapWriter): `zfs receive -F` replaces the dataset object the old
+// fd points at.
+func (s *Secondary) currentWriter() (LocalWriter, Reader) {
+	s.oplogMu.Lock()
+	defer s.oplogMu.Unlock()
+	return s.writer, s.reader
+}
+
+// HasWriter reports whether a local writer is currently armed.
+func (s *Secondary) HasWriter() bool {
+	s.oplogMu.Lock()
+	defer s.oplogMu.Unlock()
+	return s.writer != nil
+}
+
+// SwapWriter atomically replaces the local writer and durable-copy
+// reader, returning the previous writer for the caller to close.
+// Used around a `zfs receive -F` targeting this replica's zvol: a
+// full-stream receive REPLACES the zvol dataset object (fresh
+// creation, prior snapshots destroyed), so the old device fd points
+// at a destroyed node (or, still worse, keeps the zombie device — and
+// its pre-receive content — alive for buffered readers of the
+// /dev/zvol symlink). Passing nil quiesces the local device for the
+// duration of the receive; protocol and oplog state are kept.
+func (s *Secondary) SwapWriter(w LocalWriter) (old LocalWriter) {
+	s.oplogMu.Lock()
+	defer s.oplogMu.Unlock()
+	old = s.writer
+	s.writer = w
+	s.reader = nil
+	if r, ok := w.(Reader); ok {
+		s.reader = r
+	}
+	return old
+}
+
 // SetReader wires the durable-copy reader used by FetchOps (recovery
 // 4b/4c). Optional: a secondary without one cannot serve op fetches.
 func (s *Secondary) SetReader(r Reader) {
@@ -128,10 +167,17 @@ func New(nodeID string, size int, w LocalWriter) *Secondary {
 		events: make(chan ResyncEvent, 64),
 		oplog:  map[uint64]OpRecord{},
 	}
+	s.writer = w
 	if r, ok := w.(Reader); ok {
 		s.reader = r
 	}
 	s.proto = protocol.NewSecondaryWithApply(nodeID, size, func(op protocol.WriteOp) error {
+		w, _ := s.currentWriter()
+		if w == nil {
+			// Local device quiesced (a resync receive is replacing the
+			// dataset underneath us): fail loud, never buffer silently.
+			return experrors.New(experrors.KindUnavailable, "exvol.secondary", "local device quiesced (resync receive in progress)")
+		}
 		var err error
 		if op.Flush {
 			// Durability marker (§4.4): fsync, write nothing.

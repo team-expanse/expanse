@@ -34,8 +34,31 @@ def main() -> None:
             data = f.read(BLOCK)
         sys.exit(0 if data == rec(seq) else 3)
     elif cmd == "blocks":
-        with open(sys.argv[2], "rb") as f:
-            d = f.read(16 * 1024 * 1024)
+        # --direct: bypass the host page cache (os.O_DIRECT on a block
+        # device). A buffered read can otherwise return pre-resync
+        # cached content forever, masking (or faking) divergence.
+        direct = "--direct" in sys.argv
+        sys.argv = [a for a in sys.argv if a != "--direct"]
+        if direct:
+            import mmap
+            import os
+            fd = os.open(sys.argv[2], os.O_RDONLY | os.O_DIRECT)
+            # O_DIRECT requires a page-aligned buffer of block-size
+            # multiples.
+            buf = mmap.mmap(-1, 16 * 1024 * 1024)
+            d = b""
+            off = 0
+            while off < 16 * 1024 * 1024:
+                n = os.preadv(fd, [buf], off)
+                if n <= 0:
+                    break
+                off += n
+            d = buf[:off]
+            buf.close()
+            os.close(fd)
+        else:
+            with open(sys.argv[2], "rb") as f:
+                d = f.read(16 * 1024 * 1024)
         print(" ".join(
             hashlib.sha256(d[i:i + BLOCK]).hexdigest()[:8]
             for i in range(0, len(d), BLOCK)))

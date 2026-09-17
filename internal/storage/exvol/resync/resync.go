@@ -143,10 +143,19 @@ func Run(ctx context.Context, z ZFS, dataset string, sourceSnaps []string, sink 
 	if len(sourceSnaps) == 0 {
 		return res, fmt.Errorf("resync: primary has no @resync-* snapshot to send (G6.6 requires periodic snapshots)")
 	}
-	// Newest source snapshot is the resync target (steps 1–2).
-	to := sourceSnaps[len(sourceSnaps)-1]
-	res.To = to
+	// Newest source snapshot is the resync target (steps 1–2). Select
+	// by PARSED seq, not list order: zfs list returns names
+	// lexicographically, and resync-<seq> is not zero-padded — at
+	// seq >= 10, resync-4 sorts after resync-10 and "last element"
+	// would send the WRONG (older) snapshot.
+	to := sourceSnaps[0]
 	toSeq, _ := ParseSeq(to)
+	for _, s := range sourceSnaps[1:] {
+		if q, ok := ParseSeq(s); ok && q > toSeq {
+			to, toSeq = s, q
+		}
+	}
+	res.To = to
 
 	targetSnaps, err := sink.ListSnaps(ctx) // step 1 (remote)
 	if err != nil {

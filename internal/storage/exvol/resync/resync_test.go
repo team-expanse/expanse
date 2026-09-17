@@ -300,3 +300,23 @@ func writeDev(dev string, b []byte) error {
 	_, err = f.Write(b)
 	return err
 }
+
+// TestRunNewestSnapshotNumeric: the source snapshot to send is chosen
+// by parsed seq, not zfs list order — at seq >= 10 lexicographic order
+// puts resync-4 AFTER resync-10, and "last element" would send the
+// wrong (older) snapshot.
+func TestRunNewestSnapshotNumeric(t *testing.T) {
+	z := newFakeZFS()
+	snaps := []string{"resync-2", "resync-10", "resync-4"} // lexicographic order
+	sink := &fakeSink{}
+	res, err := Run(context.Background(), z, "volumes/vol-order", snaps, sink, slog.Default())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.To != "resync-10" {
+		t.Fatalf("sent %q, want resync-10", res.To)
+	}
+	if res.Adopt != 10 {
+		t.Fatalf("adopted seq %d, want 10", res.Adopt)
+	}
+}

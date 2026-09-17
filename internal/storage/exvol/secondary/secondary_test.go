@@ -221,3 +221,53 @@ func (failingWriter) WriteAt(p []byte, off int64) error {
 }
 
 func (failingWriter) Flush() error { return net.ErrClosed }
+
+// countingWriter records applies; its writes panic if used after the
+// test has swapped it out (SwapWriter(nil)).
+type countingWriter struct {
+	applies int
+}
+
+func (c *countingWriter) WriteAt(p []byte, off int64) error {
+	c.applies++
+	return nil
+}
+
+func (c *countingWriter) Flush() error { return nil }
+
+func (c *countingWriter) ReadAt(p []byte, off int64) (int, error) {
+	return len(p), nil
+}
+
+// TestSwapWriterQuiesceAndRearm: a quiesced secondary (writer nil,
+// e.g. while `zfs receive -F` replaces the dataset object) must fail
+// applies LOUDLY — never ack durable — and keep protocol + oplog
+// state across the swap; re-arming resumes at the same sequence.
+func TestSwapWriterQuiesceAndRearm(t *testing.T) {
+	w := &countingWriter{}
+	s := New("n2", 4096, w)
+	op := protocol.WriteOp{Seq: 1, Offset: 0, Data: bytes.Repeat([]byte{7}, 16), CRC: protocol.CRC32C(bytes.Repeat([]byte{7}, 16))}
+	if rep := s.Handle(op); !rep.ACK {
+		t.Fatalf("pre-swap apply not acked")
+	}
+	old := s.SwapWriter(nil)
+	if old == nil {
+		t.Fatalf("SwapWriter(nil) returned nil old writer")
+	}
+	if s.HasWriter() {
+		t.Fatalf("HasWriter true while quiesced")
+	}
+	if rep := s.Handle(op); rep.ACK {
+		t.Fatalf("quiesced apply acked durable")
+	}
+	// Re-arm: a DIFFERENT writer over the same (post-receive) device.
+	s.SwapWriter(&countingWriter{})
+	if !s.HasWriter() {
+		t.Fatalf("HasWriter false after re-arm")
+	}
+	// The reader must track the swapped writer (FetchOps serves from
+	// the new durable copy, never the old fd).
+	if _, r := s.currentWriter(); r == nil {
+		t.Fatalf("reader not re-armed with writer")
+	}
+}

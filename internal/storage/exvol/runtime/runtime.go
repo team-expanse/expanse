@@ -115,8 +115,9 @@ type Runtime struct {
 	srv       *transport.Server // shared per-node replication listener
 	secs      map[string]*secondary.Secondary
 	prim      map[string]*volPrimary
-	nbdSlots  map[string]string // volID → /dev/nbdN (assigned once)
-	zvolOf    map[string]string // volID → local zvol path
+	nbdSlots  map[string]string       // volID → /dev/nbdN (assigned once)
+	zvolOf    map[string]string       // volID → local zvol path
+	specOf    map[string]storage.Spec // volID → spec (device reopen after receive)
 	lastSnap  map[string]time.Time
 	resyncing map[string]int // node ID → in-flight resyncs (cap 2 per node)
 
@@ -175,6 +176,7 @@ func New(opts Options) *Runtime {
 		prim:      map[string]*volPrimary{},
 		nbdSlots:  map[string]string{},
 		zvolOf:    map[string]string{},
+		specOf:    map[string]storage.Spec{},
 		lastSnap:  map[string]time.Time{},
 		resyncing: map[string]int{},
 		recv:      map[string]*resyncRecv{},
@@ -576,11 +578,29 @@ func (r *Runtime) ensureZvol(ctx context.Context, spec storage.Spec, zvolPath st
 // replication server (starting the server on first use).
 func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, devNode string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.secs[volID]; ok {
+	r.zvolOf[volID] = zvolPath
+	r.specOf[volID] = spec
+	if sec, ok := r.secs[volID]; ok {
+		r.mu.Unlock()
+		if sec.HasWriter() {
+			return
+		}
+		// Heal a quiesced secondary (writer nil since a resync receive
+		// was abandoned mid-stream): reopen the device and swap it in,
+		// keeping protocol + oplog state.
+		if w, err := localwrite.Open(devNode, int64(spec.SizeBytes)); err == nil {
+			if old := sec.SwapWriter(w); old != nil {
+				if c, ok := old.(io.Closer); ok {
+					_ = c.Close()
+				}
+			}
+			r.opts.Logger.Info("secondary re-armed", "vol", volID, "zvol", zvolPath)
+		} else {
+			r.opts.Logger.Warn("secondary re-arm failed", "vol", volID, "err", err)
+		}
 		return
 	}
-	r.zvolOf[volID] = zvolPath
+	defer r.mu.Unlock()
 	if err := r.ensureServerLocked(); err != nil {
 		r.opts.Logger.Warn("replication server unavailable", "err", err)
 		return
@@ -1438,6 +1458,8 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 
 	r.mu.Lock()
 	rp := r.recv[volID]
+	quiesce := false
+	finished := false
 	if rp == nil {
 		zp := r.zvolOf[volID]
 		if zp == "" {
@@ -1451,6 +1473,7 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 		go func() { done <- cmd.Run() }()
 		rp = &resyncRecv{pw: rw, done: done}
 		r.recv[volID] = rp
+		quiesce = true
 	}
 	rp.count += int64(len(data))
 	count := rp.count
@@ -1465,14 +1488,87 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 			return nil, err
 		}
 	} else {
+		finished = true
 		rp.pw.Close() // EOF: zfs receive finalizes the image
-		if err := <-rp.done; err != nil {
+		err := <-rp.done
+		r.reopenLocalDevice(volID)
+		if err != nil {
 			return nil, fmt.Errorf("zfs receive: %w", err)
 		}
+	}
+	if quiesce && !finished {
+		// Quiesce the local device BEFORE the first stream byte: a
+		// full-stream `zfs receive -F` REPLACES the zvol dataset object
+		// (fresh creation, prior snapshots destroyed). Holding our own
+		// secondary's device fd open pins the destroyed device — the
+		// /dev/zvol symlink and the block-device page cache can then
+		// keep serving pre-receive content for the lifetime of the fd.
+		r.quiesceLocalDevice(volID)
 	}
 	ack := make([]byte, 8)
 	binary.BigEndian.PutUint64(ack, uint64(count))
 	return ack, nil
+}
+
+// quiesceLocalDevice closes this node's local writer for volID around
+// a `zfs receive -F` (see receiveChunk). The secondary keeps its
+// protocol + oplog state; it is re-armed by reopenLocalDevice, or by
+// the reconcile tick's ensureSecondary heal path if the stream is
+// abandoned.
+func (r *Runtime) quiesceLocalDevice(volID string) {
+	r.mu.Lock()
+	sec := r.secs[volID]
+	r.mu.Unlock()
+	if sec == nil {
+		return
+	}
+	if old := sec.SwapWriter(nil); old != nil {
+		if c, ok := old.(io.Closer); ok {
+			_ = c.Close()
+		}
+	}
+}
+
+// reopenLocalDevice re-opens the volume's device node and re-arms the
+// secondary after a resync receive (quiesceLocalDevice's counterpart,
+// run on BOTH receive success and failure — `receive -F` may have
+// destroyed the dataset before failing). The device node may take a
+// moment to reappear (udev re-creates the link for the new dataset
+// object), so poll briefly before giving up.
+func (r *Runtime) reopenLocalDevice(volID string) {
+	r.mu.Lock()
+	sec := r.secs[volID]
+	zp := r.zvolOf[volID]
+	spec, haveSpec := r.specOf[volID]
+	r.mu.Unlock()
+	if sec == nil || zp == "" || !haveSpec {
+		return
+	}
+	devNode := r.opts.ZvolDevBase + "/" + zp
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		w, err := localwrite.Open(devNode, int64(spec.SizeBytes))
+		if err == nil {
+			if old := sec.SwapWriter(w); old != nil {
+				if c, ok := old.(io.Closer); ok {
+					_ = c.Close()
+				}
+			}
+			r.opts.Logger.Info("local device reopened after resync receive", "vol", volID, "dev", devNode)
+			return
+		}
+		if time.Now().After(deadline) {
+			// Loud, and self-healing: drop the secondary so the
+			// reconcile tick rebuilds it — never serve FetchOps/querySeq
+			// from a dead fd.
+			r.opts.Logger.Warn("local device reopen failed after receive; dropping secondary for rebuild", "vol", volID, "err", err)
+			r.mu.Lock()
+			delete(r.secs, volID)
+			r.mu.Unlock()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // periodicSnapshot takes the volume's @resync-<seq> snapshot on the

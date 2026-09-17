@@ -40,7 +40,7 @@ in
       description = "Create scratch ZFS pool for exvol storage tests";
       wantedBy = [ "multi-user.target" ];
       before = [ "expansed.service" ];
-      after = [ "systemd-modules-load.service" ];
+      after = [ "systemd-modules-load.service" "systemd-udev-settle.service" ];
       path = with pkgs; [ zfs ];
       unitConfig.DefaultDependencies = "no";
       serviceConfig.Type = "oneshot";
@@ -48,6 +48,15 @@ in
       script = ''
         if zpool list ${cfg.poolName} >/dev/null 2>&1; then
           echo "expanse-storage-test: pool ${cfg.poolName} already exists"
+          exit 0
+        fi
+        # A restored (crash-tested) VM's disk label survives the reboot;
+        # cachefile=none just means it is not auto-imported. Import it —
+        # `zpool create -f` here would silently WIPE the pool and
+        # destroy every volume on it (which is how a resync test's
+        # restored node came back with a fresh, empty zvol).
+        if zpool import -f ${cfg.poolName} >/dev/null 2>&1; then
+          echo "expanse-storage-test: imported existing pool ${cfg.poolName}"
           exit 0
         fi
         echo "expanse-storage-test: creating pool ${cfg.poolName}"

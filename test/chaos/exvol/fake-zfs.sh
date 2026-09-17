@@ -99,11 +99,16 @@ zfs)
 
 	receive)
 		# receive -F <dataset>
+		# Model dataset replacement: write to a NEW file and rename it
+		# over the zvol. A writer holding the old fd keeps reading the
+		# OLD (pre-receive) inode — exactly like a real `zfs receive -F`
+		# replacing the zvol dataset object under a pinned device node.
 		shift
 		name=$(lastname "$@")
 		f=$(devpath "$name")
 		mkdir -p "$(dirname "$f")"
-		cat > "$f" || die "receive $name"
+		cat > "$f.tmp" || die "receive $name"
+		mv "$f.tmp" "$f" || die "receive $name"
 		;;
 
 	set)

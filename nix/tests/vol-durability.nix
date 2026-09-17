@@ -181,7 +181,11 @@ in
             sums, ok = {}, True
             for m in [n1, n2, n3]:
                 rc, out = m.execute(
-                    "dd if=/dev/zvol/volumes/volumes/"
+                    # iflag=direct: read the DISK, not the host page
+                    # cache. The poll starts around the resync receive,
+                    # so buffered reads can cache pre-receive content
+                    # for the lifetime of the poll.
+                    "dd iflag=direct if=/dev/zvol/volumes/volumes/"
                     + vol_id + " bs=4M count=4 2>/dev/null | sha256sum | cut -d' ' -f1"
                 )
                 if rc != 0 or not out.strip():
@@ -198,11 +202,48 @@ in
         blocks = {}
         for m in [n1, n2, n3]:
             rc, out = m.execute(
-                f"python3 {REC} blocks /dev/zvol/volumes/volumes/{vol_id}"
+                f"python3 {REC} blocks /dev/zvol/volumes/volumes/{vol_id} --direct"
             )
             blocks[m.name] = out.split() if rc == 0 else []
         diff = [i for i in range(len(blocks.get("n1", [])))
                 if len(set(b[i] for b in blocks.values() if len(b) > i)) > 1]
+        # EVIDENCE for post-mortem: per-node zvol identity + snapshots +
+        # the first bytes of each differing block. A full send|receive
+        # that exits 0 cannot differ from its source — this dump says
+        # which side lied (stream content vs receive application).
+        for m in [n1, n2, n3]:
+            print(f"EVIDENCE[{m.name}] snaps:", m.execute(
+                "zfs list -H -p -o name,used,written,creation -t snapshot 2>&1 | head -20"
+            )[1])
+            print(f"EVIDENCE[{m.name}] props:", m.execute(
+                "zfs get -H -o property,value volblocksize,creation,used,compressratio "
+                + "volumes/volumes/" + vol_id + " 2>&1"
+            )[1])
+            for i in diff[:4]:
+                print(f"EVIDENCE[{m.name}] block {i}:", m.execute(
+                    f"dd iflag=direct if=/dev/zvol/volumes/volumes/{vol_id} bs=4096 skip={i} "
+                    "count=1 2>/dev/null | od -A d -t x1 | head -4"
+                )[1])
+        # Clone-read the SOURCE snapshots: does @resync-4 actually hold
+        # the records? And does n1's RECEIVED @resync-4?
+        pn = primary_node()
+        print("EVIDENCE[pool] compression:", pn.execute(
+            "zfs get -H -o property,value compression,recompress volumes 2>&1"
+        )[1])
+        for m, ds in [(pn, "volumes/volumes/" + vol_id), (n1, "volumes/volumes/" + vol_id)]:
+            rc, sn = m.execute(
+                "zfs list -H -o name -t snapshot 2>&1 | head -1"
+            )
+            sn = sn.strip()
+            if not sn:
+                continue
+            m.execute(f"zfs clone {sn} volumes/evcheck 2>&1")
+            rc, out = m.execute(
+                "dd iflag=direct if=/dev/zvol/volumes/evcheck bs=4096 count=1 2>/dev/null "
+                "| od -A d -t x1 | head -2"
+            )
+            print(f"EVIDENCE[{m.name}] clone({sn}) block0 rc={rc}:", out)
+            m.execute("zfs destroy volumes/evcheck 2>&1")
         raise AssertionError(
             f"replica checksums DIVERGED after {timeout}s: {sums}; differing 4K blocks: {diff[:20]}")
 
