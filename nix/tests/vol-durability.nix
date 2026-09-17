@@ -136,6 +136,26 @@ in
                 if len(holders) == 1 and holders[0] == p:
                     return p
             time.sleep(3)
+        # NETEVIDENCE: the wait failed with every node's daemon alive but
+        # no serving primary. VM runs have shown the exvol overlay
+        # (10.42.x.1 wireguard) black-holing between crash-restored
+        # peers while both daemons live — dump the network layer so the
+        # product bug (if any) is diagnosable, not guessed at.
+        for m in [n1, n2, n3]:
+            print(f"NETEVIDENCE[{m.name}] wg:", m.execute(
+                "wg show 2>&1 | head -40")[1])
+            print(f"NETEVIDENCE[{m.name}] link:", m.execute(
+                "ip -br a show exp0 2>&1; ip route 2>&1 | head -5")[1])
+            for peer in [n1, n2, n3]:
+                if peer is m:
+                    continue
+                rc, out = m.execute(
+                    f"ping -c1 -W1 10.42.{peer.name[1]}.1 2>&1 | tail -1")
+                print(f"NETEVIDENCE[{m.name} -> {peer.name}] ping rc={rc}:", out)
+            print(f"NETEVIDENCE[{m.name}] listen9440:", m.execute(
+                "ss -ltn | grep 9440 2>&1")[1])
+            print(f"NETEVIDENCE[{m.name}] nft9440:", m.execute(
+                "nft list ruleset 2>/dev/null | grep -c 9440")[1])
         raise AssertionError(f"no ready primary within {timeout}s")
     def write_record(primary, seq):
         """Write record `seq` at block offset seq, fsync, then ack."""
