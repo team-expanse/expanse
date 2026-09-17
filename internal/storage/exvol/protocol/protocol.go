@@ -77,6 +77,11 @@ type Secondary struct {
 	windowOps   int
 	windowBytes uint64
 
+	// applyFn, when set, replaces the built-in Data copy with a
+	// caller-supplied durable write (the real secondary writes to its
+	// zvol via localwrite). Returning an error surfaces as a NACK.
+	applyFn func(WriteOp) error
+
 	// ResyncNeeded latches once the window is exceeded until Reset.
 	ResyncNeeded bool
 }
@@ -96,6 +101,15 @@ func newSecondaryWindow(id string, size, windowOps int, windowBytes uint64) *Sec
 		windowOps:   windowOps,
 		windowBytes: windowBytes,
 	}
+}
+
+// NewSecondaryWithApply is NewSecondary with every applied write routed
+// through apply (the real secondary's O_DIRECT|O_DSYNC zvol write). An
+// apply error surfaces as a NACK — the op is NOT acknowledged durable.
+func NewSecondaryWithApply(id string, size int, apply func(WriteOp) error) *Secondary {
+	s := NewSecondary(id, size)
+	s.applyFn = apply
+	return s
 }
 
 // LastSeq is the highest contiguously applied sequence (R2).
@@ -153,23 +167,39 @@ func (s *Secondary) Handle(op WriteOp) Reply {
 	}
 
 	// op.Seq == lastSeq+1: apply, then drain contiguous buffered ops.
-	s.apply(op)
+	if err := s.apply(op); err != nil {
+		return Reply{ACK: false, LastSeq: s.lastSeq, Reason: "local apply failed: " + err.Error()}
+	}
 	for next, ok := s.pending[s.lastSeq+1]; ok; next, ok = s.pending[s.lastSeq+1] {
-		s.apply(next)
+		if err := s.apply(next); err != nil {
+			return Reply{ACK: false, LastSeq: s.lastSeq, Reason: "local apply failed: " + err.Error()}
+		}
 	}
 	return Reply{ACK: true, Seq: s.lastSeq}
 }
 
-func (s *Secondary) apply(op WriteOp) {
-	if uint64(len(s.Data)) < op.Offset+uint64(len(op.Data)) {
-		panic("simulator misuse: write out of range")
+// apply applies one in-order op and advances lastSeq. The op is
+// bookkept as applied regardless of Data copying — the durable write
+// itself either happened (nil error) or the caller NACKs (applyFn).
+func (s *Secondary) apply(op WriteOp) error {
+	if s.applyFn != nil {
+		if err := s.applyFn(op); err != nil {
+			return err
+		}
+	} else {
+		if uint64(len(s.Data)) < op.Offset+uint64(len(op.Data)) {
+			panic("simulator misuse: write out of range")
+		}
+		copy(s.Data[op.Offset:], op.Data)
 	}
-	copy(s.Data[op.Offset:], op.Data)
 	s.applied[op.Seq] = op
-	delete(s.pending, op.Seq)
-	s.pendOps--
-	s.pendBytes -= uint64(len(op.Data))
+	if _, wasPending := s.pending[op.Seq]; wasPending {
+		delete(s.pending, op.Seq)
+		s.pendOps--
+		s.pendBytes -= uint64(len(op.Data))
+	}
 	s.lastSeq = op.Seq
+	return nil
 }
 
 func sameOp(a, b WriteOp) bool {

@@ -168,11 +168,17 @@ func (c *Coordinator) Write(data []byte, off int64) error {
 	}
 
 	for _, st := range live {
+		// Submission backpressures on the pump, bounded by the stale
+		// timeout: a pump still busy with a previous op gets exactly
+		// one deadline to catch up. Skipping the op instead would
+		// open a permanent sequence gap (R2) — never an option. A
+		// pump stuck past the deadline is marked Stale (§9).
+		timer := time.NewTimer(c.timeout)
 		select {
 		case st.sendC <- op:
-		default:
-			// Pump still busy with a previous op — this replica is
-			// slow; skip it (its result is handled by the timeout).
+			timer.Stop()
+		case <-timer.C:
+			c.markStale(st)
 		}
 	}
 
