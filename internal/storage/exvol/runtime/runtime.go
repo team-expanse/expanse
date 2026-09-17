@@ -16,6 +16,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -740,9 +741,10 @@ func (r *Runtime) adoptSeq(volID string, seq uint64, full bool) error {
 // resyncRecv is one in-progress `zfs receive` for a volume (the remote
 // end of a resync stream).
 type resyncRecv struct {
-	pw    *io.PipeWriter // chunks are written here
-	count int64
-	done  chan error
+	pw     *io.PipeWriter // chunks are written here
+	count  int64
+	done   chan error
+	stderr *bytes.Buffer // zfs receive diagnostics (logged on failure)
 }
 
 // ensurePrimary acquires the volume lease and stands up the write path:
@@ -1458,22 +1460,33 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 
 	r.mu.Lock()
 	rp := r.recv[volID]
-	quiesce := false
-	finished := false
 	if rp == nil {
 		zp := r.zvolOf[volID]
 		if zp == "" {
 			r.mu.Unlock()
 			return nil, experrors.New(experrors.KindNotFound, "exvol.runtime.receiveChunk", "no such volume: "+volID)
 		}
-		rr, rw := io.Pipe()
+		r.mu.Unlock()
+		// Quiesce the local device BEFORE spawning `zfs receive`: a
+		// full-stream receive REPLACES the zvol dataset object (fresh
+		// creation, prior snapshots destroyed). Holding our own
+		// secondary's device fd open across the spawn pins the old
+		// device — the /dev/zvol symlink and the block-device page
+		// cache can then keep serving pre-receive content for the
+		// lifetime of the fd, and the receive itself races the open fd
+		// on the device it is about to replace. Re-armed by
+		// reopenLocalDevice at stream end (success or failure).
+		r.quiesceLocalDevice(volID)
+		var stderr bytes.Buffer
 		cmd := exec.Command(r.zfs.ZfsPath, "receive", "-F", zp)
+		cmd.Stderr = &stderr
+		rr, rw := io.Pipe()
 		cmd.Stdin = rr
 		done := make(chan error, 1)
 		go func() { done <- cmd.Run() }()
-		rp = &resyncRecv{pw: rw, done: done}
+		rp = &resyncRecv{pw: rw, done: done, stderr: &stderr}
+		r.mu.Lock()
 		r.recv[volID] = rp
-		quiesce = true
 	}
 	rp.count += int64(len(data))
 	count := rp.count
@@ -1488,22 +1501,15 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 			return nil, err
 		}
 	} else {
-		finished = true
 		rp.pw.Close() // EOF: zfs receive finalizes the image
 		err := <-rp.done
 		r.reopenLocalDevice(volID)
 		if err != nil {
+			if rp.stderr != nil && rp.stderr.Len() > 0 {
+				r.opts.Logger.Warn("zfs receive failed", "vol", volID, "stderr", rp.stderr.String())
+			}
 			return nil, fmt.Errorf("zfs receive: %w", err)
 		}
-	}
-	if quiesce && !finished {
-		// Quiesce the local device BEFORE the first stream byte: a
-		// full-stream `zfs receive -F` REPLACES the zvol dataset object
-		// (fresh creation, prior snapshots destroyed). Holding our own
-		// secondary's device fd open pins the destroyed device — the
-		// /dev/zvol symlink and the block-device page cache can then
-		// keep serving pre-receive content for the lifetime of the fd.
-		r.quiesceLocalDevice(volID)
 	}
 	ack := make([]byte, 8)
 	binary.BigEndian.PutUint64(ack, uint64(count))
