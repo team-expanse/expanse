@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -36,6 +37,8 @@ import (
 	"github.com/expanse/expanse/internal/storage/exvol/device"
 	"github.com/expanse/expanse/internal/storage/exvol/localwrite"
 	"github.com/expanse/expanse/internal/storage/exvol/primary"
+	"github.com/expanse/expanse/internal/storage/exvol/protocol"
+	"github.com/expanse/expanse/internal/storage/exvol/recovery"
 	"github.com/expanse/expanse/internal/storage/exvol/secondary"
 	"github.com/expanse/expanse/internal/storage/exvol/transport"
 	"github.com/expanse/expanse/internal/storage/zfs"
@@ -85,6 +88,7 @@ type volPrimary struct {
 	nsrv   *device.Server
 	held   *lease.Held
 	writer *localwrite.Writer
+	conns  map[string]*transport.Conn
 }
 
 // New builds the runtime. Call Run in a goroutine.
@@ -133,6 +137,9 @@ func (r *Runtime) stopAll() {
 		p.coord = nil
 		p.held.Abandon()
 		p.writer.Close()
+		for _, cn := range p.conns {
+			cn.Close()
+		}
 		delete(r.prim, id)
 	}
 	r.secs = map[string]*secondary.Secondary{}
@@ -169,7 +176,8 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 				r.opts.Logger.Warn("zvol ensure failed", "vol", id, "err", err)
 				continue
 			}
-			if status.Primary == r.opts.NodeID && status.State != storage.StateDeleting {
+			if status.Primary == r.opts.NodeID && status.State != storage.StateDeleting &&
+				status.State != storage.StateNeedsManualRecovery {
 				if err := r.ensurePrimary(ctx, spec, status, zvolPath, devNode); err != nil {
 					r.opts.Logger.Warn("primary ensure failed", "vol", id, "err", err)
 				}
@@ -369,9 +377,12 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 
 	w, err := localwrite.Open(devNode, int64(spec.SizeBytes))
 	if err != nil {
+		r.lm.Release(ctx, held)
 		return err
 	}
-	var reps []primary.Replica
+	// Dial every other replica once; the recovery probe and the write
+	// fan-out share the connections.
+	conns := map[string]*transport.Conn{}
 	for _, p := range status.Placement {
 		if p.NodeID == r.opts.NodeID {
 			continue
@@ -379,11 +390,39 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 		conn, err := r.dialReplica(ctx, p.NodeID)
 		if err != nil {
 			w.Close()
+			r.lm.Release(ctx, held)
 			return err
 		}
-		reps = append(reps, primary.Replica{NodeID: p.NodeID, Sender: transport.NewSender(conn, 0, 0)})
+		conns[p.NodeID] = conn
 	}
-	coord := primary.New(spec.ID, spec.Replication, w, reps, held, 5*time.Second)
+
+	// §4.3 recovery: a volume with prior writes resumes only after the
+	// failover algorithm has run (4a probes, 4b pulls, 4c leveling,
+	// 4d stale marks). Sequence 0 = freshly created, nothing to recover.
+	startSeq := status.Sequence
+	if startSeq > 0 {
+		startSeq, err = r.recoverVol(ctx, spec.ID, w, conns)
+		if err != nil {
+			w.Close()
+			r.lm.Release(ctx, held)
+			for _, cn := range conns {
+				cn.Close()
+			}
+			var div *recovery.DivergedError
+			if errors.As(err, &div) {
+				// §9: refuse automatic recovery, preserve all copies,
+				// hand the decision to an operator.
+				r.markDiverged(ctx, spec.ID)
+				return err
+			}
+			return fmt.Errorf("volume recovery failed: %w", err)
+		}
+	}
+	var reps []primary.Replica
+	for nodeID, conn := range conns {
+		reps = append(reps, primary.Replica{NodeID: nodeID, Sender: transport.NewSender(conn, 0, 0)})
+	}
+	coord := primary.NewAt(spec.ID, spec.Replication, w, reps, held, 5*time.Second, startSeq)
 	dev := device.New(spec.ID, int64(spec.SizeBytes), w, coord, held)
 
 	sock := fmt.Sprintf("%s/nbd-%s.sock", r.opts.DataDir, spec.ID)
@@ -403,10 +442,94 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	}
 
 	r.mu.Lock()
-	r.prim[spec.ID] = &volPrimary{coord: coord, dev: dev, nsrv: nsrv, held: held, writer: w}
+	r.prim[spec.ID] = &volPrimary{coord: coord, dev: dev, nsrv: nsrv, held: held, writer: w, conns: conns}
 	r.mu.Unlock()
-	r.opts.Logger.Info("primary serving", "vol", spec.ID, "zvol", zvolPath, "replicas", len(reps))
+	r.opts.Logger.Info("primary serving", "vol", spec.ID, "zvol", zvolPath, "replicas", len(reps), "seq", startSeq)
 	return nil
+}
+
+// recoverVol runs the §4.3 failover recovery algorithm (4a–4d) against
+// the other replicas over their live transport connections, returning
+// the seq the new primary resumes at (step 5). It returns a
+// *recovery.DivergedError when the branches have diverged (§9) — the
+// caller must NOT serve and must preserve all copies.
+func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Writer, conns map[string]*transport.Conn) (uint64, error) {
+	probes := make([]recovery.Probe, 0, len(conns)+1)
+	for nodeID, conn := range conns {
+		nodeID, conn := nodeID, conn
+		qrep, err := conn.QuerySeq(volID) // step 4a
+		if err != nil {
+			// Unreachable mid-recovery: step 4d marks it Stale.
+			probes = append(probes, recovery.Probe{NodeID: nodeID, Reachable: false})
+			continue
+		}
+		crcs := map[uint64]uint32{}
+		for _, op := range qrep.GetOps() {
+			crcs[op.GetSeq()] = op.GetCrc32C()
+		}
+		probes = append(probes, recovery.Probe{
+			NodeID:    nodeID,
+			Reachable: true,
+			LastSeq:   qrep.GetLastSeq(),
+			CRCs:      crcs,
+			FetchOps: func(_ context.Context, from, to uint64) ([]protocol.WriteOp, error) {
+				frep, err := conn.FetchOps(volID, from, to)
+				if err != nil {
+					return nil, err
+				}
+				var ops []protocol.WriteOp
+				for _, req := range frep.GetOps() {
+					ops = append(ops, protocol.WriteOp{
+						Seq: req.GetSeq(), Offset: req.GetOffset(),
+						Data: req.GetData(), CRC: req.GetCrc32C(), Flush: req.GetFlush(),
+					})
+				}
+				return ops, nil
+			},
+		})
+	}
+	res, err := recovery.Recover(ctx, probes,
+		func(_ context.Context, op protocol.WriteOp) error { // 4b
+			if op.Flush {
+				return w.Flush()
+			}
+			return w.WriteAt(op.Data, int64(op.Offset))
+		},
+		func(_ context.Context, target string, op protocol.WriteOp) error { // 4c
+			conn := conns[target]
+			if conn == nil {
+				return fmt.Errorf("no connection to %s", target)
+			}
+			if err := conn.Send(volID, op); err != nil {
+				return err
+			}
+			rep, err := conn.Recv()
+			if err != nil {
+				return err
+			}
+			if !rep.ACK {
+				return fmt.Errorf("replica %s nacked recovery op %d: %s", target, op.Seq, rep.Reason)
+			}
+			return nil
+		})
+	if err != nil {
+		return 0, err
+	}
+	r.opts.Logger.Info("volume recovered", "vol", volID,
+		"primary", res.NewPrimaryID, "seq", res.MaxSeq, "pulled", res.Pulled, "stale", res.Stale)
+	return res.MaxSeq, nil
+}
+
+// markDiverged records §9's NeedsManualRecovery state — automatic
+// recovery is refused and every copy is left exactly as found.
+func (r *Runtime) markDiverged(ctx context.Context, volID string) {
+	status, rev, err := storage.LoadStatus(ctx, r.opts.St, volID)
+	if err != nil {
+		return
+	}
+	status.State = storage.StateNeedsManualRecovery
+	_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, status)
+	r.opts.Logger.Error("volume diverged — manual recovery required, all copies preserved", "vol", volID)
 }
 
 // dialReplica connects to a node's replication transport with retries —
@@ -461,6 +584,9 @@ func (r *Runtime) pruneNotIn(seen map[string]bool) {
 			p.nsrv.Close()
 			p.held.Abandon()
 			p.writer.Close()
+			for _, cn := range p.conns {
+				cn.Close()
+			}
 			delete(r.prim, id)
 		}
 	}

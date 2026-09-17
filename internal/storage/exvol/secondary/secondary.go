@@ -39,6 +39,21 @@ type ResyncEvent struct {
 	Reason  string
 }
 
+// Reader re-reads durable bytes from this replica's local copy
+// (*localwrite.Writer satisfies it).
+type Reader interface {
+	ReadAt(p []byte, off int64) (int, error)
+}
+
+// OpRecord locates one durable op on this replica (§4.3 recovery 4a/4b:
+// the recovery algorithm compares CRCs per seq across replicas and
+// re-reads op bytes from the replica that holds them).
+type OpRecord struct {
+	Offset int64
+	Length int
+	CRC    uint32
+}
+
 // Secondary applies replicated writes in order to its local zvol.
 type Secondary struct {
 	mu     sync.Mutex
@@ -46,6 +61,20 @@ type Secondary struct {
 	size   int
 	proto  *protocol.Secondary // owns lastSeq/pending/CRC state (T04)
 	events chan ResyncEvent
+
+	// oplogMu guards oplog/reader separately from s.mu: the apply hook
+	// runs INSIDE proto.Handle while s.mu is held.
+	oplogMu sync.Mutex
+	oplog   map[uint64]OpRecord
+	reader  Reader
+}
+
+// SetReader wires the durable-copy reader used by FetchOps (recovery
+// 4b/4c). Optional: a secondary without one cannot serve op fetches.
+func (s *Secondary) SetReader(r Reader) {
+	s.oplogMu.Lock()
+	defer s.oplogMu.Unlock()
+	s.reader = r
 }
 
 // New builds a secondary of the given volume size writing through w.
@@ -54,6 +83,7 @@ func New(nodeID string, size int, w LocalWriter) *Secondary {
 		nodeID: nodeID,
 		size:   size,
 		events: make(chan ResyncEvent, 64),
+		oplog:  map[uint64]OpRecord{},
 	}
 	s.proto = protocol.NewSecondaryWithApply(nodeID, size, func(op protocol.WriteOp) error {
 		var err error
@@ -62,6 +92,13 @@ func New(nodeID string, size int, w LocalWriter) *Secondary {
 			err = w.Flush()
 		} else {
 			err = w.WriteAt(op.Data, int64(op.Offset))
+		}
+		if err == nil {
+			// Recovery metadata (§4.3 4a): seq → location + CRC. A
+			// flush consumes a seq but carries no bytes (CRC 0).
+			s.oplogMu.Lock()
+			s.oplog[op.Seq] = OpRecord{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}
+			s.oplogMu.Unlock()
 		}
 		if err != nil {
 			return experrors.Wrap(err, experrors.KindInternal, "exvol.secondary", "local replica write failed")
@@ -110,6 +147,49 @@ func (s *Secondary) emit(e ResyncEvent) {
 	case s.events <- e:
 	default:
 	}
+}
+
+// OpLog snapshots this replica's durable op records (recovery 4a).
+func (s *Secondary) OpLog() map[uint64]OpRecord {
+	s.oplogMu.Lock()
+	defer s.oplogMu.Unlock()
+	out := make(map[uint64]OpRecord, len(s.oplog))
+	for k, v := range s.oplog {
+		out[k] = v
+	}
+	return out
+}
+
+// FetchOps re-reads ops (from, to] from this replica's durable copy —
+// recovery steps 4b/4c's data movement. Flush markers come back as
+// empty ops carrying the flag.
+func (s *Secondary) FetchOps(from, to uint64) ([]protocol.WriteOp, error) {
+	s.oplogMu.Lock()
+	r := s.reader
+	log := s.oplog
+	s.oplogMu.Unlock()
+	if r == nil {
+		return nil, experrors.New(experrors.KindUnavailable, "exvol.secondary", "no durable-copy reader wired")
+	}
+	ops := make([]protocol.WriteOp, 0, to-from)
+	for seq := from + 1; seq <= to; seq++ {
+		rec, ok := log[seq]
+		if !ok {
+			return nil, experrors.New(experrors.KindInternal, "exvol.secondary", "op not durable here")
+		}
+		op := protocol.WriteOp{Seq: seq, Offset: uint64(rec.Offset), CRC: rec.CRC}
+		if rec.Length > 0 {
+			buf := make([]byte, rec.Length)
+			if _, err := r.ReadAt(buf, rec.Offset); err != nil {
+				return nil, experrors.Wrap(err, experrors.KindInternal, "exvol.secondary", "op re-read failed")
+			}
+			op.Data = buf
+		} else {
+			op.Flush = true
+		}
+		ops = append(ops, op)
+	}
+	return ops, nil
 }
 
 // Handler adapts the secondary to the transport's volume router.

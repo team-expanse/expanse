@@ -210,6 +210,275 @@ func (x *WriteReply) GetReason() string {
 	return ""
 }
 
+// SeqInfo is one replica's durable-op record, reported at failover
+// recovery (§4.3 step 4a): the seq and the CRC it was applied under.
+// Recovery compares CRCs across replicas — the same seq with different
+// CRCs is a divergent branch (§9): refuse automatic recovery.
+type SeqInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Seq           uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
+	Crc32C        uint32                 `protobuf:"varint,2,opt,name=crc32c,proto3" json:"crc32c,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SeqInfo) Reset() {
+	*x = SeqInfo{}
+	mi := &file_proto_replication_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeqInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeqInfo) ProtoMessage() {}
+
+func (x *SeqInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_replication_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeqInfo.ProtoReflect.Descriptor instead.
+func (*SeqInfo) Descriptor() ([]byte, []int) {
+	return file_proto_replication_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SeqInfo) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *SeqInfo) GetCrc32C() uint32 {
+	if x != nil {
+		return x.Crc32C
+	}
+	return 0
+}
+
+// SeqQuery asks a replica for its last contiguous seq plus the per-seq
+// CRC records (recovery step 4a).
+type SeqQuery struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VolId         string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SeqQuery) Reset() {
+	*x = SeqQuery{}
+	mi := &file_proto_replication_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeqQuery) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeqQuery) ProtoMessage() {}
+
+func (x *SeqQuery) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_replication_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeqQuery.ProtoReflect.Descriptor instead.
+func (*SeqQuery) Descriptor() ([]byte, []int) {
+	return file_proto_replication_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SeqQuery) GetVolId() string {
+	if x != nil {
+		return x.VolId
+	}
+	return ""
+}
+
+type SeqQueryReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VolId         string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
+	LastSeq       uint64                 `protobuf:"varint,2,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
+	Ops           []*SeqInfo             `protobuf:"bytes,3,rep,name=ops,proto3" json:"ops,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SeqQueryReply) Reset() {
+	*x = SeqQueryReply{}
+	mi := &file_proto_replication_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeqQueryReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeqQueryReply) ProtoMessage() {}
+
+func (x *SeqQueryReply) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_replication_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeqQueryReply.ProtoReflect.Descriptor instead.
+func (*SeqQueryReply) Descriptor() ([]byte, []int) {
+	return file_proto_replication_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SeqQueryReply) GetVolId() string {
+	if x != nil {
+		return x.VolId
+	}
+	return ""
+}
+
+func (x *SeqQueryReply) GetLastSeq() uint64 {
+	if x != nil {
+		return x.LastSeq
+	}
+	return 0
+}
+
+func (x *SeqQueryReply) GetOps() []*SeqInfo {
+	if x != nil {
+		return x.Ops
+	}
+	return nil
+}
+
+// FetchOpsRequest pulls ops (from_seq, to_seq] from a replica — the
+// recovery step 4b/4c data movement. The replica re-reads the bytes
+// from its own durable copy.
+type FetchOpsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VolId         string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
+	FromSeq       uint64                 `protobuf:"varint,2,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
+	ToSeq         uint64                 `protobuf:"varint,3,opt,name=to_seq,json=toSeq,proto3" json:"to_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchOpsRequest) Reset() {
+	*x = FetchOpsRequest{}
+	mi := &file_proto_replication_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchOpsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchOpsRequest) ProtoMessage() {}
+
+func (x *FetchOpsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_replication_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchOpsRequest.ProtoReflect.Descriptor instead.
+func (*FetchOpsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_replication_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *FetchOpsRequest) GetVolId() string {
+	if x != nil {
+		return x.VolId
+	}
+	return ""
+}
+
+func (x *FetchOpsRequest) GetFromSeq() uint64 {
+	if x != nil {
+		return x.FromSeq
+	}
+	return 0
+}
+
+func (x *FetchOpsRequest) GetToSeq() uint64 {
+	if x != nil {
+		return x.ToSeq
+	}
+	return 0
+}
+
+type FetchOpsReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ops           []*WriteRequest        `protobuf:"bytes,1,rep,name=ops,proto3" json:"ops,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FetchOpsReply) Reset() {
+	*x = FetchOpsReply{}
+	mi := &file_proto_replication_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FetchOpsReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchOpsReply) ProtoMessage() {}
+
+func (x *FetchOpsReply) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_replication_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchOpsReply.ProtoReflect.Descriptor instead.
+func (*FetchOpsReply) Descriptor() ([]byte, []int) {
+	return file_proto_replication_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *FetchOpsReply) GetOps() []*WriteRequest {
+	if x != nil {
+		return x.Ops
+	}
+	return nil
+}
+
 var File_proto_replication_proto protoreflect.FileDescriptor
 
 const file_proto_replication_proto_rawDesc = "" +
@@ -232,7 +501,22 @@ const file_proto_replication_proto_rawDesc = "" +
 	"retransmit\x18\x05 \x01(\bR\n" +
 	"retransmit\x12\x16\n" +
 	"\x06resync\x18\x06 \x01(\bR\x06resync\x12\x16\n" +
-	"\x06reason\x18\a \x01(\tR\x06reasonB\"Z github.com/expanse/expanse/protob\x06proto3"
+	"\x06reason\x18\a \x01(\tR\x06reason\"3\n" +
+	"\aSeqInfo\x12\x10\n" +
+	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x16\n" +
+	"\x06crc32c\x18\x02 \x01(\rR\x06crc32c\"!\n" +
+	"\bSeqQuery\x12\x15\n" +
+	"\x06vol_id\x18\x01 \x01(\tR\x05volId\"t\n" +
+	"\rSeqQueryReply\x12\x15\n" +
+	"\x06vol_id\x18\x01 \x01(\tR\x05volId\x12\x19\n" +
+	"\blast_seq\x18\x02 \x01(\x04R\alastSeq\x121\n" +
+	"\x03ops\x18\x03 \x03(\v2\x1f.expanse.replication.v1.SeqInfoR\x03ops\"Z\n" +
+	"\x0fFetchOpsRequest\x12\x15\n" +
+	"\x06vol_id\x18\x01 \x01(\tR\x05volId\x12\x19\n" +
+	"\bfrom_seq\x18\x02 \x01(\x04R\afromSeq\x12\x15\n" +
+	"\x06to_seq\x18\x03 \x01(\x04R\x05toSeq\"G\n" +
+	"\rFetchOpsReply\x126\n" +
+	"\x03ops\x18\x01 \x03(\v2$.expanse.replication.v1.WriteRequestR\x03opsB\"Z github.com/expanse/expanse/protob\x06proto3"
 
 var (
 	file_proto_replication_proto_rawDescOnce sync.Once
@@ -246,17 +530,24 @@ func file_proto_replication_proto_rawDescGZIP() []byte {
 	return file_proto_replication_proto_rawDescData
 }
 
-var file_proto_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_proto_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_proto_replication_proto_goTypes = []any{
-	(*WriteRequest)(nil), // 0: expanse.replication.v1.WriteRequest
-	(*WriteReply)(nil),   // 1: expanse.replication.v1.WriteReply
+	(*WriteRequest)(nil),    // 0: expanse.replication.v1.WriteRequest
+	(*WriteReply)(nil),      // 1: expanse.replication.v1.WriteReply
+	(*SeqInfo)(nil),         // 2: expanse.replication.v1.SeqInfo
+	(*SeqQuery)(nil),        // 3: expanse.replication.v1.SeqQuery
+	(*SeqQueryReply)(nil),   // 4: expanse.replication.v1.SeqQueryReply
+	(*FetchOpsRequest)(nil), // 5: expanse.replication.v1.FetchOpsRequest
+	(*FetchOpsReply)(nil),   // 6: expanse.replication.v1.FetchOpsReply
 }
 var file_proto_replication_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	2, // 0: expanse.replication.v1.SeqQueryReply.ops:type_name -> expanse.replication.v1.SeqInfo
+	0, // 1: expanse.replication.v1.FetchOpsReply.ops:type_name -> expanse.replication.v1.WriteRequest
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_proto_replication_proto_init() }
@@ -270,7 +561,7 @@ func file_proto_replication_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_replication_proto_rawDesc), len(file_proto_replication_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

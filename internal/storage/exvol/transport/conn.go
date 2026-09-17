@@ -27,6 +27,21 @@ type Server struct {
 	router     func(volID string) (Handler, error)
 	rawHandler RawHandler
 	dscp       int // 0 = no marking
+
+	// Recovery-time handlers (§4.3 step 4a/4b, T11): seq queries and
+	// op fetches from the durable local copy. Nil → refused.
+	queryHandler func(volID string) (*expb.SeqQueryReply, error)
+	fetchHandler func(volID string, from, to uint64) (*expb.FetchOpsReply, error)
+}
+
+// SetQueryHandler registers the recovery seq-probe handler.
+func (s *Server) SetQueryHandler(h func(volID string) (*expb.SeqQueryReply, error)) {
+	s.queryHandler = h
+}
+
+// SetFetchHandler registers the recovery op-fetch handler.
+func (s *Server) SetFetchHandler(h func(volID string, from, to uint64) (*expb.FetchOpsReply, error)) {
+	s.fetchHandler = h
 }
 
 // NewServer wraps a listener. router resolves a volume ID to its
@@ -96,6 +111,40 @@ func (s *Server) handleConn(nc net.Conn) {
 			}
 			if err := c.w.Flush(); err != nil {
 				return
+			}
+
+		case msgQuerySeq:
+			if s.queryHandler == nil {
+				return // refused on this server
+			}
+			req := &expb.SeqQuery{}
+			if err := proto.Unmarshal(payload, req); err != nil {
+				return
+			}
+			rep, err := s.queryHandler(req.GetVolId())
+			if err != nil {
+				return
+			}
+			if b, merr := proto.Marshal(rep); merr == nil {
+				_ = writeFrame(c.w, msgQuerySeq, b)
+				_ = c.w.Flush()
+			}
+
+		case msgFetchOps:
+			if s.fetchHandler == nil {
+				return // refused on this server
+			}
+			req := &expb.FetchOpsRequest{}
+			if err := proto.Unmarshal(payload, req); err != nil {
+				return
+			}
+			rep, err := s.fetchHandler(req.GetVolId(), req.GetFromSeq(), req.GetToSeq())
+			if err != nil {
+				return
+			}
+			if b, merr := proto.Marshal(rep); merr == nil {
+				_ = writeFrame(c.w, msgFetchOps, b)
+				_ = c.w.Flush()
 			}
 
 		case msgResyncChunk:
@@ -227,6 +276,60 @@ func (c *Conn) SendResyncChunk(chunk []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, msgResyncAck)
 	}
 	return payload, nil
+}
+
+// QuerySeq asks a replica for its last contiguous seq plus per-seq CRC
+// records (recovery step 4a, §9 divergence detection).
+func (c *Conn) QuerySeq(volID string) (*expb.SeqQueryReply, error) {
+	b, err := proto.Marshal(&expb.SeqQuery{VolId: volID})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFrame(c.c.w, msgQuerySeq, b); err != nil {
+		return nil, err
+	}
+	if err := c.c.w.Flush(); err != nil {
+		return nil, err
+	}
+	typ, payload, err := readFrame(c.c.r)
+	if err != nil {
+		return nil, err
+	}
+	if typ != msgQuerySeq {
+		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, msgQuerySeq)
+	}
+	rep := &expb.SeqQueryReply{}
+	if err := proto.Unmarshal(payload, rep); err != nil {
+		return nil, err
+	}
+	return rep, nil
+}
+
+// FetchOps pulls ops (from, to] from a replica's durable copy (recovery
+// steps 4b/4c).
+func (c *Conn) FetchOps(volID string, from, to uint64) (*expb.FetchOpsReply, error) {
+	b, err := proto.Marshal(&expb.FetchOpsRequest{VolId: volID, FromSeq: from, ToSeq: to})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFrame(c.c.w, msgFetchOps, b); err != nil {
+		return nil, err
+	}
+	if err := c.c.w.Flush(); err != nil {
+		return nil, err
+	}
+	typ, payload, err := readFrame(c.c.r)
+	if err != nil {
+		return nil, err
+	}
+	if typ != msgFetchOps {
+		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, msgFetchOps)
+	}
+	rep := &expb.FetchOpsReply{}
+	if err := proto.Unmarshal(payload, rep); err != nil {
+		return nil, err
+	}
+	return rep, nil
 }
 
 // --- protobuf <-> protocol conversions (single source of truth for the

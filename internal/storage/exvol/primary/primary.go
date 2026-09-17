@@ -81,12 +81,19 @@ type Coordinator struct {
 
 // New builds a coordinator. lease may be nil in tests (treated valid).
 func New(volID string, replication int, local LocalWriter, replicas []Replica, l Lease, staleTimeout time.Duration) *Coordinator {
+	return NewAt(volID, replication, local, replicas, l, staleTimeout, 0)
+}
+
+// NewAt is New with the sequence counter seeded — the failover-recovery
+// path resumes at max(allSeqs) (§4.3 step 5); sequences are logical
+// (R2) and must never restart from 0.
+func NewAt(volID string, replication int, local LocalWriter, replicas []Replica, l Lease, staleTimeout time.Duration, startSeq uint64) *Coordinator {
 	if staleTimeout <= 0 {
 		staleTimeout = DefaultStaleTimeout
 	}
 	c := &Coordinator{
 		volID:    volID,
-		p:        protocol.NewPrimary(volID, replication),
+		p:        protocol.NewPrimaryAt(volID, replication, startSeq),
 		local:    local,
 		lease:    l,
 		timeout:  staleTimeout,

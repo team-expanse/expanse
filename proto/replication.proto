@@ -34,3 +34,37 @@ message WriteReply {
   bool resync = 6;
   string reason = 7;
 }
+
+// SeqInfo is one replica's durable-op record, reported at failover
+// recovery (§4.3 step 4a): the seq and the CRC it was applied under.
+// Recovery compares CRCs across replicas — the same seq with different
+// CRCs is a divergent branch (§9): refuse automatic recovery.
+message SeqInfo {
+  uint64 seq = 1;
+  uint32 crc32c = 2;
+}
+
+// SeqQuery asks a replica for its last contiguous seq plus the per-seq
+// CRC records (recovery step 4a).
+message SeqQuery {
+  string vol_id = 1;
+}
+
+message SeqQueryReply {
+  string vol_id = 1;
+  uint64 last_seq = 2;
+  repeated SeqInfo ops = 3;
+}
+
+// FetchOpsRequest pulls ops (from_seq, to_seq] from a replica — the
+// recovery step 4b/4c data movement. The replica re-reads the bytes
+// from its own durable copy.
+message FetchOpsRequest {
+  string vol_id = 1;
+  uint64 from_seq = 2;
+  uint64 to_seq = 3;
+}
+
+message FetchOpsReply {
+  repeated WriteRequest ops = 1;
+}

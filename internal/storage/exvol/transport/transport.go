@@ -15,7 +15,8 @@
 //	+4  byte       version (1; unknown version → hard error, no
 //	               negotiation yet — that is a later-phase concern)
 //	+5  byte       message type (1=WriteRequest, 2=WriteReply,
-//	                               3=ResyncChunk, 4=ResyncAck)
+//	                               3=ResyncChunk, 4=ResyncAck,
+//	                               5=SeqQuery, 6=FetchOps)
 //	+6  ...        payload (protobuf for types 1–2, raw bytes for 3–4)
 //
 // Max frame = 68 MiB (64 MiB max op payload + slack). A peer sending a
@@ -45,6 +46,8 @@ const (
 	msgWriteReply   = 2
 	msgResyncChunk  = 3
 	msgResyncAck    = 4
+	msgQuerySeq     = 5
+	msgFetchOps     = 6
 
 	// MaxFrameSize caps a frame: 64 MiB op payload plus framing slack.
 	MaxFrameSize = 68 << 20

@@ -19,6 +19,10 @@ enum VolumeState {
   VOLUME_STATE_RESYNCING = 5;
   VOLUME_STATE_FAILED = 6;
   VOLUME_STATE_DELETING = 7;
+  // Split-brain divergence detected (§9): same seq, different CRC on
+  // two replicas. Automatic recovery refused; an operator must choose
+  // (`expanse ctl volume diverged`). All copies are preserved.
+  VOLUME_STATE_NEEDS_MANUAL_RECOVERY = 8;
 }
 
 // ReplicaRole is one replica's position in the replication protocol (§4.3).

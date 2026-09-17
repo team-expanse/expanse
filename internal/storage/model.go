@@ -27,6 +27,9 @@ const (
 	StateResyncing VolumeState = "Resyncing"
 	StateFailed    VolumeState = "Failed"
 	StateDeleting  VolumeState = "Deleting"
+	// StateNeedsManualRecovery marks split-brain divergence (§9):
+	// automatic recovery refused, all copies preserved.
+	StateNeedsManualRecovery VolumeState = "NeedsManualRecovery"
 )
 
 func (s VolumeState) proto() pb.VolumeState {
@@ -45,6 +48,8 @@ func (s VolumeState) proto() pb.VolumeState {
 		return pb.VolumeState_VOLUME_STATE_FAILED
 	case StateDeleting:
 		return pb.VolumeState_VOLUME_STATE_DELETING
+	case StateNeedsManualRecovery:
+		return pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY
 	}
 	return pb.VolumeState_VOLUME_STATE_UNSPECIFIED
 }
@@ -65,6 +70,8 @@ func stateFromProto(p pb.VolumeState) VolumeState {
 		return StateFailed
 	case pb.VolumeState_VOLUME_STATE_DELETING:
 		return StateDeleting
+	case pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY:
+		return StateNeedsManualRecovery
 	}
 	return ""
 }

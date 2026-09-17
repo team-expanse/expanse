@@ -33,6 +33,10 @@ const (
 	VolumeState_VOLUME_STATE_RESYNCING   VolumeState = 5
 	VolumeState_VOLUME_STATE_FAILED      VolumeState = 6
 	VolumeState_VOLUME_STATE_DELETING    VolumeState = 7
+	// Split-brain divergence detected (§9): same seq, different CRC on
+	// two replicas. Automatic recovery refused; an operator must choose
+	// (`expanse ctl volume diverged`). All copies are preserved.
+	VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY VolumeState = 8
 )
 
 // Enum value maps for VolumeState.
@@ -46,16 +50,18 @@ var (
 		5: "VOLUME_STATE_RESYNCING",
 		6: "VOLUME_STATE_FAILED",
 		7: "VOLUME_STATE_DELETING",
+		8: "VOLUME_STATE_NEEDS_MANUAL_RECOVERY",
 	}
 	VolumeState_value = map[string]int32{
-		"VOLUME_STATE_UNSPECIFIED": 0,
-		"VOLUME_STATE_CREATING":    1,
-		"VOLUME_STATE_HEALTHY":     2,
-		"VOLUME_STATE_DEGRADED":    3,
-		"VOLUME_STATE_READONLY":    4,
-		"VOLUME_STATE_RESYNCING":   5,
-		"VOLUME_STATE_FAILED":      6,
-		"VOLUME_STATE_DELETING":    7,
+		"VOLUME_STATE_UNSPECIFIED":           0,
+		"VOLUME_STATE_CREATING":              1,
+		"VOLUME_STATE_HEALTHY":               2,
+		"VOLUME_STATE_DEGRADED":              3,
+		"VOLUME_STATE_READONLY":              4,
+		"VOLUME_STATE_RESYNCING":             5,
+		"VOLUME_STATE_FAILED":                6,
+		"VOLUME_STATE_DELETING":              7,
+		"VOLUME_STATE_NEEDS_MANUAL_RECOVERY": 8,
 	}
 )
 
@@ -428,7 +434,7 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\x05state\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.VolumeStateR\x05state\x12\x18\n" +
 	"\aprimary\x18\x03 \x01(\tR\aprimary\x12\x1a\n" +
 	"\bsequence\x18\x04 \x01(\x04R\bsequence\x129\n" +
-	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacement*\xe6\x01\n" +
+	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacement*\x8e\x02\n" +
 	"\vVolumeState\x12\x1c\n" +
 	"\x18VOLUME_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15VOLUME_STATE_CREATING\x10\x01\x12\x18\n" +
@@ -437,7 +443,8 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\x15VOLUME_STATE_READONLY\x10\x04\x12\x1a\n" +
 	"\x16VOLUME_STATE_RESYNCING\x10\x05\x12\x17\n" +
 	"\x13VOLUME_STATE_FAILED\x10\x06\x12\x19\n" +
-	"\x15VOLUME_STATE_DELETING\x10\a*\x95\x01\n" +
+	"\x15VOLUME_STATE_DELETING\x10\a\x12&\n" +
+	"\"VOLUME_STATE_NEEDS_MANUAL_RECOVERY\x10\b*\x95\x01\n" +
 	"\vReplicaRole\x12\x1c\n" +
 	"\x18REPLICA_ROLE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14REPLICA_ROLE_PRIMARY\x10\x01\x12\x1a\n" +

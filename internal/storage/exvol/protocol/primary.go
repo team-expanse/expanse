@@ -32,6 +32,13 @@ func NewPrimary(volID string, replication int) *Primary {
 	return &Primary{VolID: volID, HasLease: true, Replication: replication}
 }
 
+// NewPrimaryAt is NewPrimary with the sequence counter seeded — failover
+// recovery resumes at max(allSeqs), never back at 0 (§4.3 step 5;
+// sequences are logical and must not be reused, R2).
+func NewPrimaryAt(volID string, replication int, startSeq uint64) *Primary {
+	return &Primary{VolID: volID, HasLease: true, Replication: replication, seq: startSeq}
+}
+
 // NextSeq assigns the next sequence number (§4.3 step 2). After lease
 // loss it fails with ErrLeaseLost — every subsequent write fails EIO
 // within the guard band (R5); the simulator models that by refusing
