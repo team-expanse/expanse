@@ -177,6 +177,15 @@ func (v Volume) Status() Status {
 	}
 }
 
+// PendingPrefix is the store key namespace for pending volume-creation
+// requests (Phase 06 T10): `ctl volume create` writes one via the agent
+// socket; the leader's volume runtime performs placement and consumes it.
+const PendingPrefix = VolumePrefix + "_pending/"
+
+// PendingCreateKey is the store key for a named creation request. The
+// value is a marshaled pb.VolumeSpec.
+func PendingCreateKey(name string) store.Key { return store.Key(PendingPrefix + name) }
+
 // VolumePrefix is the store key namespace for volumes (§4.1).
 const VolumePrefix = "/volumes/"
 

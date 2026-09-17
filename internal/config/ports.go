@@ -9,4 +9,5 @@ const (
 	PortJoin       = 7446 // Join/bootstrap service (TLS, token-authenticated)
 	PortMDNS       = 5353 // mDNS discovery (UDP)
 	PortUI         = 8443 // Web UI (Phase 08)
+	PortExvol      = 9440 // exvol replication transport (Phase 06 §4.3)
 )

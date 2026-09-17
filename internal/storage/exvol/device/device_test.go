@@ -347,7 +347,7 @@ func nbdDial(t *testing.T, sock string, size int64) *nbdConn {
 
 func nbdCommand(c *nbdConn, cmd uint16, off int64, length int64, data []byte) ([]byte, error) {
 	handle := uint64(42)
-	req := make([]byte, 30)
+	req := make([]byte, 28)
 	binary.BigEndian.PutUint32(req[0:], nbdReqMagic)
 	binary.BigEndian.PutUint16(req[6:], cmd)
 	binary.BigEndian.PutUint64(req[8:], handle)

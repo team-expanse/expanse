@@ -32,6 +32,10 @@ in
 
     boot.zfs.devNodes = "/dev";
 
+    # Zvol device nodes (/dev/<pool>/<ds>) are udev symlinks; without
+    # the zfs rules installed the daemon would never see them.
+    services.udev.packages = [ pkgs.zfs ];
+
     systemd.services.expanse-scratch-pool = {
       description = "Create scratch ZFS pool for exvol storage tests";
       wantedBy = [ "multi-user.target" ];

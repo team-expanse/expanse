@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -27,14 +28,27 @@ const (
 	nbdMagic       = "NBDMAGIC"         // 0x4E42444D41474943
 	nbdNewStyle    = 0x49484156454F5054 // "IHAVEOPT"
 	nbdOptExport   = 1
-	nbdReqMagic    = 0x25609513
-	nbdRepMagic    = 0x67446698
-	nbdCmdRead     = 0
-	nbdCmdWrite    = 1
-	nbdCmdDisc     = 2
-	nbdCmdFlush    = 3
-	nbdCmdTrim     = 4
-	nbdWriteZeroes = 6
+	nbdOptAbort    = 2
+	nbdOptList     = 3
+	nbdOptStartTLS = 4
+	nbdOptInfo     = 5
+	nbdOptGo       = 6
+	nbdOptStruct   = 8 // NBD_OPT_STRUCTURED_REPLY
+	nbdOptListMeta = 9
+	nbdOptSetMeta  = 10
+
+	nbdRepAck        = 1
+	nbdRepInfo       = 3
+	nbdRepErrUnsup   = 0x80000001
+	nbdOptReplyMagic = 0x0003E889045565A9
+	nbdReqMagic      = 0x25609513
+	nbdRepMagic      = 0x67446698
+	nbdCmdRead       = 0
+	nbdCmdWrite      = 1
+	nbdCmdDisc       = 2
+	nbdCmdFlush      = 3
+	nbdCmdTrim       = 4
+	nbdWriteZeroes   = 6
 
 	nbdFlagHasFlags  = 1 // transmission flag bit 0
 	nbdFlagSendFlush = 1 << 2
@@ -119,6 +133,27 @@ func (s *Server) Close() error {
 	return err
 }
 
+// nbdExportFlags is the transmission-flag set advertised on both the
+// EXPORT_NAME and OPT_GO paths.
+const nbdExportFlags = uint16(nbdFlagHasFlags | nbdFlagSendFlush | nbdFlagSendTrim | nbdFlagSendDisc | nbdFlagSendWZ)
+
+// nbdOptionReply writes an option-reply record.
+func nbdOptionReply(w io.Writer, option, replyType uint32, payload []byte) error {
+	rep := make([]byte, 20)
+	binary.BigEndian.PutUint64(rep[0:], nbdOptReplyMagic)
+	binary.BigEndian.PutUint32(rep[8:], option)
+	binary.BigEndian.PutUint32(rep[12:], replyType)
+	binary.BigEndian.PutUint32(rep[16:], uint32(len(payload)))
+	_, err := w.Write(append(rep, payload...))
+	return err
+}
+
+// debugLog is wired for VM-test diagnostics (T10); replaced by the
+// node logger when the runtime owns server construction.
+var debugLog = func(format string, args ...any) {
+	slog.Info(fmt.Sprintf("exvol.nbd: "+format, args...))
+}
+
 // serveNBDConn runs one client: newstyle handshake + transmission loop.
 func serveNBDConn(nc net.Conn, dev BlockDevice) {
 	defer nc.Close() //nolint:errcheck
@@ -144,6 +179,7 @@ func serveNBDConn(nc net.Conn, dev BlockDevice) {
 	// length(4) + payload.
 	var magic [8]byte
 	var optAndLen [8]byte
+exportDone:
 	for {
 		if _, err := io.ReadFull(r, magic[:]); err != nil {
 			return
@@ -161,16 +197,40 @@ func serveNBDConn(nc net.Conn, dev BlockDevice) {
 				return
 			}
 		}
-		if binary.BigEndian.Uint32(optAndLen[:4]) == nbdOptExport {
-			break
-		}
-		// Unsupported option → NBD_REP_ERR_UNSUP (option header +
-		// 4-byte reply type, no payload) and continue.
-		rep := make([]byte, 8)
-		copy(rep[0:], nbdMagic)
-		binary.BigEndian.PutUint32(rep[4:], 0x80000001) // NBD_REP_ERR_UNSUP
-		if _, err := w.Write(rep); err != nil {
+		switch binary.BigEndian.Uint32(optAndLen[:4]) {
+		case nbdOptExport:
+			break exportDone
+		case nbdOptGo, nbdOptInfo:
+			// Accept: REPLY_MAGIC(8) + option(4) + type(4) + len(4).
+			// NBD_REP_INFO with NBD_INFO_EXPORT (size + flags), then
+			// NBD_REP_ACK. Modern nbd-client negotiates via GO; the
+			// kernel client requires the INFO record to size the device.
+			if dev == nil {
+				return
+			}
+			info := make([]byte, 14)
+			binary.BigEndian.PutUint16(info[0:], 0) // NBD_INFO_EXPORT
+			binary.BigEndian.PutUint64(info[2:], uint64(dev.Size()))
+			binary.BigEndian.PutUint16(info[10:], nbdExportFlags)
+			if err := nbdOptionReply(w, binary.BigEndian.Uint32(optAndLen[:4]), nbdRepInfo, info); err != nil {
+				return
+			}
+			if err := nbdOptionReply(w, binary.BigEndian.Uint32(optAndLen[:4]), nbdRepAck, nil); err != nil {
+				return
+			}
+			continue
+		case nbdOptAbort:
 			return
+		case nbdOptStruct, nbdOptList, nbdOptListMeta, nbdOptSetMeta, nbdOptStartTLS:
+			// Refused: the client proceeds without structured replies
+			// / TLS (the mesh already encrypts; TLS here is redundant).
+			if err := nbdOptionReply(w, binary.BigEndian.Uint32(optAndLen[:4]), nbdRepErrUnsup, nil); err != nil {
+				return
+			}
+		default:
+			if err := nbdOptionReply(w, binary.BigEndian.Uint32(optAndLen[:4]), nbdRepErrUnsup, nil); err != nil {
+				return
+			}
 		}
 	}
 
@@ -181,14 +241,13 @@ func serveNBDConn(nc net.Conn, dev BlockDevice) {
 	// Export info: size(8) + transmission flags(2) + 124 reserved zeros.
 	var info [134]byte
 	binary.BigEndian.PutUint64(info[0:], uint64(dev.Size()))
-	flags := uint16(nbdFlagHasFlags | nbdFlagSendFlush | nbdFlagSendTrim | nbdFlagSendDisc | nbdFlagSendWZ)
-	binary.BigEndian.PutUint16(info[8:], flags)
+	binary.BigEndian.PutUint16(info[8:], nbdExportFlags)
 	if _, err := w.Write(info[:]); err != nil {
 		return
 	}
 
 	// Transmission loop.
-	var req [30]byte // magic(4) flags(2) type(2) handle(8) offset(8) len(4)
+	var req [28]byte // magic(4) flags(2) type(2) handle(8) offset(8) len(4)
 	var rep [16]byte // magic(4) error(4) handle(8)
 	for {
 		if _, err := io.ReadFull(r, req[:]); err != nil {
@@ -226,6 +285,7 @@ func serveNBDConn(nc net.Conn, dev BlockDevice) {
 				return
 			}
 			if _, err := dev.WriteAt(buf, offset); err != nil {
+				debugLog("write %d bytes at %d failed: %v", length, offset, err)
 				errCode = 5
 			}
 		case nbdCmdFlush:
@@ -291,7 +351,8 @@ func Attach(sock, volID string, nbdDev string, r Runner) error {
 		return experrors.Wrap(err, experrors.KindInternal, "exvol.nbd.attach", "mkdir /dev/exvol failed")
 	}
 	if err := r.Run("nbd-client", "-unix", sock, nbdDev); err != nil {
-		return experrors.Wrap(err, experrors.KindUnavailable, "exvol.nbd.attach", "nbd-client failed")
+		return experrors.Wrap(err, experrors.KindUnavailable, "exvol.nbd.attach",
+			"nbd-client failed: "+err.Error())
 	}
 	link := "/dev/exvol/" + volID
 	os.Remove(link) //nolint:errcheck — replace stale symlink

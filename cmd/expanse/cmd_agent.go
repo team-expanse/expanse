@@ -25,6 +25,7 @@ func newAgentCmd() *cobra.Command {
 		extPool    string
 		extIface   string
 		dnsUp      string
+		exvolPool  string
 		firewall   bool
 	)
 	cmd := &cobra.Command{
@@ -44,6 +45,7 @@ func newAgentCmd() *cobra.Command {
 				ExternalVIPPool:   extPool,
 				ExternalInterface: extIface,
 				DNSUpstreams:      dnsUp,
+				ExvolPool:         exvolPool,
 				Firewall:          firewall,
 				LogLevel:          cmd.Root().PersistentFlags().Lookup("log-level").Value.String(),
 			}
@@ -82,6 +84,8 @@ func newAgentCmd() *cobra.Command {
 		"physical interface to announce external VIPs on (default: auto = default route)")
 	cmd.Flags().StringVar(&dnsUp, "dns-upstreams", "",
 		"DNS forwarders (T17), comma-separated ip:port; empty = /etc/resolv.conf")
+	cmd.Flags().StringVar(&exvolPool, "exvol-pool", "",
+		"zpool for the node's exvol volume runtime (Phase 06); empty = storage disabled")
 	cmd.Flags().BoolVar(&firewall, "firewall", false,
 		"apply the §4.5 nftables ruleset (static skeleton + store-driven dynamic sets)")
 	cmd.Flags().StringVar(&raftAdv, "raft-advertise", "", "raft transport advertised addr (default: the bind host or local IP, port 7444)")

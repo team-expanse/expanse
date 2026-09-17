@@ -30,6 +30,10 @@ import (
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/proxy"
+	pbproto "google.golang.org/protobuf/proto"
+
+	networkmesh "github.com/expanse/expanse/internal/network/mesh"
+	exvolrt "github.com/expanse/expanse/internal/storage/exvol/runtime"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -95,6 +99,10 @@ type Config struct {
 	// DNSUpstreams overrides the DNS forwarders (T17): comma-separated
 	// "ip:port" list. Empty = parsed from /etc/resolv.conf.
 	DNSUpstreams string
+	// ExvolPool is the zpool the node's exvol volume runtime (Phase 06
+	// T10) creates zvols on. Empty = storage runtime disabled on this
+	// node (e.g. witness nodes).
+	ExvolPool string
 	// Firewall enables the §4.5 nftables ruleset (T19/T20): static
 	// skeleton at start, store-driven dynamic sets after. Off by
 	// default — deployments that manage the host firewall themselves
@@ -161,6 +169,7 @@ type Agent struct {
 	blocks       pb.BlockServiceServer
 	blockCatalog pb.CatalogServiceServer
 	blockCtl     *controller.Controller
+	volrt        *exvolrt.Runtime
 	blockBridge  *wire.Bridge
 	invMu        sync.Mutex
 	invSnapshot  *inventory.Inventory
@@ -328,6 +337,26 @@ func New(cfg Config) (*Agent, error) {
 	nixDriver := nix.New()
 	r.Register(nixman.New(nixDriver, os.Stdout))
 	a.recon = r
+
+	// Exvol volume runtime (Phase 06 T10): per-node zvol + secondary /
+	// primary + device convergence from the cluster store. Cluster
+	// nodes with a configured pool only.
+	if cfg.ExvolPool != "" {
+		a.volrt = exvolrt.New(exvolrt.Options{
+			NodeID:  cfg.NodeID,
+			St:      st,
+			Pool:    cfg.ExvolPool,
+			DataDir: filepath.Join(cfg.DataDir, "exvol"),
+			AddrOf:  a.meshAddrOf,
+			IsLeader: func() bool {
+				if a.ctl == nil || a.ctl.store == nil {
+					return false
+				}
+				return a.ctl.store.IsLeader()
+			},
+			Logger: logger,
+		})
+	}
 
 	// Block API (T20.5a): served on the agent socket when a block
 	// catalog is configured. Admission runs the full V1–V24 rules with
@@ -595,6 +624,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	// reconcile: zero capacity means nothing is ever placed here (§4.9).
 	if !witness {
 		go a.recon.Run(ctx)
+	}
+
+	// Exvol volume runtime (Phase 06 T10).
+	if a.volrt != nil {
+		go a.volrt.Run(ctx)
 	}
 
 	// WireGuard mesh (§4.1): identity + exp0 peer reconciliation from
@@ -896,4 +930,26 @@ func (b *blockBuilder) Build(ctx context.Context, blockType string) (nix.StorePa
 			"flake", b.flakeRef, "cause", fmt.Sprint(err))
 	}
 	return p, err
+}
+
+// meshAddrOf resolves a node ID to its exp0 overlay address (the .1 in
+// the node's published overlay prefix, §4.1's 10.42.N.1 convention).
+// Used by the exvol volume runtime to reach remote replicas.
+func (a *Agent) meshAddrOf(nodeID string) (string, error) {
+	entry, err := a.store.Get(context.Background(),
+		store.Key(networkmesh.PublicKeyKey(nodeID)))
+	if err != nil {
+		return "", fmt.Errorf("no mesh record for %s: %w", nodeID, err)
+	}
+	var peer pb.WireGuardPeer
+	if err := pbproto.Unmarshal(entry.Value, &peer); err != nil {
+		return "", fmt.Errorf("mesh record for %s unreadable: %w", nodeID, err)
+	}
+	prefix, err := netip.ParsePrefix(peer.GetOverlayPrefix())
+	if err != nil {
+		return "", fmt.Errorf("bad overlay prefix for %s: %w", nodeID, err)
+	}
+	addr := prefix.Addr().As4() // node itself is .1 in its /24 (§3)
+	addr[3] = 1
+	return netip.AddrFrom4(addr).String(), nil
 }

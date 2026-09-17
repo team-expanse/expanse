@@ -247,7 +247,10 @@ func TestLeaseInvalidImmediateEIONoWrite(t *testing.T) {
 func TestWriteConvergesAllReplicas(t *testing.T) {
 	size := int64(1 << 20)
 	reps := []*testReplica{newTestReplica(t, "n1", size), newTestReplica(t, "n2", size), newTestReplica(t, "n3", size)}
-	c, local, _ := newTestPrimary(t, size, reps, &fakeLease{valid: true}, 2*time.Second)
+	// Generous deadline: under a parallel -race full sweep, loopback
+	// pump goroutines can be starved for seconds — that's scheduler
+	// noise, not a §9 stall.
+	c, local, _ := newTestPrimary(t, size, reps, &fakeLease{valid: true}, 20*time.Second)
 
 	for i := 0; i < 20; i++ {
 		payload := bytes.Repeat([]byte{byte(i + 1)}, 100+i)

@@ -112,7 +112,10 @@ func newSecondaryWindow(id string, size, windowOps int, windowBytes uint64) *Sec
 // through apply (the real secondary's O_DIRECT|O_DSYNC zvol write). An
 // apply error surfaces as a NACK — the op is NOT acknowledged durable.
 func NewSecondaryWithApply(id string, size int, apply func(WriteOp) error) *Secondary {
-	s := NewSecondary(id, size)
+	// No in-memory backing: with an apply hook every write goes
+	// straight to durable storage, so Data would be a size-byte
+	// allocation we never read — fatal on real (GiB) volumes.
+	s := newSecondaryWindow(id, 0, DefaultWindowOps, DefaultWindowBytes)
 	s.applyFn = apply
 	return s
 }

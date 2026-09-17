@@ -61,6 +61,12 @@ in
       description = "DNS forwarders (T17), comma-separated ip:port. Empty = /etc/resolv.conf.";
     };
 
+    exvolPool = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Zpool for the node's exvol volume runtime (Phase 06). Empty = storage disabled.";
+    };
+
     firewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -122,6 +128,10 @@ in
       before = [ "expanse-ui.service" ];
 
       unitConfig = { };
+      # zfs on PATH: the exvol volume runtime shells out to zfs/zpool
+      # (Phase 06 §4.5); the daemon must find them even though the
+      # unit's own Environment=PATH is minimal.
+      path = with pkgs; [ zfs nbd ];
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
@@ -133,6 +143,7 @@ in
           optionalString (cfg.externalVIPPool != "") " --external-vip-pool ${cfg.externalVIPPool}" +
           optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}" +
           optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}" +
+          optionalString (cfg.exvolPool != "") " --exvol-pool ${cfg.exvolPool}" +
           optionalString cfg.firewall " --firewall";
         Restart = "always";
         RestartSec = "5s";

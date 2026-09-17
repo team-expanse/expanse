@@ -73,6 +73,9 @@
           cluster-witness = mkTest "cluster-witness" ./nix/tests/cluster-witness.nix;
           cluster-generations = mkTest "cluster-generations" ./nix/tests/cluster-generations.nix;
 
+          # Phase 06 (storage / exvol).
+          vol-create = mkTest "vol-create" ./nix/tests/vol-create.nix;
+
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
           net-vip-basic = mkTest "net-vip-basic" ./nix/tests/net-vip-basic.nix;

@@ -110,6 +110,7 @@ func newCtlCmd() *cobra.Command {
 	blockCmd, catalogCmd := newBlockCmd(opts)
 	cmd.AddCommand(blockCmd)
 	cmd.AddCommand(catalogCmd)
+	cmd.AddCommand(newVolumeCmd(opts))
 
 	gen := &cobra.Command{Use: "generation", Short: "Desired-state generation history and rollback"}
 	gen.AddCommand(&cobra.Command{
