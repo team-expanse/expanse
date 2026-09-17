@@ -302,6 +302,18 @@ func (c *Coordinator) drainResults() {
 	}
 }
 
+// ReplicaIDs lists every replica in the fan-out (monitoring, rebuild
+// convergence).
+func (c *Coordinator) ReplicaIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.replicas))
+	for id := range c.replicas {
+		out = append(out, id)
+	}
+	return out
+}
+
 // StaleReplicas lists replicas marked Stale (monitoring, tests).
 func (c *Coordinator) StaleReplicas() []string {
 	c.mu.Lock()

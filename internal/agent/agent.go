@@ -33,7 +33,9 @@ import (
 	pbproto "google.golang.org/protobuf/proto"
 
 	networkmesh "github.com/expanse/expanse/internal/network/mesh"
+	volctlc "github.com/expanse/expanse/internal/storage/controller"
 	exvolrt "github.com/expanse/expanse/internal/storage/exvol/runtime"
+	expzfs "github.com/expanse/expanse/internal/storage/zfs"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -170,6 +172,7 @@ type Agent struct {
 	blockCatalog pb.CatalogServiceServer
 	blockCtl     *controller.Controller
 	volrt        *exvolrt.Runtime
+	volctl       *volctlc.Controller
 	blockBridge  *wire.Bridge
 	invMu        sync.Mutex
 	invSnapshot  *inventory.Inventory
@@ -354,6 +357,21 @@ func New(cfg Config) (*Agent, error) {
 				}
 				return a.ctl.store.IsLeader()
 			},
+			Logger: logger,
+		})
+		// Leader-side volume controller (T13, §4.6): planning only —
+		// election, replication enforcement, rebuilds, scrubs.
+		a.volctl = volctlc.New(volctlc.Options{
+			NodeID: cfg.NodeID,
+			St:     st,
+			Pool:   cfg.ExvolPool,
+			IsLeader: func() bool {
+				if a.ctl == nil || a.ctl.store == nil {
+					return false
+				}
+				return a.ctl.store.IsLeader()
+			},
+			ZFS:    expzfs.New(),
 			Logger: logger,
 		})
 	}
@@ -629,6 +647,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Exvol volume runtime (Phase 06 T10).
 	if a.volrt != nil {
 		go a.volrt.Run(ctx)
+	}
+	if a.volctl != nil {
+		go a.volctl.Run(ctx)
 	}
 
 	// WireGuard mesh (§4.1): identity + exp0 peer reconciliation from

@@ -200,6 +200,12 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 			continue
 		}
 		seen[id] = true
+		if status.State == storage.StateDeleting {
+			// Deletion (T13 controller marks it): destroy the local
+			// zvol, stop local roles; the controller drops the records.
+			r.teardownVolume(ctx, id, status)
+			continue
+		}
 		mine, zvolPath := r.myReplica(spec.ID, status)
 		if mine {
 			devNode, err := r.ensureZvol(ctx, spec, zvolPath)
@@ -212,6 +218,8 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 				if err := r.ensurePrimary(ctx, spec, status, zvolPath, devNode); err != nil {
 					r.opts.Logger.Warn("primary ensure failed", "vol", id, "err", err)
 				} else {
+					r.reportSequence(ctx, spec.ID, status)
+					r.adoptNewReplicas(ctx, spec, status)
 					r.periodicSnapshot(id, zvolPath)
 					r.resyncStale(ctx, spec, status, zvolPath)
 				}
@@ -685,6 +693,97 @@ func (r *Runtime) nbdDevFor(volID string) string {
 	return d
 }
 
+// teardownVolume destroys the local zvol and all local roles for a
+// deleting volume (idempotent — retried ticks no-op).
+func (r *Runtime) teardownVolume(ctx context.Context, volID string, status storage.Status) {
+	r.mu.Lock()
+	if p, ok := r.prim[volID]; ok {
+		p.nsrv.Close()
+		p.held.Abandon()
+		p.writer.Close()
+		for _, cn := range p.conns {
+			cn.Close()
+		}
+		delete(r.prim, volID)
+	}
+	delete(r.secs, volID)
+	zp := r.zvolOf[volID]
+	if zp == "" {
+		for _, pl := range status.Placement {
+			if pl.NodeID == r.opts.NodeID && pl.ZvolPath != "" {
+				zp = pl.ZvolPath
+				break
+			}
+		}
+	}
+	r.mu.Unlock()
+	if zp != "" {
+		if err := r.zfs.DestroyZvol(ctx, zp, true); err != nil {
+			r.opts.Logger.Warn("zvol destroy failed", "vol", volID, "err", err)
+		} else {
+			r.mu.Lock()
+			delete(r.zvolOf, volID)
+			r.mu.Unlock()
+			r.opts.Logger.Info("zvol destroyed", "vol", volID, "zvol", zp)
+		}
+	}
+}
+
+// reportSequence publishes the primary's last assigned seq into its
+// placement row (the T13 controller's election input).
+func (r *Runtime) reportSequence(ctx context.Context, volID string, status storage.Status) {
+	r.mu.Lock()
+	p := r.prim[volID]
+	r.mu.Unlock()
+	if p == nil || p.coord == nil {
+		return
+	}
+	seq := p.coord.LastSeq()
+	for i := range status.Placement {
+		if status.Placement[i].NodeID == r.opts.NodeID && status.Placement[i].Sequence != seq {
+			status.Placement[i].Sequence = seq
+			if st, rev, err := storage.LoadStatus(ctx, r.opts.St, volID); err == nil {
+				for j := range st.Placement {
+					if st.Placement[j].NodeID == r.opts.NodeID {
+						st.Placement[j].Sequence = seq
+					}
+				}
+				_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
+			}
+			return
+		}
+	}
+}
+
+// adoptNewReplicas converges replica rebuilds (T13): a placement node
+// not yet in the coordinator's fan-out is dialed and admitted — it
+// starts behind, gets marked Stale on its first gap NACK, and T12's
+// resync fills it.
+func (r *Runtime) adoptNewReplicas(ctx context.Context, spec storage.Spec, status storage.Status) {
+	r.mu.Lock()
+	p := r.prim[spec.ID]
+	r.mu.Unlock()
+	if p == nil || p.coord == nil {
+		return
+	}
+	have := map[string]bool{}
+	for _, id := range p.coord.ReplicaIDs() {
+		have[id] = true
+	}
+	for _, pl := range status.Placement {
+		if pl.NodeID == r.opts.NodeID || have[pl.NodeID] {
+			continue
+		}
+		conn, err := r.dialReplica(ctx, pl.NodeID)
+		if err != nil {
+			r.opts.Logger.Warn("rebuild dial failed", "vol", spec.ID, "node", pl.NodeID, "err", err)
+			continue
+		}
+		p.coord.AddReplica(pl.NodeID, transport.NewSender(conn, 0, 0))
+		r.opts.Logger.Info("rebuild replica admitted", "vol", spec.ID, "node", pl.NodeID)
+	}
+}
+
 // pruneNotIn stops local roles for volumes that disappeared from the
 // store (delete handling stays minimal in T10; T13 grows the rest).
 func (r *Runtime) pruneNotIn(seen map[string]bool) {
@@ -693,6 +792,7 @@ func (r *Runtime) pruneNotIn(seen map[string]bool) {
 	for id := range r.secs {
 		if !seen[id] {
 			delete(r.secs, id)
+			delete(r.zvolOf, id)
 		}
 	}
 	for id, p := range r.prim {
