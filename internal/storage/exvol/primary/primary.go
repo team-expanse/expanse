@@ -61,10 +61,12 @@ type repResult struct {
 }
 
 type replicaState struct {
-	id    string
-	snd   *transport.Sender
-	sendC chan protocol.WriteOp // cap 1; full = still busy with a previous op (slow)
-	stale bool
+	id     string
+	snd    *transport.Sender
+	sendC  chan protocol.WriteOp // cap 1; full = still busy with a previous op (slow)
+	stale  bool
+	stop   chan struct{} // closed to retire the pump (revive path)
+	exited chan struct{} // closed by the pump when it returns
 }
 
 // Coordinator serializes writes for one volume on one primary.
@@ -101,7 +103,13 @@ func NewAt(volID string, replication int, local LocalWriter, replicas []Replica,
 		replicas: make(map[string]*replicaState, len(replicas)),
 	}
 	for _, r := range replicas {
-		st := &replicaState{id: r.NodeID, snd: r.Sender, sendC: make(chan protocol.WriteOp, 1)}
+		st := &replicaState{
+			id:     r.NodeID,
+			snd:    r.Sender,
+			sendC:  make(chan protocol.WriteOp, 1),
+			stop:   make(chan struct{}),
+			exited: make(chan struct{}),
+		}
 		c.replicas[r.NodeID] = st
 		c.startReplica(st)
 	}
@@ -112,21 +120,43 @@ func NewAt(volID string, replication int, local LocalWriter, replicas []Replica,
 // Recv in order (the Sender requires ordered Recv). Errors (conn dead)
 // end the pump; the coordinator notices and marks Stale.
 func (c *Coordinator) startReplica(st *replicaState) {
+	ch, stop := st.sendC, st.stop
 	go func() {
-		defer close(st.sendC)
-		for op := range st.sendC {
-			if err := st.snd.Submit(c.volID, op); err != nil {
-				c.results <- repResult{nodeID: st.id, err: fmt.Errorf("submit: %w", err)}
+		defer close(st.exited)
+		for {
+			select {
+			case <-stop:
 				return
+			case op, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := st.snd.Submit(c.volID, op); err != nil {
+					c.results <- repResult{nodeID: st.id, err: fmt.Errorf("submit: %w", err)}
+					return
+				}
+				rep, err := st.snd.Recv()
+				if err != nil {
+					c.results <- repResult{nodeID: st.id, err: fmt.Errorf("recv: %w", err)}
+					return
+				}
+				c.results <- repResult{nodeID: st.id, seq: rep.Seq, ack: rep.ACK, resync: rep.Resync}
 			}
-			rep, err := st.snd.Recv()
-			if err != nil {
-				c.results <- repResult{nodeID: st.id, err: fmt.Errorf("recv: %w", err)}
-				return
-			}
-			c.results <- repResult{nodeID: st.id, seq: rep.Seq, ack: rep.ACK, resync: rep.Resync}
 		}
 	}()
+}
+
+// retirePump stops a replica's pump and waits for it to exit. Closing
+// the sender unblocks a Recv/Submit parked on a dead or idle conn.
+// Must hold c.mu.
+func (c *Coordinator) retirePump(st *replicaState) {
+	select {
+	case <-st.exited: // already gone (conn error path)
+	default:
+		close(st.stop)
+		_ = st.snd.Close()
+		<-st.exited
+	}
 }
 
 // AddReplica (re-)admits a replica with a fresh sender — the resync
@@ -140,15 +170,24 @@ func (c *Coordinator) AddReplica(nodeID string, snd *transport.Sender) {
 		if !st.stale {
 			return // healthy already; leave the pump alone
 		}
-		// Revive: fresh sender, fresh pump.
-		close(st.sendC) //nolint:errcheck — pump already exited on staleness
+		// Revive: fresh sender, fresh pump. Retire the old pump first
+		// (it may still be parked in Submit/Recv — never assume it
+		// exited just because the replica went stale).
+		c.retirePump(st)
 		st.snd = snd
 		st.stale = false
+		st.stop = make(chan struct{})
+		st.exited = make(chan struct{})
 		st.sendC = make(chan protocol.WriteOp, 1)
 		c.startReplica(st)
 		return
 	}
-	st := &replicaState{id: nodeID, snd: snd, sendC: make(chan protocol.WriteOp, 1)}
+	st := &replicaState{
+		id: nodeID, snd: snd,
+		sendC:  make(chan protocol.WriteOp, 1),
+		stop:   make(chan struct{}),
+		exited: make(chan struct{}),
+	}
 	c.replicas[nodeID] = st
 	c.startReplica(st)
 }

@@ -132,7 +132,7 @@ func execErr(ctx context.Context, op, name string, err error, stderr string) err
 // class.
 // Mountpoint returns the mountpoint of a dataset ("" when unmounted).
 func (e *Exec) Mountpoint(ctx context.Context, dataset string) (string, error) {
-	out, err := e.run(ctx, "get", dataset, "get", "-H", "-o", "value", "mountpoint", dataset)
+	out, err := e.run(ctx, "get", e.ZfsPath, "get", "-H", "-o", "value", "mountpoint", dataset)
 	if err != nil {
 		return "", err
 	}

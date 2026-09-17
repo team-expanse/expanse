@@ -82,6 +82,26 @@ type Options struct {
 
 	// ResyncBytesPerSec rate-limits resync streams (default 100 MiB/s).
 	ResyncBytesPerSec int64
+
+	// ZvolDevBase prefixes the zvol device path (default "/dev/zvol";
+	// tests point this at a directory of regular files).
+	ZvolDevBase string
+
+	// ZFS overrides the zfs/zpool exec client (default: real binaries;
+	// tests inject a file-backed fake).
+	ZFS *zfs.Exec
+
+	// AttachNBD connects the volume's NBD socket to a /dev/nbd device
+	// and publishes /dev/exvol/<id> (default: device.Attach shelling
+	// out to nbd-client; tests fake it).
+	AttachNBD func(sock, volID, nbdDev string) error
+
+	// Tick is the reconcile cadence (default 2s; tests speed this up).
+	Tick time.Duration
+
+	// ListenAddr is the replication listener host pattern (default
+	// ":%d" — all interfaces; tests bind per-node loopback IPs).
+	ListenAddr string
 }
 
 // Runtime is one node's volume runtime.
@@ -130,9 +150,20 @@ func New(opts Options) *Runtime {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.ZvolDevBase == "" {
+		opts.ZvolDevBase = "/dev/zvol"
+	}
+	if opts.ZFS == nil {
+		opts.ZFS = zfs.New()
+	}
+	if opts.AttachNBD == nil {
+		opts.AttachNBD = func(sock, volID, nbdDev string) error {
+			return device.Attach(sock, volID, nbdDev, device.ExecRunner{})
+		}
+	}
 	return &Runtime{
 		opts:      opts,
-		zfs:       zfs.New(),
+		zfs:       opts.ZFS,
 		lm:        lease.NewManager(opts.St, opts.NodeID),
 		secs:      map[string]*secondary.Secondary{},
 		prim:      map[string]*volPrimary{},
@@ -146,7 +177,11 @@ func New(opts Options) *Runtime {
 
 // Run reconciles every 2s until the context is done.
 func (r *Runtime) Run(ctx context.Context) {
-	t := time.NewTicker(2 * time.Second)
+	tick := r.opts.Tick
+	if tick <= 0 {
+		tick = 2 * time.Second
+	}
+	t := time.NewTicker(tick)
 	defer t.Stop()
 	for {
 		if err := r.Reconcile(ctx); err != nil {
@@ -509,7 +544,7 @@ func (r *Runtime) myReplica(volID string, status storage.Status) (bool, string) 
 // node (/dev/zvol/<dataset> — the udev link OpenZFS ships; the older
 // /dev/<pool>/<ds> tree was removed in OpenZFS 2.4).
 func (r *Runtime) ensureZvol(ctx context.Context, spec storage.Spec, zvolPath string) (string, error) {
-	dev := "/dev/zvol/" + zvolPath
+	dev := r.opts.ZvolDevBase + "/" + zvolPath
 	if _, err := os.Stat(dev); err == nil {
 		return dev, nil
 	}
@@ -553,7 +588,13 @@ func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, dev
 	// erased zvol data erases the same records here, keeping the
 	// metadata truthful. Records are fsynced on flush markers (the
 	// client-visible durability barrier).
-	if mp, mpErr := r.zfs.Mountpoint(context.Background(), r.opts.Pool+"/volumes"); mpErr == nil && mp != "" {
+	mp, mpErr := r.zfs.Mountpoint(context.Background(), r.opts.Pool+"/volumes")
+	if mpErr != nil || mp == "" {
+		// A durable oplog is required for truthful recovery (§4.3 4a);
+		// running memory-only must be loud.
+		r.opts.Logger.Warn("durable oplog unavailable (memory-only replica)", "vol", volID, "err", mpErr)
+	}
+	if mpErr == nil && mp != "" {
 		dir := mp + "/.oplogs"
 		if err := os.MkdirAll(dir, 0o700); err == nil {
 			if err := sec.SetOplogStore(fmt.Sprintf("%s/%s.oplog", dir, volID)); err != nil {
@@ -569,7 +610,11 @@ func (r *Runtime) ensureServerLocked() error {
 	if r.srv != nil {
 		return nil
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", r.opts.Port))
+	pat := r.opts.ListenAddr
+	if pat == "" {
+		pat = ":%d"
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf(pat, r.opts.Port))
 	if err != nil {
 		return err
 	}
@@ -760,7 +805,7 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	}
 	nsrv.SetDevice(dev)
 	go nsrv.Serve() //nolint:errcheck
-	if err := device.Attach(sock, spec.ID, r.nbdDevFor(spec.ID), device.ExecRunner{}); err != nil {
+	if err := r.opts.AttachNBD(sock, spec.ID, r.nbdDevFor(spec.ID)); err != nil {
 		nsrv.Close()
 		w.Close()
 		r.lm.Release(ctx, held) // free the lease; the next tick retries
@@ -773,6 +818,31 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	r.clearManualRecovered(ctx, spec.ID)
 	r.opts.Logger.Info("primary serving", "vol", spec.ID, "zvol", zvolPath, "replicas", len(reps), "seq", startSeq)
 	return nil
+}
+
+// WriteOp issues one replicated data write through the volume's
+// primary coordinator (§4.3 quorum path). The NBD device is the
+// production client path; this is the programmatic ops surface.
+func (r *Runtime) WriteOp(volID string, off int64, data []byte) error {
+	r.mu.Lock()
+	p := r.prim[volID]
+	r.mu.Unlock()
+	if p == nil {
+		return experrors.New(experrors.KindUnavailable, "exvol.runtime.WriteOp", "not primary for "+volID)
+	}
+	return p.coord.Write(data, off)
+}
+
+// FlushOp issues a replicated flush marker (the client-visible
+// durability barrier — data + oplog are fsynced at quorum).
+func (r *Runtime) FlushOp(volID string) error {
+	r.mu.Lock()
+	p := r.prim[volID]
+	r.mu.Unlock()
+	if p == nil {
+		return experrors.New(experrors.KindUnavailable, "exvol.runtime.FlushOp", "not primary for "+volID)
+	}
+	return p.coord.Flush()
 }
 
 // clearManualRecovered drops the one-shot §9 operator-choice flag once
