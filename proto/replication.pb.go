@@ -13,12 +13,11 @@
 package proto
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -32,12 +31,16 @@ const (
 // secondary (§4.3 step 5). CRC is crc32c(Data), computed once at the
 // primary and verified by the secondary (step 6a).
 type WriteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolId         string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
-	Seq           uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`
-	Offset        uint64                 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
-	Data          []byte                 `protobuf:"bytes,4,opt,name=data,proto3" json:"data,omitempty"`
-	Crc32C        uint32                 `protobuf:"varint,5,opt,name=crc32c,proto3" json:"crc32c,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	VolId  string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
+	Seq    uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`
+	Offset uint64                 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Data   []byte                 `protobuf:"bytes,4,opt,name=data,proto3" json:"data,omitempty"`
+	Crc32C uint32                 `protobuf:"varint,5,opt,name=crc32c,proto3" json:"crc32c,omitempty"`
+	// flush is a durability marker (§4.4: a device flush must fsync all
+	// quorum replicas before returning). It consumes a sequence number
+	// (keeping R2's gapless property) but carries no data.
+	Flush         bool `protobuf:"varint,6,opt,name=flush,proto3" json:"flush,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -105,6 +108,13 @@ func (x *WriteRequest) GetCrc32C() uint32 {
 		return x.Crc32C
 	}
 	return 0
+}
+
+func (x *WriteRequest) GetFlush() bool {
+	if x != nil {
+		return x.Flush
+	}
+	return false
 }
 
 // WriteReply is the secondary's response (§4.3 step 6e / T04 Reply).
@@ -204,13 +214,14 @@ var File_proto_replication_proto protoreflect.FileDescriptor
 
 const file_proto_replication_proto_rawDesc = "" +
 	"\n" +
-	"\x17proto/replication.proto\x12\x16expanse.replication.v1\"{\n" +
+	"\x17proto/replication.proto\x12\x16expanse.replication.v1\"\x91\x01\n" +
 	"\fWriteRequest\x12\x15\n" +
 	"\x06vol_id\x18\x01 \x01(\tR\x05volId\x12\x10\n" +
 	"\x03seq\x18\x02 \x01(\x04R\x03seq\x12\x16\n" +
 	"\x06offset\x18\x03 \x01(\x04R\x06offset\x12\x12\n" +
 	"\x04data\x18\x04 \x01(\fR\x04data\x12\x16\n" +
-	"\x06crc32c\x18\x05 \x01(\rR\x06crc32c\"\xad\x01\n" +
+	"\x06crc32c\x18\x05 \x01(\rR\x06crc32c\x12\x14\n" +
+	"\x05flush\x18\x06 \x01(\bR\x05flush\"\xad\x01\n" +
 	"\n" +
 	"WriteReply\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12\x10\n" +
@@ -235,14 +246,11 @@ func file_proto_replication_proto_rawDescGZIP() []byte {
 	return file_proto_replication_proto_rawDescData
 }
 
-var (
-	file_proto_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-	file_proto_replication_proto_goTypes  = []any{
-		(*WriteRequest)(nil), // 0: expanse.replication.v1.WriteRequest
-		(*WriteReply)(nil),   // 1: expanse.replication.v1.WriteReply
-	}
-)
-
+var file_proto_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_proto_replication_proto_goTypes = []any{
+	(*WriteRequest)(nil), // 0: expanse.replication.v1.WriteRequest
+	(*WriteReply)(nil),   // 1: expanse.replication.v1.WriteReply
+}
 var file_proto_replication_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
 	0, // [0:0] is the sub-list for method input_type

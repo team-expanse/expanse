@@ -35,9 +35,11 @@ type Lease interface {
 	Valid() bool
 }
 
-// LocalWriter is the primary's own durable replica (step 4). *localwrite.Writer satisfies it.
+// LocalWriter is the primary's own durable replica (step 4, plus the
+// flush marker's fsync). *localwrite.Writer satisfies it.
 type LocalWriter interface {
 	WriteAt(p []byte, off int64) error
+	Flush() error
 }
 
 // DefaultStaleTimeout is the per-replica reply timeout (§9): after this,
@@ -136,24 +138,45 @@ func (c *Coordinator) markStale(st *replicaState) {
 // demand it, and replication throughput is dominated by the secondaries
 // applying in parallel anyway.
 func (c *Coordinator) Write(data []byte, off int64) error {
+	return c.replicate(func(seq uint64) protocol.WriteOp {
+		return protocol.WriteOp{Seq: seq, Offset: uint64(off), Data: data, CRC: protocol.CRC32C(data)}
+	}, func() error { return c.local.WriteAt(data, off) }, "exvol.write")
+}
+
+// Flush is a durability marker (§4.4): fsync the local replica, then
+// fan-out a flush op — a flush is not complete until quorum acks it
+// (same quorum rule as a write; filesystems depend on this for
+// journaling correctness). Consumes a sequence number so R2 stays
+// gapless; secondaries fsync instead of writing data.
+func (c *Coordinator) Flush() error {
+	return c.replicate(func(seq uint64) protocol.WriteOp {
+		return protocol.WriteOp{Seq: seq, Flush: true}
+	}, c.local.Flush, "exvol.flush")
+}
+
+// replicate runs one op through §4.3 steps 1-8: lease gate, sequence,
+// local durable apply, fan-out, quorum ack. makeOp builds the wire op
+// from the assigned sequence; applyLocal is the primary's own durable
+// step (completed BEFORE fan-out); opName labels errors.
+func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal func() error, opName string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Step 1: lease gate. Immediate EIO, no queueing.
 	if c.lease != nil && !c.lease.Valid() {
-		return experrors.New(experrors.KindInternal, "exvol.write", "EIO: volume lease lost")
+		return experrors.New(experrors.KindInternal, opName, "EIO: volume lease lost")
 	}
 
 	// Step 2: sequence number (monotonic, never reused).
 	seq, err := c.p.NextSeq()
 	if err != nil {
-		return experrors.New(experrors.KindInternal, "exvol.write", "EIO: volume lease lost")
+		return experrors.New(experrors.KindInternal, opName, "EIO: volume lease lost")
 	}
 
 	// Step 3+4: local durable write BEFORE fan-out.
-	op := protocol.WriteOp{Seq: seq, Offset: uint64(off), Data: data, CRC: protocol.CRC32C(data)}
-	if err := c.local.WriteAt(data, off); err != nil {
-		return experrors.Wrap(err, experrors.KindInternal, "exvol.write", "local replica write failed")
+	op := makeOp(seq)
+	if err := applyLocal(); err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, opName, "local replica write failed")
 	}
 
 	// Step 5: fan-out to live secondaries. First drain pumps' pending
@@ -226,8 +249,8 @@ func (c *Coordinator) Write(data []byte, off int64) error {
 	if c.p.ShouldAck(durable) {
 		return nil
 	}
-	return experrors.New(experrors.KindUnavailable, "exvol.write",
-		fmt.Sprintf("write not quorum-durable: %d of %d replicas (quorum %d)", durable, c.p.Replication, c.p.Quorum()))
+	return experrors.New(experrors.KindUnavailable, opName,
+		fmt.Sprintf("%s not quorum-durable: %d of %d replicas (quorum %d)", opName, durable, c.p.Replication, c.p.Quorum()))
 }
 
 // drainResults consumes ALL pending pump output without blocking

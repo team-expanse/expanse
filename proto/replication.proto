@@ -18,6 +18,10 @@ message WriteRequest {
   uint64 offset = 3;
   bytes data = 4;
   uint32 crc32c = 5;
+  // flush is a durability marker (§4.4: a device flush must fsync all
+  // quorum replicas before returning). It consumes a sequence number
+  // (keeping R2's gapless property) but carries no data.
+  bool flush = 6;
 }
 
 // WriteReply is the secondary's response (§4.3 step 6e / T04 Reply).

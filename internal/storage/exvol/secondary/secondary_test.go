@@ -219,3 +219,5 @@ type failingWriter struct{}
 func (failingWriter) WriteAt(p []byte, off int64) error {
 	return net.ErrClosed
 }
+
+func (failingWriter) Flush() error { return net.ErrClosed }

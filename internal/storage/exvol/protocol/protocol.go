@@ -31,6 +31,11 @@ type WriteOp struct {
 	Offset uint64
 	Data   []byte
 	CRC    uint32 // crc32c(Data)
+
+	// Flush is a durability marker (§4.4): fsync the local replica,
+	// ack through the normal quorum machinery, write no data. It
+	// consumes a sequence number so R2 stays gapless.
+	Flush bool
 }
 
 // ValidCRC reports whether the op's CRC matches its payload.

@@ -24,10 +24,11 @@ import (
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 )
 
-// LocalWriter is the secondary's durable local replica (step 6c).
-// *localwrite.Writer satisfies it.
+// LocalWriter is the secondary's durable local replica (step 6c, plus
+// the flush marker's fsync). *localwrite.Writer satisfies it.
 type LocalWriter interface {
 	WriteAt(p []byte, off int64) error
+	Flush() error
 }
 
 // ResyncEvent reports one resync trigger (step 6b / R3): the secondary
@@ -55,7 +56,14 @@ func New(nodeID string, size int, w LocalWriter) *Secondary {
 		events: make(chan ResyncEvent, 64),
 	}
 	s.proto = protocol.NewSecondaryWithApply(nodeID, size, func(op protocol.WriteOp) error {
-		if err := w.WriteAt(op.Data, int64(op.Offset)); err != nil {
+		var err error
+		if op.Flush {
+			// Durability marker (§4.4): fsync, write nothing.
+			err = w.Flush()
+		} else {
+			err = w.WriteAt(op.Data, int64(op.Offset))
+		}
+		if err != nil {
 			return experrors.Wrap(err, experrors.KindInternal, "exvol.secondary", "local replica write failed")
 		}
 		return nil

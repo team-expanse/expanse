@@ -85,6 +85,7 @@ func (s *Server) handleConn(nc net.Conn) {
 				Offset: req.GetOffset(),
 				Data:   req.GetData(),
 				CRC:    req.GetCrc32C(),
+				Flush:  req.GetFlush(),
 			})
 			b, err := proto.Marshal(replyToPB(reply))
 			if err != nil {
@@ -179,6 +180,7 @@ func (c *Conn) Send(volID string, op protocol.WriteOp) error {
 		Offset: op.Offset,
 		Data:   op.Data,
 		Crc32C: op.CRC,
+		Flush:  op.Flush,
 	})
 	if err != nil {
 		return err
