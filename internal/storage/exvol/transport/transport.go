@@ -49,6 +49,7 @@ const (
 	msgResyncAck    = 4
 	msgQuerySeq     = 5
 	msgFetchOps     = 6
+	msgError        = 7 // handler-level error reply; the conn stays up
 	msgListSnaps    = 7
 	msgAdoptSeq     = 8
 

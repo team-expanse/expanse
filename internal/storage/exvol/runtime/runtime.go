@@ -118,7 +118,10 @@ type Runtime struct {
 	zvolOf    map[string]string // volID → local zvol path
 	lastSnap  map[string]time.Time
 	resyncing map[string]int // node ID → in-flight resyncs (cap 2 per node)
-	recv      map[string]*resyncRecv
+
+	convMu       sync.Mutex
+	convInFlight bool // background replica-convergence run in flight
+	recv         map[string]*resyncRecv
 }
 
 type volPrimary struct {
@@ -266,9 +269,13 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 					r.opts.Logger.Warn("primary ensure failed", "vol", id, "err", err)
 				} else {
 					r.reportSequence(ctx, spec.ID, status)
-					r.adoptNewReplicas(ctx, spec, status, zvolPath)
 					r.periodicSnapshot(id, zvolPath)
-					r.resyncStale(ctx, spec, status, zvolPath)
+					// Replica convergence (adopt + resync) dials peers
+					// (up to ~12s of timeouts when a replica is down)
+					// and streams full images — never inline in the
+					// reconcile loop: a stalled dial must not freeze
+					// demotion checks or every other volume's tick.
+					r.convergeReplicas(ctx, spec, status, zvolPath)
 				}
 			}
 			if status.Primary != r.opts.NodeID {
@@ -619,7 +626,11 @@ func (r *Runtime) ensureServerLocked() error {
 		return err
 	}
 	r.srv = transport.NewServer(ln, func(volID string) (transport.Handler, error) {
+		// Runs on the server's connection goroutines: the secs map is
+		// rewritten by stopAll — read under r.mu.
+		r.mu.Lock()
 		sec, ok := r.secs[volID]
+		r.mu.Unlock()
 		if !ok {
 			return nil, experrors.New(experrors.KindNotFound, "exvol.runtime", "no such volume: "+volID)
 		}
@@ -766,13 +777,14 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	// probed op logs are. A fresh volume probes back 0 everywhere and
 	// resumes at 0.
 	startSeq := status.Sequence
+	var recRes recovery.Result
 	if status.ManualRecovered {
 		// §9 via T15: the operator chose this branch; adopt the
 		// recorded sequence without re-running automatic recovery
 		// (it would re-detect the divergence we were told to accept).
 		r.opts.Logger.Info("manual recovery: adopting branch as primary", "vol", spec.ID, "seq", startSeq)
 	} else {
-		startSeq, err = r.recoverVol(ctx, spec.ID, w, conns)
+		recRes, startSeq, err = r.recoverVol(ctx, spec.ID, w, conns)
 		if err != nil {
 			w.Close()
 			r.lm.Release(ctx, held)
@@ -780,9 +792,19 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 				cn.Close()
 			}
 			var div *recovery.DivergedError
+			var unfill *recovery.UnfillableError
 			if errors.As(err, &div) {
 				// §9: refuse automatic recovery, preserve all copies,
 				// hand the decision to an operator.
+				r.markDiverged(ctx, spec.ID)
+				return err
+			}
+			if errors.As(err, &unfill) {
+				// An op some replica CLAIMS but nobody can serve
+				// honestly is suspected data loss — retrying is the
+				// livelock the VM runs demonstrated. Preserve copies,
+				// stop the automatic loop, involve an operator.
+				r.opts.Logger.Error("recovery: unfillable op — claimed durability is missing; manual recovery required", "vol", spec.ID, "seq", unfill.Seq, "err", unfill.Err)
 				r.markDiverged(ctx, spec.ID)
 				return err
 			}
@@ -794,6 +816,15 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 		reps = append(reps, primary.Replica{NodeID: nodeID, Sender: transport.NewSender(conn, 0, 0)})
 	}
 	coord := primary.NewAt(spec.ID, spec.Replication, w, reps, held, 5*time.Second, startSeq)
+	// Recovery's stale marks (unreachable replicas §4.3 4d, and 4c
+	// targets that could not be leveled) MUST outlive recovery: without
+	// them the coordinator counts a replica whose data never arrived as
+	// quorum — the resync that repairs it never triggers, and the hole
+	// persists forever. A node still crashed (not in reps) is picked up
+	// by the adopt path (adopt → MarkStale → resync) when it returns.
+	for _, staleID := range recRes.Stale {
+		coord.MarkStale(staleID)
+	}
 	dev := device.New(spec.ID, int64(spec.SizeBytes), w, coord, held)
 
 	sock := fmt.Sprintf("%s/nbd-%s.sock", r.opts.DataDir, spec.ID)
@@ -863,7 +894,7 @@ func (r *Runtime) clearManualRecovered(ctx context.Context, volID string) {
 // the seq the new primary resumes at (step 5). It returns a
 // *recovery.DivergedError when the branches have diverged (§9) — the
 // caller must NOT serve and must preserve all copies.
-func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Writer, conns map[string]*transport.Conn) (uint64, error) {
+func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Writer, conns map[string]*transport.Conn) (recovery.Result, uint64, error) {
 	probes := make([]recovery.Probe, 0, len(conns)+1)
 	for nodeID, conn := range conns {
 		nodeID, conn := nodeID, conn
@@ -905,7 +936,37 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 	// may have elected THIS node. Before serving, pull every op the
 	// local copy lacks from a reachable holder (mirror of 4b).
 	localLast := r.localLastSeq(volID)
-	res, err := recovery.Recover(ctx, probes,
+	// selfFetch re-reads ops from THIS node's durable copy for 4c
+	// leveling: claims from the local oplog, bytes via the writer.
+	selfFetch := func(_ context.Context, from, to uint64) ([]protocol.WriteOp, error) {
+		var log map[uint64]secondary.OpRecord
+		if sec := r.secOf(volID); sec != nil {
+			log = sec.OpLog()
+		} else {
+			log = map[uint64]secondary.OpRecord{}
+		}
+		ops := make([]protocol.WriteOp, 0, to-from)
+		for seq := from + 1; seq <= to; seq++ {
+			rec, ok := log[seq]
+			if !ok {
+				return nil, experrors.New(experrors.KindUnavailable, "exvol.recoverVol.selfFetch",
+					fmt.Sprintf("op %d not in local oplog (filled by pull, not logged) — target must resync", seq))
+			}
+			op := protocol.WriteOp{Seq: seq, Offset: uint64(rec.Offset), CRC: rec.CRC}
+			if rec.Length > 0 {
+				buf := make([]byte, rec.Length)
+				if _, err := w.ReadAt(buf, int64(rec.Offset)); err != nil {
+					return nil, experrors.Wrap(err, experrors.KindInternal, "exvol.recoverVol.selfFetch", "self re-read")
+				}
+				op.Data = buf
+			} else {
+				op.Flush = true
+			}
+			ops = append(ops, op)
+		}
+		return ops, nil
+	}
+	res, err := recovery.Recover(ctx, probes, selfFetch,
 		func(_ context.Context, op protocol.WriteOp) error { // 4b
 			if op.Flush {
 				return w.Flush()
@@ -930,47 +991,41 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 			return nil
 		})
 	if err != nil {
-		return 0, err
+		return recovery.Result{}, 0, err
 	}
 	r.opts.Logger.Info("volume recovered", "vol", volID,
 		"primary", res.NewPrimaryID, "seq", res.MaxSeq, "pulled", res.Pulled, "stale", res.Stale)
 	// Fill the local copy (see above) before the caller resumes serving.
 	if res.MaxSeq > localLast {
+		byID := map[string]*recovery.Probe{}
+		for i := range probes {
+			byID[probes[i].NodeID] = &probes[i]
+		}
 		for seq := localLast + 1; seq <= res.MaxSeq; seq++ {
-			var holder *recovery.Probe
-			for i := range probes {
-				if probes[i].Reachable {
-					if _, ok := probes[i].CRCs[seq]; ok {
-						holder = &probes[i]
-						break
-					}
-				}
-			}
-			if holder == nil {
-				return res.MaxSeq, fmt.Errorf("op %d not held by any reachable replica", seq)
-			}
-			ops, err := holder.FetchOps(ctx, seq-1, seq)
+			// Honest-holder rule (mirror of 4b): try claimants in turn,
+			// CRC-verifying bytes against each holder's own claim; a
+			// holder that fails or fabricates is skipped, not fatal —
+			// but if NOBODY can serve an op the cluster claims is
+			// durable, that is data loss: refuse to serve (the
+			// fabricated-zeros bug filled the local copy with garbage
+			// and called it recovery).
+			op, err := recovery.FillOne(ctx, probes, seq)
 			if err != nil {
-				return res.MaxSeq, fmt.Errorf("local fill: fetch op %d from %s: %w", seq, holder.NodeID, err)
+				return res, res.MaxSeq, &recovery.UnfillableError{Seq: seq, Err: err}
 			}
-			for _, op := range ops {
-				if op.Seq != seq {
-					continue
-				}
-				if op.Flush {
-					err = w.Flush()
-				} else {
-					err = w.WriteAt(op.Data, int64(op.Offset))
-				}
-				if err != nil {
-					return res.MaxSeq, fmt.Errorf("local fill: apply op %d: %w", seq, err)
-				}
+			if op.Flush {
+				err = w.Flush()
+			} else {
+				err = w.WriteAt(op.Data, int64(op.Offset))
+			}
+			if err != nil {
+				return res, res.MaxSeq, fmt.Errorf("local fill: apply op %d: %w", seq, err)
 			}
 		}
 		r.opts.Logger.Info("local copy filled from survivors", "vol", volID,
 			"from", localLast, "to", res.MaxSeq)
 	}
-	return res.MaxSeq, nil
+	return res, res.MaxSeq, nil
 }
 
 // demoteIfLeaseLost stops the local primary for volID when its volume
@@ -1038,13 +1093,32 @@ func (r *Runtime) secOf(volID string) *secondary.Secondary {
 // markDiverged records §9's NeedsManualRecovery state — automatic
 // recovery is refused and every copy is left exactly as found.
 func (r *Runtime) markDiverged(ctx context.Context, volID string) {
-	status, rev, err := storage.LoadStatus(ctx, r.opts.St, volID)
-	if err != nil {
-		return
+	// The status record is contended (sequence reporters, the
+	// controller); a losing CAS here would silently leave the volume
+	// Healthy and the automatic retry loop alive — retry until it
+	// lands, and say so when it does not.
+	var lastErr error
+	for i := 0; i < 20; i++ {
+		status, rev, err := storage.LoadStatus(ctx, r.opts.St, volID)
+		if err != nil {
+			lastErr = err
+		} else if status.State != storage.StateNeedsManualRecovery {
+			status.State = storage.StateNeedsManualRecovery
+			lastErr = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, status)
+		} else {
+			lastErr = nil
+		}
+		if lastErr == nil {
+			r.opts.Logger.Error("volume diverged — manual recovery required, all copies preserved", "vol", volID)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
-	status.State = storage.StateNeedsManualRecovery
-	_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, status)
-	r.opts.Logger.Error("volume diverged — manual recovery required, all copies preserved", "vol", volID)
+	r.opts.Logger.Error("volume diverged — FAILED to record NeedsManualRecovery", "vol", volID, "err", lastErr)
 }
 
 // dialReplica connects to a node's replication transport with a short
@@ -1150,6 +1224,27 @@ func (r *Runtime) reportSequence(ctx context.Context, volID string, status stora
 			return
 		}
 	}
+}
+
+// convergeReplicas runs adoptNewReplicas + resyncStale in the
+// background, one run at a time per runtime.
+func (r *Runtime) convergeReplicas(ctx context.Context, spec storage.Spec, status storage.Status, zvolPath string) {
+	r.convMu.Lock()
+	if r.convInFlight {
+		r.convMu.Unlock()
+		return
+	}
+	r.convInFlight = true
+	r.convMu.Unlock()
+	go func() {
+		defer func() {
+			r.convMu.Lock()
+			r.convInFlight = false
+			r.convMu.Unlock()
+		}()
+		r.adoptNewReplicas(ctx, spec, status, zvolPath)
+		r.resyncStale(ctx, spec, status, zvolPath)
+	}()
 }
 
 // adoptNewReplicas converges replica rebuilds (T13): a placement node
@@ -1340,9 +1435,11 @@ func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string,
 	}()
 
 	seq := p.coord.LastSeq()
-	if seq == 0 {
-		return fmt.Errorf("volume %s has no writes to resync", volID)
-	}
+	// seq == 0 (fresh volume, nothing written): there is no @resync-0 to
+	// reference — take one anyway and full-send the (empty) zvol. The
+	// old behavior ("has no writes to resync") retried forever, keeping
+	// the replica stale indefinitely on an idle volume (the observed
+	// livelock).
 	if _, err := resync.EnsureSnapshot(ctx, r.zfs, zvolPath, seq, r.opts.SnapshotKeep); err != nil {
 		return fmt.Errorf("resync snapshot: %w", err)
 	}

@@ -165,9 +165,20 @@ func (s *Secondary) Handle(op WriteOp) Reply {
 	}
 
 	if op.Seq == 0 || op.Seq <= s.lastSeq {
-		// Duplicate delivery: already durable. Re-ACK idempotently.
-		if op.Seq > 0 && s.applied[op.Seq].CRC == op.CRC && sameOp(s.applied[op.Seq], op) {
-			return Reply{ACK: true, Seq: s.lastSeq}
+		// Duplicate delivery: already durable, re-ACK idempotently —
+		// but REWRITE the data bytes first. The oplog may claim an op
+		// whose zvol bytes were lost (torn zvol behind honest claims);
+		// recovery's 4c leveling resends are what rebuild them, and
+		// blindly re-ACKing without writing cements the hole. Rewriting
+		// the same bytes is a no-op on a healthy replica.
+		if len(op.Data) > 0 {
+			if s.applyFn != nil {
+				if err := s.applyFn(op); err != nil {
+					return Reply{ACK: false, LastSeq: s.lastSeq, Reason: "re-apply failed: " + err.Error()}
+				}
+			} else {
+				copy(s.Data[op.Offset:], op.Data)
+			}
 		}
 		return Reply{ACK: true, Seq: s.lastSeq}
 	}

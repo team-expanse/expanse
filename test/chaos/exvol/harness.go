@@ -209,8 +209,12 @@ func (c *Cluster) newNode(id, oldRoot string, idx int) *Node {
 
 // nodeLogger silences per-node logs unless the test is verbose.
 func (c *Cluster) nodeLogger(id string) *slog.Logger {
+	lvl := slog.LevelWarn
+	if os.Getenv("EXVOL_HARNESS_DEBUG") != "" {
+		lvl = slog.LevelInfo
+	}
 	h := slog.NewTextHandler(testWriter{t: c.T}, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
+		Level: lvl,
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.Attr{}

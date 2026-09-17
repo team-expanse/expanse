@@ -259,7 +259,8 @@ func TestFailover101211(t *testing.T) {
 
 	var sent []protocol.WriteOp
 	res, err := Recover(ctx, probes,
-		nil, // new primary needs no pulls in this scenario
+		n2.probe(t, volID, true).FetchOps, // the caller's own durable copy (caller = n2 here)
+		nil,                               // new primary needs no pulls in this scenario
 		func(_ context.Context, target string, op protocol.WriteOp) error {
 			sent = append(sent, op)
 			// Deliver over the real transport to the real secondary.
@@ -340,6 +341,7 @@ func TestFailoverPullBack(t *testing.T) {
 		nb.probe(t, volID, true),
 		nc.probe(t, volID, true),
 	},
+		nc.probe(t, volID, true).FetchOps, // the caller's own durable copy (caller = nc)
 		func(_ context.Context, op protocol.WriteOp) error {
 			pulled = append(pulled, op)
 			return na.w.WriteAt(op.Data, int64(op.Offset))
@@ -405,6 +407,7 @@ func TestDivergenceRefused(t *testing.T) {
 		n1.probe(t, volID, true),
 		n2.probe(t, volID, true),
 	},
+		nil, // divergence guard fires before any data movement
 		func(_ context.Context, op protocol.WriteOp) error {
 			applied = append(applied, op)
 			return nil

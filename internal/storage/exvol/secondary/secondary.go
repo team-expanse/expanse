@@ -117,12 +117,19 @@ func (s *Secondary) SetReader(r Reader) {
 }
 
 // New builds a secondary of the given volume size writing through w.
+// w must also expose ReadAt (the durable-copy reader FetchOps serves
+// from) — a secondary without a readable durable copy cannot answer
+// recovery pulls (§4.3 4b), which turns every failover into an
+// UnfillableError. The concrete writer (*localwrite.Writer) does.
 func New(nodeID string, size int, w LocalWriter) *Secondary {
 	s := &Secondary{
 		nodeID: nodeID,
 		size:   size,
 		events: make(chan ResyncEvent, 64),
 		oplog:  map[uint64]OpRecord{},
+	}
+	if r, ok := w.(Reader); ok {
+		s.reader = r
 	}
 	s.proto = protocol.NewSecondaryWithApply(nodeID, size, func(op protocol.WriteOp) error {
 		var err error

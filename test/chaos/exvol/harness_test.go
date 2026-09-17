@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/expanse/expanse/internal/storage"
 )
 
 const recSize = 4096
@@ -152,12 +154,6 @@ func TestRestartedReplicaOplogSurvives(t *testing.T) {
 	// The oplog must exist BEFORE the restart (fsynced at flush).
 	oplog := filepath.Join(c.byID["n2"].Root, "pool", ".oplogs", volID+".oplog")
 	if _, err := os.Stat(oplog); err != nil {
-		filepath.Walk(c.byID["n2"].Root, func(p string, info os.FileInfo, err error) error {
-			if err == nil {
-				t.Logf("n2 tree: %s (%d)", p, info.Size())
-			}
-			return nil
-		})
 		t.Fatalf("n2 oplog missing pre-crash at %s: %v", oplog, err)
 	}
 
@@ -172,4 +168,121 @@ func TestRestartedReplicaOplogSurvives(t *testing.T) {
 		raw, err := os.ReadFile(oplog)
 		return err == nil && bytes.Contains(raw, []byte("\n")) && len(raw) > 0
 	})
+}
+
+// TestTornZvolReplicaIsStaledNotFatal: a replica whose oplog CLAIMS
+// sequences but whose zvol bytes are gone (torn write / lost zvol with
+// surviving oplog — the exact VM failure "fetch op 1 from n3: EOF")
+// must be treated as a DISHONEST HOLDER: excluded from recovery
+// sourcing, staled, and rebuilt via resync — never abort the failover
+// and never serve fabricated zeros.
+func TestTornZvolReplicaIsStaledNotFatal(t *testing.T) {
+	const (
+		volID = "vol-torn"
+		recs  = 4
+	)
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	for i := 1; i < recs; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"n1", "n2", "n3"} {
+		if !c.byID[id].fileHas(t, volID, recs-1) {
+			t.Fatalf("pre-kill: record %d missing on %s", recs, id)
+		}
+	}
+
+	// Tear n2's zvol: the oplog still claims seqs 1..4, but the bytes
+	// are gone. Reading fails honestly; serving zeros is the bug.
+	if err := os.Truncate(c.byID["n2"].zvolFile(volID), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fail over: the new primary's recovery must NOT abort on n2's
+	// dishonesty (the old code flapped: "fetch ops ...: EOF" forever).
+	c.Crash("n1")
+	c.Elect(volID, "n3")
+	waitFor(t, 20*time.Second, "n3 serving as recovered primary", func() bool {
+		return c.writeAcks(volID, recs) == nil
+	})
+
+	// Bring the crashed n1 back: BOTH stale replicas (n1 unreachable,
+	// n2 leveled-fail) must rebuild via resync now that recovery's
+	// stale marks reach the coordinator.
+	c.Restart("n1")
+
+	// The torn replica must be backfilled by resync — not fed the
+	// failover, and not left blocking quorum forever.
+	waitFor(t, 30*time.Second, "n2 torn zvol rebuilt via resync", func() bool {
+		return c.byID["n2"].fileHas(t, volID, recs) && c.byID["n2"].fileHas(t, volID, recs-1)
+	})
+
+	// n1 (crashed through the failover) rebuilds via adopt + resync.
+	waitFor(t, 30*time.Second, "n1 resynced to the new primary's seq", func() bool {
+		return c.byID["n1"].fileHas(t, volID, recs)
+	})
+
+	// Three-way equality restored; writes still acked at quorum.
+	for _, id := range []string{"n1", "n2", "n3"} {
+		for r := 0; r <= recs; r++ {
+			if !c.byID[id].fileHas(t, volID, r) {
+				t.Fatalf("final: record %d wrong on %s", r+1, id)
+			}
+		}
+	}
+}
+
+// TestUnfillableClaimMeansManualRecovery: when a claimed op cannot be
+// served honestly by ANY holder, recovery must stop the automatic
+// retry loop and flag NeedsManualRecovery (suspected data loss of
+// claimed durability) — not flap forever, and never fabricate bytes.
+func TestUnfillableClaimMeansManualRecovery(t *testing.T) {
+	const (
+		volID = "vol-unfillable"
+		recs  = 4
+	)
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+
+	// n2 is down BEFORE the writes: quorum is n1+n3, so n2 has nothing
+	// to give back (it must not be a fallback source).
+	c.Crash("n2")
+	time.Sleep(3 * time.Second) // let the lease lapse; keep n2 fully out
+
+	waitFor(t, 15*time.Second, "first record acked (n1+n3 quorum)", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	for i := 1; i < recs; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c.byID["n2"].fileHas(t, volID, 0) {
+		t.Fatal("n2 was down; it must not hold record 1")
+	}
+
+	// Now destroy n3's zvol too (data gone, oplog still claims 1..4).
+	if err := os.Truncate(c.byID["n3"].zvolFile(volID), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fail over to n2: the only holder of seqs 1..4 is n3, whose bytes
+	// are unreadable — unfillable. n2 was crashed pre-writes; its
+	// restart brings the empty branch node back up.
+	c.Restart("n2")
+	c.Elect(volID, "n2")
+	waitFor(t, 20*time.Second, "volume flagged NeedsManualRecovery", func() bool {
+		return c.Status(volID).State == storage.StateNeedsManualRecovery
+	})
+
+	// And n2 must NOT serve writes on the unfillable branch.
+	if err := c.Write(volID, int64(recs*recSize), recData(recs)); err == nil {
+		t.Fatal("n2 served writes on an unfillable (suspected-loss) branch")
+	}
 }

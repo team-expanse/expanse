@@ -138,7 +138,8 @@ func (s *Server) handleConn(nc net.Conn) {
 			}
 			rep, err := s.queryHandler(req.GetVolId())
 			if err != nil {
-				return
+				replyError(c, err)
+				continue
 			}
 			if b, merr := proto.Marshal(rep); merr == nil {
 				_ = writeFrame(c.w, msgQuerySeq, b)
@@ -155,7 +156,8 @@ func (s *Server) handleConn(nc net.Conn) {
 			}
 			rep, err := s.fetchHandler(req.GetVolId(), req.GetFromSeq(), req.GetToSeq())
 			if err != nil {
-				return
+				replyError(c, err)
+				continue
 			}
 			if b, merr := proto.Marshal(rep); merr == nil {
 				_ = writeFrame(c.w, msgFetchOps, b)
@@ -337,18 +339,47 @@ func (c *Conn) QuerySeq(volID string) (*expb.SeqQueryReply, error) {
 	if err := c.c.w.Flush(); err != nil {
 		return nil, err
 	}
-	typ, payload, err := readFrame(c.c.r)
+	payload, err := c.waitReply(msgQuerySeq)
 	if err != nil {
 		return nil, err
-	}
-	if typ != msgQuerySeq {
-		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, msgQuerySeq)
 	}
 	rep := &expb.SeqQueryReply{}
 	if err := proto.Unmarshal(payload, rep); err != nil {
 		return nil, err
 	}
 	return rep, nil
+}
+
+// replyError answers a request with an msgError frame carrying the
+// handler's error text. The connection stays up: a handler that
+// cannot serve one request (e.g. an oplog record that fails re-read)
+// is not a reason to kill the session — and silently dropping the
+// connection turned honest handler errors into client-side EOFs,
+// which recovery misread as "unreachable" instead of "dishonest
+// holder" (the §4.3 4b/4c flap).
+func replyError(c *conn, err error) {
+	_ = writeFrame(c.w, msgError, []byte(err.Error())) //nolint:errcheck — best-effort reply
+	_ = c.w.Flush()                                    //nolint:errcheck
+}
+
+// waitReply reads one reply frame for a request round-trip. An
+// msgError frame (the server's handler failed but the connection is
+// fine) surfaces as a Go error — NEVER as EOF. The old behavior (drop
+// the connection on handler error) made a replica that could not
+// honestly serve ops look like a network fault, which recovery then
+// misread as "retry later" instead of "this holder is lying".
+func (c *Conn) waitReply(want frameType) ([]byte, error) {
+	typ, payload, err := readFrame(c.c.r)
+	if err != nil {
+		return nil, err
+	}
+	if typ == msgError {
+		return nil, fmt.Errorf("replica: %s", payload)
+	}
+	if typ != want {
+		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, want)
+	}
+	return payload, nil
 }
 
 // FetchOps pulls ops (from, to] from a replica's durable copy (recovery
@@ -364,12 +395,9 @@ func (c *Conn) FetchOps(volID string, from, to uint64) (*expb.FetchOpsReply, err
 	if err := c.c.w.Flush(); err != nil {
 		return nil, err
 	}
-	typ, payload, err := readFrame(c.c.r)
+	payload, err := c.waitReply(msgFetchOps)
 	if err != nil {
 		return nil, err
-	}
-	if typ != msgFetchOps {
-		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, msgFetchOps)
 	}
 	rep := &expb.FetchOpsReply{}
 	if err := proto.Unmarshal(payload, rep); err != nil {
