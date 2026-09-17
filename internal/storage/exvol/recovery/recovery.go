@@ -113,11 +113,18 @@ func Recover(ctx context.Context, probes []Probe, applyToPrimary func(context.Co
 	states := make([]protocol.ReplicaState, len(probes))
 	byID := map[string]*Probe{}
 	for i, p := range probes {
+		ops := map[uint64]protocol.WriteOp{}
+		// Placeholder entries: PlanRecovery only needs to know WHICH
+		// sequences a holder has (the probe's per-seq CRC map from 4a);
+		// the actual bytes are fetched on demand via FetchOps below.
+		for seq := range p.CRCs {
+			ops[seq] = protocol.WriteOp{Seq: seq}
+		}
 		states[i] = protocol.ReplicaState{
 			NodeID:    p.NodeID,
 			LastSeq:   p.LastSeq,
 			Reachable: p.Reachable,
-			Ops:       map[uint64]protocol.WriteOp{}, // ops are fetched on demand
+			Ops:       ops,
 		}
 		byID[p.NodeID] = &probes[i]
 	}

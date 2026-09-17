@@ -356,3 +356,41 @@ func TestOpsDeleteAndMovePrimary(t *testing.T) {
 		t.Fatal("zvol not destroyed via delete op")
 	}
 }
+
+// TestExpiredLeaseReElectsPrimary: a HARD-killed primary never
+// unpublishes its mesh record, so record presence alone cannot mean
+// "alive". Once the node's liveness lease (/leases/node-<id>) has
+// expired, the controller must re-elect (highest-seq rule) even though
+// the record is still there.
+func TestExpiredLeaseReElectsPrimary(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-dead", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	status, _, _ := storage.LoadStatus(ctx, st, "vol-dead")
+	status.Placement[2].Sequence = 11 // n3 highest surviving seq
+	_ = storage.SaveStatus(ctx, st, "vol-dead", status)
+
+	// n1's liveness lease: granted, then expired (hard-kill).
+	expired := []byte(`{"h":"n1","e":-1}`)
+	if _, err := st.Put(ctx, store.Key("/leases/node-n1"), expired); err != nil {
+		t.Fatal(err)
+	}
+
+	var leader atomic.Bool
+	leader.Store(true)
+	c := New(Options{St: st, Pool: "pool", IsLeader: leader.Load, Alert: func(AlertEvent) {}})
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := storage.LoadStatus(ctx, st, "vol-dead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Primary != "n3" {
+		t.Fatalf("primary = %s, want n3 (highest-seq re-election after lease expiry)", got.Primary)
+	}
+	if got.State != storage.StateDegraded {
+		t.Fatalf("state = %s, want Degraded until recovery levels it", got.State)
+	}
+}

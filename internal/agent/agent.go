@@ -172,6 +172,7 @@ type Agent struct {
 	blocks       pb.BlockServiceServer
 	blockCatalog pb.CatalogServiceServer
 	blockCtl     *controller.Controller
+	nodeLease    *lease.Held
 	volrt        *exvolrt.Runtime
 	volctl       *volctlc.Controller
 	blockBridge  *wire.Bridge
@@ -646,6 +647,24 @@ func (a *Agent) Run(ctx context.Context) error {
 	// reconcile: zero capacity means nothing is ever placed here (§4.9).
 	if !witness {
 		go a.recon.Run(ctx)
+	}
+
+	// Node liveness lease (§4.3 machinery): each node holds a
+	// renewable lease for its own ID. The storage controller judges
+	// mesh liveness by its expiry, so a HARD-killed node — which never
+	// gets to unpublish its mesh record — leaves the mesh view when
+	// the lease expires. Renewal is automatic (Held.renewLoop).
+	if a.ctl != nil && a.ctl.store != nil && !witness {
+		lm := lease.NewManager(a.ctl.store, a.cfg.NodeID)
+		if hl, err := lm.TryAcquire(ctx, "node-"+a.cfg.NodeID, 30*time.Second); err != nil {
+			a.logger.Warn("node liveness lease unavailable", "err", err)
+		} else {
+			a.nodeLease = hl
+			go func() {
+				<-ctx.Done()
+				_ = lm.Release(context.Background(), hl)
+			}()
+		}
 	}
 
 	// Exvol volume runtime (Phase 06 T10).

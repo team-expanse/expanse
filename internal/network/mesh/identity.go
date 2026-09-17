@@ -106,6 +106,14 @@ func loadOrCreateKey(path string) (wgtypes.Key, error) {
 				time.Sleep(retryWait)
 				continue
 			}
+			if len(b) == 0 {
+				// Persistently empty: the create raced a hard crash
+				// (durable entry, lost content). No starter is mid-
+				// write (retries exhausted), so the entry is debris —
+				// remove it and fall through to regeneration.
+				_ = os.Remove(path)
+				continue
+			}
 			k, parseErr := wgtypes.ParseKey(string(b))
 			if parseErr != nil {
 				return wgtypes.Key{}, errors.New(errors.KindInternal, "mesh.parseKey",
@@ -138,9 +146,20 @@ func loadOrCreateKey(path string) (wgtypes.Key, error) {
 			}
 			return wgtypes.Key{}, errors.New(errors.KindInternal, "mesh.writeKey", openErr.Error())
 		}
-		if _, wErr := f.WriteString(k.String()); wErr != nil || f.Close() != nil {
+		if _, wErr := f.WriteString(k.String()); wErr != nil || f.Sync() != nil || f.Close() != nil {
 			f.Close()
 			return wgtypes.Key{}, errors.New(errors.KindInternal, "mesh.writeKey", "persisting "+path)
+		}
+		// Crash-consistency: the key is written ONCE and must survive a
+		// hard power loss (qemu quit, kernel panic). The content that
+		// was only in the host's volatile cache is gone on such an
+		// event — the durable directory entry must not be able to
+		// outlive the key bytes (an empty key file wedges the node:
+		// the mesh record keeps the OLD key, the file can never be
+		// parsed again). Fsync the file, then the directory entry.
+		if d, dErr := os.Open(filepath.Dir(path)); dErr == nil {
+			_ = d.Sync()
+			_ = d.Close()
 		}
 		return k, nil
 	}

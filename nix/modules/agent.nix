@@ -67,6 +67,15 @@ in
       description = "Zpool for the node's exvol volume runtime (Phase 06). Empty = storage disabled.";
     };
 
+    raftAdvertise = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = ''Raft transport advertised addr (host:port). Must be
+        stable across reboots: a node that re-joins after a crash with an
+        autodetected (per-boot) address poisons the cluster's leader
+        forwarding for every peer. Empty = daemon default (local IP).'';
+    };
+
     firewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -144,6 +153,7 @@ in
           optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}" +
           optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}" +
           optionalString (cfg.exvolPool != "") " --exvol-pool ${cfg.exvolPool}" +
+          optionalString (cfg.raftAdvertise != "") " --raft-advertise ${cfg.raftAdvertise}" +
           optionalString cfg.firewall " --firewall";
         Restart = "always";
         RestartSec = "5s";

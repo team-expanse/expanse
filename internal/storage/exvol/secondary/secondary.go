@@ -18,6 +18,9 @@
 package secondary
 
 import (
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 
 	experrors "github.com/expanse/expanse/internal/errors"
@@ -64,9 +67,45 @@ type Secondary struct {
 
 	// oplogMu guards oplog/reader separately from s.mu: the apply hook
 	// runs INSIDE proto.Handle while s.mu is held.
-	oplogMu sync.Mutex
-	oplog   map[uint64]OpRecord
-	reader  Reader
+	oplogMu   sync.Mutex
+	oplog     map[uint64]OpRecord
+	reader    Reader
+	oplogFile *os.File // durable append log (nil = memory-only)
+}
+
+// SetOplogStore loads (if present) and opens for append the durable
+// oplog at path. Without it the oplog is memory-only: a daemon restart
+// forgets which sequences the zvol holds, recovery misjudges the
+// replica as empty, and FetchOps cannot serve ops it no longer
+// remembers — failover after a restart then deadlocks (§4.3 4a
+// metadata must survive crashes, not just the data). Records are
+// fsynced on flush markers: the flush fsync is the durability barrier
+// acked to the client, so everything before it (data + these records)
+// is durable at the same moment.
+func (s *Secondary) SetOplogStore(path string) error {
+	s.oplogMu.Lock()
+	defer s.oplogMu.Unlock()
+	data, err := os.ReadFile(path)
+	if err == nil {
+		for _, ln := range strings.Split(string(data), "\n") {
+			var rec OpRecord
+			var seq uint64
+			if ln == "" {
+				continue
+			}
+			if _, err := fmt.Sscanf(ln, "%d %d %d %d", &seq, &rec.Offset, &rec.Length, &rec.CRC); err == nil {
+				s.oplog[seq] = rec
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return experrors.Wrap(err, experrors.KindInternal, "exvol.secondary", "read oplog store")
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "exvol.secondary", "open oplog store")
+	}
+	s.oplogFile = f
+	return nil
 }
 
 // SetReader wires the durable-copy reader used by FetchOps (recovery
@@ -98,6 +137,12 @@ func New(nodeID string, size int, w LocalWriter) *Secondary {
 			// flush consumes a seq but carries no bytes (CRC 0).
 			s.oplogMu.Lock()
 			s.oplog[op.Seq] = OpRecord{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}
+			if s.oplogFile != nil {
+				fmt.Fprintf(s.oplogFile, "%d %d %d %d\n", op.Seq, int64(op.Offset), len(op.Data), op.CRC)
+				if op.Flush {
+					_ = s.oplogFile.Sync()
+				}
+			}
 			s.oplogMu.Unlock()
 		}
 		if err != nil {
@@ -135,6 +180,12 @@ func (s *Secondary) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.proto.Reset()
+	s.oplogMu.Lock()
+	s.oplog = map[uint64]OpRecord{}
+	if s.oplogFile != nil {
+		s.oplogFile.Truncate(0) //nolint:errcheck — a lost truncation is repaired by resync
+	}
+	s.oplogMu.Unlock()
 }
 
 // Events exposes resync triggers (non-blocking for the sender; the
@@ -158,6 +209,9 @@ func (s *Secondary) AdoptResync(seq uint64, full bool) {
 	s.oplogMu.Lock()
 	if full {
 		s.oplog = map[uint64]OpRecord{}
+		if s.oplogFile != nil {
+			s.oplogFile.Truncate(0) //nolint:errcheck — a lost truncation is repaired by resync
+		}
 	}
 	s.oplogMu.Unlock()
 	s.mu.Lock()

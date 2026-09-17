@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
@@ -409,8 +410,9 @@ func (c *Controller) finalizeDelete(ctx context.Context, volID string, spec *sto
 // elected node's runtime acquires the volume lease and runs T11's
 // recovery (steps 4a–5) before serving.
 func (c *Controller) electPrimary(ctx context.Context, volID string, status *storage.Status, rev store.Revision, meshed map[string]bool) {
-	if status.Primary != "" && meshed[status.Primary] {
-		return // healthy primary already elected and meshed
+	if status.Primary != "" && meshed[status.Primary] && !c.volLeaseExpired(ctx, volID) {
+		return // healthy primary: meshed, and its lease is either valid
+		// or not yet acquired (a fresh election is still mid-handshake)
 	}
 	type cand struct {
 		id  string
@@ -438,6 +440,22 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 	if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err == nil {
 		c.log.Info("primary elected", "vol", volID, "primary", status.Primary, "seq", cands[0].seq)
 	}
+}
+
+// volLeaseExpired reports whether the volume's primary lease exists
+// and has lapsed (15s skew allowance, matching meshedNodes). That is
+// the proof the primary died: a rebooted node is meshed again, but its
+// volume lease died with the crash (TTL ≪ boot time) — it must
+// REPROVE itself via re-election and recovery, not silently resume
+// serving a possibly-behind zvol. A MISSING record is NOT expiry: a
+// freshly elected primary may not have acquired its lease yet.
+func (c *Controller) volLeaseExpired(ctx context.Context, volID string) bool {
+	lm := lease.NewManager(c.opts.St, "storage-controller")
+	l, ok, err := lm.Inspect(ctx, "exvol-vol-"+volID)
+	if err != nil || !ok {
+		return false
+	}
+	return time.Now().After(l.ExpiresAt.Add(15 * time.Second))
 }
 
 // enforceReplication alerts when the volume cannot meet its
@@ -544,19 +562,36 @@ func (c *Controller) maybeScrub(ctx context.Context) {
 	}
 }
 
-// meshedNodes lists node IDs with a published mesh record.
+// meshedNodes lists node IDs considered alive for placement and
+// election decisions. A node publishes a mesh record that PERSISTS
+// through a hard kill (qemu quit never unpublishes anything), so the
+// record alone cannot mean "alive". Each node therefore also holds a
+// renewable liveness lease (/leases/node-<id>, §4.3 machinery); a
+// record whose lease has EXPIRED is a dead node. Nodes that publish no
+// lease at all (single-bolt clusters, tests) fall back to the record —
+// the pre-lease semantics.
 func (c *Controller) meshedNodes(ctx context.Context) map[string]bool {
 	out := map[string]bool{}
 	entries, err := c.opts.St.List(ctx, "/nodes/")
 	if err != nil {
 		return out
 	}
+	lm := lease.NewManager(c.opts.St, "storage-controller")
+	now := time.Now()
 	for _, e := range entries {
 		if !strings.HasSuffix(string(e.Key), "/network.wgPublicKey") {
 			continue
 		}
 		id := strings.TrimSuffix(strings.TrimPrefix(string(e.Key), "/nodes/"), "/network.wgPublicKey")
-		out[id] = true
+		alive := true
+		if l, ok, ierr := lm.Inspect(ctx, "node-"+id); ierr == nil && ok {
+			// 15s skew allowance: expiry is judged against the local
+			// clock, the grant was made on the holder's.
+			if now.After(l.ExpiresAt.Add(15 * time.Second)) {
+				alive = false
+			}
+		}
+		out[id] = alive
 	}
 	return out
 }

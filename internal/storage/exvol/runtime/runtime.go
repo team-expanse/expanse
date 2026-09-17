@@ -222,16 +222,26 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 			}
 			if status.Primary == r.opts.NodeID && status.State != storage.StateDeleting &&
 				status.State != storage.StateNeedsManualRecovery {
+				// §4.3 lease-loss demotion: a primary that lost the
+				// volume lease (expired under partition, lost a CAS
+				// race) must stop serving — the new holder may already
+				// be recovering. Serving on would be split brain.
+				r.demoteIfLeaseLost(ctx, spec.ID)
 				if err := r.ensurePrimary(ctx, spec, status, zvolPath, devNode); err != nil {
 					r.opts.Logger.Warn("primary ensure failed", "vol", id, "err", err)
 				} else {
 					r.reportSequence(ctx, spec.ID, status)
-					r.adoptNewReplicas(ctx, spec, status)
+					r.adoptNewReplicas(ctx, spec, status, zvolPath)
 					r.periodicSnapshot(id, zvolPath)
 					r.resyncStale(ctx, spec, status, zvolPath)
 				}
 			}
 			if status.Primary != r.opts.NodeID {
+				// Role changed away from us (re-election after our
+				// crash, operator move): stop the local write path —
+				// still holding the (now invalid) lease would block
+				// the new primary's acquisition for a full TTL.
+				r.stopPrimaryIfServing(spec.ID)
 				r.ensureSecondary(spec.ID, spec, zvolPath, devNode)
 			}
 		}
@@ -534,7 +544,24 @@ func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, dev
 		r.opts.Logger.Warn("local writer open failed", "vol", volID, "err", err)
 		return
 	}
-	r.secs[volID] = secondary.New(r.opts.NodeID, int(spec.SizeBytes), w)
+	sec := secondary.New(r.opts.NodeID, int(spec.SizeBytes), w)
+	// Durable oplog (§4.3 4a): a daemon restart must not forget which
+	// sequences the zvol holds — recovery would misjudge the replica
+	// and FetchOps could not serve ops it no longer remembers (§4.3
+	// failover deadlocks). The log lives INSIDE the pool's volumes
+	// dataset so it shares the zvol's crash domain: whatever txg loss
+	// erased zvol data erases the same records here, keeping the
+	// metadata truthful. Records are fsynced on flush markers (the
+	// client-visible durability barrier).
+	if mp, mpErr := r.zfs.Mountpoint(context.Background(), r.opts.Pool+"/volumes"); mpErr == nil && mp != "" {
+		dir := mp + "/.oplogs"
+		if err := os.MkdirAll(dir, 0o700); err == nil {
+			if err := sec.SetOplogStore(fmt.Sprintf("%s/%s.oplog", dir, volID)); err != nil {
+				r.opts.Logger.Warn("oplog store open failed (memory-only)", "vol", volID, "err", err)
+			}
+		}
+	}
+	r.secs[volID] = sec
 	r.opts.Logger.Info("secondary serving", "vol", volID, "zvol", zvolPath)
 }
 
@@ -659,32 +686,47 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 		r.lm.Release(ctx, held)
 		return err
 	}
-	// Dial every other replica once; the recovery probe and the write
-	// fan-out share the connections.
+	// Dial every other replica; the recovery probe and the write
+	// fan-out share the connections. An unreachable replica does NOT
+	// abort bring-up (§4.3 4d): recovery marks it Stale and serving
+	// proceeds with the reachable quorum; adoptNewReplicas re-dials
+	// and re-admits it when it returns.
 	conns := map[string]*transport.Conn{}
 	for _, p := range status.Placement {
 		if p.NodeID == r.opts.NodeID {
 			continue
 		}
-		conn, err := r.dialReplica(ctx, p.NodeID)
-		if err != nil {
-			w.Close()
-			r.lm.Release(ctx, held)
-			return err
+		conn, derr := r.dialReplica(ctx, p.NodeID)
+		if derr != nil {
+			r.opts.Logger.Warn("replica unreachable; proceeding without it (§4.3 4d)",
+				"vol", spec.ID, "node", p.NodeID, "err", derr)
+			continue
 		}
 		conns[p.NodeID] = conn
 	}
+	if len(conns) == 0 && status.Sequence > 0 {
+		// No replica reachable AND the store claims prior writes: the
+		// resume sequence cannot be verified — do not serve (retrying
+		// next tick risks neither ack-loss nor split-brain).
+		w.Close()
+		r.lm.Release(ctx, held)
+		return fmt.Errorf("no replica reachable; resume seq %d unverifiable", status.Sequence)
+	}
 
-	// §4.3 recovery: a volume with prior writes resumes only after the
-	// failover algorithm has run (4a probes, 4b pulls, 4c leveling,
-	// 4d stale marks). Sequence 0 = freshly created, nothing to recover.
+	// §4.3 recovery: the failover algorithm (4a probes, 4b pulls, 4c
+	// leveling, 4d stale marks) ALWAYS runs before serving. The
+	// store's status.Sequence is written asynchronously and can lag
+	// behind acked writes (or be lost entirely with a hard-killed
+	// primary), so it is NOT a trusted resume point — the replicas'
+	// probed op logs are. A fresh volume probes back 0 everywhere and
+	// resumes at 0.
 	startSeq := status.Sequence
 	if status.ManualRecovered {
 		// §9 via T15: the operator chose this branch; adopt the
 		// recorded sequence without re-running automatic recovery
 		// (it would re-detect the divergence we were told to accept).
 		r.opts.Logger.Info("manual recovery: adopting branch as primary", "vol", spec.ID, "seq", startSeq)
-	} else if startSeq > 0 {
+	} else {
 		startSeq, err = r.recoverVol(ctx, spec.ID, w, conns)
 		if err != nil {
 			w.Close()
@@ -786,6 +828,13 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 			},
 		})
 	}
+	// The CALLING node's own durable copy may be behind the survivors:
+	// it acked ops under the old primary, but a restart (or the §4.3
+	// re-election itself) can leave its zvol missing ops the probes
+	// report. Recovery 4b only fills the ELECTED node — the controller
+	// may have elected THIS node. Before serving, pull every op the
+	// local copy lacks from a reachable holder (mirror of 4b).
+	localLast := r.localLastSeq(volID)
 	res, err := recovery.Recover(ctx, probes,
 		func(_ context.Context, op protocol.WriteOp) error { // 4b
 			if op.Flush {
@@ -815,7 +864,105 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 	}
 	r.opts.Logger.Info("volume recovered", "vol", volID,
 		"primary", res.NewPrimaryID, "seq", res.MaxSeq, "pulled", res.Pulled, "stale", res.Stale)
+	// Fill the local copy (see above) before the caller resumes serving.
+	if res.MaxSeq > localLast {
+		for seq := localLast + 1; seq <= res.MaxSeq; seq++ {
+			var holder *recovery.Probe
+			for i := range probes {
+				if probes[i].Reachable {
+					if _, ok := probes[i].CRCs[seq]; ok {
+						holder = &probes[i]
+						break
+					}
+				}
+			}
+			if holder == nil {
+				return res.MaxSeq, fmt.Errorf("op %d not held by any reachable replica", seq)
+			}
+			ops, err := holder.FetchOps(ctx, seq-1, seq)
+			if err != nil {
+				return res.MaxSeq, fmt.Errorf("local fill: fetch op %d from %s: %w", seq, holder.NodeID, err)
+			}
+			for _, op := range ops {
+				if op.Seq != seq {
+					continue
+				}
+				if op.Flush {
+					err = w.Flush()
+				} else {
+					err = w.WriteAt(op.Data, int64(op.Offset))
+				}
+				if err != nil {
+					return res.MaxSeq, fmt.Errorf("local fill: apply op %d: %w", seq, err)
+				}
+			}
+		}
+		r.opts.Logger.Info("local copy filled from survivors", "vol", volID,
+			"from", localLast, "to", res.MaxSeq)
+	}
 	return res.MaxSeq, nil
+}
+
+// demoteIfLeaseLost stops the local primary for volID when its volume
+// lease is no longer valid. Idempotent; a no-op when not serving.
+func (r *Runtime) demoteIfLeaseLost(ctx context.Context, volID string) {
+	r.mu.Lock()
+	p, ok := r.prim[volID]
+	r.mu.Unlock()
+	if !ok || p.held.Valid() {
+		return
+	}
+	r.opts.Logger.Warn("volume lease lost — demoting primary (§4.3)", "vol", volID)
+	r.stopPrimary(volID)
+}
+
+// stopPrimaryIfServing stops the local primary when the store no
+// longer names this node as the volume's primary (idempotent).
+func (r *Runtime) stopPrimaryIfServing(volID string) {
+	r.mu.Lock()
+	_, serving := r.prim[volID]
+	r.mu.Unlock()
+	if serving {
+		r.opts.Logger.Warn("demoting primary: no longer the elected primary (§4.3)", "vol", volID)
+		r.stopPrimary(volID)
+	}
+}
+
+// stopPrimary tears down the local write path for volID (lease lost,
+// role change); the next reconcile tick re-evaluates the role.
+func (r *Runtime) stopPrimary(volID string) {
+	r.mu.Lock()
+	p, ok := r.prim[volID]
+	if ok {
+		delete(r.prim, volID)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	p.nsrv.Close()
+	p.held.Abandon()
+	p.writer.Close()
+	for _, cn := range p.conns {
+		cn.Close()
+	}
+}
+
+// localLastSeq is the calling node's own durable-copy last sequence for
+// volID (its secondary's oplog view), 0 when it holds no replica.
+func (r *Runtime) localLastSeq(volID string) uint64 {
+	sec := r.secOf(volID)
+	if sec == nil {
+		return 0
+	}
+	return sec.LastSeq()
+}
+
+// secOf returns the local secondary for volID, if this node holds one.
+func (r *Runtime) secOf(volID string) *secondary.Secondary {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.secs[volID]
 }
 
 // markDiverged records §9's NeedsManualRecovery state — automatic
@@ -830,9 +977,10 @@ func (r *Runtime) markDiverged(ctx context.Context, volID string) {
 	r.opts.Logger.Error("volume diverged — manual recovery required, all copies preserved", "vol", volID)
 }
 
-// dialReplica connects to a node's replication transport with retries —
-// the peer's secondary comes up on its own reconcile tick, so the
-// primary may be ready before the secondaries are.
+// dialReplica connects to a node's replication transport with a short
+// retry budget. Callers treat failure as "replica unreachable" (§4.3
+// 4d: marked Stale, re-adopted later by adoptNewReplicas) — a long
+// retry here would stall failover recovery on a hard-killed node.
 func (r *Runtime) dialReplica(ctx context.Context, nodeID string) (*transport.Conn, error) {
 	addr, err := r.opts.AddrOf(nodeID)
 	if err != nil {
@@ -840,8 +988,13 @@ func (r *Runtime) dialReplica(ctx context.Context, nodeID string) (*transport.Co
 	}
 	target := fmt.Sprintf("%s:%d", addr, r.opts.Port)
 	var last error
-	for i := 0; i < 30; i++ {
-		cn, derr := transport.Dial(ctx, target)
+	for i := 0; i < 3; i++ {
+		// Per-attempt deadline: a cold WireGuard peer (or a filtered
+		// route) drops SYNs silently, and an unbounded connect would
+		// hang the reconcile loop for the kernel's ~2min timeout.
+		dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		cn, derr := transport.Dial(dctx, target)
+		cancel()
 		if derr == nil {
 			return cn, nil
 		}
@@ -933,7 +1086,7 @@ func (r *Runtime) reportSequence(ctx context.Context, volID string, status stora
 // not yet in the coordinator's fan-out is dialed and admitted — it
 // starts behind, gets marked Stale on its first gap NACK, and T12's
 // resync fills it.
-func (r *Runtime) adoptNewReplicas(ctx context.Context, spec storage.Spec, status storage.Status) {
+func (r *Runtime) adoptNewReplicas(ctx context.Context, spec storage.Spec, status storage.Status, zvolPath string) {
 	r.mu.Lock()
 	p := r.prim[spec.ID]
 	r.mu.Unlock()
@@ -954,7 +1107,17 @@ func (r *Runtime) adoptNewReplicas(ctx context.Context, spec storage.Spec, statu
 			continue
 		}
 		p.coord.AddReplica(pl.NodeID, transport.NewSender(conn, 0, 0))
-		r.opts.Logger.Info("rebuild replica admitted", "vol", spec.ID, "node", pl.NodeID)
+		// §4.3 4d/5: the adopted replica's durable copy is unverified
+		// (a node that lost its zvol rejoins EMPTY). Exclude it from
+		// quorum and backfill from the latest snapshot before it may
+		// ack writes again.
+		p.coord.MarkStale(pl.NodeID)
+		r.opts.Logger.Info("rebuild replica admitted (resyncing)", "vol", spec.ID, "node", pl.NodeID)
+		if r.resyncInFlight(pl.NodeID) < 2 {
+			if rerr := r.runResync(ctx, spec.ID, pl.NodeID, zvolPath, status); rerr != nil {
+				r.opts.Logger.Warn("adopt resync failed", "vol", spec.ID, "node", pl.NodeID, "err", rerr)
+			}
+		}
 	}
 }
 

@@ -153,6 +153,20 @@ func (c *Coordinator) AddReplica(nodeID string, snd *transport.Sender) {
 	c.startReplica(st)
 }
 
+// MarkStale excludes nodeID from quorum accounting and fan-out until
+// it is resynced and re-admitted (§4.3 4d). Used when a replica is
+// adopted whose durable copy may be missing history — e.g. a node that
+// crashed, lost its zvol, and rejoined: its sender starts at seq 0,
+// and acking quorum writes without the earlier ops would violate
+// durability (the ack quorum must be replicas that HOLD the history).
+func (c *Coordinator) MarkStale(nodeID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if st, ok := c.replicas[nodeID]; ok {
+		c.markStale(st)
+	}
+}
+
 // markStale excludes a replica from quorum accounting and fan-out (§9)
 // and closes its connection so any blocked pump unblocks.
 func (c *Coordinator) markStale(st *replicaState) {

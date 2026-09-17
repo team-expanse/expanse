@@ -130,6 +130,19 @@ func execErr(ctx context.Context, op, name string, err error, stderr string) err
 // CreateZvol creates a zvol of the given size (bytes). Default exvol
 // properties (§4.5) are applied first; props overrides them per storage
 // class.
+// Mountpoint returns the mountpoint of a dataset ("" when unmounted).
+func (e *Exec) Mountpoint(ctx context.Context, dataset string) (string, error) {
+	out, err := e.run(ctx, "get", dataset, "get", "-H", "-o", "value", "mountpoint", dataset)
+	if err != nil {
+		return "", err
+	}
+	mp := strings.TrimSpace(string(out))
+	if mp == "-" || mp == "none" {
+		return "", nil
+	}
+	return mp, nil
+}
+
 func (e *Exec) CreateZvol(ctx context.Context, name string, size uint64, props map[string]string) error {
 	merged := make(map[string]string, len(DefaultZvolProps)+len(props))
 	for k, v := range DefaultZvolProps {
