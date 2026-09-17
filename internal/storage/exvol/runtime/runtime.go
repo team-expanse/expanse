@@ -1505,8 +1505,23 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 		err := <-rp.done
 		r.reopenLocalDevice(volID)
 		if err != nil {
-			if rp.stderr != nil && rp.stderr.Len() > 0 {
-				r.opts.Logger.Warn("zfs receive failed", "vol", volID, "stderr", rp.stderr.String())
+			std := ""
+			if rp.stderr != nil {
+				std = rp.stderr.String()
+			}
+			if strings.Contains(std, "destination has snapshots") {
+				// A FULL stream requires a snapshot-free destination —
+				// zfs refuses to overwrite snapshot history. The source
+				// full-sent precisely because none of OUR @resync-*
+				// snapshots matched its list, so they are worthless as
+				// common ancestors: destroy them and let the source's
+				// convergence retry succeed. (Non-resync snapshots would
+				// still block — the receive then keeps failing loudly;
+				// wiping a user snapshot here would be data loss.)
+				r.destroyResyncSnaps(volID)
+			}
+			if std != "" {
+				r.opts.Logger.Warn("zfs receive failed", "vol", volID, "stderr", std)
 			}
 			return nil, fmt.Errorf("zfs receive: %w", err)
 		}
@@ -1514,6 +1529,32 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 	ack := make([]byte, 8)
 	binary.BigEndian.PutUint64(ack, uint64(count))
 	return ack, nil
+}
+
+// destroyResyncSnaps clears this node's @resync-* snapshots for volID
+// (the full-stream-receive precondition; see receiveChunk).
+func (r *Runtime) destroyResyncSnaps(volID string) {
+	r.mu.Lock()
+	zp := r.zvolOf[volID]
+	r.mu.Unlock()
+	if zp == "" {
+		return
+	}
+	ctx := context.Background()
+	snaps, err := r.zfs.ListSnapshots(ctx, zp)
+	if err != nil {
+		r.opts.Logger.Warn("resync snap destroy: list failed", "vol", volID, "err", err)
+		return
+	}
+	for _, s := range snaps {
+		if _, ok := resync.ParseSeq(s); !ok {
+			continue
+		}
+		if err := r.zfs.DestroySnapshot(ctx, zp, s); err != nil {
+			r.opts.Logger.Warn("resync snap destroy failed", "vol", volID, "snap", s, "err", err)
+		}
+	}
+	r.opts.Logger.Info("destroyed local resync snapshots for full-stream receive", "vol", volID)
 }
 
 // quiesceLocalDevice closes this node's local writer for volID around
