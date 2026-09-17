@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 	expb "github.com/expanse/expanse/proto"
@@ -221,6 +222,11 @@ type conn struct {
 	nc net.Conn
 	r  *bufio.Reader
 	w  *bufio.Writer
+	// wmu serializes frame writes: the pump owns steady-state
+	// traffic, but recovery, resync and the watchdog also submit on
+	// (separate or shared) connections — a concurrent Close must not
+	// corrupt an in-flight frame's bufio state.
+	wmu sync.Mutex
 }
 
 // Conn is a client connection to a secondary. Requests are pipelined:
@@ -282,7 +288,10 @@ func (c *Conn) Send(volID string, op protocol.WriteOp) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFrame(c.c.w, msgWriteRequest, b); err != nil {
+	c.c.wmu.Lock()
+	err = writeFrame(c.c.w, msgWriteRequest, b)
+	c.c.wmu.Unlock()
+	if err != nil {
 		return err
 	}
 	return c.c.w.Flush()
@@ -310,7 +319,10 @@ func (c *Conn) SendResyncChunk(chunk []byte) ([]byte, error) {
 	if c.throttle != nil {
 		c.throttle.Wait(len(chunk))
 	}
-	if err := writeFrame(c.c.w, msgResyncChunk, chunk); err != nil {
+	c.c.wmu.Lock()
+	err := writeFrame(c.c.w, msgResyncChunk, chunk)
+	c.c.wmu.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	if err := c.c.w.Flush(); err != nil {
@@ -333,7 +345,10 @@ func (c *Conn) QuerySeq(volID string) (*expb.SeqQueryReply, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := writeFrame(c.c.w, msgQuerySeq, b); err != nil {
+	c.c.wmu.Lock()
+	err = writeFrame(c.c.w, msgQuerySeq, b)
+	c.c.wmu.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	if err := c.c.w.Flush(); err != nil {
@@ -389,7 +404,10 @@ func (c *Conn) FetchOps(volID string, from, to uint64) (*expb.FetchOpsReply, err
 	if err != nil {
 		return nil, err
 	}
-	if err := writeFrame(c.c.w, msgFetchOps, b); err != nil {
+	c.c.wmu.Lock()
+	err = writeFrame(c.c.w, msgFetchOps, b)
+	c.c.wmu.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	if err := c.c.w.Flush(); err != nil {
@@ -413,7 +431,10 @@ func (c *Conn) ListSnaps(volID string) (*expb.SnapListReply, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := writeFrame(c.c.w, msgListSnaps, b); err != nil {
+	c.c.wmu.Lock()
+	err = writeFrame(c.c.w, msgListSnaps, b)
+	c.c.wmu.Unlock()
+	if err != nil {
 		return nil, err
 	}
 	if err := c.c.w.Flush(); err != nil {
@@ -440,7 +461,10 @@ func (c *Conn) AdoptSeq(volID string, seq uint64, full bool) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFrame(c.c.w, msgAdoptSeq, b); err != nil {
+	c.c.wmu.Lock()
+	err = writeFrame(c.c.w, msgAdoptSeq, b)
+	c.c.wmu.Unlock()
+	if err != nil {
 		return err
 	}
 	if err := c.c.w.Flush(); err != nil {

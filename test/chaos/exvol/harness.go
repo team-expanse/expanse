@@ -25,6 +25,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,9 +57,10 @@ type Cluster struct {
 	St  *boltstore.Store
 	Ctx context.Context // cluster-wide context (nil → Background)
 
-	Nodes []*Node
-	byID  map[string]*Node
-	port  int
+	Nodes   []*Node
+	byID    map[string]*Node
+	logSink *testWriter
+	port    int
 }
 
 // NewCluster brings up nodes reconciling on a fast tick. One shared
@@ -114,6 +116,11 @@ func (c *Cluster) Node(id string) *Node { return c.byID[id] }
 
 // Stop cancels every node (daemon exit — leases expire, not yank).
 func (c *Cluster) Stop() {
+	if c.logSink != nil {
+		c.logSink.mu.Lock()
+		c.logSink.closed = true
+		c.logSink.mu.Unlock()
+	}
 	for _, n := range c.Nodes {
 		c.stopNode(n)
 	}
@@ -213,7 +220,10 @@ func (c *Cluster) nodeLogger(id string) *slog.Logger {
 	if os.Getenv("EXVOL_HARNESS_DEBUG") != "" {
 		lvl = slog.LevelInfo
 	}
-	h := slog.NewTextHandler(testWriter{t: c.T}, &slog.HandlerOptions{
+	if c.logSink == nil {
+		c.logSink = &testWriter{t: c.T}
+	}
+	h := slog.NewTextHandler(c.logSink, &slog.HandlerOptions{
 		Level: lvl,
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
@@ -225,9 +235,22 @@ func (c *Cluster) nodeLogger(id string) *slog.Logger {
 	return slog.New(h).With("node", id)
 }
 
-type testWriter struct{ t *testing.T }
+type testWriter struct {
+	t *testing.T
 
-func (w testWriter) Write(p []byte) (int, error) {
+	mu     sync.Mutex
+	closed bool
+}
+
+func (w *testWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	closed := w.closed
+	w.mu.Unlock()
+	if closed {
+		// The node goroutines outlive the test (a final tick can race
+		// Stop's cleanup); logging into a finished test panics.
+		return len(p), nil
+	}
 	w.t.Logf("%s", p)
 	return len(p), nil
 }

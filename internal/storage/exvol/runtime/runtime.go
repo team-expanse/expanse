@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log/slog"
 	"net"
@@ -125,12 +126,14 @@ type Runtime struct {
 }
 
 type volPrimary struct {
-	coord  *primary.Coordinator
-	dev    *device.ExvolDevice
-	nsrv   *device.Server
-	held   *lease.Held
-	writer *localwrite.Writer
-	conns  map[string]*transport.Conn
+	coord      *primary.Coordinator
+	dev        *device.ExvolDevice
+	nsrv       *device.Server
+	held       *lease.Held
+	writer     *localwrite.Writer
+	conns      map[string]*transport.Conn
+	lastVerify time.Time
+	verifySeq  uint64 // currency-watchdog rotation cursor (next op to re-check)
 }
 
 // New builds the runtime. Call Run in a goroutine.
@@ -269,6 +272,7 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 					r.opts.Logger.Warn("primary ensure failed", "vol", id, "err", err)
 				} else {
 					r.reportSequence(ctx, spec.ID, status)
+					r.verifyServingCurrent(ctx, spec.ID)
 					r.periodicSnapshot(id, zvolPath)
 					// Replica convergence (adopt + resync) dials peers
 					// (up to ~12s of timeouts when a replica is down)
@@ -1026,6 +1030,113 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 			"from", localLast, "to", res.MaxSeq)
 	}
 	return res, res.MaxSeq, nil
+}
+
+// verifyServingInterval bounds how often the currency watchdog samples
+// the serving primary's own zvol (cheap: one oplog fetch + one re-read).
+const verifyServingInterval = 1 * time.Second
+
+var crc32cTable = crc32.MakeTable(crc32.Castagnoli)
+
+func crc32c(b []byte) uint32 { return crc32.Checksum(b, crc32cTable) }
+
+// verifyServingCurrent is the §4.3 promotion-safety watchdog (T17.3):
+// a serving primary re-checks per tick that its local copy is still
+// current. Storage can lose or tear bytes while reads keep "succeeding"
+// (a truncated zvol reads back zeros), so every verify tick the
+// watchdog re-reads ONE acked op's bytes — rotating through the whole
+// history via the replica's per-op CRC claims — and compares them
+// against the replica's durable record. Only a positive mismatch is
+// evidence (a flaky fetch is not); the response is to step down:
+// re-promotion re-runs recovery, which re-pulls the missing ops from
+// the replica and heals.
+func (r *Runtime) verifyServingCurrent(ctx context.Context, volID string) {
+	r.mu.Lock()
+	p := r.prim[volID]
+	if p == nil || p.coord == nil || p.writer == nil {
+		r.mu.Unlock()
+		return
+	}
+	if time.Since(p.lastVerify) < verifyServingInterval {
+		r.mu.Unlock()
+		return
+	}
+	p.lastVerify = time.Now()
+	cursor := p.verifySeq
+	r.mu.Unlock()
+
+	last := p.coord.LastSeq()
+	if last == 0 {
+		return // nothing acked yet; a fresh volume is current by definition
+	}
+	var conn string
+	for _, id := range p.coord.ReplicaIDs() {
+		if c := p.conns[id]; c != nil {
+			conn = id
+			break
+		}
+	}
+	if conn == "" {
+		return // no live replica to compare against; 4d handles isolation
+	}
+	// NOTE: the pump and the recovery paths own the shared conns; a
+	// transport Conn is single-submitter, so the watchdog dials its own
+	// short-lived connection per verify instead of reusing p.conns.
+	probe, err := r.dialReplica(ctx, conn)
+	if err != nil {
+		return // availability first: a failed dial is not divergence
+	}
+	defer probe.Close()
+	// Pick the next claimed op after the cursor (wrapping): the rotation
+	// walks the ENTIRE acked history over time, not just the hot tail.
+	qrep, err := probe.QuerySeq(volID)
+	if err != nil {
+		return // availability first: a failed probe is not divergence
+	}
+	claims := map[uint64]struct{}{}
+	var minSeq uint64
+	for _, op := range qrep.GetOps() {
+		claims[op.GetSeq()] = struct{}{}
+		if minSeq == 0 || op.GetSeq() < minSeq {
+			minSeq = op.GetSeq()
+		}
+	}
+	seq, ok := cursor+1, false
+	for seq <= last {
+		if _, claimed := claims[seq]; claimed {
+			ok = true
+			break
+		}
+		seq++
+	}
+	if !ok {
+		if minSeq == 0 || minSeq > last {
+			return // replica's log covers nothing comparable
+		}
+		seq, ok = minSeq, true // wrap to the oldest claimed op
+	}
+	p.verifySeq = seq
+
+	frep, err := probe.FetchOps(volID, seq-1, seq)
+	if err != nil || len(frep.GetOps()) == 0 {
+		return // availability first: a failed fetch is not divergence
+	}
+	op := frep.GetOps()[0]
+	if op.GetFlush() || len(op.GetData()) == 0 {
+		return // flush markers carry no bytes to compare
+	}
+	buf := make([]byte, len(op.GetData()))
+	if _, err := p.writer.ReadAt(buf, int64(op.GetOffset())); err != nil {
+		r.opts.Logger.Error("currency watchdog: primary cannot re-read its own zvol — stepping down",
+			"vol", volID, "seq", seq, "err", err)
+		r.stopPrimary(volID)
+		return
+	}
+	if crc32c(buf) != crc32c(op.GetData()) {
+		r.opts.Logger.Error("currency watchdog: primary zvol diverges from the replica's durable record — stepping down for re-recovery",
+			"vol", volID, "seq", seq, "off", op.GetOffset())
+		r.stopPrimary(volID)
+	}
 }
 
 // demoteIfLeaseLost stops the local primary for volID when its volume

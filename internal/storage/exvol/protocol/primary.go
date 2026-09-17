@@ -3,6 +3,7 @@ package protocol
 import (
 	"errors"
 	"fmt"
+	"sync"
 )
 
 // ErrLeaseLost is the EIO cause the primary surfaces after losing its
@@ -23,7 +24,8 @@ type Primary struct {
 	// Replication is the volume's replication factor R (1..5).
 	Replication int
 
-	seq       uint64 // last assigned (monotonic, gapless — R2)
+	mu        sync.Mutex // guards seq/lastAcked: assigned on the client's goroutine, read by the reconcile tick
+	seq       uint64     // last assigned (monotonic, gapless — R2)
 	lastAcked uint64
 }
 
@@ -47,16 +49,27 @@ func (p *Primary) NextSeq() (uint64, error) {
 	if !p.HasLease {
 		return 0, ErrLeaseLost
 	}
+	p.mu.Lock()
 	p.seq++
-	return p.seq, nil
+	seq := p.seq
+	p.mu.Unlock()
+	return seq, nil
 }
 
 // LastAssigned is the highest assigned sequence (for diagnostics and
 // recovery input).
-func (p *Primary) LastAssigned() uint64 { return p.seq }
+func (p *Primary) LastAssigned() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.seq
+}
 
 // LastAcked is the last seq the primary counted at quorum (step 8).
-func (p *Primary) LastAcked() uint64 { return p.lastAcked }
+func (p *Primary) LastAcked() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastAcked
+}
 
 // Quorum is floor(R/2)+1 (§4.3 step 7, R1). R=3 needs 2, R=2 needs 2
 // (both replicas — R6: durability without availability), R=1 needs 1.
@@ -76,6 +89,8 @@ func (p *Primary) ShouldAck(durableCount int) bool {
 
 // RecordAcked advances lastAcked once the client was acked (step 8).
 func (p *Primary) RecordAcked(seq uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if seq > p.lastAcked {
 		p.lastAcked = seq
 	}

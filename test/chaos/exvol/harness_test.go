@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/storage"
+	"github.com/expanse/expanse/internal/store"
 )
 
 const recSize = 4096
@@ -285,4 +287,139 @@ func TestUnfillableClaimMeansManualRecovery(t *testing.T) {
 	if err := c.Write(volID, int64(recs*recSize), recData(recs)); err == nil {
 		t.Fatal("n2 served writes on an unfillable (suspected-loss) branch")
 	}
+}
+
+// revokeLease hands the volume lease to a ghost holder with a
+// far-future expiry — simulating a takeover by a node the current
+// primary cannot see (the fence that must demote a serving primary).
+func revokeLease(c *Cluster, volID, newHolder string) {
+	c.T.Helper()
+	key := store.Key(lease.Prefix + "exvol-vol-" + volID)
+	val, err := lease.EncodeForTest(lease.Lease{
+		Name: "exvol-vol-" + volID, Holder: newHolder,
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		c.T.Fatal(err)
+	}
+	for i := 0; i < 10; i++ { // race the holder's renewals for the CAS
+		cur, gerr := c.St.Get(c.ctx(), key)
+		if gerr != nil {
+			c.T.Fatal(gerr)
+		}
+		if _, err := c.St.CompareAndSwap(c.ctx(), key, cur.Revision, val); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.T.Fatal("could not overwrite the volume lease record")
+}
+
+// TestLeaseRevocationDemotesPrimary (§4.3, T17.3): a serving primary
+// whose volume lease is taken over must stop serving within a tick or
+// two of learning the fact — writes must start failing, not keep
+// acking on a stolen fence (split brain).
+func TestLeaseRevocationDemotesPrimary(t *testing.T) {
+	const (
+		volID = "vol-revoke"
+		recs  = 2
+	)
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	if err := c.writeAcks(volID, recs-1); err != nil {
+		t.Fatal(err)
+	}
+
+	revokeLease(c, volID, "ghost")
+
+	waitFor(t, 10*time.Second, "demoted primary refuses writes", func() bool {
+		return c.Write(volID, int64(recs*recSize), recData(recs)) != nil
+	})
+	// The refusal must persist (the ghost holds the fence for 1h) —
+	// a demote-then-silently-repromote would still be split brain.
+	time.Sleep(2 * time.Second)
+	if err := c.Write(volID, int64(recs*recSize), recData(recs)); err == nil {
+		t.Fatal("primary resumed serving on a revoked lease")
+	}
+}
+
+// TestReElectionDemotesOldPrimary (§4.3, T17.3): when the store's
+// status row moves to a new primary WITHOUT the old one crashing, the
+// old primary must step down (status watchdog) and join as a replica
+// of the new one — both must never serve concurrently.
+func TestReElectionDemotesOldPrimary(t *testing.T) {
+	const (
+		volID = "vol-move"
+		recs  = 2
+	)
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	if err := c.writeAcks(volID, recs-1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pure control-plane re-election: no crash, n1 keeps running.
+	c.Elect(volID, "n2")
+
+	// The new primary must reach serving (n1's step-down releases the
+	// fence within TTL) and the post-move write must be fanned out to
+	// the OLD primary as a replica — proof it rejoined, not split off.
+	waitFor(t, 20*time.Second, "post-move write acked on n2", func() bool {
+		return c.writeAcks(volID, recs) == nil
+	})
+	waitFor(t, 15*time.Second, "old primary rejoined as replica", func() bool {
+		return c.byID["n1"].fileHas(t, volID, recs)
+	})
+}
+
+// TestTornPrimarySelfHeals (§4.3, T17.3): the currency watchdog — a
+// serving primary that can no longer re-read its own acked bytes
+// (torn/zeroed region) must step down; re-promotion re-runs recovery,
+// which re-pulls the missing ops from the replicas and heals the copy
+// WITHOUT any failover.
+func TestTornPrimarySelfHeals(t *testing.T) {
+	const (
+		volID = "vol-selfheal"
+		recs  = 3
+	)
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	for i := 1; i < recs; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Zero the primary's own copy of record recs-1 — the storage fault
+	// that reads back as success (no error, wrong bytes).
+	f, err := os.OpenFile(c.byID["n1"].zvolFile(volID), os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, werr := f.WriteAt(make([]byte, recSize), int64((recs-1)*recSize)); werr != nil {
+		t.Fatal(werr)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Watchdog steps the primary down; re-promotion heals from n2/n3.
+	waitFor(t, 25*time.Second, "primary healed and serving again", func() bool {
+		return c.writeAcks(volID, recs) == nil
+	})
+	waitFor(t, 10*time.Second, "torn bytes restored on the primary", func() bool {
+		return c.byID["n1"].fileHas(t, volID, recs-1)
+	})
 }
