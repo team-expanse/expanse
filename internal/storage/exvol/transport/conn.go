@@ -32,6 +32,11 @@ type Server struct {
 	// op fetches from the durable local copy. Nil → refused.
 	queryHandler func(volID string) (*expb.SeqQueryReply, error)
 	fetchHandler func(volID string, from, to uint64) (*expb.FetchOpsReply, error)
+
+	// Resync-time handlers (§4.3 resync, T12): snapshot listing and
+	// post-resync seq adoption. Nil → refused.
+	snapListHandler func(volID string) (*expb.SnapListReply, error)
+	adoptSeqHandler func(volID string, seq uint64, full bool) error
 }
 
 // SetQueryHandler registers the recovery seq-probe handler.
@@ -42,6 +47,16 @@ func (s *Server) SetQueryHandler(h func(volID string) (*expb.SeqQueryReply, erro
 // SetFetchHandler registers the recovery op-fetch handler.
 func (s *Server) SetFetchHandler(h func(volID string, from, to uint64) (*expb.FetchOpsReply, error)) {
 	s.fetchHandler = h
+}
+
+// SetSnapListHandler registers the resync snapshot-list handler.
+func (s *Server) SetSnapListHandler(h func(volID string) (*expb.SnapListReply, error)) {
+	s.snapListHandler = h
+}
+
+// SetAdoptSeqHandler registers the post-resync seq-adoption handler.
+func (s *Server) SetAdoptSeqHandler(h func(volID string, seq uint64, full bool) error) {
+	s.adoptSeqHandler = h
 }
 
 // NewServer wraps a listener. router resolves a volume ID to its
@@ -146,6 +161,37 @@ func (s *Server) handleConn(nc net.Conn) {
 				_ = writeFrame(c.w, msgFetchOps, b)
 				_ = c.w.Flush()
 			}
+
+		case msgListSnaps:
+			if s.snapListHandler == nil {
+				return // refused on this server
+			}
+			req := &expb.SeqQuery{}
+			if err := proto.Unmarshal(payload, req); err != nil {
+				return
+			}
+			rep, err := s.snapListHandler(req.GetVolId())
+			if err != nil {
+				return
+			}
+			if b, merr := proto.Marshal(rep); merr == nil {
+				_ = writeFrame(c.w, msgListSnaps, b)
+				_ = c.w.Flush()
+			}
+
+		case msgAdoptSeq:
+			if s.adoptSeqHandler == nil {
+				return // refused on this server
+			}
+			req := &expb.AdoptSeqRequest{}
+			if err := proto.Unmarshal(payload, req); err != nil {
+				return
+			}
+			if err := s.adoptSeqHandler(req.GetVolId(), req.GetSeq(), req.GetFull()); err != nil {
+				return
+			}
+			_ = writeFrame(c.w, msgAdoptSeq, nil)
+			_ = c.w.Flush()
 
 		case msgResyncChunk:
 			if s.rawHandler == nil {
@@ -330,6 +376,56 @@ func (c *Conn) FetchOps(volID string, from, to uint64) (*expb.FetchOpsReply, err
 		return nil, err
 	}
 	return rep, nil
+}
+
+// ListSnaps asks a replica for its local snapshot names (resync:
+// common-ancestor discovery).
+func (c *Conn) ListSnaps(volID string) (*expb.SnapListReply, error) {
+	b, err := proto.Marshal(&expb.SeqQuery{VolId: volID})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFrame(c.c.w, msgListSnaps, b); err != nil {
+		return nil, err
+	}
+	if err := c.c.w.Flush(); err != nil {
+		return nil, err
+	}
+	typ, payload, err := readFrame(c.c.r)
+	if err != nil {
+		return nil, err
+	}
+	if typ != msgListSnaps {
+		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, msgListSnaps)
+	}
+	rep := &expb.SnapListReply{}
+	if err := proto.Unmarshal(payload, rep); err != nil {
+		return nil, err
+	}
+	return rep, nil
+}
+
+// AdoptSeq tells a replica its durable state now corresponds to seq
+// after a resync (T12 step 5).
+func (c *Conn) AdoptSeq(volID string, seq uint64, full bool) error {
+	b, err := proto.Marshal(&expb.AdoptSeqRequest{VolId: volID, Seq: seq, Full: full})
+	if err != nil {
+		return err
+	}
+	if err := writeFrame(c.c.w, msgAdoptSeq, b); err != nil {
+		return err
+	}
+	if err := c.c.w.Flush(); err != nil {
+		return err
+	}
+	typ, _, err := readFrame(c.c.r)
+	if err != nil {
+		return err
+	}
+	if typ != msgAdoptSeq {
+		return fmt.Errorf("unexpected frame type %d, want %d", typ, msgAdoptSeq)
+	}
+	return nil
 }
 
 // --- protobuf <-> protocol conversions (single source of truth for the

@@ -149,6 +149,22 @@ func (s *Secondary) emit(e ResyncEvent) {
 	}
 }
 
+// AdoptResync latches the post-resync state (§4.3 resync step 5): the
+// durable copy now corresponds to a snapshot at seq. With full=true the
+// zvol was rebuilt wholesale — the per-seq op records no longer trace
+// to this replica's writes, so they are reset with the image (recovery
+// CRC comparison only uses records both sides still hold).
+func (s *Secondary) AdoptResync(seq uint64, full bool) {
+	s.oplogMu.Lock()
+	if full {
+		s.oplog = map[uint64]OpRecord{}
+	}
+	s.oplogMu.Unlock()
+	s.mu.Lock()
+	s.proto.AdoptSeq(seq)
+	s.mu.Unlock()
+}
+
 // OpLog snapshots this replica's durable op records (recovery 4a).
 func (s *Secondary) OpLog() map[uint64]OpRecord {
 	s.oplogMu.Lock()

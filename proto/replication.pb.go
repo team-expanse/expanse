@@ -479,6 +479,116 @@ func (x *FetchOpsReply) GetOps() []*WriteRequest {
 	return nil
 }
 
+// SnapListReply lists a replica's local snapshot names (T12 resync:
+// common-ancestor discovery).
+type SnapListReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Names         []string               `protobuf:"bytes,1,rep,name=names,proto3" json:"names,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapListReply) Reset() {
+	*x = SnapListReply{}
+	mi := &file_proto_replication_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapListReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapListReply) ProtoMessage() {}
+
+func (x *SnapListReply) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_replication_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapListReply.ProtoReflect.Descriptor instead.
+func (*SnapListReply) Descriptor() ([]byte, []int) {
+	return file_proto_replication_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SnapListReply) GetNames() []string {
+	if x != nil {
+		return x.Names
+	}
+	return nil
+}
+
+// AdoptSeqRequest tells a replica its durable state now corresponds to
+// seq after a resync (T12: the replica resumes inclusion in quorum at
+// that seq). Full=true means the replica was rebuilt wholesale and its
+// per-seq op records were reset with the image.
+type AdoptSeqRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VolId         string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
+	Seq           uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`
+	Full          bool                   `protobuf:"varint,3,opt,name=full,proto3" json:"full,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdoptSeqRequest) Reset() {
+	*x = AdoptSeqRequest{}
+	mi := &file_proto_replication_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdoptSeqRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdoptSeqRequest) ProtoMessage() {}
+
+func (x *AdoptSeqRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_replication_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdoptSeqRequest.ProtoReflect.Descriptor instead.
+func (*AdoptSeqRequest) Descriptor() ([]byte, []int) {
+	return file_proto_replication_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *AdoptSeqRequest) GetVolId() string {
+	if x != nil {
+		return x.VolId
+	}
+	return ""
+}
+
+func (x *AdoptSeqRequest) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *AdoptSeqRequest) GetFull() bool {
+	if x != nil {
+		return x.Full
+	}
+	return false
+}
+
 var File_proto_replication_proto protoreflect.FileDescriptor
 
 const file_proto_replication_proto_rawDesc = "" +
@@ -516,7 +626,13 @@ const file_proto_replication_proto_rawDesc = "" +
 	"\bfrom_seq\x18\x02 \x01(\x04R\afromSeq\x12\x15\n" +
 	"\x06to_seq\x18\x03 \x01(\x04R\x05toSeq\"G\n" +
 	"\rFetchOpsReply\x126\n" +
-	"\x03ops\x18\x01 \x03(\v2$.expanse.replication.v1.WriteRequestR\x03opsB\"Z github.com/expanse/expanse/protob\x06proto3"
+	"\x03ops\x18\x01 \x03(\v2$.expanse.replication.v1.WriteRequestR\x03ops\"%\n" +
+	"\rSnapListReply\x12\x14\n" +
+	"\x05names\x18\x01 \x03(\tR\x05names\"N\n" +
+	"\x0fAdoptSeqRequest\x12\x15\n" +
+	"\x06vol_id\x18\x01 \x01(\tR\x05volId\x12\x10\n" +
+	"\x03seq\x18\x02 \x01(\x04R\x03seq\x12\x12\n" +
+	"\x04full\x18\x03 \x01(\bR\x04fullB\"Z github.com/expanse/expanse/protob\x06proto3"
 
 var (
 	file_proto_replication_proto_rawDescOnce sync.Once
@@ -530,7 +646,7 @@ func file_proto_replication_proto_rawDescGZIP() []byte {
 	return file_proto_replication_proto_rawDescData
 }
 
-var file_proto_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_proto_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_proto_replication_proto_goTypes = []any{
 	(*WriteRequest)(nil),    // 0: expanse.replication.v1.WriteRequest
 	(*WriteReply)(nil),      // 1: expanse.replication.v1.WriteReply
@@ -539,6 +655,8 @@ var file_proto_replication_proto_goTypes = []any{
 	(*SeqQueryReply)(nil),   // 4: expanse.replication.v1.SeqQueryReply
 	(*FetchOpsRequest)(nil), // 5: expanse.replication.v1.FetchOpsRequest
 	(*FetchOpsReply)(nil),   // 6: expanse.replication.v1.FetchOpsReply
+	(*SnapListReply)(nil),   // 7: expanse.replication.v1.SnapListReply
+	(*AdoptSeqRequest)(nil), // 8: expanse.replication.v1.AdoptSeqRequest
 }
 var file_proto_replication_proto_depIdxs = []int32{
 	2, // 0: expanse.replication.v1.SeqQueryReply.ops:type_name -> expanse.replication.v1.SeqInfo
@@ -561,7 +679,7 @@ func file_proto_replication_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_replication_proto_rawDesc), len(file_proto_replication_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

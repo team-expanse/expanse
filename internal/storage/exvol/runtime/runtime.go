@@ -18,12 +18,15 @@ package runtime
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +42,7 @@ import (
 	"github.com/expanse/expanse/internal/storage/exvol/primary"
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 	"github.com/expanse/expanse/internal/storage/exvol/recovery"
+	"github.com/expanse/expanse/internal/storage/exvol/resync"
 	"github.com/expanse/expanse/internal/storage/exvol/secondary"
 	"github.com/expanse/expanse/internal/storage/exvol/transport"
 	"github.com/expanse/expanse/internal/storage/zfs"
@@ -67,6 +71,16 @@ type Options struct {
 	// IsLeader reports whether THIS node holds raft leadership. Only
 	// the leader processes pending volume-creation requests.
 	IsLeader func() bool
+
+	// SnapshotInterval is the periodic @resync-<seq> cadence (§4.3,
+	// G6.6; default 60 s).
+	SnapshotInterval time.Duration
+
+	// SnapshotKeep is the snapshot retention (default 10).
+	SnapshotKeep int
+
+	// ResyncBytesPerSec rate-limits resync streams (default 100 MiB/s).
+	ResyncBytesPerSec int64
 }
 
 // Runtime is one node's volume runtime.
@@ -75,11 +89,15 @@ type Runtime struct {
 	zfs  *zfs.Exec
 	lm   *lease.Manager
 
-	mu       sync.Mutex
-	srv      *transport.Server // shared per-node replication listener
-	secs     map[string]*secondary.Secondary
-	prim     map[string]*volPrimary
-	nbdSlots map[string]string // volID → /dev/nbdN (assigned once)
+	mu        sync.Mutex
+	srv       *transport.Server // shared per-node replication listener
+	secs      map[string]*secondary.Secondary
+	prim      map[string]*volPrimary
+	nbdSlots  map[string]string // volID → /dev/nbdN (assigned once)
+	zvolOf    map[string]string // volID → local zvol path
+	lastSnap  map[string]time.Time
+	resyncing map[string]int // node ID → in-flight resyncs (cap 2 per node)
+	recv      map[string]*resyncRecv
 }
 
 type volPrimary struct {
@@ -99,16 +117,29 @@ func New(opts Options) *Runtime {
 	if opts.LeaseTTL <= 0 {
 		opts.LeaseTTL = 10 * time.Second
 	}
+	if opts.SnapshotInterval <= 0 {
+		opts.SnapshotInterval = 60 * time.Second
+	}
+	if opts.SnapshotKeep <= 0 {
+		opts.SnapshotKeep = resync.DefaultKeep
+	}
+	if opts.ResyncBytesPerSec <= 0 {
+		opts.ResyncBytesPerSec = 100 << 20
+	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
 	return &Runtime{
-		opts:     opts,
-		zfs:      zfs.New(),
-		lm:       lease.NewManager(opts.St, opts.NodeID),
-		secs:     map[string]*secondary.Secondary{},
-		prim:     map[string]*volPrimary{},
-		nbdSlots: map[string]string{},
+		opts:      opts,
+		zfs:       zfs.New(),
+		lm:        lease.NewManager(opts.St, opts.NodeID),
+		secs:      map[string]*secondary.Secondary{},
+		prim:      map[string]*volPrimary{},
+		nbdSlots:  map[string]string{},
+		zvolOf:    map[string]string{},
+		lastSnap:  map[string]time.Time{},
+		resyncing: map[string]int{},
+		recv:      map[string]*resyncRecv{},
 	}
 }
 
@@ -180,6 +211,9 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 				status.State != storage.StateNeedsManualRecovery {
 				if err := r.ensurePrimary(ctx, spec, status, zvolPath, devNode); err != nil {
 					r.opts.Logger.Warn("primary ensure failed", "vol", id, "err", err)
+				} else {
+					r.periodicSnapshot(id, zvolPath)
+					r.resyncStale(ctx, spec, status, zvolPath)
 				}
 			}
 			if status.Primary != r.opts.NodeID {
@@ -327,6 +361,7 @@ func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, dev
 	if _, ok := r.secs[volID]; ok {
 		return
 	}
+	r.zvolOf[volID] = zvolPath
 	if err := r.ensureServerLocked(); err != nil {
 		r.opts.Logger.Warn("replication server unavailable", "err", err)
 		return
@@ -354,9 +389,90 @@ func (r *Runtime) ensureServerLocked() error {
 			return nil, experrors.New(experrors.KindNotFound, "exvol.runtime", "no such volume: "+volID)
 		}
 		return sec.Handler(), nil
-	}, nil, 0)
+	}, r.receiveChunk, 0)
+	r.srv.SetQueryHandler(r.querySeq)
+	r.srv.SetFetchHandler(r.fetchOps)
+	r.srv.SetSnapListHandler(r.listSnaps)
+	r.srv.SetAdoptSeqHandler(r.adoptSeq)
 	go r.srv.Serve() //nolint:errcheck — Close during shutdown is fine
 	return nil
+}
+
+// --- recovery / resync handlers served by THIS node's transport server ---
+
+// querySeq answers a recovery probe (§4.3 step 4a) from the local
+// secondary's op log.
+func (r *Runtime) querySeq(volID string) (*pb.SeqQueryReply, error) {
+	r.mu.Lock()
+	sec := r.secs[volID]
+	r.mu.Unlock()
+	if sec == nil {
+		return nil, experrors.New(experrors.KindNotFound, "exvol.runtime.querySeq", "no such volume: "+volID)
+	}
+	rep := &pb.SeqQueryReply{VolId: volID, LastSeq: sec.LastSeq()}
+	for seq, rec := range sec.OpLog() {
+		rep.Ops = append(rep.Ops, &pb.SeqInfo{Seq: seq, Crc32C: rec.CRC})
+	}
+	return rep, nil
+}
+
+// fetchOps serves recovery op pulls (§4.3 steps 4b/4c) by re-reading
+// this replica's durable copy.
+func (r *Runtime) fetchOps(volID string, from, to uint64) (*pb.FetchOpsReply, error) {
+	r.mu.Lock()
+	sec := r.secs[volID]
+	r.mu.Unlock()
+	if sec == nil {
+		return nil, experrors.New(experrors.KindNotFound, "exvol.runtime.fetchOps", "no such volume: "+volID)
+	}
+	ops, err := sec.FetchOps(from, to)
+	if err != nil {
+		return nil, err
+	}
+	out := &pb.FetchOpsReply{}
+	for _, op := range ops {
+		out.Ops = append(out.Ops, &pb.WriteRequest{
+			VolId: volID, Seq: op.Seq, Offset: op.Offset,
+			Data: op.Data, Crc32C: op.CRC, Flush: op.Flush,
+		})
+	}
+	return out, nil
+}
+
+// listSnaps answers resync snapshot comparison for the local zvol.
+func (r *Runtime) listSnaps(volID string) (*pb.SnapListReply, error) {
+	r.mu.Lock()
+	zp := r.zvolOf[volID]
+	r.mu.Unlock()
+	if zp == "" {
+		return nil, experrors.New(experrors.KindNotFound, "exvol.runtime.listSnaps", "no such volume: "+volID)
+	}
+	snaps, err := r.zfs.ListSnapshots(context.Background(), zp)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.SnapListReply{Names: snaps}, nil
+}
+
+// adoptSeq latches a replica's post-resync sequence (§4.3 resync
+// step 5).
+func (r *Runtime) adoptSeq(volID string, seq uint64, full bool) error {
+	r.mu.Lock()
+	sec := r.secs[volID]
+	r.mu.Unlock()
+	if sec == nil {
+		return experrors.New(experrors.KindNotFound, "exvol.runtime.adoptSeq", "no such volume: "+volID)
+	}
+	sec.AdoptResync(seq, full)
+	return nil
+}
+
+// resyncRecv is one in-progress `zfs receive` for a volume (the remote
+// end of a resync stream).
+type resyncRecv struct {
+	pw    *io.PipeWriter // chunks are written here
+	count int64
+	done  chan error
 }
 
 // ensurePrimary acquires the volume lease and stands up the write path:
@@ -590,4 +706,243 @@ func (r *Runtime) pruneNotIn(seen map[string]bool) {
 			delete(r.prim, id)
 		}
 	}
+}
+
+// receiveChunk is the transport rawHandler: the remote end of a resync
+// stream. Payload = 2-byte BE volID length + volID + stream bytes; a
+// zero-length data section closes the stream. The ack carries the
+// cumulative bytes received (8 bytes BE).
+func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
+	if len(payload) < 2 {
+		return nil, fmt.Errorf("malformed resync chunk")
+	}
+	n := int(binary.BigEndian.Uint16(payload))
+	if len(payload) < 2+n {
+		return nil, fmt.Errorf("malformed resync chunk")
+	}
+	volID := string(payload[2 : 2+n])
+	data := payload[2+n:]
+
+	r.mu.Lock()
+	rp := r.recv[volID]
+	if rp == nil {
+		zp := r.zvolOf[volID]
+		if zp == "" {
+			r.mu.Unlock()
+			return nil, experrors.New(experrors.KindNotFound, "exvol.runtime.receiveChunk", "no such volume: "+volID)
+		}
+		rr, rw := io.Pipe()
+		cmd := exec.Command(r.zfs.ZfsPath, "receive", "-F", zp)
+		cmd.Stdin = rr
+		done := make(chan error, 1)
+		go func() { done <- cmd.Run() }()
+		rp = &resyncRecv{pw: rw, done: done}
+		r.recv[volID] = rp
+	}
+	rp.count += int64(len(data))
+	count := rp.count
+	if len(data) == 0 {
+		delete(r.recv, volID)
+	}
+	r.mu.Unlock()
+
+	if len(data) > 0 {
+		if _, err := rp.pw.Write(data); err != nil {
+			rp.pw.Close()
+			return nil, err
+		}
+	} else {
+		rp.pw.Close() // EOF: zfs receive finalizes the image
+		if err := <-rp.done; err != nil {
+			return nil, fmt.Errorf("zfs receive: %w", err)
+		}
+	}
+	ack := make([]byte, 8)
+	binary.BigEndian.PutUint64(ack, uint64(count))
+	return ack, nil
+}
+
+// periodicSnapshot takes the volume's @resync-<seq> snapshot on the
+// configured cadence (§4.3, G6.6) and enforces retention.
+func (r *Runtime) periodicSnapshot(volID, zvolPath string) {
+	r.mu.Lock()
+	p := r.prim[volID]
+	if p == nil || p.coord == nil {
+		r.mu.Unlock()
+		return
+	}
+	if time.Since(r.lastSnap[volID]) < r.opts.SnapshotInterval {
+		r.mu.Unlock()
+		return
+	}
+	r.lastSnap[volID] = time.Now()
+	seq := p.coord.LastSeq()
+	r.mu.Unlock()
+	if seq == 0 {
+		return // nothing written yet
+	}
+	if _, err := resync.EnsureSnapshot(context.Background(), r.zfs, zvolPath, seq, r.opts.SnapshotKeep); err != nil {
+		r.opts.Logger.Warn("resync snapshot failed", "vol", volID, "err", err)
+	}
+}
+
+// resyncStale runs one resync per Stale replica (§4.3 resync), bounded
+// to 2 concurrent resyncs per target node.
+func (r *Runtime) resyncStale(ctx context.Context, spec storage.Spec, status storage.Status, zvolPath string) {
+	r.mu.Lock()
+	p := r.prim[spec.ID]
+	if p == nil || p.coord == nil {
+		r.mu.Unlock()
+		return
+	}
+	stale := p.coord.StaleReplicas()
+	r.mu.Unlock()
+	for _, target := range stale {
+		if r.resyncInFlight(target) >= 2 {
+			continue // §4.6: max 2 resyncs per node
+		}
+		if err := r.runResync(ctx, spec.ID, target, zvolPath, status); err != nil {
+			r.opts.Logger.Warn("resync failed", "vol", spec.ID, "target", target, "err", err)
+			continue
+		}
+	}
+}
+
+func (r *Runtime) resyncInFlight(nodeID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.resyncing[nodeID]
+}
+
+// runResync streams the primary's latest @resync-<seq> snapshot into a
+// stale replica incrementally (common-ancestor send -i) or fully (with
+// the spec-required WARNING), then re-admits it to quorum.
+func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string, status storage.Status) error {
+	r.mu.Lock()
+	p := r.prim[volID]
+	if p == nil || p.coord == nil {
+		r.mu.Unlock()
+		return fmt.Errorf("no primary for %s", volID)
+	}
+	r.resyncing[target]++
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.resyncing[target]--
+		r.mu.Unlock()
+	}()
+
+	seq := p.coord.LastSeq()
+	if seq == 0 {
+		return fmt.Errorf("volume %s has no writes to resync", volID)
+	}
+	if _, err := resync.EnsureSnapshot(ctx, r.zfs, zvolPath, seq, r.opts.SnapshotKeep); err != nil {
+		return fmt.Errorf("resync snapshot: %w", err)
+	}
+	snaps, err := r.zfs.ListSnapshots(ctx, zvolPath)
+	if err != nil {
+		return fmt.Errorf("list source snapshots: %w", err)
+	}
+
+	// The resync connection: throttled (§4.3 bandwidth control) and
+	// DSCP-marked CS1 so bulk traffic never starves foreground I/O.
+	addr, err := r.opts.AddrOf(target)
+	if err != nil {
+		return err
+	}
+	targetAddr := fmt.Sprintf("%s:%d", addr, r.opts.Port)
+	var dopts []transport.DialOption
+	dopts = append(dopts, transport.WithResyncThrottle(transport.NewThrottle(r.opts.ResyncBytesPerSec)))
+	dopts = append(dopts, transport.WithDSCP(transport.DSCPBulk))
+	conn, err := transport.Dial(ctx, targetAddr, dopts...)
+	if err != nil {
+		return fmt.Errorf("dial resync target %s: %w", target, err)
+	}
+	defer conn.Close()
+
+	sink := &remoteSink{conn: conn, volID: volID}
+	out, err := resync.Run(ctx, r.zfs, zvolPath, snaps, sink, r.opts.Logger)
+	if err != nil {
+		return err
+	}
+
+	// Re-admit the replica with a fresh FOREGROUND connection (the
+	// resync connection was throttled/DSCP-marked — never write I/O).
+	fg, err := r.dialReplica(ctx, target)
+	if err != nil {
+		return fmt.Errorf("re-dial resynced replica: %w", err)
+	}
+	p.coord.AddReplica(target, transport.NewSender(fg, 0, 0))
+
+	// Status: the replica is Secondary again, durable at the adopted seq.
+	for i := range status.Placement {
+		pl := &status.Placement[i]
+		if pl.NodeID == target {
+			pl.Role = storage.RoleSecondary
+			pl.Healthy = true
+			pl.Sequence = out.Adopt
+			pl.LastSeen = time.Now()
+		}
+	}
+	if st, rev, err := storage.LoadStatus(ctx, r.opts.St, volID); err == nil {
+		st.Placement = status.Placement
+		_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
+	}
+	r.opts.Logger.Info("resync complete", "vol", volID, "target", target,
+		"seq", out.Adopt, "incremental", !out.Full, "bytes", out.Bytes)
+	return nil
+}
+
+// remoteSink drives a replica's receive side over the transport.
+type remoteSink struct {
+	conn  *transport.Conn
+	volID string
+}
+
+func (s *remoteSink) ListSnaps(ctx context.Context) ([]string, error) {
+	rep, err := s.conn.ListSnaps(s.volID)
+	if err != nil {
+		return nil, err
+	}
+	return rep.GetNames(), nil
+}
+
+// Receive streams r into the replica in framed chunks; each chunk is
+// rate-limited by the connection throttle (§4.3 bandwidth control).
+func (s *remoteSink) Receive(_ context.Context, src io.Reader) (int64, error) {
+	buf := make([]byte, 256<<10) // 256 KiB chunks
+	total := int64(0)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			total += int64(n)
+			if _, err := s.conn.SendResyncChunk(mkChunk(s.volID, buf[:n])); err != nil {
+				return total, err
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return total, rerr
+		}
+	}
+	// Zero-length chunk = end of stream (the replica finalizes
+	// `zfs receive` and acks with its cumulative count).
+	if _, err := s.conn.SendResyncChunk(mkChunk(s.volID, nil)); err != nil {
+		return total, err
+	}
+	return total, nil
+}
+
+func mkChunk(volID string, data []byte) []byte {
+	out := make([]byte, 2+len(volID)+len(data))
+	binary.BigEndian.PutUint16(out, uint16(len(volID)))
+	copy(out[2:], volID)
+	copy(out[2+len(volID):], data)
+	return out
+}
+
+func (s *remoteSink) AdoptSeq(ctx context.Context, seq uint64, full bool) error {
+	return s.conn.AdoptSeq(s.volID, seq, full)
 }

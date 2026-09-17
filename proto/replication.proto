@@ -68,3 +68,19 @@ message FetchOpsRequest {
 message FetchOpsReply {
   repeated WriteRequest ops = 1;
 }
+
+// SnapListReply lists a replica's local snapshot names (T12 resync:
+// common-ancestor discovery).
+message SnapListReply {
+  repeated string names = 1;
+}
+
+// AdoptSeqRequest tells a replica its durable state now corresponds to
+// seq after a resync (T12: the replica resumes inclusion in quorum at
+// that seq). Full=true means the replica was rebuilt wholesale and its
+// per-seq op records were reset with the image.
+message AdoptSeqRequest {
+  string vol_id = 1;
+  uint64 seq = 2;
+  bool full = 3;
+}

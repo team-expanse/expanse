@@ -123,6 +123,23 @@ func NewSecondaryWithApply(id string, size int, apply func(WriteOp) error) *Seco
 // LastSeq is the highest contiguously applied sequence (R2).
 func (s *Secondary) LastSeq() uint64 { return s.lastSeq }
 
+// AdoptSeq latches the sequence after a resync (§4.3 resync step 5):
+// the replica's durable state now corresponds to a snapshot taken at
+// seq, so replication resumes from there. Pending buffers are dropped
+// — their contents came (or will come) with the image. Monotonic: a
+// stale image can never rewind a replica past what it applied.
+func (s *Secondary) AdoptSeq(seq uint64) {
+	if seq < s.lastSeq {
+		return
+	}
+	s.lastSeq = seq
+	s.pending = map[uint64]WriteOp{}
+	s.applied = map[uint64]WriteOp{}
+	s.pendOps = 0
+	s.pendBytes = 0
+	s.ResyncNeeded = false
+}
+
 // Handle processes one WriteOp per §4.3 step 6:
 // a. CRC mismatch → NACK, request retransmit (never applied);
 // b. seq must be lastSeq+1 — later seqs are buffered (bounded window;

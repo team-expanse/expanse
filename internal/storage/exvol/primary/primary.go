@@ -129,6 +129,30 @@ func (c *Coordinator) startReplica(st *replicaState) {
 	}()
 }
 
+// AddReplica (re-)admits a replica with a fresh sender — the resync
+// path (T12) uses it after rebuilding a Stale replica's copy. A
+// replica that was never present is created; a Stale one is revived
+// and re-included in quorum accounting. Idempotent per node.
+func (c *Coordinator) AddReplica(nodeID string, snd *transport.Sender) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if st, ok := c.replicas[nodeID]; ok {
+		if !st.stale {
+			return // healthy already; leave the pump alone
+		}
+		// Revive: fresh sender, fresh pump.
+		close(st.sendC) //nolint:errcheck — pump already exited on staleness
+		st.snd = snd
+		st.stale = false
+		st.sendC = make(chan protocol.WriteOp, 1)
+		c.startReplica(st)
+		return
+	}
+	st := &replicaState{id: nodeID, snd: snd, sendC: make(chan protocol.WriteOp, 1)}
+	c.replicas[nodeID] = st
+	c.startReplica(st)
+}
+
 // markStale excludes a replica from quorum accounting and fan-out (§9)
 // and closes its connection so any blocked pump unblocks.
 func (c *Coordinator) markStale(st *replicaState) {
