@@ -1,0 +1,350 @@
+// Package storage holds the volume data model and store persistence for
+// exvol (Phase 06 §4.1): the Volume/Replica shapes, their proto-marshaled
+// store records at /volumes/<id>/spec and /volumes/<id>/status, and the
+// CAS-based update idiom shared with the rest of the tree (blocks, VIPs).
+package storage
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+
+	experrors "github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/store"
+	pb "github.com/expanse/expanse/proto"
+)
+
+// VolumeState is a volume's lifecycle state.
+type VolumeState string
+
+const (
+	StateCreating  VolumeState = "Creating"
+	StateHealthy   VolumeState = "Healthy"
+	StateDegraded  VolumeState = "Degraded"
+	StateReadOnly  VolumeState = "ReadOnly"
+	StateResyncing VolumeState = "Resyncing"
+	StateFailed    VolumeState = "Failed"
+	StateDeleting  VolumeState = "Deleting"
+)
+
+func (s VolumeState) proto() pb.VolumeState {
+	switch s {
+	case StateCreating:
+		return pb.VolumeState_VOLUME_STATE_CREATING
+	case StateHealthy:
+		return pb.VolumeState_VOLUME_STATE_HEALTHY
+	case StateDegraded:
+		return pb.VolumeState_VOLUME_STATE_DEGRADED
+	case StateReadOnly:
+		return pb.VolumeState_VOLUME_STATE_READONLY
+	case StateResyncing:
+		return pb.VolumeState_VOLUME_STATE_RESYNCING
+	case StateFailed:
+		return pb.VolumeState_VOLUME_STATE_FAILED
+	case StateDeleting:
+		return pb.VolumeState_VOLUME_STATE_DELETING
+	}
+	return pb.VolumeState_VOLUME_STATE_UNSPECIFIED
+}
+
+func stateFromProto(p pb.VolumeState) VolumeState {
+	switch p {
+	case pb.VolumeState_VOLUME_STATE_CREATING:
+		return StateCreating
+	case pb.VolumeState_VOLUME_STATE_HEALTHY:
+		return StateHealthy
+	case pb.VolumeState_VOLUME_STATE_DEGRADED:
+		return StateDegraded
+	case pb.VolumeState_VOLUME_STATE_READONLY:
+		return StateReadOnly
+	case pb.VolumeState_VOLUME_STATE_RESYNCING:
+		return StateResyncing
+	case pb.VolumeState_VOLUME_STATE_FAILED:
+		return StateFailed
+	case pb.VolumeState_VOLUME_STATE_DELETING:
+		return StateDeleting
+	}
+	return ""
+}
+
+// Role is one replica's position in the replication protocol (§4.3).
+type Role string
+
+const (
+	RolePrimary   Role = "Primary"
+	RoleSecondary Role = "Secondary"
+	RoleResyncing Role = "Resyncing"
+	RoleStale     Role = "Stale"
+)
+
+func (r Role) proto() pb.ReplicaRole {
+	switch r {
+	case RolePrimary:
+		return pb.ReplicaRole_REPLICA_ROLE_PRIMARY
+	case RoleSecondary:
+		return pb.ReplicaRole_REPLICA_ROLE_SECONDARY
+	case RoleResyncing:
+		return pb.ReplicaRole_REPLICA_ROLE_RESYNCING
+	case RoleStale:
+		return pb.ReplicaRole_REPLICA_ROLE_STALE
+	}
+	return pb.ReplicaRole_REPLICA_ROLE_UNSPECIFIED
+}
+
+func roleFromProto(p pb.ReplicaRole) Role {
+	switch p {
+	case pb.ReplicaRole_REPLICA_ROLE_PRIMARY:
+		return RolePrimary
+	case pb.ReplicaRole_REPLICA_ROLE_SECONDARY:
+		return RoleSecondary
+	case pb.ReplicaRole_REPLICA_ROLE_RESYNCING:
+		return RoleResyncing
+	case pb.ReplicaRole_REPLICA_ROLE_STALE:
+		return RoleStale
+	}
+	return ""
+}
+
+// Replica is one placement of a volume (§4.1).
+type Replica struct {
+	NodeID   string
+	Role     Role
+	ZvolPath string
+	// Sequence is the last durable sequence on this replica (§4.3).
+	Sequence uint64
+	LastSeen time.Time
+	Healthy  bool
+}
+
+// Volume is the spec + live status of one exvol volume (§4.1). Spec is
+// written once by the controller; Status is CAS-updated as replicas and
+// the primary evolve.
+type Volume struct {
+	ID          string // "vol-" + 16 hex
+	Name        string
+	Namespace   string
+	SizeBytes   uint64
+	Class       string // "default", "fast", "local", "ceph"
+	Replication int    // 1..5
+	Placement   []Replica
+	Generation  uint64      // bumped on every membership change
+	State       VolumeState // Creating|Healthy|Degraded|ReadOnly|Resyncing|Failed|Deleting
+	Primary     string      // node ID holding the primary lease
+	Sequence    uint64      // last acked write sequence
+}
+
+// Spec is the immutable-except-size configuration half of a Volume.
+type Spec struct {
+	ID          string
+	Name        string
+	Namespace   string
+	SizeBytes   uint64
+	Class       string
+	Replication int
+}
+
+// Status is the mutable half of a Volume.
+type Status struct {
+	Generation uint64
+	State      VolumeState
+	Primary    string
+	Sequence   uint64
+	Placement  []Replica
+}
+
+// Spec returns the spec half of the volume.
+func (v Volume) Spec() Spec {
+	return Spec{
+		ID:          v.ID,
+		Name:        v.Name,
+		Namespace:   v.Namespace,
+		SizeBytes:   v.SizeBytes,
+		Class:       v.Class,
+		Replication: v.Replication,
+	}
+}
+
+// Status returns the status half of the volume.
+func (v Volume) Status() Status {
+	return Status{
+		Generation: v.Generation,
+		State:      v.State,
+		Primary:    v.Primary,
+		Sequence:   v.Sequence,
+		Placement:  append([]Replica(nil), v.Placement...),
+	}
+}
+
+// VolumePrefix is the store key namespace for volumes (§4.1).
+const VolumePrefix = "/volumes/"
+
+// SpecKey is the store key for a volume's spec record.
+func SpecKey(volID string) store.Key { return store.Key(VolumePrefix + volID + "/spec") }
+
+// StatusKey is the store key for a volume's status record.
+func StatusKey(volID string) store.Key { return store.Key(VolumePrefix + volID + "/status") }
+
+// SpecToProto marshals a spec into its store representation.
+func SpecToProto(s Spec) *pb.VolumeSpec {
+	return &pb.VolumeSpec{
+		Id:          s.ID,
+		Name:        s.Name,
+		Namespace:   s.Namespace,
+		SizeBytes:   s.SizeBytes,
+		Class:       s.Class,
+		Replication: int32(s.Replication),
+	}
+}
+
+// SpecFromProto unmarshals a spec from its store representation.
+func SpecFromProto(p *pb.VolumeSpec) Spec {
+	return Spec{
+		ID:          p.GetId(),
+		Name:        p.GetName(),
+		Namespace:   p.GetNamespace(),
+		SizeBytes:   p.GetSizeBytes(),
+		Class:       p.GetClass(),
+		Replication: int(p.GetReplication()),
+	}
+}
+
+func replicaToProto(r Replica) *pb.Replica {
+	return &pb.Replica{
+		NodeId:           r.NodeID,
+		Role:             r.Role.proto(),
+		ZvolPath:         r.ZvolPath,
+		Sequence:         r.Sequence,
+		LastSeenUnixNano: r.LastSeen.UnixNano(),
+		Healthy:          r.Healthy,
+	}
+}
+
+func replicaFromProto(p *pb.Replica) Replica {
+	return Replica{
+		NodeID:   p.GetNodeId(),
+		Role:     roleFromProto(p.GetRole()),
+		ZvolPath: p.GetZvolPath(),
+		Sequence: p.GetSequence(),
+		LastSeen: time.Unix(0, p.GetLastSeenUnixNano()).UTC(),
+		Healthy:  p.GetHealthy(),
+	}
+}
+
+// StatusToProto marshals a status into its store representation.
+func StatusToProto(s Status) *pb.VolumeStatus {
+	p := &pb.VolumeStatus{
+		Generation: s.Generation,
+		State:      s.State.proto(),
+		Primary:    s.Primary,
+		Sequence:   s.Sequence,
+	}
+	for _, r := range s.Placement {
+		p.Placement = append(p.Placement, replicaToProto(r))
+	}
+	return p
+}
+
+// StatusFromProto unmarshals a status from its store representation.
+func StatusFromProto(p *pb.VolumeStatus) Status {
+	s := Status{
+		Generation: p.GetGeneration(),
+		State:      stateFromProto(p.GetState()),
+		Primary:    p.GetPrimary(),
+		Sequence:   p.GetSequence(),
+	}
+	for _, r := range p.GetPlacement() {
+		s.Placement = append(s.Placement, replicaFromProto(r))
+	}
+	return s
+}
+
+// SaveSpec writes a volume spec to the store.
+func SaveSpec(ctx context.Context, st store.Store, s Spec) error {
+	raw, err := proto.Marshal(SpecToProto(s))
+	if err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "storage.SaveSpec", "marshal")
+	}
+	if _, err := st.Put(ctx, SpecKey(s.ID), raw); err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "storage.SaveSpec", "put")
+	}
+	return nil
+}
+
+// LoadSpec reads a volume spec; KindNotFound if the volume doesn't exist.
+func LoadSpec(ctx context.Context, st store.Store, volID string) (Spec, error) {
+	entry, err := st.Get(ctx, SpecKey(volID))
+	if err != nil {
+		return Spec{}, experrors.Wrap(err, experrors.KindNotFound, "storage.LoadSpec", "get")
+	}
+	var p pb.VolumeSpec
+	if err := proto.Unmarshal(entry.Value, &p); err != nil {
+		return Spec{}, experrors.Wrap(err, experrors.KindInternal, "storage.LoadSpec", "unmarshal")
+	}
+	return SpecFromProto(&p), nil
+}
+
+// SaveStatus writes a volume status unconditionally (controller-owned
+// fields only; replicas go through CompareAndSwapStatus).
+func SaveStatus(ctx context.Context, st store.Store, volID string, s Status) error {
+	raw, err := proto.Marshal(StatusToProto(s))
+	if err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "storage.SaveStatus", "marshal")
+	}
+	if _, err := st.Put(ctx, StatusKey(volID), raw); err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "storage.SaveStatus", "put")
+	}
+	return nil
+}
+
+// LoadStatus reads a volume's status and the revision of its record, for
+// later CompareAndSwapStatus calls. KindNotFound if the volume doesn't
+// exist.
+func LoadStatus(ctx context.Context, st store.Store, volID string) (Status, store.Revision, error) {
+	entry, err := st.Get(ctx, StatusKey(volID))
+	if err != nil {
+		return Status{}, 0, experrors.Wrap(err, experrors.KindNotFound, "storage.LoadStatus", "get")
+	}
+	var p pb.VolumeStatus
+	if err := proto.Unmarshal(entry.Value, &p); err != nil {
+		return Status{}, 0, experrors.Wrap(err, experrors.KindInternal, "storage.LoadStatus", "unmarshal")
+	}
+	return StatusFromProto(&p), entry.Revision, nil
+}
+
+// CompareAndSwapStatus updates the status only if its revision is still
+// expect; returns KindConflict on a lost race (caller re-reads and
+// retries — the standard idiom in this tree).
+func CompareAndSwapStatus(ctx context.Context, st store.Store, volID string, expect store.Revision, s Status) error {
+	raw, err := proto.Marshal(StatusToProto(s))
+	if err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "storage.CompareAndSwapStatus", "marshal")
+	}
+	if _, err := st.CompareAndSwap(ctx, StatusKey(volID), expect, raw); err != nil {
+		return experrors.Wrap(err, experrors.KindConflict, "storage.CompareAndSwapStatus", "cas")
+	}
+	return nil
+}
+
+// ListVolumeIDs returns every volume ID present in the store.
+func ListVolumeIDs(ctx context.Context, st store.Store) ([]string, error) {
+	entries, err := st.List(ctx, VolumePrefix)
+	if err != nil {
+		return nil, experrors.Wrap(err, experrors.KindInternal, "storage.ListVolumeIDs", "list")
+	}
+	// Keys are /volumes/<id>/spec|status — collect unique IDs.
+	seen := map[string]bool{}
+	var ids []string
+	for _, e := range entries {
+		rest := strings.TrimPrefix(string(e.Key), VolumePrefix)
+		if i := len(rest) - len("/spec"); i > 0 && rest[i:] == "/spec" {
+			id := rest[:i]
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, nil
+}

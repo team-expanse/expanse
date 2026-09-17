@@ -4,6 +4,7 @@
   imports = [
     ./base.nix
     ./storage.nix
+    ./storage-test.nix
     ./impermanence.nix
     ./identity.nix
     ./network-base.nix

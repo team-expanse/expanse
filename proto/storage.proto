@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package expanse.storage.v1;
+
+option go_package = "github.com/expanse/expanse/proto";
+
+// Storage messages — Phase 06. These are store-marshaled values (volume
+// specs and status, §4.1), not a gRPC surface; CLI/API wiring comes later
+// in the phase. Specs persist at /volumes/<id>/spec, status at
+// /volumes/<id>/status.
+
+// VolumeState is a volume's lifecycle state (§4.1).
+enum VolumeState {
+  VOLUME_STATE_UNSPECIFIED = 0;
+  VOLUME_STATE_CREATING = 1;
+  VOLUME_STATE_HEALTHY = 2;
+  VOLUME_STATE_DEGRADED = 3;
+  VOLUME_STATE_READONLY = 4;
+  VOLUME_STATE_RESYNCING = 5;
+  VOLUME_STATE_FAILED = 6;
+  VOLUME_STATE_DELETING = 7;
+}
+
+// ReplicaRole is one replica's position in the replication protocol (§4.3).
+enum ReplicaRole {
+  REPLICA_ROLE_UNSPECIFIED = 0;
+  REPLICA_ROLE_PRIMARY = 1;
+  REPLICA_ROLE_SECONDARY = 2;
+  REPLICA_ROLE_RESYNCING = 3;
+  REPLICA_ROLE_STALE = 4;
+}
+
+// VolumeSpec is the immutable-except-size volume configuration written
+// once by the controller.
+message VolumeSpec {
+  // "vol-" + 16 hex.
+  string id = 1;
+  string name = 2;
+  string namespace = 3;
+  uint64 size_bytes = 4;
+  // Storage class name: "default", "fast", "local", "ceph" (§4.2).
+  string class = 5;
+  // 1..5.
+  int32 replication = 6;
+}
+
+// Replica is one placement's live state (§4.1).
+message Replica {
+  string node_id = 1;
+  ReplicaRole role = 2;
+  // e.g. "rpool/volumes/vol-1a2b".
+  string zvol_path = 3;
+  // Last durable sequence on this replica (§4.3).
+  uint64 sequence = 4;
+  // Last time this replica responded, UnixNano.
+  int64 last_seen_unix_nano = 5;
+  bool healthy = 6;
+}
+
+// VolumeStatus is the mutable volume state, updated CAS-style by the
+// controller and replicas.
+message VolumeStatus {
+  // Bumped on every membership change (§4.1).
+  uint64 generation = 1;
+  VolumeState state = 2;
+  // Node ID holding the primary lease.
+  string primary = 3;
+  // Last acked write sequence.
+  uint64 sequence = 4;
+  repeated Replica placement = 5;
+}
