@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+// Wire messages for the exvol replication transport (Phase 06 T05).
+// These carry the §4.3 replication protocol (T04's simulator types) over
+// TCP connections between volume replicas on the exp0 mesh. Versioning /
+// rolling-upgrade negotiation is a later-phase concern — frames carry a
+// version byte; no negotiation yet.
+package expanse.replication.v1;
+
+option go_package = "github.com/expanse/expanse/proto";
+
+// WriteRequest is one replicated write sent from a primary to a
+// secondary (§4.3 step 5). CRC is crc32c(Data), computed once at the
+// primary and verified by the secondary (step 6a).
+message WriteRequest {
+  string vol_id = 1;
+  uint64 seq = 2;
+  uint64 offset = 3;
+  bytes data = 4;
+  uint32 crc32c = 5;
+}
+
+// WriteReply is the secondary's response (§4.3 step 6e / T04 Reply).
+message WriteReply {
+  bool ack = 1;
+  uint64 seq = 2;
+  uint64 last_seq = 3;
+  bool gap = 4;
+  bool retransmit = 5;
+  bool resync = 6;
+  string reason = 7;
+}
