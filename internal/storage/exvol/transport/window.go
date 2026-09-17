@@ -91,3 +91,6 @@ func (s *Sender) release(n uint64) {
 	s.cond.Signal()
 	s.mu.Unlock()
 }
+
+// Close closes the underlying connection (unblocks a blocked Recv).
+func (s *Sender) Close() error { return s.c.Close() }

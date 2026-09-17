@@ -253,3 +253,7 @@ func replyFromPB(r *expb.WriteReply) protocol.Reply {
 		Reason:     r.GetReason(),
 	}
 }
+
+// Close shuts the server down (closes the listener; open conns error
+// out on their next I/O).
+func (s *Server) Close() error { return s.ln.Close() }
