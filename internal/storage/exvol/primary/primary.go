@@ -37,10 +37,13 @@ type Lease interface {
 }
 
 // LocalWriter is the primary's own durable replica (step 4, plus the
-// flush marker's fsync). *localwrite.Writer satisfies it.
+// flush marker's fsync). *localwrite.Writer satisfies it. ReadAt backs
+// FetchOps — replaying a briefly-stale replica's missed ops straight
+// from the primary's own copy, no ZFS snapshot involved.
 type LocalWriter interface {
 	WriteAt(p []byte, off int64) error
 	Flush() error
+	ReadAt(p []byte, off int64) (int, error)
 }
 
 // DefaultStaleTimeout is the per-replica reply timeout (§9): after this,
@@ -416,6 +419,42 @@ func (c *Coordinator) StaleReplicas() []string {
 
 // LastSeq is the last assigned sequence number.
 func (c *Coordinator) LastSeq() uint64 { return c.p.LastAssigned() }
+
+// FetchOps re-reads ops (from, to] from the primary's own durable
+// copy — the op-replay resync path (runtime.tryOpReplay): a replica
+// that was live-current before a brief outage can be caught back up
+// by resending exactly the ops it missed, with no ZFS snapshot
+// lineage required. Mirrors secondary.Secondary.FetchOps exactly;
+// flush markers come back as empty ops carrying the flag.
+func (c *Coordinator) FetchOps(from, to uint64) ([]protocol.WriteOp, error) {
+	c.mu.Lock()
+	local := c.local
+	log := c.oplog
+	c.mu.Unlock()
+	if log == nil {
+		return nil, experrors.New(experrors.KindUnavailable, "exvol.primary", "no durable oplog wired")
+	}
+	records := log.Snapshot()
+	ops := make([]protocol.WriteOp, 0, to-from)
+	for seq := from + 1; seq <= to; seq++ {
+		rec, ok := records[seq]
+		if !ok {
+			return nil, experrors.New(experrors.KindInternal, "exvol.primary", "op not durable here")
+		}
+		op := protocol.WriteOp{Seq: seq, Offset: uint64(rec.Offset), CRC: rec.CRC}
+		if rec.Length > 0 {
+			buf := make([]byte, rec.Length)
+			if _, err := local.ReadAt(buf, rec.Offset); err != nil {
+				return nil, experrors.Wrap(err, experrors.KindInternal, "exvol.primary", "op re-read failed")
+			}
+			op.Data = buf
+		} else {
+			op.Flush = true
+		}
+		ops = append(ops, op)
+	}
+	return ops, nil
+}
 
 // Replication is the configured replication factor.
 func (c *Coordinator) Replication() int { return c.p.Replication }

@@ -86,6 +86,22 @@ type Options struct {
 	// ResyncBytesPerSec rate-limits resync streams (default 100 MiB/s).
 	ResyncBytesPerSec int64
 
+	// OpReplayMaxOps bounds the op-replay fast path (default 4096): a
+	// Stale replica whose gap behind the primary is within this many
+	// ops is caught up by resending exactly those ops over the live
+	// write protocol (runResync's first attempt, see tryOpReplay) —
+	// no ZFS snapshot lineage needed, which matters because a replica
+	// that has never been through a snapshot-based resync before (e.g.
+	// every replica from the volume's original placement) has none. A
+	// gap larger than this streams a snapshot instead: one sequential
+	// `zfs send` beats thousands of individual request/ack round trips.
+	OpReplayMaxOps int
+
+	// OpReplayMaxBytes bounds the op-replay fast path by total payload
+	// size (default 256 MiB) — a large number of small ops can still
+	// add up to more data than is worth chunking as individual RPCs.
+	OpReplayMaxBytes int64
+
 	// ResyncTimeout bounds one runResync attempt end to end (default
 	// 10 min) — a backstop, not G6.7's per-test SLA. Without it, a
 	// resync that never returns (a `zfs send`/`receive` wedged on the
@@ -179,6 +195,12 @@ func New(opts Options) *Runtime {
 	}
 	if opts.ResyncTimeout <= 0 {
 		opts.ResyncTimeout = 10 * time.Minute
+	}
+	if opts.OpReplayMaxOps <= 0 {
+		opts.OpReplayMaxOps = 4096
+	}
+	if opts.OpReplayMaxBytes <= 0 {
+		opts.OpReplayMaxBytes = 256 << 20
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -1924,6 +1946,115 @@ func (r *Runtime) resyncInFlight(nodeID string) int {
 	return r.resyncing[nodeID]
 }
 
+// tryOpReplay is runResync's fast path: a Stale replica that was
+// live-current before a brief outage holds a true PREFIX of the
+// primary's durable history, so the gap can be closed by resending
+// exactly the ops it missed over the live write protocol (protocol.go
+// Handle) — no `zfs send`/`receive` at all. This matters because a
+// replica that has never been through a snapshot-based resync (every
+// replica from the volume's original placement, until its first ever
+// staleness) holds no @resync-<seq> snapshot, so resync.CommonAncestor
+// can never find one and the ZFS path is unconditionally a full send —
+// for exactly the case this fast path targets.
+//
+// Returns done=true once it has decided the outcome (caught up, or hit
+// a real failure) — the caller must NOT also run the ZFS path then.
+// done=false means op-replay does not apply here (gap too large, or
+// the primary's own oplog can't serve it) — fall back to a snapshot
+// stream.
+func (r *Runtime) tryOpReplay(ctx context.Context, volID, target string, p *volPrimary, status storage.Status) (done bool, err error) {
+	primarySeq := p.coord.LastSeq()
+
+	// Connectivity failures here are NOT a signal that op-replay doesn't
+	// apply — falling through to the ZFS path would commit this whole
+	// resync cycle to a full snapshot send over the same unreachable-or-
+	// not-yet-ready target, which the ZFS path's own dial would likely
+	// hit too. The one exception observed in practice: a replica whose
+	// daemon JUST restarted can have its mesh address reachable (exp0 up)
+	// before its transport listener is bound — dialReplica's own retries
+	// don't always outlast that window. Surfacing the error here (done)
+	// lets the NEXT reconcile tick retry the fast path fresh, instead of
+	// silently downgrading a brief startup race into an unnecessary full
+	// resync of the whole volume.
+	conn, derr := r.dialReplica(ctx, target)
+	if derr != nil {
+		return true, fmt.Errorf("op-replay: dial %s: %w", target, derr)
+	}
+	defer conn.Close()
+
+	qrep, qerr := conn.QuerySeq(volID)
+	if qerr != nil {
+		return true, fmt.Errorf("op-replay: querySeq %s: %w", target, qerr)
+	}
+	targetSeq := qrep.GetLastSeq()
+	if targetSeq > primarySeq {
+		return false, nil // target claims to be ahead of us — not the brief-outage case
+	}
+
+	gap := primarySeq - targetSeq
+	if gap > uint64(r.opts.OpReplayMaxOps) {
+		return false, nil // too many ops to chat one RPC at a time; stream a snapshot instead
+	}
+
+	var ops []protocol.WriteOp
+	if gap > 0 {
+		var ferr error
+		ops, ferr = p.coord.FetchOps(targetSeq, primarySeq)
+		if ferr != nil {
+			return false, nil // primary's own oplog can't serve the range (rotated out) — fall back
+		}
+		var totalBytes int64
+		for _, op := range ops {
+			totalBytes += int64(len(op.Data))
+		}
+		if totalBytes > r.opts.OpReplayMaxBytes {
+			return false, nil
+		}
+		for _, op := range ops {
+			if serr := conn.Send(volID, op); serr != nil {
+				return true, fmt.Errorf("op-replay: send op %d to %s: %w", op.Seq, target, serr)
+			}
+			rep, rerr := conn.Recv()
+			if rerr != nil {
+				return true, fmt.Errorf("op-replay: recv ack for op %d from %s: %w", op.Seq, target, rerr)
+			}
+			if !rep.ACK {
+				// The replica's own state disagrees with what its
+				// QuerySeq just reported (raced by a concurrent write,
+				// or a claim the local copy can't back) — the snapshot
+				// path re-establishes ground truth honestly.
+				return false, nil
+			}
+		}
+	}
+
+	// Re-admit with a fresh sender — the op-replay connection above was
+	// single-purpose (query + sequential send/recv), not the pump the
+	// coordinator's fan-out expects to own long-term.
+	fg, derr := r.dialReplica(ctx, target)
+	if derr != nil {
+		return true, fmt.Errorf("op-replay: re-dial %s: %w", target, derr)
+	}
+	p.coord.AddReplica(target, transport.NewSender(fg, 0, 0))
+
+	for i := range status.Placement {
+		pl := &status.Placement[i]
+		if pl.NodeID == target {
+			pl.Role = storage.RoleSecondary
+			pl.Healthy = true
+			pl.Sequence = primarySeq
+			pl.LastSeen = time.Now()
+		}
+	}
+	if st, rev, serr := storage.LoadStatus(ctx, r.opts.St, volID); serr == nil {
+		st.Placement = status.Placement
+		_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
+	}
+	r.opts.Logger.Info("op-replay resync complete", "vol", volID, "target", target,
+		"seq", primarySeq, "ops", gap)
+	return true, nil
+}
+
 // runResync streams the primary's latest @resync-<seq> snapshot into a
 // stale replica incrementally (common-ancestor send -i) or fully (with
 // the spec-required WARNING), then re-admits it to quorum.
@@ -1944,6 +2075,10 @@ func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string,
 		r.resyncing[target]--
 		r.mu.Unlock()
 	}()
+
+	if done, err := r.tryOpReplay(ctx, volID, target, p, status); done {
+		return err
+	}
 
 	seq := p.coord.LastSeq()
 	// seq == 0 (fresh volume, nothing written): there is no @resync-0 to

@@ -2,11 +2,15 @@
 
 Create a 10 GiB volume, write 5 GiB, take a secondary offline, write
 100 MiB more, bring it back, and prove the resync that catches it up
-is an incremental `zfs send -i`, not a full copy: bytes received over
-exp0 must stay well under the 5 GiB baseline (< 500 MiB) and the whole
-resync must finish inside 60 s. Finish by checksumming the written
-range on both nodes to prove the incremental catch-up landed
-correctly, not just quickly.
+is incremental, not a full copy: bytes received over exp0 must stay
+well under the 5 GiB baseline (< 500 MiB) and the whole resync must
+finish inside 60 s. The incremental path may be either op-replay
+(runtime.tryOpReplay — resending exactly the missed ops over the live
+write protocol; the common case, since a replica from the volume's
+original placement has no @resync-<seq> snapshot to diff against yet)
+or a ZFS `send -i` once a snapshot lineage exists; either satisfies
+G6.6's bound. Finish by checksumming the written range on both nodes
+to prove the incremental catch-up landed correctly, not just quickly.
 
 Spliced (via readFile, see vol-resync-incremental.nix) after
 cluster-common.py, which provides n1/n2/n3, form(), wait_agent_ready(),
@@ -14,13 +18,8 @@ and friends.
 """
 
 VOL = "rsi"
-# TODO(T18 close-out): restore to the spec values (5 * 1024, 100) before
-# the final acceptance run — G6.6/G6.7 require a 5 GiB baseline / 100 MiB
-# drift. Shrunk for fast dev iteration while chasing the incremental-
-# resync bug; kept well above the 500 MiB threshold so a full-send
-# regression still fails the assertion.
-FIVE_GIB_MB = 768
-DRIFT_MB = 32
+FIVE_GIB_MB = 5 * 1024
+DRIFT_MB = 100
 BLK_MB = 4
 
 
