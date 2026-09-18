@@ -250,6 +250,17 @@ func New(cfg Config) (*Agent, error) {
 			}
 			raftAdv = net.JoinHostPort(advHost, port)
 		}
+		// Persist the addresses this boot actually settled on —
+		// regardless of whether they came from flags, the file, or the
+		// LocalIP guess above. mesh.go's lanIP() depends on this file to
+		// know the node's real LAN address; a node started with a static
+		// --raft-advertise (every declaratively-configured cluster
+		// member) would otherwise never write it, forcing lanIP() to
+		// fall back to interface-enumeration guessing forever, on every
+		// tick, across every restart.
+		if err := control.SaveRaftAddr(cfg.DataDir, raftBind, raftAdv); err != nil {
+			logger.Warn("save raft addr failed", "err", err)
+		}
 		rs, err := raftstore.Open(raftstore.Config{
 			NodeID:        cfg.NodeID,
 			BindAddr:      raftBind,
@@ -673,17 +684,31 @@ func (a *Agent) Run(ctx context.Context) error {
 	// mesh liveness by its expiry, so a HARD-killed node — which never
 	// gets to unpublish its mesh record — leaves the mesh view when
 	// the lease expires. Renewal is automatic (Held.renewLoop).
+	//
+	// A node that hard-crashed and restarted races its OWN prior
+	// lease: that record is still "held" (by this same node ID) until
+	// its TTL lapses, since a qemu-quit-style crash never released it.
+	// A single TryAcquire hits that conflict once and gives up —
+	// permanently, since nothing here ever retries — so the node
+	// never renews its own liveness record again and eventually reads
+	// as dead to the rest of the cluster forever, despite being
+	// healthy. Acquire (blocking, retries on conflict) waits out that
+	// stale lease's remaining TTL instead; it runs in its own
+	// goroutine so Run() doesn't block on it.
 	if a.ctl != nil && a.ctl.store != nil && !witness {
 		lm := lease.NewManager(a.ctl.store, a.cfg.NodeID)
-		if hl, err := lm.TryAcquire(ctx, "node-"+a.cfg.NodeID, 30*time.Second); err != nil {
-			a.logger.Warn("node liveness lease unavailable", "err", err)
-		} else {
+		go func() {
+			hl, err := lm.Acquire(ctx, "node-"+a.cfg.NodeID, 30*time.Second)
+			if err != nil {
+				if ctx.Err() == nil {
+					a.logger.Warn("node liveness lease unavailable", "err", err)
+				}
+				return
+			}
 			a.nodeLease = hl
-			go func() {
-				<-ctx.Done()
-				_ = lm.Release(context.Background(), hl)
-			}()
-		}
+			<-ctx.Done()
+			_ = lm.Release(context.Background(), hl)
+		}()
 	}
 
 	// Exvol volume runtime (Phase 06 T10).
