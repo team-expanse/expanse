@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/storage/exvol/localwrite"
+	"github.com/expanse/expanse/internal/storage/exvol/oplog"
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 	"github.com/expanse/expanse/internal/storage/exvol/transport"
 )
@@ -269,5 +270,48 @@ func TestSwapWriterQuiesceAndRearm(t *testing.T) {
 	// the new durable copy, never the old fd).
 	if _, r := s.currentWriter(); r == nil {
 		t.Fatalf("reader not re-armed with writer")
+	}
+}
+
+// TestSetOplogStoreRaisesLastSeq: a node's own writes made while it was
+// PRIMARY (recorded into the same durable oplog file —
+// primary.Coordinator.AttachOplog) must not read back as "behind" once
+// this node restarts and rejoins as a SECONDARY. SetOplogStore loads
+// the file's per-seq records AND must raise LastSeq() to match — what
+// recovery actually trusts as this replica's resume point (§4.3 4a) —
+// not just the per-seq location map that FetchOps serves from.
+func TestSetOplogStoreRaisesLastSeq(t *testing.T) {
+	path := t.TempDir() + "/vol.oplog"
+
+	// This node's own primary-era writes, landed in the shared journal
+	// without ever going through this Secondary.
+	st, err := oplog.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Append(1, oplog.Record{Offset: 0, Length: 16, CRC: 111}, false)
+	st.Append(2, oplog.Record{Offset: 16, Length: 16, CRC: 222}, true)
+
+	w := &countingWriter{}
+	s := New("n1", 4096, w)
+	if got := s.LastSeq(); got != 0 {
+		t.Fatalf("LastSeq before SetOplogStore = %d, want 0", got)
+	}
+	if err := s.SetOplogStore(path); err != nil {
+		t.Fatalf("SetOplogStore: %v", err)
+	}
+	if got := s.LastSeq(); got != 2 {
+		t.Fatalf("LastSeq after SetOplogStore = %d, want 2 (raised from loaded oplog)", got)
+	}
+	if log := s.OpLog(); len(log) != 2 {
+		t.Fatalf("OpLog() after SetOplogStore = %v, want 2 entries", log)
+	}
+
+	// A subsequent live write must continue from the raised seq, not
+	// restart from 0 (which would collide with the already-durable
+	// history and violate R2's gaplessness).
+	op := protocol.WriteOp{Seq: 3, Offset: 32, Data: bytes.Repeat([]byte{9}, 16), CRC: protocol.CRC32C(bytes.Repeat([]byte{9}, 16))}
+	if rep := s.Handle(op); !rep.ACK {
+		t.Fatalf("write at seq 3 not acked: %+v", rep)
 	}
 }

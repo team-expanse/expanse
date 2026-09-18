@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/storage/exvol/localwrite"
+	"github.com/expanse/expanse/internal/storage/exvol/oplog"
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 	"github.com/expanse/expanse/internal/storage/exvol/transport"
 )
@@ -295,5 +296,37 @@ func TestAllReplicasDeadReturnsUnavailable(t *testing.T) {
 	conns[1].Close()
 	if err := c.Write([]byte("x"), 0); err == nil {
 		t.Fatal("write with all replicas dead accepted")
+	}
+}
+
+// TestAttachOplogRecordsLocalWrites: every local write/flush this
+// coordinator durably applies must also land in an attached oplog
+// store (§4.3 4a) — the mechanism that lets a node's own primary-era
+// writes survive a later restart into the secondary role, instead of
+// silently vanishing from its reported history.
+func TestAttachOplogRecordsLocalWrites(t *testing.T) {
+	size := int64(1 << 16)
+	c, _, _ := newTestPrimary(t, size, nil, nil, 200*time.Millisecond)
+	st := oplog.NewMemory()
+	c.AttachOplog(st)
+
+	data := bytes.Repeat([]byte{5}, 16)
+	if err := c.Write(data, 0); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	rec, ok := st.Get(1)
+	if !ok || rec.Offset != 0 || rec.Length != len(data) || rec.CRC != protocol.CRC32C(data) {
+		t.Fatalf("Get(1) = %+v, ok=%v", rec, ok)
+	}
+	flushRec, ok := st.Get(2)
+	if !ok || flushRec.Length != 0 {
+		t.Fatalf("Get(2) (flush) = %+v, ok=%v", flushRec, ok)
+	}
+	if got := st.MaxSeq(); got != 2 {
+		t.Fatalf("MaxSeq = %d, want 2", got)
 	}
 }

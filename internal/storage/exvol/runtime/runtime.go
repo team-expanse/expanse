@@ -42,6 +42,7 @@ import (
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/storage/exvol/device"
 	"github.com/expanse/expanse/internal/storage/exvol/localwrite"
+	"github.com/expanse/expanse/internal/storage/exvol/oplog"
 	"github.com/expanse/expanse/internal/storage/exvol/primary"
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 	"github.com/expanse/expanse/internal/storage/exvol/recovery"
@@ -120,7 +121,8 @@ type Runtime struct {
 	zvolOf    map[string]string       // volID → local zvol path
 	specOf    map[string]storage.Spec // volID → spec (device reopen after receive)
 	lastSnap  map[string]time.Time
-	resyncing map[string]int // node ID → in-flight resyncs (cap 2 per node)
+	resyncing map[string]int          // node ID → in-flight resyncs (cap 2 per node)
+	oplogs    map[string]*oplog.Store // volID → durable seq->location journal (§4.3 4a), shared across role changes
 
 	convMu       sync.Mutex
 	convInFlight bool // background replica-convergence run in flight
@@ -181,6 +183,7 @@ func New(opts Options) *Runtime {
 		lastSnap:  map[string]time.Time{},
 		resyncing: map[string]int{},
 		recv:      map[string]*resyncRecv{},
+		oplogs:    map[string]*oplog.Store{},
 	}
 }
 
@@ -578,6 +581,13 @@ func (r *Runtime) ensureZvol(ctx context.Context, spec storage.Spec, zvolPath st
 // ensureSecondary registers the volume's secondary on the shared
 // replication server (starting the server on first use).
 func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, devNode string) {
+	// Must happen before r.mu below (held via defer for the rest of
+	// this function on the construction path): volOplog takes r.mu
+	// itself, and Go's Mutex isn't reentrant. Cheap once cached (a
+	// lock+map lookup), so paying it even on the early-return path
+	// below is not worth avoiding with a second locking scheme.
+	opStore := r.volOplog(context.Background(), volID)
+
 	r.mu.Lock()
 	r.zvolOf[volID] = zvolPath
 	r.specOf[volID] = spec
@@ -612,27 +622,16 @@ func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, dev
 		return
 	}
 	sec := secondary.New(r.opts.NodeID, int(spec.SizeBytes), w)
-	// Durable oplog (§4.3 4a): a daemon restart must not forget which
-	// sequences the zvol holds — recovery would misjudge the replica
-	// and FetchOps could not serve ops it no longer remembers (§4.3
-	// failover deadlocks). The log lives INSIDE the pool's volumes
-	// dataset so it shares the zvol's crash domain: whatever txg loss
-	// erased zvol data erases the same records here, keeping the
-	// metadata truthful. Records are fsynced on flush markers (the
-	// client-visible durability barrier).
-	mp, mpErr := r.zfs.Mountpoint(context.Background(), r.opts.Pool+"/volumes")
-	if mpErr != nil || mp == "" {
-		// A durable oplog is required for truthful recovery (§4.3 4a);
-		// running memory-only must be loud.
-		r.opts.Logger.Warn("durable oplog unavailable (memory-only replica)", "vol", volID, "err", mpErr)
-	}
-	if mpErr == nil && mp != "" {
-		dir := mp + "/.oplogs"
-		if err := os.MkdirAll(dir, 0o700); err == nil {
-			if err := sec.SetOplogStore(fmt.Sprintf("%s/%s.oplog", dir, volID)); err != nil {
-				r.opts.Logger.Warn("oplog store open failed (memory-only)", "vol", volID, "err", err)
-			}
-		}
+	// Durable oplog (§4.3 4a), shared with the primary role via
+	// volOplog: a daemon restart — or a primary<->secondary role flip
+	// on this node — must not forget which sequences the zvol holds,
+	// or recovery misjudges the replica and FetchOps can't serve ops it
+	// no longer remembers (§4.3 failover deadlocks). The log lives
+	// INSIDE the pool's volumes dataset so it shares the zvol's crash
+	// domain: whatever txg loss erased zvol data erases the same
+	// records here, keeping the metadata truthful.
+	if opStore != nil {
+		sec.AttachOplogStore(opStore)
 	}
 	r.secs[volID] = sec
 	r.opts.Logger.Info("secondary serving", "vol", volID, "zvol", zvolPath)
@@ -795,6 +794,13 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 		return fmt.Errorf("no replica reachable; resume seq %d unverifiable", status.Sequence)
 	}
 
+	// Durable oplog (§4.3 4a): the SAME journal a secondary-role stint
+	// on this node uses (see ensureSecondary / volOplog). A node's own
+	// writes made while primary must not vanish from its reported
+	// history if it later restarts or rejoins as a secondary —
+	// recovery would misjudge it as behind and never re-level it.
+	opStore := r.volOplog(ctx, spec.ID)
+
 	// §4.3 recovery: the failover algorithm (4a probes, 4b pulls, 4c
 	// leveling, 4d stale marks) ALWAYS runs before serving. The
 	// store's status.Sequence is written asynchronously and can lag
@@ -810,7 +816,7 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 		// (it would re-detect the divergence we were told to accept).
 		r.opts.Logger.Info("manual recovery: adopting branch as primary", "vol", spec.ID, "seq", startSeq)
 	} else {
-		recRes, startSeq, err = r.recoverVol(ctx, spec.ID, w, conns)
+		recRes, startSeq, err = r.recoverVol(ctx, spec.ID, w, conns, opStore)
 		if err != nil {
 			w.Close()
 			r.lm.Release(ctx, held)
@@ -842,6 +848,9 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 		reps = append(reps, primary.Replica{NodeID: nodeID, Sender: transport.NewSender(conn, 0, 0)})
 	}
 	coord := primary.NewAt(spec.ID, spec.Replication, w, reps, held, 5*time.Second, startSeq)
+	if opStore != nil {
+		coord.AttachOplog(opStore)
+	}
 	// Recovery's stale marks (unreachable replicas §4.3 4d, and 4c
 	// targets that could not be leveled) MUST outlive recovery: without
 	// them the coordinator counts a replica whose data never arrived as
@@ -920,7 +929,7 @@ func (r *Runtime) clearManualRecovered(ctx context.Context, volID string) {
 // the seq the new primary resumes at (step 5). It returns a
 // *recovery.DivergedError when the branches have diverged (§9) — the
 // caller must NOT serve and must preserve all copies.
-func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Writer, conns map[string]*transport.Conn) (recovery.Result, uint64, error) {
+func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Writer, conns map[string]*transport.Conn, ops *oplog.Store) (recovery.Result, uint64, error) {
 	probes := make([]recovery.Probe, 0, len(conns)+1)
 	for nodeID, conn := range conns {
 		nodeID, conn := nodeID, conn
@@ -992,30 +1001,43 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 		}
 		return ops, nil
 	}
+	sendToReplica := func(_ context.Context, target string, op protocol.WriteOp) error { // 4c
+		conn := conns[target]
+		if conn == nil {
+			return fmt.Errorf("no connection to %s", target)
+		}
+		if err := conn.Send(volID, op); err != nil {
+			return err
+		}
+		rep, err := conn.Recv()
+		if err != nil {
+			return err
+		}
+		if !rep.ACK {
+			return fmt.Errorf("replica %s nacked recovery op %d: %s", target, op.Seq, rep.Reason)
+		}
+		return nil
+	}
 	res, err := recovery.Recover(ctx, probes, selfFetch,
 		func(_ context.Context, op protocol.WriteOp) error { // 4b
 			if op.Flush {
-				return w.Flush()
-			}
-			return w.WriteAt(op.Data, int64(op.Offset))
-		},
-		func(_ context.Context, target string, op protocol.WriteOp) error { // 4c
-			conn := conns[target]
-			if conn == nil {
-				return fmt.Errorf("no connection to %s", target)
-			}
-			if err := conn.Send(volID, op); err != nil {
+				if err := w.Flush(); err != nil {
+					return err
+				}
+			} else if err := w.WriteAt(op.Data, int64(op.Offset)); err != nil {
 				return err
 			}
-			rep, err := conn.Recv()
-			if err != nil {
-				return err
-			}
-			if !rep.ACK {
-				return fmt.Errorf("replica %s nacked recovery op %d: %s", target, op.Seq, rep.Reason)
+			// The pulled op lands in the local copy via the raw writer,
+			// before any coordinator exists to log it (§4.3 4a) — record
+			// it into the same durable journal a live write would, or a
+			// node that crashes again before its next live write forgets
+			// this fill exactly like the bug this journal exists to fix.
+			if ops != nil {
+				ops.Append(op.Seq, oplog.Record{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}, op.Flush)
 			}
 			return nil
-		})
+		},
+		sendToReplica)
 	if err != nil {
 		return recovery.Result{}, 0, err
 	}
@@ -1044,6 +1066,9 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 			} else {
 				err = w.WriteAt(op.Data, int64(op.Offset))
 			}
+			if err == nil && ops != nil {
+				ops.Append(op.Seq, oplog.Record{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}, op.Flush)
+			}
 			if err != nil {
 				return res, res.MaxSeq, fmt.Errorf("local fill: apply op %d: %w", seq, err)
 			}
@@ -1061,6 +1086,43 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 	if localLast > res.MaxSeq {
 		r.opts.Logger.Warn("recovery resume raised to local oplog", "vol", volID,
 			"probe_max", res.MaxSeq, "local_last", localLast)
+		// 4c leveled every reachable replica up to the OLD (too-low)
+		// res.MaxSeq before this correction existed — a replica whose
+		// own probed LastSeq happened to already meet that ceiling was
+		// certified "current" and skipped, even though the caller's own
+		// copy (just proven ahead) has ops beyond it. Re-level the tail
+		// now that the true ceiling is known, or those ops NEVER reach
+		// that replica: nothing else re-probes or re-triggers a resync
+		// for a replica that was never marked stale.
+		alreadyStale := map[string]bool{}
+		for _, id := range res.Stale {
+			alreadyStale[id] = true
+		}
+		for i := range probes {
+			p := probes[i]
+			if !p.Reachable || p.LastSeq >= localLast || alreadyStale[p.NodeID] {
+				continue
+			}
+			from := p.LastSeq
+			if from < res.MaxSeq {
+				from = res.MaxSeq // already leveled to here by 4c above
+			}
+			leveled := true
+			for seq := from + 1; seq <= localLast; seq++ {
+				op, ferr := selfFetch(ctx, seq-1, seq)
+				if ferr != nil || len(op) != 1 {
+					leveled = false
+					break
+				}
+				if serr := sendToReplica(ctx, p.NodeID, op[0]); serr != nil {
+					leveled = false
+					break
+				}
+			}
+			if !leveled {
+				res.Stale = append(res.Stale, p.NodeID)
+			}
+		}
 		return res, localLast, nil
 	}
 	return res, res.MaxSeq, nil
@@ -1233,6 +1295,53 @@ func (r *Runtime) secOf(volID string) *secondary.Secondary {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.secs[volID]
+}
+
+// volOplog returns this node's durable seq->location journal for volID
+// (§4.3 4a), opening and caching it on first use. Cached rather than
+// reopened per call: ensurePrimary retries its ENTIRE bring-up from
+// scratch on every failed attempt (unlike ensureSecondary, which sets
+// up once and then short-circuits), so an uncached open would run a
+// real zfs subprocess + file open on every retry of a volume stuck
+// failing recovery — wasted work, and in one chaos-test run measurably
+// disruptive to the tight retry loop it sits in. One Store per volID
+// for the life of the process also means a primary<->secondary role
+// flip on this node shares the exact same in-memory + on-disk history
+// instead of two independent views that could drift.
+func (r *Runtime) volOplog(ctx context.Context, volID string) *oplog.Store {
+	r.mu.Lock()
+	if st, ok := r.oplogs[volID]; ok {
+		r.mu.Unlock()
+		return st
+	}
+	r.mu.Unlock()
+
+	mp, mpErr := r.zfs.Mountpoint(ctx, r.opts.Pool+"/volumes")
+	if mpErr != nil || mp == "" {
+		r.opts.Logger.Warn("durable oplog unavailable (memory-only)", "vol", volID, "err", mpErr)
+		return nil
+	}
+	dir := mp + "/.oplogs"
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		r.opts.Logger.Warn("oplog dir create failed (memory-only)", "vol", volID, "err", err)
+		return nil
+	}
+	st, err := oplog.Open(fmt.Sprintf("%s/%s.oplog", dir, volID))
+	if err != nil {
+		r.opts.Logger.Warn("oplog store open failed (memory-only)", "vol", volID, "err", err)
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, ok := r.oplogs[volID]; ok {
+		// Lost a race with a concurrent caller — keep the winner, close
+		// the redundant handle.
+		st.Close()
+		return existing
+	}
+	r.oplogs[volID] = st
+	return st
 }
 
 // markDiverged records §9's NeedsManualRecovery state — automatic

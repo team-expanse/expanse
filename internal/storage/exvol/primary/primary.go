@@ -26,6 +26,7 @@ import (
 	"time"
 
 	experrors "github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/storage/exvol/oplog"
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 	"github.com/expanse/expanse/internal/storage/exvol/transport"
 )
@@ -79,6 +80,20 @@ type Coordinator struct {
 	results  chan repResult
 	mu       sync.Mutex
 	replicas map[string]*replicaState
+	oplog    *oplog.Store // durable seq->location journal (§4.3 4a); nil = memory-only
+}
+
+// AttachOplog wires the durable seq->location journal (§4.3 4a): every
+// local write this coordinator makes is also recorded here — the SAME
+// journal (internal/storage/exvol/oplog) a secondary-role stint on this
+// node reads and writes. Without it, a node's own writes made while it
+// was primary are invisible to recovery once it later restarts or
+// rejoins as a secondary: its reported history silently regresses even
+// though its zvol data is current, and the hole is never re-leveled.
+func (c *Coordinator) AttachOplog(st *oplog.Store) {
+	c.mu.Lock()
+	c.oplog = st
+	c.mu.Unlock()
 }
 
 // New builds a coordinator. lease may be nil in tests (treated valid).
@@ -261,6 +276,12 @@ func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal
 	op := makeOp(seq)
 	if err := applyLocal(); err != nil {
 		return experrors.Wrap(err, experrors.KindInternal, opName, "local replica write failed")
+	}
+	if c.oplog != nil {
+		// Recovery metadata (§4.3 4a), mirroring the secondary apply
+		// hook exactly: seq -> location + CRC. A flush consumes a seq
+		// but carries no bytes (CRC 0).
+		c.oplog.Append(seq, oplog.Record{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}, op.Flush)
 	}
 
 	// Step 5: fan-out to live secondaries. First drain pumps' pending

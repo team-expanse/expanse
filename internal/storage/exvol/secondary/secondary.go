@@ -18,12 +18,10 @@
 package secondary
 
 import (
-	"fmt"
-	"os"
-	"strings"
 	"sync"
 
 	experrors "github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/storage/exvol/oplog"
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 )
 
@@ -51,11 +49,7 @@ type Reader interface {
 // OpRecord locates one durable op on this replica (§4.3 recovery 4a/4b:
 // the recovery algorithm compares CRCs per seq across replicas and
 // re-reads op bytes from the replica that holds them).
-type OpRecord struct {
-	Offset int64
-	Length int
-	CRC    uint32
-}
+type OpRecord = oplog.Record
 
 // Secondary applies replicated writes in order to its local zvol.
 type Secondary struct {
@@ -65,48 +59,53 @@ type Secondary struct {
 	proto  *protocol.Secondary // owns lastSeq/pending/CRC state (T04)
 	events chan ResyncEvent
 
-	// oplogMu guards writer/reader/oplog separately from s.mu: the
+	// oplogMu guards writer/reader/store separately from s.mu: the
 	// apply hook runs INSIDE proto.Handle while s.mu is held.
-	oplogMu   sync.Mutex
-	writer    LocalWriter // durable local replica (swappable)
-	oplog     map[uint64]OpRecord
-	reader    Reader
-	oplogFile *os.File // durable append log (nil = memory-only)
+	oplogMu sync.Mutex
+	writer  LocalWriter // durable local replica (swappable)
+	store   *oplog.Store
+	reader  Reader
 }
 
 // SetOplogStore loads (if present) and opens for append the durable
-// oplog at path. Without it the oplog is memory-only: a daemon restart
-// forgets which sequences the zvol holds, recovery misjudges the
-// replica as empty, and FetchOps cannot serve ops it no longer
+// oplog at path — the SAME journal a primary-role stint on this node
+// writes to (internal/storage/exvol/oplog): a node's own prior-primary
+// writes must not vanish from its reported history just because it is
+// now the secondary. Without it the oplog is memory-only: a daemon
+// restart forgets which sequences the zvol holds, recovery misjudges
+// the replica as empty, and FetchOps cannot serve ops it no longer
 // remembers — failover after a restart then deadlocks (§4.3 4a
 // metadata must survive crashes, not just the data). Records are
 // fsynced on flush markers: the flush fsync is the durability barrier
 // acked to the client, so everything before it (data + these records)
 // is durable at the same moment.
+//
+// Loading the file also raises the protocol-level lastSeq to match
+// (AdoptSeq, monotonic): LastSeq() — what recovery trusts as this
+// replica's resume point — must reflect the loaded history too, not
+// just the per-seq location map.
 func (s *Secondary) SetOplogStore(path string) error {
-	s.oplogMu.Lock()
-	defer s.oplogMu.Unlock()
-	data, err := os.ReadFile(path)
-	if err == nil {
-		for _, ln := range strings.Split(string(data), "\n") {
-			var rec OpRecord
-			var seq uint64
-			if ln == "" {
-				continue
-			}
-			if _, err := fmt.Sscanf(ln, "%d %d %d %d", &seq, &rec.Offset, &rec.Length, &rec.CRC); err == nil {
-				s.oplog[seq] = rec
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return experrors.Wrap(err, experrors.KindInternal, "exvol.secondary", "read oplog store")
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	st, err := oplog.Open(path)
 	if err != nil {
-		return experrors.Wrap(err, experrors.KindInternal, "exvol.secondary", "open oplog store")
+		return err
 	}
-	s.oplogFile = f
+	s.AttachOplogStore(st)
 	return nil
+}
+
+// AttachOplogStore wires an already-open durable oplog Store — used
+// when the caller shares ONE Store across a primary<->secondary role
+// flip on this node (runtime.Runtime.volOplog) instead of each role
+// opening its own independent handle to the same file, which would let
+// the two in-memory views drift apart within one process lifetime.
+// Same LastSeq-raising behavior as SetOplogStore.
+func (s *Secondary) AttachOplogStore(st *oplog.Store) {
+	s.oplogMu.Lock()
+	s.store = st
+	s.oplogMu.Unlock()
+	s.mu.Lock()
+	s.proto.AdoptSeq(st.MaxSeq())
+	s.mu.Unlock()
 }
 
 // currentWriter returns the active local writer (and durable-copy
@@ -165,7 +164,7 @@ func New(nodeID string, size int, w LocalWriter) *Secondary {
 		nodeID: nodeID,
 		size:   size,
 		events: make(chan ResyncEvent, 64),
-		oplog:  map[uint64]OpRecord{},
+		store:  oplog.NewMemory(),
 	}
 	s.writer = w
 	if r, ok := w.(Reader); ok {
@@ -189,13 +188,7 @@ func New(nodeID string, size int, w LocalWriter) *Secondary {
 			// Recovery metadata (§4.3 4a): seq → location + CRC. A
 			// flush consumes a seq but carries no bytes (CRC 0).
 			s.oplogMu.Lock()
-			s.oplog[op.Seq] = OpRecord{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}
-			if s.oplogFile != nil {
-				fmt.Fprintf(s.oplogFile, "%d %d %d %d\n", op.Seq, int64(op.Offset), len(op.Data), op.CRC)
-				if op.Flush {
-					_ = s.oplogFile.Sync()
-				}
-			}
+			s.store.Append(op.Seq, OpRecord{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}, op.Flush)
 			s.oplogMu.Unlock()
 		}
 		if err != nil {
@@ -234,10 +227,7 @@ func (s *Secondary) Reset() {
 	defer s.mu.Unlock()
 	s.proto.Reset()
 	s.oplogMu.Lock()
-	s.oplog = map[uint64]OpRecord{}
-	if s.oplogFile != nil {
-		s.oplogFile.Truncate(0) //nolint:errcheck — a lost truncation is repaired by resync
-	}
+	s.store.Reset()
 	s.oplogMu.Unlock()
 }
 
@@ -261,10 +251,7 @@ func (s *Secondary) emit(e ResyncEvent) {
 func (s *Secondary) AdoptResync(seq uint64, full bool) {
 	s.oplogMu.Lock()
 	if full {
-		s.oplog = map[uint64]OpRecord{}
-		if s.oplogFile != nil {
-			s.oplogFile.Truncate(0) //nolint:errcheck — a lost truncation is repaired by resync
-		}
+		s.store.Reset()
 	}
 	s.oplogMu.Unlock()
 	s.mu.Lock()
@@ -275,12 +262,9 @@ func (s *Secondary) AdoptResync(seq uint64, full bool) {
 // OpLog snapshots this replica's durable op records (recovery 4a).
 func (s *Secondary) OpLog() map[uint64]OpRecord {
 	s.oplogMu.Lock()
-	defer s.oplogMu.Unlock()
-	out := make(map[uint64]OpRecord, len(s.oplog))
-	for k, v := range s.oplog {
-		out[k] = v
-	}
-	return out
+	st := s.store
+	s.oplogMu.Unlock()
+	return st.Snapshot()
 }
 
 // FetchOps re-reads ops (from, to] from this replica's durable copy —
@@ -289,7 +273,7 @@ func (s *Secondary) OpLog() map[uint64]OpRecord {
 func (s *Secondary) FetchOps(from, to uint64) ([]protocol.WriteOp, error) {
 	s.oplogMu.Lock()
 	r := s.reader
-	log := s.oplog
+	log := s.store.Snapshot()
 	s.oplogMu.Unlock()
 	if r == nil {
 		return nil, experrors.New(experrors.KindUnavailable, "exvol.secondary", "no durable-copy reader wired")

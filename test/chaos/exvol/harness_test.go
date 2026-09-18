@@ -269,14 +269,23 @@ func TestUnfillableClaimMeansManualRecovery(t *testing.T) {
 		t.Fatal("n2 was down; it must not hold record 1")
 	}
 
-	// Now destroy n3's zvol too (data gone, oplog still claims 1..4).
+	// n1 — the primary that wrote seqs 1..4 — durably holds them too
+	// (§4.3 4a: a node's own writes made while primary survive into its
+	// own oplog, recovered by *this same fix*). Crash it first so its
+	// zvol is safe to truncate (not mid-write under a live primary),
+	// then destroy both its and n3's zvols — oplogs still claim 1..4,
+	// bytes are gone everywhere. n2 never held them (down pre-writes).
+	c.Crash("n1")
+	if err := os.Truncate(c.byID["n1"].zvolFile(volID), 0); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Truncate(c.byID["n3"].zvolFile(volID), 0); err != nil {
 		t.Fatal(err)
 	}
 
-	// Fail over to n2: the only holder of seqs 1..4 is n3, whose bytes
-	// are unreadable — unfillable. n2 was crashed pre-writes; its
-	// restart brings the empty branch node back up.
+	// Fail over to n2: no node can honestly serve seqs 1..4 any more —
+	// unfillable. n2 was crashed pre-writes; its restart brings the
+	// empty branch node back up.
 	c.Restart("n2")
 	c.Elect(volID, "n2")
 	waitFor(t, 20*time.Second, "volume flagged NeedsManualRecovery", func() bool {
