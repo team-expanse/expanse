@@ -147,7 +147,9 @@ func (c *Controller) Run(ctx context.Context) {
 // Reconcile converges cluster volume state once. All planning is
 // leader-only; non-leaders are inert observers.
 func (c *Controller) Reconcile(ctx context.Context) error {
-	if c.opts.IsLeader == nil || !c.opts.IsLeader() {
+	leader := c.opts.IsLeader != nil && c.opts.IsLeader()
+	c.log.Info("controller: reconcile tick", "leader", leader)
+	if !leader {
 		return nil
 	}
 	ids, err := storage.ListVolumeIDs(ctx, c.opts.St)
@@ -164,10 +166,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	for _, id := range ids {
 		spec, err := storage.LoadSpec(ctx, c.opts.St, id)
 		if err != nil {
+			c.log.Warn("reconcile: load spec failed; skipping volume this round", "vol", id, "err", err)
 			continue
 		}
 		status, rev, err := storage.LoadStatus(ctx, c.opts.St, id)
 		if err != nil {
+			c.log.Warn("reconcile: load status failed; skipping volume this round", "vol", id, "err", err)
 			continue
 		}
 		switch status.State {
@@ -194,11 +198,13 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 		c.electPrimary(ctx, id, &status, rev, meshed)
 		if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
+			c.log.Warn("reconcile: reload status after electPrimary failed; skipping rest of round", "vol", id, "err", err)
 			continue // deleted mid-flight
 		}
 		_ = rev
 		c.enforceReplication(ctx, id, &spec, &status, rev, meshed)
 		if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
+			c.log.Warn("reconcile: reload status after enforceReplication failed; skipping rebuild check", "vol", id, "err", err)
 			continue
 		}
 		c.rebuildLostReplicas(ctx, id, &spec, &status, rev, meshed)
@@ -535,7 +541,9 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 	}
 	status.Primary = cands[0].id
 	status.State = wantState
-	if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err == nil {
+	if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err != nil {
+		c.log.Warn("primary election CAS failed; will retry next round", "vol", volID, "primary", status.Primary, "seq", cands[0].seq, "err", err)
+	} else {
 		c.log.Info("primary elected", "vol", volID, "primary", status.Primary, "seq", cands[0].seq)
 	}
 }
