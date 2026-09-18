@@ -56,7 +56,7 @@ def wait_primary_ready(timeout=240):
         stale-handshake blackout can be lined up against
         crash/restore events."""
         out = []
-        for m in [n1, n2, n3]:
+        for m in live_nodes():
             rc, txt = m.execute(
                 "wg show exp0 latest-handshakes 2>/dev/null")
             ages = []
