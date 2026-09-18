@@ -99,6 +99,17 @@ type Options struct {
 	// out to nbd-client; tests fake it).
 	AttachNBD func(sock, volID, nbdDev string) error
 
+	// DetachNBD disconnects the NBD device and removes /dev/exvol/<id>
+	// (default: device.Detach shelling out to nbd-client; tests fake
+	// it). Every role change that stops local primary service — lease
+	// loss, re-election, currency-watchdog step-down, volume delete,
+	// process shutdown — must call this: a stale attach is what every
+	// "is this node serving as primary?" check relies on (the CLI's
+	// `volume inspect`, vol-no-double-primary.nix's §4.7 probe), so
+	// leaving one behind makes a fully-recovered volume look forever
+	// unserved.
+	DetachNBD func(volID, nbdDev string) error
+
 	// Tick is the reconcile cadence (default 2s; tests speed this up).
 	Tick time.Duration
 
@@ -171,6 +182,11 @@ func New(opts Options) *Runtime {
 			return device.Attach(sock, volID, nbdDev, device.ExecRunner{})
 		}
 	}
+	if opts.DetachNBD == nil {
+		opts.DetachNBD = func(volID, nbdDev string) error {
+			return device.Detach(volID, nbdDev, device.ExecRunner{})
+		}
+	}
 	return &Runtime{
 		opts:      opts,
 		zfs:       opts.ZFS,
@@ -210,8 +226,15 @@ func (r *Runtime) Run(ctx context.Context) {
 
 func (r *Runtime) stopAll() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	for id, p := range r.prim {
+	prims := r.prim
+	r.prim = map[string]*volPrimary{}
+	r.secs = map[string]*secondary.Secondary{}
+	if r.srv != nil {
+		r.srv.Close()
+		r.srv = nil
+	}
+	r.mu.Unlock()
+	for id, p := range prims {
 		p.nsrv.Close()
 		p.coord = nil
 		p.held.Abandon()
@@ -219,12 +242,7 @@ func (r *Runtime) stopAll() {
 		for _, cn := range p.conns {
 			cn.Close()
 		}
-		delete(r.prim, id)
-	}
-	r.secs = map[string]*secondary.Secondary{}
-	if r.srv != nil {
-		r.srv.Close()
-		r.srv = nil
+		r.detachDevice(id)
 	}
 }
 
@@ -1278,6 +1296,7 @@ func (r *Runtime) stopPrimary(volID string) {
 	for _, cn := range p.conns {
 		cn.Close()
 	}
+	r.detachDevice(volID)
 }
 
 // localLastSeq is the calling node's own durable-copy last sequence for
@@ -1406,6 +1425,18 @@ func (r *Runtime) dialReplica(ctx context.Context, nodeID string) (*transport.Co
 	return nil, last
 }
 
+// detachDevice best-effort tears down this node's NBD attach for volID
+// (nbd-client -d + the /dev/exvol/<id> symlink). Best-effort: a failed
+// detach is logged, not fatal — the volume's already off the write
+// path by the time every caller reaches this, and retrying forever
+// would block reconcile on a wedged nbd-client.
+func (r *Runtime) detachDevice(volID string) {
+	nbdDev := r.nbdDevFor(volID)
+	if err := r.opts.DetachNBD(volID, nbdDev); err != nil {
+		r.opts.Logger.Warn("nbd detach failed", "vol", volID, "dev", nbdDev, "err", err)
+	}
+}
+
 // nbdDevFor assigns a stable /dev/nbdN slot per volume (in-process).
 func (r *Runtime) nbdDevFor(volID string) string {
 	r.mu.Lock()
@@ -1422,13 +1453,8 @@ func (r *Runtime) nbdDevFor(volID string) string {
 // deleting volume (idempotent — retried ticks no-op).
 func (r *Runtime) teardownVolume(ctx context.Context, volID string, status storage.Status) {
 	r.mu.Lock()
-	if p, ok := r.prim[volID]; ok {
-		p.nsrv.Close()
-		p.held.Abandon()
-		p.writer.Close()
-		for _, cn := range p.conns {
-			cn.Close()
-		}
+	p, wasPrimary := r.prim[volID]
+	if wasPrimary {
 		delete(r.prim, volID)
 	}
 	delete(r.secs, volID)
@@ -1442,6 +1468,15 @@ func (r *Runtime) teardownVolume(ctx context.Context, volID string, status stora
 		}
 	}
 	r.mu.Unlock()
+	if wasPrimary {
+		p.nsrv.Close()
+		p.held.Abandon()
+		p.writer.Close()
+		for _, cn := range p.conns {
+			cn.Close()
+		}
+		r.detachDevice(volID)
+	}
 	if zp != "" {
 		if err := r.zfs.DestroyZvol(ctx, zp, true); err != nil {
 			r.opts.Logger.Warn("zvol destroy failed", "vol", volID, "err", err)
@@ -1544,23 +1579,28 @@ func (r *Runtime) adoptNewReplicas(ctx context.Context, spec storage.Spec, statu
 // store (delete handling stays minimal in T10; T13 grows the rest).
 func (r *Runtime) pruneNotIn(seen map[string]bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	for id := range r.secs {
 		if !seen[id] {
 			delete(r.secs, id)
 			delete(r.zvolOf, id)
 		}
 	}
+	gone := map[string]*volPrimary{}
 	for id, p := range r.prim {
 		if !seen[id] {
-			p.nsrv.Close()
-			p.held.Abandon()
-			p.writer.Close()
-			for _, cn := range p.conns {
-				cn.Close()
-			}
+			gone[id] = p
 			delete(r.prim, id)
 		}
+	}
+	r.mu.Unlock()
+	for id, p := range gone {
+		p.nsrv.Close()
+		p.held.Abandon()
+		p.writer.Close()
+		for _, cn := range p.conns {
+			cn.Close()
+		}
+		r.detachDevice(id)
 	}
 }
 

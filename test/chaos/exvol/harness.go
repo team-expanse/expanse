@@ -126,6 +126,17 @@ func (c *Cluster) Stop() {
 	}
 }
 
+// DeviceAttached reports whether this node's fake NBD device marker is
+// currently published (mirrors production's /dev/exvol/<id> symlink,
+// torn down by DetachNBD on demotion/delete/shutdown).
+func (n *Node) DeviceAttached() bool {
+	entries, err := os.ReadDir(filepath.Join(n.Root, "exvol"))
+	if err != nil {
+		return false
+	}
+	return len(entries) > 0
+}
+
 func (c *Cluster) stopNode(n *Node) {
 	if n.RT != nil && n.alive {
 		n.cancelRun()
@@ -208,6 +219,11 @@ func (c *Cluster) newNode(id, oldRoot string, idx int) *Node {
 			tgt := filepath.Join(dir, filepath.Base(nbdDev))
 			_ = os.Remove(tgt)
 			return os.Symlink(sock, tgt)
+		},
+		DetachNBD: func(volID, nbdDev string) error {
+			tgt := filepath.Join(root, "exvol", filepath.Base(nbdDev))
+			_ = os.Remove(tgt)
+			return nil
 		},
 		Tick: 200 * time.Millisecond,
 	})

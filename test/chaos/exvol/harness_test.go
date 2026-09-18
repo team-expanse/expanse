@@ -387,6 +387,14 @@ func TestReElectionDemotesOldPrimary(t *testing.T) {
 	waitFor(t, 15*time.Second, "old primary rejoined as replica", func() bool {
 		return c.byID["n1"].fileHas(t, volID, recs)
 	})
+	// A stale device left attached on the demoted node is exactly what
+	// made a fully-recovered vol-durability.nix run look "no ready
+	// primary" forever: the CLI/§4.7 double-primary check treats device
+	// attachment as the signal for "serving as primary", so a leftover
+	// attach on n1 makes it look like two nodes are still primary.
+	waitFor(t, 10*time.Second, "old primary's device detached", func() bool {
+		return !c.byID["n1"].DeviceAttached()
+	})
 }
 
 // TestTornPrimarySelfHeals (§4.3, T17.3): the currency watchdog — a
