@@ -86,6 +86,15 @@ type Options struct {
 	// ResyncBytesPerSec rate-limits resync streams (default 100 MiB/s).
 	ResyncBytesPerSec int64
 
+	// ResyncTimeout bounds one runResync attempt end to end (default
+	// 10 min) — a backstop, not G6.7's per-test SLA. Without it, a
+	// resync that never returns (a `zfs send`/`receive` wedged on the
+	// far side, a dead connection with no read/write ever erroring)
+	// leaves convInFlight permanently true: EVERY future resync and
+	// replica adoption on this node silently stops, forever, with
+	// nothing in the logs to say why (found via vol-resync-incremental.nix).
+	ResyncTimeout time.Duration
+
 	// ZvolDevBase prefixes the zvol device path (default "/dev/zvol";
 	// tests point this at a directory of regular files).
 	ZvolDevBase string
@@ -167,6 +176,9 @@ func New(opts Options) *Runtime {
 	}
 	if opts.ResyncBytesPerSec <= 0 {
 		opts.ResyncBytesPerSec = 100 << 20
+	}
+	if opts.ResyncTimeout <= 0 {
+		opts.ResyncTimeout = 10 * time.Minute
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -298,6 +310,7 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 					r.reportSequence(ctx, spec.ID, status)
 					r.verifyServingCurrent(ctx, spec.ID)
 					r.periodicSnapshot(id, zvolPath)
+					r.publishStaleReplicas(ctx, spec.ID, status)
 					// Replica convergence (adopt + resync) dials peers
 					// (up to ~12s of timeouts when a replica is down)
 					// and streams full images — never inline in the
@@ -610,8 +623,21 @@ func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, dev
 	r.zvolOf[volID] = zvolPath
 	r.specOf[volID] = spec
 	if sec, ok := r.secs[volID]; ok {
+		_, receiving := r.recv[volID]
 		r.mu.Unlock()
-		if sec.HasWriter() {
+		if sec.HasWriter() || receiving {
+			// A live `zfs receive` (see receiveChunk) also leaves the
+			// writer nil for its whole duration — indistinguishable from
+			// an abandoned stream by HasWriter() alone. Healing here
+			// while one is in flight reopens the device out from under
+			// `zfs receive -F`, which recreates the dataset object mid-
+			// stream: the receive wedges forever, and since it runs
+			// inside the primary's convergeReplicas goroutine, THAT
+			// never returns either — permanently starving every future
+			// resync on this node (found via vol-resync-incremental.nix:
+			// a stale replica stayed stale for the rest of the run).
+			// reopenLocalDevice re-arms this secondary once the receive
+			// actually finishes, success or failure.
 			return
 		}
 		// Heal a quiesced secondary (writer nil since a resync receive
@@ -1667,6 +1693,16 @@ func (r *Runtime) receiveChunk(payload []byte) ([]byte, error) {
 	if len(data) > 0 {
 		if _, err := rp.pw.Write(data); err != nil {
 			rp.pw.Close()
+			// Clear the in-flight marker and re-arm the local device: a
+			// write failure here means the stream is dead (broken pipe to
+			// a `zfs receive` that already exited, or similar) — leaving
+			// r.recv set would permanently block ensureSecondary's heal
+			// path (it now defers to an in-flight receive, see there) for
+			// a stream that is never coming back.
+			r.mu.Lock()
+			delete(r.recv, volID)
+			r.mu.Unlock()
+			r.reopenLocalDevice(volID)
 			return nil, err
 		}
 	} else {
@@ -1811,6 +1847,55 @@ func (r *Runtime) periodicSnapshot(volID, zvolPath string) {
 	}
 }
 
+// publishStaleReplicas syncs the coordinator's in-memory Stale set into
+// persisted status (§9 observability). markStale (primary.go) only flips
+// in-memory quorum-accounting state on the write hot path — deliberately,
+// so a write never pays a store CAS round-trip — which left `volume
+// inspect` reporting a replica "Secondary" for as long as it took
+// runResync to eventually revive it, even while that replica had already
+// been silently excluded from quorum and was falling behind. runResync's
+// own success path already restores Role to Secondary; this only needs
+// to cover the transition INTO staleness.
+func (r *Runtime) publishStaleReplicas(ctx context.Context, volID string, status storage.Status) {
+	r.mu.Lock()
+	p := r.prim[volID]
+	r.mu.Unlock()
+	if p == nil || p.coord == nil {
+		return
+	}
+	// A dead pump's failure otherwise only gets processed at the top of
+	// the NEXT write (replicate()'s own drainResults) — on an idle
+	// volume that may never come, leaving this replica un-detected as
+	// Stale (and, worse, still counted toward quorum) indefinitely.
+	p.coord.DrainResults()
+	stale := map[string]bool{}
+	for _, id := range p.coord.StaleReplicas() {
+		stale[id] = true
+	}
+	changed := false
+	for i := range status.Placement {
+		pl := &status.Placement[i]
+		if pl.NodeID == r.opts.NodeID || !stale[pl.NodeID] || pl.Role == storage.RoleStale {
+			continue
+		}
+		pl.Role = storage.RoleStale
+		pl.Healthy = false
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if st, rev, err := storage.LoadStatus(ctx, r.opts.St, volID); err == nil {
+		for i := range st.Placement {
+			if stale[st.Placement[i].NodeID] {
+				st.Placement[i].Role = storage.RoleStale
+				st.Placement[i].Healthy = false
+			}
+		}
+		_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
+	}
+}
+
 // resyncStale runs one resync per Stale replica (§4.3 resync), bounded
 // to 2 concurrent resyncs per target node.
 func (r *Runtime) resyncStale(ctx context.Context, spec storage.Spec, status storage.Status, zvolPath string) {
@@ -1843,6 +1928,9 @@ func (r *Runtime) resyncInFlight(nodeID string) int {
 // stale replica incrementally (common-ancestor send -i) or fully (with
 // the spec-required WARNING), then re-admits it to quorum.
 func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string, status storage.Status) error {
+	ctx, cancel := context.WithTimeout(ctx, r.opts.ResyncTimeout)
+	defer cancel()
+
 	r.mu.Lock()
 	p := r.prim[volID]
 	if p == nil || p.coord == nil {

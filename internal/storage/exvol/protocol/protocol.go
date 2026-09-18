@@ -74,7 +74,6 @@ type Secondary struct {
 	Data []byte
 
 	lastSeq   uint64
-	applied   map[uint64]WriteOp
 	pending   map[uint64]WriteOp
 	pendOps   int
 	pendBytes uint64
@@ -101,7 +100,6 @@ func newSecondaryWindow(id string, size, windowOps int, windowBytes uint64) *Sec
 	return &Secondary{
 		ID:          id,
 		Data:        make([]byte, size),
-		applied:     map[uint64]WriteOp{},
 		pending:     map[uint64]WriteOp{},
 		windowOps:   windowOps,
 		windowBytes: windowBytes,
@@ -134,7 +132,6 @@ func (s *Secondary) AdoptSeq(seq uint64) {
 	}
 	s.lastSeq = seq
 	s.pending = map[uint64]WriteOp{}
-	s.applied = map[uint64]WriteOp{}
 	s.pendOps = 0
 	s.pendBytes = 0
 	s.ResyncNeeded = false
@@ -214,9 +211,14 @@ func (s *Secondary) Handle(op WriteOp) Reply {
 	return Reply{ACK: true, Seq: s.lastSeq}
 }
 
-// apply applies one in-order op and advances lastSeq. The op is
-// bookkept as applied regardless of Data copying — the durable write
-// itself either happened (nil error) or the caller NACKs (applyFn).
+// apply applies one in-order op and advances lastSeq. It does not retain
+// op (or op.Data) anywhere: durability lives in the local write itself
+// (applyFn, or s.Data for the in-memory simulator) plus the caller's own
+// oplog (offset/length/CRC only, no payload) — an unbounded per-op
+// history here previously retained every WriteOp's full payload forever
+// with no reader anywhere, which OOM'd a secondary under sustained
+// foreground write load (found via vol-resync-incremental.nix's 5 GiB
+// baseline write).
 func (s *Secondary) apply(op WriteOp) error {
 	if s.applyFn != nil {
 		if err := s.applyFn(op); err != nil {
@@ -228,7 +230,6 @@ func (s *Secondary) apply(op WriteOp) error {
 		}
 		copy(s.Data[op.Offset:], op.Data)
 	}
-	s.applied[op.Seq] = op
 	if _, wasPending := s.pending[op.Seq]; wasPending {
 		delete(s.pending, op.Seq)
 		s.pendOps--
@@ -236,10 +237,6 @@ func (s *Secondary) apply(op WriteOp) error {
 	}
 	s.lastSeq = op.Seq
 	return nil
-}
-
-func sameOp(a, b WriteOp) bool {
-	return a.Seq == b.Seq && a.Offset == b.Offset && string(a.Data) == string(b.Data)
 }
 
 // Reset clears a latched resync state after the controller completes a

@@ -358,6 +358,19 @@ func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal
 		fmt.Sprintf("%s not quorum-durable: %d of %d replicas (quorum %d)", opName, durable, c.p.Replication, c.p.Quorum()))
 }
 
+// DrainResults processes any pending async pump failures without
+// blocking (§9, the reconcile tick). replicate()'s own drainResults only
+// runs at the top of the NEXT write — a replica whose pump already died
+// (found via vol-resync-incremental.nix: a drift write's fan-out to a
+// down replica failed, but nothing wrote again afterward to trigger the
+// next drainResults) would otherwise sit "live" in quorum accounting,
+// undetected as Stale, for as long as the volume stays idle.
+func (c *Coordinator) DrainResults() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.drainResults()
+}
+
 // drainResults consumes ALL pending pump output without blocking
 // (results from a previous early-returned write, or dead pumps),
 // updating staleness. Called only before fan-out, never during reply

@@ -521,3 +521,78 @@ func TestDurabilityLoop(t *testing.T) {
 		}
 	}
 }
+
+// TestSecondaryReconnectResyncs covers a scenario none of the above do:
+// the PRIMARY never changes. A secondary drops (daemon stop, not a
+// primary failover), the primary keeps taking acked writes with the
+// remaining quorum, and the secondary comes back. vol-resync-incremental
+// .nix hit exactly this shape and found the restarted secondary
+// reported "secondary" immediately and never actually received the
+// writes it missed — this reproduces that in under a second.
+func TestSecondaryReconnectResyncs(t *testing.T) {
+	const (
+		volID = "vol-secreconnect"
+		pre   = 3 // acked before the secondary drops
+		drift = 5 // acked while the secondary is down
+	)
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	for i := 1; i < pre; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, 10*time.Second, "n3 has the pre-crash baseline", func() bool {
+		return c.byID["n3"].fileHas(t, volID, pre-1)
+	})
+
+	// Let >=2 periodic @resync-<seq> snapshots accumulate before the
+	// crash (SnapshotInterval is 1s in this harness) — the VM run that
+	// found this had several minutes and multiple periodic snapshots by
+	// the time its secondary went stale; a resync choosing among
+	// several existing snapshots is a different code path than picking
+	// the only one that has ever existed.
+	time.Sleep(2500 * time.Millisecond)
+
+	// n3 is a secondary throughout (n1 is primary and stays primary).
+	c.Crash("n3")
+	for i := 0; i < drift; i++ {
+		if err := c.writeAcks(volID, pre+i); err != nil {
+			t.Fatalf("drift write %d (quorum n1+n2 only): %v", i, err)
+		}
+	}
+
+	c.Restart("n3")
+
+	// The bug: status.Placement never marks a live-write-excluded
+	// replica Stale, so this reads "secondary" from the moment n3's
+	// daemon is back — not from when it actually catches up. Wait on
+	// the thing that actually matters instead: the missing bytes
+	// landing on n3's own zvol file.
+	waitFor(t, 20*time.Second, "n3 catches up on the drift writes", func() bool {
+		return c.byID["n3"].fileHas(t, volID, pre+drift-1)
+	})
+	for r := 0; r < pre+drift; r++ {
+		if !c.byID["n3"].fileHas(t, volID, r) {
+			t.Fatalf("final: record %d missing on resynced n3", r)
+		}
+	}
+
+	// status.Placement must also end up honest: n3 reported Secondary
+	// with the adopted sequence, not a stale row nobody ever revised.
+	st := c.Status(volID)
+	for _, pl := range st.Placement {
+		if pl.NodeID == "n3" {
+			if pl.Role != storage.RoleSecondary {
+				t.Fatalf("n3 role %v after resync, want Secondary", pl.Role)
+			}
+			if pl.Sequence < uint64(pre+drift) {
+				t.Fatalf("n3 reported sequence %d after resync, want >= %d", pl.Sequence, pre+drift)
+			}
+		}
+	}
+}

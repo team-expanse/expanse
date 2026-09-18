@@ -76,6 +76,8 @@
           # Phase 06 (storage / exvol).
           vol-create = mkTest "vol-create" ./nix/tests/vol-create.nix;
           vol-durability = mkTest "vol-durability" ./nix/tests/vol-durability.nix;
+          vol-resync-incremental =
+            mkTest "vol-resync-incremental" ./nix/tests/vol-resync-incremental.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
