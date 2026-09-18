@@ -81,6 +81,19 @@ func (a *Agent) meshLoop(ctx context.Context) {
 		a.logger.Warn("first mesh reconcile failed", "err", err)
 	}
 	a.loop(ctx, 5*time.Second, "mesh", func() {
+		// Re-publish the peer record every tick. The endpoint is derived
+		// from the raft advertise address; at startup that file may not
+		// exist yet (the first successful publish then records a
+		// fallback LAN IP — on NAT'd test VMs the unroutable slirp
+		// address, blackholing the node until restart). EnsureIdentity
+		// CAS-refreshes the endpoint when it changed and is a no-op
+		// otherwise; a tick cost of one store CAS buys DHCP-renewal
+		// healing the docstring already promises.
+		if _, err := mesh.EnsureIdentity(ctx, a.store, a.cfg.NodeID,
+			filepath.Join(a.cfg.DataDir, mesh.KeyRelPath),
+			mesh.Endpoint(a.lanIP(), addrplan.WireGuardPort)); err != nil {
+			a.logger.Warn("mesh endpoint re-publish failed", "err", err)
+		}
 		if err := rec.Reconcile(ctx); err != nil {
 			a.logger.Warn("mesh reconcile failed", "err", err)
 		}
