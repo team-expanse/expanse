@@ -59,7 +59,8 @@ func (a *Agent) meshLoop(ctx context.Context) {
 		})
 		a.logger.Info("mesh identity ready",
 			"public_key", ident.Peer.PublicKey,
-			"overlay", ident.Peer.OverlayPrefix)
+			"overlay", ident.Peer.OverlayPrefix,
+			"endpoint", ident.Peer.Endpoint)
 		return true
 	}
 
