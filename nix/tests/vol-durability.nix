@@ -135,6 +135,9 @@ in
                            if mm.execute("ls /dev/exvol 2>/dev/null")[1].strip()]
                 if len(holders) == 1 and holders[0] == p:
                     return p
+            hs = wg_handshake_ages()
+            if int(time.time()) % 60 < 3:
+                print(f"HANDSHAKES {hs}")
             time.sleep(3)
         # NETEVIDENCE: the wait failed with every node's daemon alive but
         # no serving primary. VM runs have shown the exvol overlay
@@ -146,6 +149,8 @@ in
                 "wg show 2>&1 | head -40")[1])
             print(f"NETEVIDENCE[{m.name}] link:", m.execute(
                 "ip -br a show exp0 2>&1; ip route 2>&1 | head -5")[1])
+            print(f"NETEVIDENCE[{m.name}] phys:", m.execute(
+                "ip -br a 2>&1 | head -6; ping -c1 -W1 192.168.1.2 2>&1 | tail -1; ping -c1 -W1 192.168.1.3 2>&1 | tail -1; ss -ulnp 2>/dev/null | grep 51820")[1])
             for peer in [n1, n2, n3]:
                 if peer is m:
                     continue
@@ -156,6 +161,29 @@ in
                 "ss -ltn | grep 9440 2>&1")[1])
             print(f"NETEVIDENCE[{m.name}] nft9440:", m.execute(
                 "nft list ruleset 2>/dev/null | grep -c 9440")[1])
+
+        def wg_handshake_ages():
+            """Compact per-minute handshake timeline: when did the mesh
+            break? Print the age of the newest handshake per node while
+            the wait polls, so a stale-handshake blackout can be lined
+            up against crash/restore events.""
+            out = []
+            for m in [n1, n2, n3]:
+                rc, txt = m.execute(
+                    "wg show exp0 latest-handshakes 2>/dev/null")
+                ages = []
+                if rc == 0 and txt.strip():
+                    import time as _t
+                    now = _t.time()
+                    for ln in txt.strip().splitlines():
+                        parts = ln.split()
+                        if len(parts) == 2:
+                            try:
+                                ages.append(int(now - int(parts[1])))
+                            except ValueError:
+                                pass
+                out.append(f"{m.name}:[{','.join(str(a) for a in ages)}]")
+            return " ".join(out)
         raise AssertionError(f"no ready primary within {timeout}s")
     def write_record(primary, seq):
         """Write record `seq` at block offset seq, fsync, then ack."""
