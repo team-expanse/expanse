@@ -270,7 +270,15 @@ func (r *Runtime) stopAll() {
 	r.mu.Unlock()
 	for id, p := range prims {
 		p.nsrv.Close()
-		p.coord = nil
+		// p.coord is deliberately left set, not nil'd: a goroutine that
+		// resolved this SAME *volPrimary from r.prim just before the
+		// swap above (e.g. adoptNewReplicas/resyncStale, spawned async
+		// by convergeReplicas and not tracked/awaited here) may still
+		// be mid-flight and read p.coord with no lock of its own — a
+		// concurrent nil write here raced that read (found by -race)
+		// and, worse, could nil-panic it. Leaving the coordinator
+		// object itself in place is safe: its own writer/conns are
+		// closed right below, so any straggling use just errors.
 		p.held.Abandon()
 		p.writer.Close()
 		for _, cn := range p.conns {
@@ -737,11 +745,27 @@ func (r *Runtime) ensureServerLocked() error {
 // --- recovery / resync handlers served by THIS node's transport server ---
 
 // querySeq answers a recovery probe (§4.3 step 4a) from the local
-// secondary's op log.
+// secondary's op log — or, when this node currently holds the PRIMARY
+// role for volID, its own live replication health (§4.6): a raft-
+// independent read of Degraded/ReadOnly status. This is what lets
+// `volume inspect` (cmd_volume_ops.go's liveState) show the truth
+// even while the cluster's raft control plane has itself lost write
+// quorum and cannot persist a status update — the exact case
+// enforceReplication's own persisted State would otherwise go stale
+// in (controller.go), since both share the same floor(R/2)+1 rule.
 func (r *Runtime) querySeq(volID string) (*pb.SeqQueryReply, error) {
 	r.mu.Lock()
 	sec := r.secs[volID]
+	p := r.prim[volID]
 	r.mu.Unlock()
+	if p != nil && p.coord != nil {
+		coord := p.coord
+		healthy := 1 + len(coord.ReplicaIDs()) - len(coord.StaleReplicas())
+		return &pb.SeqQueryReply{
+			VolId: volID, LastSeq: coord.LastSeq(),
+			IsPrimary: true, Replication: int32(coord.Replication()), HealthyReplicas: int32(healthy),
+		}, nil
+	}
 	if sec == nil {
 		return nil, experrors.New(experrors.KindNotFound, "exvol.runtime.querySeq", "no such volume: "+volID)
 	}
@@ -821,6 +845,20 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	r.mu.Unlock()
 	if have {
 		return nil
+	}
+
+	// A primary must be reachable too, not just secondaries: other
+	// nodes' controllers QuerySeq/FetchOps it (recovery/election
+	// evidence, `volume diverged`'s probeSeqs, this CLI's own
+	// liveState probe) regardless of whether this node ALSO happens to
+	// hold a secondary role for some other volume — the previous
+	// server-only-on-secondary-role wiring left a pure-primary node's
+	// transport listener never started, unreachable even by itself.
+	r.mu.Lock()
+	srvErr := r.ensureServerLocked()
+	r.mu.Unlock()
+	if srvErr != nil {
+		return fmt.Errorf("replication server: %w", srvErr)
 	}
 
 	held, err := r.lm.TryAcquire(ctx, "exvol-vol-"+spec.ID, r.opts.LeaseTTL)
@@ -948,8 +986,47 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 	r.prim[spec.ID] = &volPrimary{coord: coord, dev: dev, nsrv: nsrv, held: held, writer: w, conns: conns}
 	r.mu.Unlock()
 	r.clearManualRecovered(ctx, spec.ID)
+	r.publishOwnPrimaryRow(ctx, spec.ID, startSeq)
 	r.opts.Logger.Info("primary serving", "vol", spec.ID, "zvol", zvolPath, "replicas", len(reps), "seq", startSeq)
 	return nil
+}
+
+// publishOwnPrimaryRow refreshes this node's OWN Placement row to
+// Role=Primary/Healthy/LastSeen=now on successful promotion. Election
+// (controller.electPrimary) only ever writes status.Primary and
+// status.State — nothing else updates the Placement table's Role
+// column when a NEW node takes over, so a node that was ALSO marked
+// Stale moments earlier (e.g. it was one of several replicas down
+// during an outage, then itself got elected once it rejoined) would
+// otherwise keep reporting itself Stale forever despite successfully
+// serving as primary: `volume inspect`/wait-for-convergence tooling
+// would never see it as healthy.
+func (r *Runtime) publishOwnPrimaryRow(ctx context.Context, volID string, seq uint64) {
+	status, rev, err := storage.LoadStatus(ctx, r.opts.St, volID)
+	if err != nil {
+		return
+	}
+	changed := false
+	for i := range status.Placement {
+		if status.Placement[i].NodeID != r.opts.NodeID {
+			continue
+		}
+		pl := &status.Placement[i]
+		if pl.Role != storage.RolePrimary || !pl.Healthy || pl.Sequence != seq {
+			pl.Role = storage.RolePrimary
+			pl.Healthy = true
+			pl.Sequence = seq
+			pl.LastSeen = time.Now()
+			changed = true
+		}
+		break
+	}
+	if !changed {
+		return
+	}
+	if err := storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, status); err != nil {
+		r.opts.Logger.Warn("publish own primary row failed", "vol", volID, "err", err)
+	}
 }
 
 // WriteOp issues one replicated data write through the volume's

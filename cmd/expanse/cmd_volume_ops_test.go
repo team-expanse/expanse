@@ -86,7 +86,7 @@ func fixtureVolume(t *testing.T) *volEntry {
 // sequence numbers and lag must be there.
 func TestPrintInspectShowsPerReplicaSeqAndLag(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printInspect(&buf, fixtureVolume(t)); err != nil {
+	if err := printInspect(context.Background(), &buf, nil, fixtureVolume(t)); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()

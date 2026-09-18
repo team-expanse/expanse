@@ -6,11 +6,25 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 	expb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
 )
+
+// sendRecvDeadline bounds Conn.Send/Recv — the foreground write-
+// replication pump's only I/O (via Sender.Submit/Recv), plus a few
+// bounded catch-up loops (op-replay, recovery backfill). Without this,
+// a peer that goes silently dark (a crashed VM behind WireGuard sends
+// no RST, no ICMP) leaves the read/write blocked on nothing shorter
+// than the OS's own TCP retransmission timeout — minutes, not the
+// documented ~5s stale-replica SLA (primary.Coordinator's staleTimeout)
+// that every caller above this actually depends on to detect failure
+// and unblock. Matches that SLA; resync's own SendResyncChunk is
+// deliberately exempt (large transfers are expected to take longer,
+// rate-limited by its own throttle instead).
+const sendRecvDeadline = 5 * time.Second
 
 // Handler processes one replicated write on the secondary side. It is
 // T04's protocol.Secondary.Handle wrapped around the local writer (T06);
@@ -288,6 +302,9 @@ func (c *Conn) Send(volID string, op protocol.WriteOp) error {
 	if err != nil {
 		return err
 	}
+	if err := c.c.nc.SetWriteDeadline(time.Now().Add(sendRecvDeadline)); err != nil {
+		return err
+	}
 	c.c.wmu.Lock()
 	err = writeFrame(c.c.w, msgWriteRequest, b)
 	c.c.wmu.Unlock()
@@ -299,6 +316,9 @@ func (c *Conn) Send(volID string, op protocol.WriteOp) error {
 
 // Recv reads the next reply in send order.
 func (c *Conn) Recv() (protocol.Reply, error) {
+	if err := c.c.nc.SetReadDeadline(time.Now().Add(sendRecvDeadline)); err != nil {
+		return protocol.Reply{}, err
+	}
 	typ, payload, err := readFrame(c.c.r)
 	if err != nil {
 		return protocol.Reply{}, err

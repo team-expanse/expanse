@@ -313,12 +313,22 @@ func (x *SeqQuery) GetVolId() string {
 }
 
 type SeqQueryReply struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	VolId         string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
-	LastSeq       uint64                 `protobuf:"varint,2,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
-	Ops           []*SeqInfo             `protobuf:"bytes,3,rep,name=ops,proto3" json:"ops,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	VolId   string                 `protobuf:"bytes,1,opt,name=vol_id,json=volId,proto3" json:"vol_id,omitempty"`
+	LastSeq uint64                 `protobuf:"varint,2,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
+	Ops     []*SeqInfo             `protobuf:"bytes,3,rep,name=ops,proto3" json:"ops,omitempty"`
+	// Live primary health (§4.6), populated only when the answering node
+	// currently holds the PRIMARY role for vol_id — a raft-independent
+	// probe: the CLI's `volume inspect` dials this directly (same channel
+	// as recovery's own probes) so a volume's live Degraded/ReadOnly
+	// state stays observable even when the cluster's raft control plane
+	// has itself lost write quorum and cannot persist a status update
+	// (see runtime.querySeq / cmd_volume_ops.go's liveState).
+	IsPrimary       bool  `protobuf:"varint,4,opt,name=is_primary,json=isPrimary,proto3" json:"is_primary,omitempty"`
+	Replication     int32 `protobuf:"varint,5,opt,name=replication,proto3" json:"replication,omitempty"`
+	HealthyReplicas int32 `protobuf:"varint,6,opt,name=healthy_replicas,json=healthyReplicas,proto3" json:"healthy_replicas,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SeqQueryReply) Reset() {
@@ -370,6 +380,27 @@ func (x *SeqQueryReply) GetOps() []*SeqInfo {
 		return x.Ops
 	}
 	return nil
+}
+
+func (x *SeqQueryReply) GetIsPrimary() bool {
+	if x != nil {
+		return x.IsPrimary
+	}
+	return false
+}
+
+func (x *SeqQueryReply) GetReplication() int32 {
+	if x != nil {
+		return x.Replication
+	}
+	return 0
+}
+
+func (x *SeqQueryReply) GetHealthyReplicas() int32 {
+	if x != nil {
+		return x.HealthyReplicas
+	}
+	return 0
 }
 
 // FetchOpsRequest pulls ops (from_seq, to_seq] from a replica — the
@@ -616,11 +647,15 @@ const file_proto_replication_proto_rawDesc = "" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x16\n" +
 	"\x06crc32c\x18\x02 \x01(\rR\x06crc32c\"!\n" +
 	"\bSeqQuery\x12\x15\n" +
-	"\x06vol_id\x18\x01 \x01(\tR\x05volId\"t\n" +
+	"\x06vol_id\x18\x01 \x01(\tR\x05volId\"\xe0\x01\n" +
 	"\rSeqQueryReply\x12\x15\n" +
 	"\x06vol_id\x18\x01 \x01(\tR\x05volId\x12\x19\n" +
 	"\blast_seq\x18\x02 \x01(\x04R\alastSeq\x121\n" +
-	"\x03ops\x18\x03 \x03(\v2\x1f.expanse.replication.v1.SeqInfoR\x03ops\"Z\n" +
+	"\x03ops\x18\x03 \x03(\v2\x1f.expanse.replication.v1.SeqInfoR\x03ops\x12\x1d\n" +
+	"\n" +
+	"is_primary\x18\x04 \x01(\bR\tisPrimary\x12 \n" +
+	"\vreplication\x18\x05 \x01(\x05R\vreplication\x12)\n" +
+	"\x10healthy_replicas\x18\x06 \x01(\x05R\x0fhealthyReplicas\"Z\n" +
 	"\x0fFetchOpsRequest\x12\x15\n" +
 	"\x06vol_id\x18\x01 \x01(\tR\x05volId\x12\x19\n" +
 	"\bfrom_seq\x18\x02 \x01(\x04R\afromSeq\x12\x15\n" +

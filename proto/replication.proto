@@ -54,6 +54,16 @@ message SeqQueryReply {
   string vol_id = 1;
   uint64 last_seq = 2;
   repeated SeqInfo ops = 3;
+  // Live primary health (§4.6), populated only when the answering node
+  // currently holds the PRIMARY role for vol_id — a raft-independent
+  // probe: the CLI's `volume inspect` dials this directly (same channel
+  // as recovery's own probes) so a volume's live Degraded/ReadOnly
+  // state stays observable even when the cluster's raft control plane
+  // has itself lost write quorum and cannot persist a status update
+  // (see runtime.querySeq / cmd_volume_ops.go's liveState).
+  bool is_primary = 4;
+  int32 replication = 5;
+  int32 healthy_replicas = 6;
 }
 
 // FetchOpsRequest pulls ops (from_seq, to_seq] from a replica — the

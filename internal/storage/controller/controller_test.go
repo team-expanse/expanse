@@ -170,15 +170,15 @@ func TestRebuildCapTwo(t *testing.T) {
 	}
 }
 
-// TestUnderReplicationAlert: fewer healthy replicas than the factor →
-// alert event emitted and state Degraded.
+// TestUnderReplicationAlert: fewer healthy replicas than the factor,
+// but a write quorum (2 of 3) still reachable → alert event emitted
+// and state Degraded (G6.11: still readable+writable).
 func TestUnderReplicationAlert(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
 	seedMesh(st, "n1", "n2", "n3")
 	seedVolume(t, ctx, st, "vol-under", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
 	status, rev, _ := storage.LoadStatus(ctx, st, "vol-under")
-	status.Placement[1].Healthy = false
 	status.Placement[2].Healthy = false
 	_ = storage.SaveStatus(ctx, st, "vol-under", status)
 	_ = rev
@@ -191,12 +191,54 @@ func TestUnderReplicationAlert(t *testing.T) {
 	if err := c.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(alerts) == 0 || alerts[0].Kind != "under-replication" || alerts[0].Have != 1 || alerts[0].Want != 3 {
-		t.Fatalf("alerts = %+v, want under-replication 1/3", alerts)
+	if len(alerts) == 0 || alerts[0].Kind != "under-replication" || alerts[0].Have != 2 || alerts[0].Want != 3 {
+		t.Fatalf("alerts = %+v, want under-replication 2/3", alerts)
 	}
 	got, _, _ := storage.LoadStatus(ctx, st, "vol-under")
 	if got.State != storage.StateDegraded {
 		t.Fatalf("state = %s, want Degraded", got.State)
+	}
+}
+
+// TestReadOnlyBelowQuorum: healthy replicas drop below write quorum
+// (1 of 3; quorum is floor(3/2)+1 = 2) → state ReadOnly, not Degraded
+// (G6.12: writes would no longer reach quorum, so the state must say
+// so — reads still work from the primary's local copy regardless).
+func TestReadOnlyBelowQuorum(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-ro", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	status, rev, _ := storage.LoadStatus(ctx, st, "vol-ro")
+	status.Placement[1].Healthy = false
+	status.Placement[2].Healthy = false
+	_ = storage.SaveStatus(ctx, st, "vol-ro", status)
+	_ = rev
+
+	c := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true },
+		Alert: func(AlertEvent) {},
+	})
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := storage.LoadStatus(ctx, st, "vol-ro")
+	if got.State != storage.StateReadOnly {
+		t.Fatalf("state = %s, want ReadOnly", got.State)
+	}
+
+	// Restore both — state must recover to Healthy, not stay stuck.
+	status, rev, _ = storage.LoadStatus(ctx, st, "vol-ro")
+	status.Placement[1].Healthy = true
+	status.Placement[2].Healthy = true
+	_ = storage.SaveStatus(ctx, st, "vol-ro", status)
+	_ = rev
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = storage.LoadStatus(ctx, st, "vol-ro")
+	if got.State != storage.StateHealthy {
+		t.Fatalf("state after recovery = %s, want Healthy", got.State)
 	}
 }
 

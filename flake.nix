@@ -78,6 +78,8 @@
           vol-durability = mkTest "vol-durability" ./nix/tests/vol-durability.nix;
           vol-resync-incremental =
             mkTest "vol-resync-incremental" ./nix/tests/vol-resync-incremental.nix;
+          vol-degraded = mkTest "vol-degraded" ./nix/tests/vol-degraded.nix;
+          vol-full-restart = mkTest "vol-full-restart" ./nix/tests/vol-full-restart.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;

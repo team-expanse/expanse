@@ -620,8 +620,16 @@ func (c *Controller) volLeaseExpired(ctx context.Context, volID string) bool {
 	return time.Now().After(l.ExpiresAt.Add(15 * time.Second))
 }
 
-// enforceReplication alerts when the volume cannot meet its
-// replication factor (§4.6) and degrades the state.
+// enforceReplication derives the volume's live State from its actual
+// reachable, healthy replica count (§4.6, G6.11/G6.12): Degraded once
+// replicas drop below the replication factor but a write quorum is
+// still reachable (still readable+writable); ReadOnly once even a
+// write quorum is unreachable — reads still succeed from the primary's
+// local copy, writes already fail fast with EIO via the primary's own
+// quorum-ack rejection (never hang), this just makes that visible.
+// Recovers back to Degraded/Healthy as replicas rejoin and resync —
+// unlike a one-way degrade, staying Degraded forever after a rejoin
+// would misreport a fully-recovered volume as still impaired.
 func (c *Controller) enforceReplication(ctx context.Context, volID string, spec *storage.Spec, status *storage.Status, rev store.Revision, meshed map[string]bool) {
 	healthy := 0
 	for _, p := range status.Placement {
@@ -629,17 +637,29 @@ func (c *Controller) enforceReplication(ctx context.Context, volID string, spec 
 			healthy++
 		}
 	}
-	if healthy >= spec.Replication {
-		return
+	// floor(R/2)+1 — matches the primary's own write-ack quorum
+	// (protocol.Primary.Quorum) exactly.
+	quorum := spec.Replication/2 + 1
+	want := storage.StateHealthy
+	switch {
+	case healthy < quorum:
+		want = storage.StateReadOnly
+	case healthy < spec.Replication:
+		want = storage.StateDegraded
 	}
-	c.emitAlert(AlertEvent{
-		VolID: volID, Kind: "under-replication",
-		Have: healthy, Want: spec.Replication,
-		Detail: "replication factor cannot be met",
-	})
-	if status.State == storage.StateHealthy {
-		status.State = storage.StateDegraded
-		_ = storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status)
+	if want != storage.StateHealthy {
+		c.emitAlert(AlertEvent{
+			VolID: volID, Kind: "under-replication",
+			Have: healthy, Want: spec.Replication,
+			Detail: "replication factor cannot be met",
+		})
+	}
+	switch status.State {
+	case storage.StateHealthy, storage.StateDegraded, storage.StateReadOnly:
+		if status.State != want {
+			status.State = want
+			_ = storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status)
+		}
 	}
 }
 
