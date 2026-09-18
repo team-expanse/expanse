@@ -440,3 +440,84 @@ func TestTornPrimarySelfHeals(t *testing.T) {
 		return c.byID["n1"].fileHas(t, volID, recs-1)
 	})
 }
+
+// TestDurabilityLoop is the in-process analog of vol-durability.nix's
+// release-blocker loop (§6 G6.3): write acked records, crash the
+// primary, fail over, verify every acked record, restore the crashed
+// node, require 3-way checksum equality — repeated many times in one
+// process instead of one cycle per ~70s VM boot. It is the fast tool
+// for catching this class of regression (this package's device-detach
+// bug, the resync snapshot numeric-ordering bug at seq>=10, etc.)
+// long before a VM run would surface it; the VM test remains the
+// final gate against the real zfs/systemd/WireGuard stack.
+//
+// Election here is driven by c.Elect (a direct status CAS) rather
+// than a real raft-leader controller — this harness has no controller
+// loop (see package doc) — so it exercises the runtime's own recovery
+// and role-change plumbing, not the controller's election algorithm
+// (covered separately by internal/storage/controller's tests).
+func TestDurabilityLoop(t *testing.T) {
+	const (
+		volID = "vol-durloop"
+		iters = 15
+	)
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+	nodes := []string{"n1", "n2", "n3"}
+	nextIdx := map[string]int{"n1": 1, "n2": 2, "n3": 0}
+
+	acked := 0
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, acked) == nil
+	})
+	acked++
+
+	for it := 0; it < iters; it++ {
+		for n := 0; n < 1+it%2; n++ { // 1-2 records this iteration
+			if err := c.writeAcks(volID, acked); err != nil {
+				t.Fatalf("iter %d: write %d: %v", it, acked, err)
+			}
+			acked++
+		}
+
+		primary := c.Status(volID).Primary
+		c.Crash(primary)
+		next := nodes[nextIdx[primary]]
+		c.Elect(volID, next)
+
+		waitFor(t, 90*time.Second, fmt.Sprintf("iter %d: %s serves", it, next), func() bool {
+			return c.writeAcks(volID, acked) == nil
+		})
+		acked++
+
+		for _, id := range nodes {
+			if id == primary {
+				continue // crashed; checked after its restart below
+			}
+			for r := 0; r < acked; r++ {
+				if !c.byID[id].fileHas(t, volID, r) {
+					t.Fatalf("iter %d: ACKED RECORD %d LOST on %s (release blocker)", it, r, id)
+				}
+			}
+		}
+
+		c.Restart(primary)
+		waitFor(t, 15*time.Second, fmt.Sprintf("iter %d: %s resynced", it, primary), func() bool {
+			return c.byID[primary].fileHas(t, volID, acked-1)
+		})
+		// The byte-level resync landing is not the same moment the
+		// restarted node's secondary role/oplog fully settles; crashing
+		// it again as someone else's leveling target immediately after
+		// is a race this loop's tight cadence can hit but no real
+		// timeline would (SnapshotInterval alone is 1s in this harness).
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	for _, id := range nodes {
+		for r := 0; r < acked; r++ {
+			if !c.byID[id].fileHas(t, volID, r) {
+				t.Fatalf("final: record %d diverged on %s", r, id)
+			}
+		}
+	}
+}

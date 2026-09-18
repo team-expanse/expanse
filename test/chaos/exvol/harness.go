@@ -322,20 +322,31 @@ func (c *Cluster) CreateVolume(volID string, size uint64, placement []string) {
 // write), preserving placement.
 func (c *Cluster) Elect(volID, nodeID string) {
 	c.T.Helper()
-	st, rev, err := storage.LoadStatus(c.ctx(), c.St, volID)
-	if err != nil {
-		c.T.Fatal(err)
-	}
-	st.Primary = nodeID
-	for i := range st.Placement {
-		if st.Placement[i].NodeID == nodeID {
-			st.Placement[i].Role = storage.RolePrimary
-		} else {
-			st.Placement[i].Role = storage.RoleSecondary
+	// Retried: the runtime writes its own status updates (e.g.
+	// reportSequence) concurrently, same as a real controller racing
+	// real agents — a real controller retries its own CAS on conflict
+	// rather than giving up, so this fake stand-in for one should too.
+	for attempt := 0; attempt < 10; attempt++ {
+		st, rev, err := storage.LoadStatus(c.ctx(), c.St, volID)
+		if err != nil {
+			c.T.Fatal(err)
 		}
-	}
-	if err := storage.CompareAndSwapStatus(c.ctx(), c.St, volID, rev, st); err != nil {
-		c.T.Fatalf("elect %s: %v", nodeID, err)
+		st.Primary = nodeID
+		for i := range st.Placement {
+			if st.Placement[i].NodeID == nodeID {
+				st.Placement[i].Role = storage.RolePrimary
+			} else {
+				st.Placement[i].Role = storage.RoleSecondary
+			}
+		}
+		if err := storage.CompareAndSwapStatus(c.ctx(), c.St, volID, rev, st); err != nil {
+			if attempt < 9 {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			c.T.Fatalf("elect %s: %v", nodeID, err)
+		}
+		return
 	}
 }
 

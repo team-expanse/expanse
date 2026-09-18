@@ -227,14 +227,20 @@ func Recover(ctx context.Context, probes []Probe, selfFetch func(ctx context.Con
 // levelOne brings one replica to MaxSeq. Its CLAIMS (oplog) may lie —
 // a torn zvol behind honest oplog records (the §4.3 4a/4b gap) must be
 // caught, so the target's durability is SAMPLE-VERIFIED first: the
-// lowest and highest ops it claims are re-read via its own FetchOps.
+// lowest and highest ops it CURRENTLY CLAIMS (its own CRCs map — not
+// literal seq 1, which a full resync can long since have rotated out
+// of every node's retained history) are re-read via its own FetchOps.
 // A failed sample means the claims are unserveable → the FULL op range
 // is resent from the caller's copy (the resends rebuild the missing
 // bytes; duplicates re-ACK idempotently on a healthy replica).
 func levelOne(ctx context.Context, target Probe, maxSeq uint64, selfFetch func(context.Context, uint64, uint64) ([]protocol.WriteOp, error), probes []Probe, byID map[string]*Probe, sendToReplica func(context.Context, string, protocol.WriteOp) error) error {
 	claimsCurrent := target.LastSeq >= maxSeq
 	if claimsCurrent && target.FetchOps != nil && maxSeq > 0 {
-		for _, seq := range []uint64{1, maxSeq} {
+		sampleSeqs := []uint64{maxSeq}
+		if lo := minClaimedSeq(target.CRCs); lo > 0 && lo != maxSeq {
+			sampleSeqs = append(sampleSeqs, lo)
+		}
+		for _, seq := range sampleSeqs {
 			ops, err := target.FetchOps(ctx, seq-1, seq)
 			if err != nil {
 				claimsCurrent = false // unserveable claims
@@ -277,6 +283,22 @@ func levelOne(ctx context.Context, target Probe, maxSeq uint64, selfFetch func(c
 		}
 	}
 	return nil
+}
+
+// minClaimedSeq returns the lowest seq a replica's CRCs map claims to
+// hold, or 0 if it claims none. A node's oplog is reset on every full
+// resync (§4.3 resync), so seq 1 is routinely NOT among a healthy,
+// fully-current replica's claims once a volume has rotated through
+// even one full resend — that is expected, not evidence of a torn
+// zvol, and must not be sampled as if it were.
+func minClaimedSeq(crcs map[uint64]uint32) uint64 {
+	var lo uint64
+	for seq := range crcs {
+		if lo == 0 || seq < lo {
+			lo = seq
+		}
+	}
+	return lo
 }
 
 // fetchOne sources one op for leveling: the caller's own durable copy

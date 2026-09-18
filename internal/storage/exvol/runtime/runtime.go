@@ -1061,6 +1061,10 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 	}
 	r.opts.Logger.Info("volume recovered", "vol", volID,
 		"primary", res.NewPrimaryID, "seq", res.MaxSeq, "pulled", res.Pulled, "stale", res.Stale)
+	for _, f := range res.SyncFailures {
+		r.opts.Logger.Warn("4c leveling failed; replica marked stale", "vol", volID,
+			"node", f.Target, "op", f.Op, "err", f.Err)
+	}
 	// Fill the local copy (see above) before the caller resumes serving.
 	if res.MaxSeq > localLast {
 		byID := map[string]*recovery.Probe{}
@@ -1129,10 +1133,14 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 			for seq := from + 1; seq <= localLast; seq++ {
 				op, ferr := selfFetch(ctx, seq-1, seq)
 				if ferr != nil || len(op) != 1 {
+					r.opts.Logger.Warn("re-level tail: self-fetch failed", "vol", volID,
+						"node", p.NodeID, "seq", seq, "err", ferr)
 					leveled = false
 					break
 				}
 				if serr := sendToReplica(ctx, p.NodeID, op[0]); serr != nil {
+					r.opts.Logger.Warn("re-level tail: send to replica failed", "vol", volID,
+						"node", p.NodeID, "seq", seq, "err", serr)
 					leveled = false
 					break
 				}
