@@ -45,7 +45,7 @@ func (f *fakeLocal) Close() error { return nil }
 func deviceOf(t *testing.T, size int64, l primary.Lease) *ExvolDevice {
 	t.Helper()
 	f := &fakeLocal{data: make([]byte, size)}
-	return &ExvolDevice{volID: "test-vol", size: size, local: f, coord: nil, lease: l}
+	return New("test-vol", size, f, nil, l)
 }
 
 func TestBlockDeviceReadWriteFlushDiscardSemantics(t *testing.T) {
@@ -106,7 +106,7 @@ func TestBlockDeviceRangeChecks(t *testing.T) {
 func TestLeaseLossEIOPromptNotHanging(t *testing.T) {
 	fl := &fakeLocal{data: make([]byte, 4096)}
 	lease := &fakeLease{valid: true}
-	dev := &ExvolDevice{volID: "v", size: 4096, local: fl, lease: lease}
+	dev := New("v", 4096, fl, nil, lease)
 
 	watchdog := time.AfterFunc(2*time.Second, func() {
 		panic("device call still blocked after 2s — §4.4 hang, not EIO")
@@ -178,7 +178,7 @@ func TestNBDRoundTrip(t *testing.T) {
 	}
 	defer srv.Close()
 	fl := &fakeLocal{data: make([]byte, 1<<20)}
-	srv.SetDevice(&ExvolDevice{volID: "v", size: 1 << 20, local: fl, lease: nil})
+	srv.SetDevice(New("v", 1<<20, fl, nil, nil))
 	go srv.Serve() //nolint:errcheck
 
 	cl := nbdDial(t, sock, 1<<20)
@@ -215,6 +215,28 @@ func TestNBDRoundTrip(t *testing.T) {
 	}
 }
 
+// Discard is neither replicated nor supported by the zvol, so TRIM must
+// not be advertised: a kernel that never sends it cannot make the
+// primary's bytes diverge from the replicas' (or hit EIO in mkfs).
+func TestNBDDoesNotAdvertiseTrim(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "vol.nbd.sock")
+	srv, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.SetDevice(New("v", 1<<20, &fakeLocal{data: make([]byte, 1<<20)}, nil, nil))
+	go srv.Serve() //nolint:errcheck
+
+	cl := nbdDial(t, sock, 1<<20)
+	if cl.flags&nbdFlagSendTrim != 0 {
+		t.Fatalf("export flags %#x advertise TRIM", cl.flags)
+	}
+	if cl.flags&nbdFlagSendFlush == 0 || cl.flags&nbdFlagSendWZ == 0 {
+		t.Fatalf("export flags %#x lost FLUSH/WRITE_ZEROES", cl.flags)
+	}
+}
+
 func TestNBDErrorReplyOnLeaseLoss(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "vol.nbd.sock")
 	srv, err := Listen(sock)
@@ -224,7 +246,7 @@ func TestNBDErrorReplyOnLeaseLoss(t *testing.T) {
 	defer srv.Close()
 	lease := &fakeLease{valid: true}
 	fl := &fakeLocal{data: make([]byte, 1<<20)}
-	srv.SetDevice(&ExvolDevice{volID: "v", size: 1 << 20, local: fl, lease: lease})
+	srv.SetDevice(New("v", 1<<20, fl, nil, lease))
 	go srv.Serve() //nolint:errcheck
 
 	cl := nbdDial(t, sock, 1<<20)
@@ -300,7 +322,8 @@ func newCoordinator(t *testing.T, size int64, reps []*fakeSecondary) (*primary.C
 // --- minimal NBD client for tests ---
 
 type nbdConn struct {
-	nc net.Conn
+	nc    net.Conn
+	flags uint16 // transmission flags advertised by the server
 }
 
 func nbdDial(t *testing.T, sock string, size int64) *nbdConn {
@@ -342,7 +365,7 @@ func nbdDial(t *testing.T, sock string, size int64) *nbdConn {
 	if got != uint64(size) {
 		t.Fatalf("export size = %d, want %d", got, size)
 	}
-	return &nbdConn{nc: nc}
+	return &nbdConn{nc: nc, flags: binary.BigEndian.Uint16(info[8:])}
 }
 
 func nbdCommand(c *nbdConn, cmd uint16, off int64, length int64, data []byte) ([]byte, error) {

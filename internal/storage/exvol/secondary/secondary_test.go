@@ -223,6 +223,8 @@ func (failingWriter) WriteAt(p []byte, off int64) error {
 
 func (failingWriter) Flush() error { return net.ErrClosed }
 
+func (failingWriter) SetSize(n int64) {}
+
 // countingWriter records applies; its writes panic if used after the
 // test has swapped it out (SwapWriter(nil)).
 type countingWriter struct {
@@ -235,6 +237,8 @@ func (c *countingWriter) WriteAt(p []byte, off int64) error {
 }
 
 func (c *countingWriter) Flush() error { return nil }
+
+func (c *countingWriter) SetSize(n int64) {}
 
 func (c *countingWriter) ReadAt(p []byte, off int64) (int, error) {
 	return len(p), nil

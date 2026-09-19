@@ -79,7 +79,23 @@ func openFlags(path string, size int64, flags int, direct bool) (*Writer, error)
 func (w *Writer) Direct() bool { return w.direct }
 
 // Size is the device size in bytes.
-func (w *Writer) Size() int64 { return w.size }
+func (w *Writer) Size() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.size
+}
+
+// SetSize grows the writer's enforced bound to match a resized zvol
+// (G6.14 online resize, grow-only) — WriteAt/ReadAt reject any offset
+// beyond whatever this was last set to, so a resize that only grows the
+// underlying zvol without also calling this leaves every write into the
+// new region rejected as "out of range" despite the device having
+// plenty of room.
+func (w *Writer) SetSize(n int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.size = n
+}
 
 // Close closes the device.
 func (w *Writer) Close() error { return w.f.Close() }

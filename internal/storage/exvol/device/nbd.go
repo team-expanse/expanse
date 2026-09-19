@@ -134,8 +134,11 @@ func (s *Server) Close() error {
 }
 
 // nbdExportFlags is the transmission-flag set advertised on both the
-// EXPORT_NAME and OPT_GO paths.
-const nbdExportFlags = uint16(nbdFlagHasFlags | nbdFlagSendFlush | nbdFlagSendTrim | nbdFlagSendDisc | nbdFlagSendWZ)
+// EXPORT_NAME and OPT_GO paths. TRIM is deliberately not advertised: it
+// is a hint, ExvolDevice.Discard is not replicated (it would leave the
+// replicas holding bytes the primary dropped), and zvols reject the
+// hole-punch anyway. The kernel therefore never sends it.
+const nbdExportFlags = uint16(nbdFlagHasFlags | nbdFlagSendFlush | nbdFlagSendDisc | nbdFlagSendWZ)
 
 // nbdOptionReply writes an option-reply record.
 func nbdOptionReply(w io.Writer, option, replyType uint32, payload []byte) error {

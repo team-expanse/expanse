@@ -309,6 +309,34 @@ func LoadSpec(ctx context.Context, st store.Store, volID string) (Spec, error) {
 	return SpecFromProto(&p), nil
 }
 
+// LoadSpecRev reads a volume spec together with its store revision, for
+// a later CompareAndSwapSpec update (the "except size" half of Spec's
+// own doc comment — G6.14 online resize).
+func LoadSpecRev(ctx context.Context, st store.Store, volID string) (Spec, store.Revision, error) {
+	entry, err := st.Get(ctx, SpecKey(volID))
+	if err != nil {
+		return Spec{}, 0, experrors.Wrap(err, experrors.KindNotFound, "storage.LoadSpecRev", "get")
+	}
+	var p pb.VolumeSpec
+	if err := proto.Unmarshal(entry.Value, &p); err != nil {
+		return Spec{}, 0, experrors.Wrap(err, experrors.KindInternal, "storage.LoadSpecRev", "unmarshal")
+	}
+	return SpecFromProto(&p), entry.Revision, nil
+}
+
+// CompareAndSwapSpec updates a spec only if its revision is still
+// expect; returns KindConflict on a lost race.
+func CompareAndSwapSpec(ctx context.Context, st store.Store, volID string, expect store.Revision, s Spec) error {
+	raw, err := proto.Marshal(SpecToProto(s))
+	if err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "storage.CompareAndSwapSpec", "marshal")
+	}
+	if _, err := st.CompareAndSwap(ctx, SpecKey(volID), expect, raw); err != nil {
+		return experrors.Wrap(err, experrors.KindConflict, "storage.CompareAndSwapSpec", "cas")
+	}
+	return nil
+}
+
 // SaveStatus writes a volume status unconditionally (controller-owned
 // fields only; replicas go through CompareAndSwapStatus).
 func SaveStatus(ctx context.Context, st store.Store, volID string, s Status) error {

@@ -135,6 +135,10 @@ type Options struct {
 	// unserved.
 	DetachNBD func(volID, nbdDev string) error
 
+	// ResizeNBD grows an attached NBD device in place, without a
+	// reconnect (default: device.ResizeNBD over netlink; tests fake it).
+	ResizeNBD func(nbdDev string, sizeBytes int64) error
+
 	// Tick is the reconcile cadence (default 2s; tests speed this up).
 	Tick time.Duration
 
@@ -174,6 +178,13 @@ type volPrimary struct {
 	conns      map[string]*transport.Conn
 	lastVerify time.Time
 	verifySeq  uint64 // currency-watchdog rotation cursor (next op to re-check)
+	// snapshotOnly (guarded by Runtime.mu) names replicas whose divergence
+	// is not a suffix of the op log — after a restore the primary's zvol
+	// jumped backwards without an op — so op-replay would "catch them up"
+	// with nothing and leave stale bytes behind.
+	snapshotOnly map[string]bool
+	// mismatch debounces the currency watchdog (touched only by it).
+	mismatch mismatchConfirmer
 }
 
 // New builds the runtime. Call Run in a goroutine.
@@ -220,6 +231,9 @@ func New(opts Options) *Runtime {
 		opts.DetachNBD = func(volID, nbdDev string) error {
 			return device.Detach(volID, nbdDev, device.ExecRunner{})
 		}
+	}
+	if opts.ResizeNBD == nil {
+		opts.ResizeNBD = device.ResizeNBD
 	}
 	return &Runtime{
 		opts:      opts,
@@ -339,6 +353,7 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 				} else {
 					r.reportSequence(ctx, spec.ID, status)
 					r.verifyServingCurrent(ctx, spec.ID)
+					r.applyResize(spec.ID, spec.SizeBytes)
 					r.periodicSnapshot(id, zvolPath)
 					r.publishStaleReplicas(ctx, spec.ID, status)
 					// Replica convergence (adopt + resync) dials peers
@@ -360,6 +375,8 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 		}
 	}
 	r.processResyncOps(ctx, seen)
+	r.processSnapshotOps(ctx, seen)
+	r.processRestoreOps(ctx, seen)
 	r.publishPoolStatus(ctx)
 	r.pruneNotIn(seen)
 	return nil
@@ -477,6 +494,148 @@ func (r *Runtime) processResyncOps(ctx context.Context, seen map[string]bool) {
 			continue // keep the op for retry
 		}
 		delOp(ctx, r.opts.St, "resync", volID)
+	}
+}
+
+// snapshotOp is a user-requested named snapshot (T15 §4.8, G6.13).
+type snapshotOp struct {
+	Name string `json:"name"`
+}
+
+// processSnapshotOps takes a named zvol snapshot for volumes this node
+// is primary of. Only the primary acts (the snapshot must reflect the
+// currently-serving copy); a non-primary node just leaves the op for
+// whichever node holds the role.
+func (r *Runtime) processSnapshotOps(ctx context.Context, seen map[string]bool) {
+	ops, err := opsOf(ctx, r.opts.St, "snapshot")
+	if err != nil {
+		return
+	}
+	for volID, e := range ops {
+		if !seen[volID] {
+			continue
+		}
+		var op snapshotOp
+		_ = json.Unmarshal(e.Value, &op)
+		status, _, err := storage.LoadStatus(ctx, r.opts.St, volID)
+		if err != nil || status.Primary != r.opts.NodeID {
+			continue // not the primary here — the primary's runtime consumes it
+		}
+		zp := r.zvolOf[volID]
+		if zp == "" {
+			continue // zvol not ensured yet; next tick
+		}
+		if op.Name == "" || strings.HasPrefix(op.Name, resync.SnapPrefix) {
+			// The resync- prefix is reserved for the internal
+			// @resync-<seq> lineage (retention destroys the oldest past
+			// DefaultKeep, and CommonAncestor parses it as a sequence
+			// number) — a user snapshot sharing it could be silently
+			// destroyed by Retain or misread as a resync checkpoint.
+			r.opts.Logger.Warn("snapshot op rejected: name is empty or reserved", "vol", volID, "name", op.Name)
+			delOp(ctx, r.opts.St, "snapshot", volID)
+			continue
+		}
+		r.mu.Lock()
+		p := r.prim[volID]
+		r.mu.Unlock()
+		if p == nil || p.coord == nil {
+			continue
+		}
+		if err := p.coord.Flush(); err != nil {
+			r.opts.Logger.Warn("snapshot: flush failed", "vol", volID, "err", err)
+			continue // retry next tick
+		}
+		if err := r.zfs.Snapshot(ctx, zp, op.Name); err != nil {
+			r.opts.Logger.Warn("snapshot failed", "vol", volID, "name", op.Name, "err", err)
+			continue
+		}
+		delOp(ctx, r.opts.St, "snapshot", volID)
+		r.opts.Logger.Info("snapshot taken", "vol", volID, "name", op.Name)
+	}
+}
+
+// restoreOp is a user-requested rollback to a named snapshot (T15
+// §4.8, G6.13).
+type restoreOp struct {
+	Snapshot string `json:"snapshot"`
+}
+
+// processRestoreOps rolls a volume back to a named snapshot on the
+// node currently primary for it. The primary's zvol is rolled back in
+// place (§9-style destructive, deliberate operation — anything newer
+// than the snapshot, including intermediate @resync-* checkpoints, is
+// gone); every other replica is then marked Stale via the coordinator
+// so the existing resync machinery (§4.3, already proven by
+// vol-resync-incremental.nix) reconverges them — zfs send/receive
+// diffs are content-based, not chronological, so the normal common-
+// ancestor incremental path (or a full send, if none survived the
+// rollback) reconciles a rolled-back primary exactly like any other
+// resync.
+func (r *Runtime) processRestoreOps(ctx context.Context, seen map[string]bool) {
+	ops, err := opsOf(ctx, r.opts.St, "restore")
+	if err != nil {
+		return
+	}
+	for volID, e := range ops {
+		if !seen[volID] {
+			continue
+		}
+		var op restoreOp
+		if json.Unmarshal(e.Value, &op) != nil || op.Snapshot == "" {
+			delOp(ctx, r.opts.St, "restore", volID)
+			continue
+		}
+		status, _, err := storage.LoadStatus(ctx, r.opts.St, volID)
+		if err != nil || status.Primary != r.opts.NodeID {
+			continue
+		}
+		zp := r.zvolOf[volID]
+		if zp == "" {
+			continue
+		}
+		r.mu.Lock()
+		p := r.prim[volID]
+		r.mu.Unlock()
+		if p == nil || p.coord == nil {
+			continue
+		}
+		snaps, err := r.zfs.ListSnapshots(ctx, zp)
+		if err != nil {
+			continue
+		}
+		found := false
+		for _, s := range snaps {
+			if s == op.Snapshot {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.opts.Logger.Error("restore: no such snapshot — refusing", "vol", volID, "snapshot", op.Snapshot)
+			delOp(ctx, r.opts.St, "restore", volID)
+			continue
+		}
+		if err := p.coord.Flush(); err != nil {
+			r.opts.Logger.Warn("restore: flush failed", "vol", volID, "err", err)
+			continue // retry next tick
+		}
+		if err := r.zfs.Rollback(ctx, zp, op.Snapshot); err != nil {
+			r.opts.Logger.Warn("restore: rollback failed", "vol", volID, "err", err)
+			continue
+		}
+		r.mu.Lock()
+		if p.snapshotOnly == nil {
+			p.snapshotOnly = map[string]bool{}
+		}
+		for _, id := range p.coord.ReplicaIDs() {
+			p.snapshotOnly[id] = true
+		}
+		r.mu.Unlock()
+		for _, id := range p.coord.ReplicaIDs() {
+			p.coord.MarkStale(id)
+		}
+		delOp(ctx, r.opts.St, "restore", volID)
+		r.opts.Logger.Info("volume restored", "vol", volID, "snapshot", op.Snapshot)
 	}
 }
 
@@ -624,6 +783,14 @@ func (r *Runtime) myReplica(volID string, status storage.Status) (bool, string) 
 func (r *Runtime) ensureZvol(ctx context.Context, spec storage.Spec, zvolPath string) (string, error) {
 	dev := r.opts.ZvolDevBase + "/" + zvolPath
 	if _, err := os.Stat(dev); err == nil {
+		// Spec.SizeBytes may have grown since creation (G6.14 online
+		// resize, grow-only, enforced at the controller's op-CAS layer) —
+		// `zfs set volsize` is a cheap idempotent no-op when unchanged,
+		// so just always converge every replica's zvol to it here rather
+		// than tracking a separate dirty flag.
+		if err := r.zfs.Resize(ctx, zvolPath, spec.SizeBytes); err != nil {
+			r.opts.Logger.Warn("zvol resize failed", "zvol", zvolPath, "err", err)
+		}
 		return dev, nil
 	}
 	if err := r.zfs.CreateZvol(ctx, zvolPath, spec.SizeBytes, map[string]string{
@@ -668,6 +835,16 @@ func (r *Runtime) ensureSecondary(volID string, spec storage.Spec, zvolPath, dev
 			// a stale replica stayed stale for the rest of the run).
 			// reopenLocalDevice re-arms this secondary once the receive
 			// actually finishes, success or failure.
+			if sec.HasWriter() {
+				// G6.14: a healthy, already-open secondary is never
+				// reopened, so its writer's enforced bound would
+				// otherwise stay stuck at whatever size it had when
+				// first attached — replicated writes into a region the
+				// primary just grew into would be rejected as
+				// out-of-range even though ensureZvol already grew the
+				// underlying zvol.
+				sec.SetSize(int64(spec.SizeBytes))
+			}
 			return
 		}
 		// Heal a quiesced secondary (writer nil since a resync receive
@@ -771,7 +948,7 @@ func (r *Runtime) querySeq(volID string) (*pb.SeqQueryReply, error) {
 	}
 	rep := &pb.SeqQueryReply{VolId: volID, LastSeq: sec.LastSeq()}
 	for seq, rec := range sec.OpLog() {
-		rep.Ops = append(rep.Ops, &pb.SeqInfo{Seq: seq, Crc32C: rec.CRC})
+		rep.Ops = append(rep.Ops, &pb.SeqInfo{Seq: seq, Crc32C: rec.CRC, Offset: uint64(rec.Offset), Length: uint32(rec.Length)})
 	}
 	return rep, nil
 }
@@ -842,6 +1019,17 @@ type resyncRecv struct {
 func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status storage.Status, zvolPath, devNode string) error {
 	r.mu.Lock()
 	_, have := r.prim[spec.ID]
+	if !have {
+		// zvolOf is otherwise only populated by ensureSecondary — a
+		// primary that was placed there at creation (the common case)
+		// and never served as a secondary first left it empty forever,
+		// silently no-opping every op that looks it up here: the forced
+		// `volume resync` op (processResyncOps, pre-existing) and the
+		// new snapshot/restore ops (G6.13) alike (found via
+		// vol-snapshot.nix — restore never fired, no log line, no
+		// error, just a permanently ignored op).
+		r.zvolOf[spec.ID] = zvolPath
+	}
 	r.mu.Unlock()
 	if have {
 		return nil
@@ -1316,15 +1504,30 @@ func (r *Runtime) verifyServingCurrent(ctx context.Context, volID string) {
 	if last == 0 {
 		return // nothing acked yet; a fresh volume is current by definition
 	}
+	stale := map[string]bool{}
+	for _, id := range p.coord.StaleReplicas() {
+		stale[id] = true
+	}
 	var conn string
 	for _, id := range p.coord.ReplicaIDs() {
+		// A replica the coordinator itself already knows is Stale (e.g.
+		// mid-resync after a restore, G6.13) is EXPECTED to disagree
+		// with the primary's current content — that is what Stale
+		// means, not evidence of corruption. Comparing against one
+		// here previously stepped the primary down right after a
+		// legitimate restore, whose recovery-on-repromotion then
+		// pulled the stale replica's pre-restore bytes back in,
+		// silently undoing it (found via vol-snapshot.nix).
+		if stale[id] {
+			continue
+		}
 		if c := p.conns[id]; c != nil {
 			conn = id
 			break
 		}
 	}
 	if conn == "" {
-		return // no live replica to compare against; 4d handles isolation
+		return // no live current replica to compare against; 4d handles isolation
 	}
 	// NOTE: the pump and the recovery paths own the shared conns; a
 	// transport Conn is single-submitter, so the watchdog dials its own
@@ -1372,6 +1575,10 @@ func (r *Runtime) verifyServingCurrent(ctx context.Context, volID string) {
 	if op.GetFlush() || len(op.GetData()) == 0 {
 		return // flush markers carry no bytes to compare
 	}
+	if supersededByLaterOp(qrep.GetOps(), seq, op.GetOffset(), uint64(len(op.GetData()))) {
+		p.mismatch.observe(seq, false)
+		return // rewritten since (e.g. fs metadata): the two copies are read at different instants
+	}
 	buf := make([]byte, len(op.GetData()))
 	if _, err := p.writer.ReadAt(buf, int64(op.GetOffset())); err != nil {
 		r.opts.Logger.Error("currency watchdog: primary cannot re-read its own zvol — stepping down",
@@ -1379,11 +1586,89 @@ func (r *Runtime) verifyServingCurrent(ctx context.Context, volID string) {
 		r.stopPrimary(volID)
 		return
 	}
-	if crc32c(buf) != crc32c(op.GetData()) {
-		r.opts.Logger.Error("currency watchdog: primary zvol diverges from the replica's durable record — stepping down for re-recovery",
-			"vol", volID, "seq", seq, "off", op.GetOffset())
-		r.stopPrimary(volID)
+	mismatch := crc32c(buf) != crc32c(op.GetData())
+	if !p.mismatch.observe(seq, mismatch) {
+		if mismatch {
+			p.verifySeq = seq - 1 // look at this same op again next tick
+		}
+		return
 	}
+	r.opts.Logger.Error("currency watchdog: primary zvol diverges from the replica's durable record — stepping down for re-recovery",
+		"vol", volID, "seq", seq, "off", op.GetOffset())
+	r.stopPrimary(volID)
+}
+
+// mismatchConfirmer debounces the watchdog: the primary and replica
+// copies are read a moment apart, so a write in flight to the range can
+// make them briefly disagree. Real divergence persists.
+type mismatchConfirmer struct{ pending uint64 }
+
+// observe records one check of op seq and reports whether a mismatch is
+// now confirmed (the same op mismatched on two consecutive checks).
+func (m *mismatchConfirmer) observe(seq uint64, mismatch bool) bool {
+	if !mismatch {
+		if m.pending == seq {
+			m.pending = 0
+		}
+		return false
+	}
+	if m.pending == seq {
+		return true
+	}
+	m.pending = seq
+	return false
+}
+
+// supersededByLaterOp reports whether any op after seq wrote into
+// [off, off+length): the primary's current bytes there are then expected
+// to differ from op seq's payload, so comparing them proves nothing.
+func supersededByLaterOp(claims []*pb.SeqInfo, seq, off, length uint64) bool {
+	for _, c := range claims {
+		if c.GetSeq() <= seq || c.GetLength() == 0 {
+			continue
+		}
+		if c.GetOffset() < off+length && off < c.GetOffset()+uint64(c.GetLength()) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyResize grows an already-serving primary's live device to match
+// the current spec (G6.14, online — no unmount). ensureZvol already
+// grew the local zvol itself; this is the part that only matters for
+// an ALREADY-running primary (ensurePrimary only ever reads spec.
+// SizeBytes once, at promotion — it short-circuits on every later tick
+// via the `have` guard) — the writer's own enforced bound and the live
+// NBD export both need to be told about the new size explicitly.
+func (r *Runtime) applyResize(volID string, sizeBytes uint64) {
+	r.mu.Lock()
+	p := r.prim[volID]
+	r.mu.Unlock()
+	if p == nil || p.dev == nil {
+		return
+	}
+	newSize := int64(sizeBytes)
+	if p.dev.Size() == newSize {
+		return
+	}
+	oldSize := p.dev.Size()
+	p.dev.SetSize(newSize)
+	if p.writer != nil {
+		p.writer.SetSize(newSize)
+	}
+	// Server bounds grow first so I/O to the new range is accepted the
+	// moment the kernel sees it. On failure roll back: the size check
+	// above would otherwise skip every later retry.
+	if err := r.opts.ResizeNBD(r.nbdDevFor(volID), newSize); err != nil {
+		p.dev.SetSize(oldSize)
+		if p.writer != nil {
+			p.writer.SetSize(oldSize)
+		}
+		r.opts.Logger.Error("resize: kernel nbd resize failed; will retry", "vol", volID, "err", err)
+		return
+	}
+	r.opts.Logger.Info("volume resized live", "vol", volID, "sizeBytes", sizeBytes)
 }
 
 // demoteIfLeaseLost stops the local primary for volID when its volume
@@ -2153,8 +2438,13 @@ func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string,
 		r.mu.Unlock()
 	}()
 
-	if done, err := r.tryOpReplay(ctx, volID, target, p, status); done {
-		return err
+	r.mu.Lock()
+	snapshotOnly := p.snapshotOnly[target]
+	r.mu.Unlock()
+	if !snapshotOnly {
+		if done, err := r.tryOpReplay(ctx, volID, target, p, status); done {
+			return err
+		}
 	}
 
 	seq := p.coord.LastSeq()
@@ -2215,6 +2505,9 @@ func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string,
 		st.Placement = status.Placement
 		_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
 	}
+	r.mu.Lock()
+	delete(p.snapshotOnly, target)
+	r.mu.Unlock()
 	r.opts.Logger.Info("resync complete", "vol", volID, "target", target,
 		"seq", out.Adopt, "incremental", !out.Full, "bytes", out.Bytes)
 	return nil

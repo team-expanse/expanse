@@ -42,6 +42,11 @@ message WriteReply {
 message SeqInfo {
   uint64 seq = 1;
   uint32 crc32c = 2;
+  // Byte range the op wrote (length 0 = flush marker, no range). Lets a
+  // reader tell whether a LATER op overwrote this one without fetching
+  // payloads (the primary's currency watchdog).
+  uint64 offset = 3;
+  uint32 length = 4;
 }
 
 // SeqQuery asks a replica for its last contiguous seq plus the per-seq

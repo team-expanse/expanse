@@ -218,14 +218,15 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 // is one JSON value under /volumes/_ops/<kind>/<volID>.
 func (c *Controller) processVolumeOps(ctx context.Context, ids []string) error {
 	type op struct {
-		Target string `json:"target"` // volume NAME (CLI-side lookup)
-		To     string `json:"to"`     // move-primary destination node
+		Target    string `json:"target"`    // volume NAME (CLI-side lookup)
+		To        string `json:"to"`        // move-primary destination node
+		SizeBytes uint64 `json:"sizeBytes"` // resize target size
 	}
 	byName, err := c.volumesByName2(ctx, ids)
 	if err != nil {
 		return err
 	}
-	for _, kind := range []string{"delete", "move-primary"} {
+	for _, kind := range []string{"delete", "move-primary", "resize"} {
 		res, err := c.opts.St.List(ctx, store.Key("/volumes/_ops/"+kind+"/"))
 		if err != nil {
 			continue
@@ -267,6 +268,25 @@ func (c *Controller) processVolumeOps(ctx context.Context, ids []string) error {
 					}
 					c.log.Info("primary moved", "vol", volID, "to", o.To)
 				}
+			case "resize":
+				// The spec is "immutable-except-size" (storage.Spec's own
+				// doc comment) — size is the one field the controller
+				// mutates outside creation, grow-only (G6.14): the
+				// per-node runtimes converge the zvol/device to it.
+				spec, specRev, serr := storage.LoadSpecRev(ctx, c.opts.St, volID)
+				if serr != nil {
+					break
+				}
+				if o.SizeBytes <= spec.SizeBytes {
+					c.log.Warn("resize op refused: not a grow", "vol", volID, "have", spec.SizeBytes, "want", o.SizeBytes)
+					break
+				}
+				spec.SizeBytes = o.SizeBytes
+				if err := storage.CompareAndSwapSpec(ctx, c.opts.St, volID, specRev, spec); err != nil {
+					c.log.Warn("resize op CAS failed", "vol", volID, "err", err)
+					continue // retry next tick
+				}
+				c.log.Info("volume resized", "vol", volID, "sizeBytes", o.SizeBytes)
 			}
 			_ = c.opts.St.Delete(ctx, store.Key(string(e.Key)), 0)
 		}

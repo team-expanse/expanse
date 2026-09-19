@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/storage/exvol/primary"
@@ -55,7 +56,7 @@ type LocalReadWriter interface {
 // local zvol, writes/flushes through the replication coordinator.
 type ExvolDevice struct {
 	volID string
-	size  int64
+	size  atomic.Int64 // read on every I/O; SetSize writes from the reconcile goroutine (G6.14)
 	local LocalReadWriter
 	coord *primary.Coordinator
 	lease primary.Lease
@@ -66,7 +67,9 @@ type ExvolDevice struct {
 
 // New builds the device for one volume.
 func New(volID string, size int64, local LocalReadWriter, coord *primary.Coordinator, l primary.Lease) *ExvolDevice {
-	return &ExvolDevice{volID: volID, size: size, local: local, coord: coord, lease: l}
+	d := &ExvolDevice{volID: volID, local: local, coord: coord, lease: l}
+	d.size.Store(size)
+	return d
 }
 
 // leaseErr is the §4.4 lease-loss error: EIO, immediately.
@@ -91,9 +94,10 @@ func (d *ExvolDevice) ReadAt(p []byte, off int64) (int, error) {
 	if err := d.check("read"); err != nil {
 		return 0, err
 	}
-	if off < 0 || off+int64(len(p)) > d.size {
+	size := d.size.Load()
+	if off < 0 || off+int64(len(p)) > size {
 		return 0, experrors.New(experrors.KindInvalid, "exvol.device.read",
-			fmt.Sprintf("read [%d,%d) out of range (size %d)", off, off+int64(len(p)), d.size))
+			fmt.Sprintf("read [%d,%d) out of range (size %d)", off, off+int64(len(p)), size))
 	}
 	return d.local.ReadAt(p, off)
 }
@@ -103,9 +107,10 @@ func (d *ExvolDevice) WriteAt(p []byte, off int64) (int, error) {
 	if err := d.check("write"); err != nil {
 		return 0, err
 	}
-	if off < 0 || off+int64(len(p)) > d.size {
+	size := d.size.Load()
+	if off < 0 || off+int64(len(p)) > size {
 		return 0, experrors.New(experrors.KindInvalid, "exvol.device.write",
-			fmt.Sprintf("write [%d,%d) out of range (size %d)", off, off+int64(len(p)), d.size))
+			fmt.Sprintf("write [%d,%d) out of range (size %d)", off, off+int64(len(p)), size))
 	}
 	if d.coord == nil {
 		// Test/local-only device: durable local write, no replication.
@@ -130,21 +135,28 @@ func (d *ExvolDevice) Flush(ctx context.Context) error {
 }
 
 // Discard is a trim hint: punch a hole in the primary's local zvol.
-// Not replicated — discard is an optimization, not a data operation;
-// the ranges still read as zeros on every replica (ZFS guarantees).
+// NOT replicated, so the replicas keep the bytes the primary drops —
+// which is why the NBD export does not advertise TRIM (nbdExportFlags).
 func (d *ExvolDevice) Discard(off, length int64) error {
 	if err := d.check("discard"); err != nil {
 		return err
 	}
-	if off < 0 || off+length > d.size {
+	size := d.size.Load()
+	if off < 0 || off+length > size {
 		return experrors.New(experrors.KindInvalid, "exvol.device.discard",
-			fmt.Sprintf("discard [%d,%d) out of range (size %d)", off, off+length, d.size))
+			fmt.Sprintf("discard [%d,%d) out of range (size %d)", off, off+length, size))
 	}
 	return d.local.Discard(off, length)
 }
 
 // Size is the volume size in bytes.
-func (d *ExvolDevice) Size() int64 { return d.size }
+func (d *ExvolDevice) Size() int64 { return d.size.Load() }
+
+// SetSize grows the device's advertised/enforced size (G6.14 online
+// resize, grow-only). The NBD wire protocol has no live-resize
+// primitive; the caller (runtime.applyResize) then tells the kernel the
+// new size in place via ResizeNBD (netlink), with no reconnect.
+func (d *ExvolDevice) SetSize(n int64) { d.size.Store(n) }
 
 // Close releases the device (idempotent; subsequent ops error).
 func (d *ExvolDevice) Close() error {

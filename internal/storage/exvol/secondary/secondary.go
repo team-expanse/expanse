@@ -30,6 +30,7 @@ import (
 type LocalWriter interface {
 	WriteAt(p []byte, off int64) error
 	Flush() error
+	SetSize(n int64)
 }
 
 // ResyncEvent reports one resync trigger (step 6b / R3): the secondary
@@ -144,6 +145,21 @@ func (s *Secondary) SwapWriter(w LocalWriter) (old LocalWriter) {
 		s.reader = r
 	}
 	return old
+}
+
+// SetSize grows the enforced volume size of the current writer to
+// match a resized zvol (G6.14 online resize, grow-only) — writes
+// replicated from the primary into the newly grown region would
+// otherwise be rejected by the writer's own stale bound even though
+// the underlying zvol already has the room.
+func (s *Secondary) SetSize(n int64) {
+	s.oplogMu.Lock()
+	s.size = int(n)
+	w := s.writer
+	s.oplogMu.Unlock()
+	if w != nil {
+		w.SetSize(n)
+	}
 }
 
 // SetReader wires the durable-copy reader used by FetchOps (recovery

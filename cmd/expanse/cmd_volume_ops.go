@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/quantity"
+	"github.com/expanse/expanse/internal/storage/exvol/resync"
 	exptransport "github.com/expanse/expanse/internal/storage/exvol/transport"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -291,15 +293,27 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 		Short: "Take a zvol snapshot on the primary",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			name := snapName
+			if name == "" {
+				name = "snap-" + time.Now().UTC().Format("20060102T150405Z")
+			} else if strings.HasPrefix(name, resync.SnapPrefix) {
+				// Reserved for the internal @resync-<seq> lineage (T12
+				// retention destroys the oldest past its keep count, and
+				// resync's common-ancestor search parses this prefix as
+				// a sequence number) — a same-named user snapshot could
+				// be silently destroyed or misread as a resync
+				// checkpoint.
+				return fmt.Errorf("--name %q: the %q prefix is reserved for internal use", name, resync.SnapPrefix)
+			}
 			return withClient(c, opts, func(ctx context.Context, cl pb.NodeServiceClient) error {
 				v, err := resolveVol(ctx, cl, args[0])
 				if err != nil {
 					return err
 				}
-				if err := putOp(ctx, cl, "snapshot", v.id, map[string]string{"target": args[0], "name": snapName}); err != nil {
+				if err := putOp(ctx, cl, "snapshot", v.id, map[string]string{"target": args[0], "name": name}); err != nil {
 					return err
 				}
-				fmt.Printf("snapshot of %q requested (name %q)\n", args[0], snapName)
+				fmt.Printf("snapshot of %q requested (name %q)\n", args[0], name)
 				return nil
 			})
 		},
@@ -518,7 +532,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	}
 
 	resize.Flags().StringVar(&sizeStr, "size", "", "new size (grow-only, e.g. 20Gi)")
-	snap.Flags().StringVar(&snapName, "name", "", "snapshot name (default auto @resync-<seq>)")
+	snap.Flags().StringVar(&snapName, "name", "", "snapshot name (default: auto snap-<timestamp>; the resync- prefix is reserved)")
 	restore.Flags().StringVar(&snapName, "snapshot", "", "snapshot to restore")
 	move.Flags().StringVar(&toNode, "to", "", "destination node (must hold a replica)")
 	resync.Flags().StringVar(&replica, "replica", "", "replica node to resync")

@@ -54,6 +54,7 @@ type ZFS interface {
 	Send(ctx context.Context, dataset, from, to string, w io.Writer) error
 	Receive(ctx context.Context, dataset string, r io.Reader) error
 	Resize(ctx context.Context, zvol string, size uint64) error
+	Rollback(ctx context.Context, dataset, snap string) error
 	PoolStatus(ctx context.Context, pool string) (*PoolStatus, error)
 	Scrub(ctx context.Context, pool string) error
 }
@@ -229,6 +230,14 @@ func (e *Exec) Receive(ctx context.Context, dataset string, r io.Reader) error {
 func (e *Exec) Resize(ctx context.Context, zvol string, size uint64) error {
 	_, err := e.run(ctx, "zfs.Resize", e.ZfsPath, "set",
 		"volsize="+strconv.FormatUint(size, 10), zvol)
+	return err
+}
+
+// Rollback reverts dataset to snap, destroying any snapshots taken
+// after it (-r) — restore (G6.13) is a deliberate, destructive
+// operation: the whole point is that anything newer than snap is gone.
+func (e *Exec) Rollback(ctx context.Context, dataset, snap string) error {
+	_, err := e.run(ctx, "zfs.Rollback", e.ZfsPath, "rollback", "-r", dataset+"@"+snap)
 	return err
 }
 
