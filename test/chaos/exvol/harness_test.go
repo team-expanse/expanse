@@ -596,3 +596,155 @@ func TestSecondaryReconnectResyncs(t *testing.T) {
 		}
 	}
 }
+
+// TestFailoverAfterOverwrites: the op log records the CRC of each op's
+// ORIGINAL payload, but recovery re-reads CURRENT zvol bytes — so any
+// overwritten range used to fail every CRC check (leveling NACKs, then
+// "unfillable op → volume diverged"). Filesystems overwrite constantly
+// (journal, inodes); found by the T21 linearizability suite.
+func TestFailoverAfterOverwrites(t *testing.T) {
+	const volID = "vol-overwrite"
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	// Overwrite record 0 (fully) and record 1 (its second half only).
+	if err := c.Write(volID, 0, recData(100)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < 4; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	half := recData(101)[recSize/2:]
+	if err := c.Write(volID, recSize+recSize/2, half); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Flush(volID); err != nil {
+		t.Fatal(err)
+	}
+
+	c.Crash("n1")
+	c.Elect(volID, "n2")
+	waitFor(t, 30*time.Second, "n2 serves after failover over overwritten ranges", func() bool {
+		return c.writeAcks(volID, 8) == nil
+	})
+	for _, bad := range []string{"leveling failed", "unfillable", "diverged"} {
+		if c.LogHas(bad) {
+			t.Fatalf("recovery over overwritten ranges logged %q", bad)
+		}
+	}
+	c.Restart("n1")
+
+	waitFor(t, 30*time.Second, "n1 converges with the overwritten state", func() bool {
+		return c.byID["n1"].fileHas(t, volID, 8)
+	})
+	for _, id := range []string{"n1", "n2", "n3"} {
+		f, err := os.ReadFile(c.byID[id].zvolFile(volID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(f[:recSize], recData(100)) {
+			t.Fatalf("%s: record 0 is not its overwritten value", id)
+		}
+		if !bytes.Equal(f[recSize+recSize/2:2*recSize], half) {
+			t.Fatalf("%s: record 1's overwritten half is missing", id)
+		}
+	}
+}
+
+// TestDeposedPrimaryBranchNotTrusted: an isolated primary keeps applying
+// writes it can never get quorum for. After it heals, a failover must not
+// treat that uncommitted branch as evidence ("diverged"): the replica is
+// Stale and resyncs from the real primary. Found by T21.
+func TestDeposedPrimaryBranchNotTrusted(t *testing.T) {
+	const volID = "vol-deposed"
+	c := NewFaultCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	for i := 1; i < 4; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Partition n1 (the primary), fail over to n2.
+	c.Faults.Isolate(c.byID["n1"].Idx)
+	// While its lease is still valid n1 applies ops it can never get quorum for.
+	for i := 0; i < 3; i++ {
+		_ = c.byID["n1"].RT.WriteOp(volID, int64((20+i)*recSize), recData(500+i))
+	}
+	c.Elect(volID, "n2")
+	waitFor(t, 30*time.Second, "n2 serves", func() bool { return c.writeAcks(volID, 4) == nil })
+	waitFor(t, 10*time.Second, "n1 published Stale", func() bool {
+		for _, pl := range c.Status(volID).Placement {
+			if pl.NodeID == "n1" && pl.Role == storage.RoleStale {
+				return true
+			}
+		}
+		return false
+	})
+
+	// n1 heals, then n2 dies before n1 has resynced: n3 must take over.
+	c.Faults.Heal(c.byID["n1"].Idx)
+	c.Crash("n2")
+	c.Elect(volID, "n3")
+	c.Restart("n2") // back before n3 wins the lease, so n3's recovery probes n1 AND n2
+	waitFor(t, 30*time.Second, "n3 serves despite n1's stale branch", func() bool {
+		return c.writeAcks(volID, 5) == nil
+	})
+	for _, bad := range []string{"diverged", "unfillable"} {
+		if c.LogHas(bad) {
+			t.Fatalf("a Stale replica's uncommitted branch was treated as evidence (%q)", bad)
+		}
+	}
+}
+
+// TestDeposedPrimaryUncommittedWritesDiscarded: the ops an isolated primary
+// applied without quorum share sequence numbers with the new primary's
+// DIFFERENT ops, so an op-replay resync of the rejoining node (which only
+// resends ops past its last seq) never overwrites them — the branch
+// survived forever (T21: "n1=1031 n2=994 n3=994").
+func TestDeposedPrimaryUncommittedWritesDiscarded(t *testing.T) {
+	const volID = "vol-discard"
+	c := NewFaultCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+	waitFor(t, 15*time.Second, "first record acked", func() bool {
+		return c.writeAcks(volID, 0) == nil
+	})
+	for i := 1; i < 4; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c.Faults.Isolate(c.byID["n1"].Idx)
+	for i := 0; i < 3; i++ { // applied locally on n1, never quorum-acked
+		_ = c.byID["n1"].Runtime().WriteOp(volID, int64((20+i)*recSize), recData(500+i))
+	}
+	c.Elect(volID, "n2")
+	waitFor(t, 30*time.Second, "n2 serves", func() bool { return c.writeAcks(volID, 4) == nil })
+	for i := 5; i < 12; i++ { // n2's branch grows past n1's last seq
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.Faults.Heal(c.byID["n1"].Idx)
+
+	region := func(id string) []byte {
+		f, err := os.ReadFile(c.byID[id].ZvolFile(volID))
+		if err != nil {
+			return nil
+		}
+		return f[:30*recSize]
+	}
+	waitFor(t, 40*time.Second, "n1 discards its uncommitted branch", func() bool {
+		want := region("n2")
+		return want != nil && bytes.Equal(region("n1"), want) && bytes.Equal(region("n3"), want)
+	})
+}

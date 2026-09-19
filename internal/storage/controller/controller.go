@@ -504,7 +504,7 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 		}
 		var live []string // meshed placement order, for deterministic probe list
 		for _, p := range status.Placement {
-			if meshed[p.NodeID] {
+			if meshed[p.NodeID] && p.Role != storage.RoleStale {
 				live = append(live, p.NodeID)
 			}
 		}
@@ -535,7 +535,7 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 		c.noCandRounds[volID] = 0
 	} else {
 		for _, p := range status.Placement {
-			if meshed[p.NodeID] {
+			if meshed[p.NodeID] && p.Role != storage.RoleStale {
 				cands = append(cands, cand{p.NodeID, p.Sequence})
 			}
 		}

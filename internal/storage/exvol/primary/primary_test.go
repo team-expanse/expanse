@@ -52,13 +52,27 @@ func newTestReplica(t *testing.T, id string, size int64) *testReplica {
 			if d > 0 {
 				time.Sleep(d)
 			}
-			copy(r.data[op.Offset:], op.Data)
-			return r.sec.Handle(op)
+			return r.handle(op)
 		}, nil
 	}, nil, 0)
 	go r.srv.Serve() //nolint:errcheck — test server
 	t.Cleanup(func() { r.srv.Close() })
 	return r
+}
+
+// handle applies one op under the replica lock (server goroutines and
+// tests both touch sec/data).
+func (r *testReplica) handle(op protocol.WriteOp) protocol.Reply {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	copy(r.data[op.Offset:], op.Data)
+	return r.sec.Handle(op)
+}
+
+func (r *testReplica) lastSeq() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sec.LastSeq()
 }
 
 func (r *testReplica) connect(t *testing.T) *transport.Sender {

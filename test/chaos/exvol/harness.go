@@ -25,13 +25,17 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/storage/exvol/runtime"
+	"github.com/expanse/expanse/internal/storage/exvol/transport"
 	"github.com/expanse/expanse/internal/storage/zfs"
+	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 )
 
@@ -40,9 +44,13 @@ const pool = "volumes" // fake pool name (mirrors the VM test pool)
 // Node is one harness node: a runtime over its own fake pool.
 type Node struct {
 	ID   string
+	Idx  int    // 1-based position; names the loopback addresses
 	Root string // tmpdir: bin/, data/, dev/, pool/ (zvol + oplog live here)
 	Port int
 
+	// mu guards RT/alive/cancelRun: Crash/Restart run concurrently with
+	// client goroutines. Concurrent code must use Runtime()/Alive().
+	mu        sync.Mutex
 	RT        *runtime.Runtime
 	alive     bool
 	ip        string
@@ -57,6 +65,9 @@ type Cluster struct {
 	St  *boltstore.Store
 	Ctx context.Context // cluster-wide context (nil → Background)
 
+	// Faults is non-nil only for NewFaultCluster clusters.
+	Faults *Faults
+
 	Nodes   []*Node
 	byID    map[string]*Node
 	logSink *testWriter
@@ -66,6 +77,18 @@ type Cluster struct {
 // NewCluster brings up nodes reconciling on a fast tick. One shared
 // boltstore represents the replicated log every node reads/writes.
 func NewCluster(t *testing.T, ids ...string) *Cluster {
+	t.Helper()
+	return newCluster(t, false, ids...)
+}
+
+// NewFaultCluster is NewCluster with the per-link fault layer (Faults)
+// interposed on every replication connection and store view.
+func NewFaultCluster(t *testing.T, ids ...string) *Cluster {
+	t.Helper()
+	return newCluster(t, true, ids...)
+}
+
+func newCluster(t *testing.T, faulted bool, ids ...string) *Cluster {
 	t.Helper()
 	st, err := boltstore.New(filepath.Join(t.TempDir(), "raft.db"))
 	if err != nil {
@@ -83,6 +106,19 @@ func NewCluster(t *testing.T, ids ...string) *Cluster {
 	}
 	c.port = ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
+	if faulted {
+		c.Faults = newFaults()
+		t.Cleanup(c.Faults.stop)
+		for s := range ids {
+			for d := range ids {
+				if s != d {
+					if err := c.Faults.addLink(s+1, d+1, c.port); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		}
+	}
 	for i, id := range ids {
 		n := c.newNode(id, "", i+1)
 		c.Nodes = append(c.Nodes, n)
@@ -126,6 +162,46 @@ func (c *Cluster) Stop() {
 	}
 }
 
+// ProbeSeq is the controller's election probe (§4.3 4a): the node's
+// last durable sequence for volID, read over the replication transport.
+func (c *Cluster) ProbeSeq(volID, nodeID string) (uint64, error) {
+	n := c.byID[nodeID]
+	if n == nil {
+		return 0, fmt.Errorf("no such node %q", nodeID)
+	}
+	ctx, cancel := context.WithTimeout(c.ctx(), time.Second)
+	defer cancel()
+	conn, err := transport.Dial(ctx, fmt.Sprintf("%s:%d", n.ip, n.Port))
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close() //nolint:errcheck
+	rep, err := conn.QuerySeq(volID)
+	if err != nil {
+		return 0, err
+	}
+	return rep.GetLastSeq(), nil
+}
+
+// Alive reports whether the node's runtime is running (not crashed).
+func (n *Node) Alive() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.alive
+}
+
+// Runtime returns the node's current runtime (replaced by Restart).
+func (n *Node) Runtime() *runtime.Runtime {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.RT
+}
+
+// ZvolFile is the path of the node's zvol backing file for volID.
+func (n *Node) ZvolFile(volID string) string {
+	return filepath.Join(n.Root, "pool", "dev", pool, "volumes", volID)
+}
+
 // DeviceAttached reports whether this node's fake NBD device marker is
 // currently published (mirrors production's /dev/exvol/<id> symlink,
 // torn down by DetachNBD on demotion/delete/shutdown).
@@ -138,6 +214,8 @@ func (n *Node) DeviceAttached() bool {
 }
 
 func (c *Cluster) stopNode(n *Node) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	if n.RT != nil && n.alive {
 		n.cancelRun()
 		n.alive = false
@@ -164,10 +242,9 @@ func (c *Cluster) newNode(id, oldRoot string, idx int) *Node {
 	}
 
 	// Fake zfs/zpool wrappers: bake FAKE_ZFS_ROOT in per node.
-	fake, err := filepath.Abs("fake-zfs.sh")
-	if err != nil {
-		c.T.Fatal(err)
-	}
+	// Resolved from this source file so other packages can use the harness.
+	_, self, _, _ := goruntime.Caller(0)
+	fake := filepath.Join(filepath.Dir(self), "fake-zfs.sh")
 	if _, err := os.Stat(fake); err != nil {
 		c.T.Fatalf("fake-zfs.sh not found next to harness: %v", err)
 	}
@@ -191,17 +268,34 @@ func (c *Cluster) newNode(id, oldRoot string, idx int) *Node {
 
 	port := c.port
 	ip := fmt.Sprintf("127.0.0.%d", idx)
+	var st store.Store = c.St
+	addrOf := c.AddrOf
+	if c.Faults != nil {
+		// Serve on the back address; peers reach us only through the proxies.
+		ip = backIP(idx)
+		st = &gatedStore{Store: c.St, f: c.Faults, idx: idx}
+		addrOf = func(nodeID string) (string, error) {
+			d, ok := c.byID[nodeID]
+			if !ok {
+				return "", fmt.Errorf("no such node %q", nodeID)
+			}
+			if d.Idx == idx {
+				return ip, nil
+			}
+			return linkIP(idx, d.Idx), nil
+		}
+	}
 	zexec := zfs.New()
 	zexec.ZfsPath = filepath.Join(bin, "zfs")
 	zexec.ZpoolPath = filepath.Join(bin, "zpool")
 
 	rt := runtime.New(runtime.Options{
 		NodeID:           id,
-		St:               c.St,
+		St:               st,
 		Pool:             pool,
 		DataDir:          filepath.Join(root, "data"),
 		Logger:           c.nodeLogger(id),
-		AddrOf:           c.AddrOf,
+		AddrOf:           addrOf,
 		Port:             port,
 		ListenAddr:       ip + ":%d",
 		LeaseTTL:         2 * time.Second,
@@ -227,7 +321,7 @@ func (c *Cluster) newNode(id, oldRoot string, idx int) *Node {
 		},
 		Tick: 200 * time.Millisecond,
 	})
-	return &Node{ID: id, Root: root, Port: port, RT: rt, ip: ip}
+	return &Node{ID: id, Idx: idx, Root: root, Port: port, RT: rt, ip: ip}
 }
 
 // nodeLogger silences per-node logs unless the test is verbose.
@@ -256,11 +350,23 @@ type testWriter struct {
 
 	mu     sync.Mutex
 	closed bool
+	buf    strings.Builder // every line, for LogHas
+}
+
+// LogHas reports whether any node has logged a line containing substr.
+func (c *Cluster) LogHas(substr string) bool {
+	if c.logSink == nil {
+		return false
+	}
+	c.logSink.mu.Lock()
+	defer c.logSink.mu.Unlock()
+	return strings.Contains(c.logSink.buf.String(), substr)
 }
 
 func (w *testWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	closed := w.closed
+	w.buf.Write(p)
 	w.mu.Unlock()
 	if closed {
 		// The node goroutines outlive the test (a final tick can race
@@ -274,12 +380,15 @@ func (w *testWriter) Write(p []byte) (int, error) {
 // start launches a node's reconcile loop.
 func (c *Cluster) start(n *Node) {
 	ctx, cancel := context.WithCancel(c.ctx())
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.alive = true
 	n.cancelRun = cancel
 	done := make(chan struct{})
+	rt := n.RT
 	go func() {
 		defer close(done)
-		n.RT.Run(ctx)
+		rt.Run(ctx)
 	}()
 	n.done = done
 }
@@ -333,9 +442,10 @@ func (c *Cluster) Elect(volID, nodeID string) {
 		}
 		st.Primary = nodeID
 		for i := range st.Placement {
-			if st.Placement[i].NodeID == nodeID {
+			switch {
+			case st.Placement[i].NodeID == nodeID:
 				st.Placement[i].Role = storage.RolePrimary
-			} else {
+			case st.Placement[i].Role != storage.RoleStale: // the real controller never clears Stale
 				st.Placement[i].Role = storage.RoleSecondary
 			}
 		}
@@ -365,20 +475,20 @@ func (c *Cluster) Status(volID string) storage.Status {
 func (c *Cluster) Write(volID string, off int64, data []byte) error {
 	prim := c.Status(volID).Primary
 	n := c.byID[prim]
-	if n == nil || !n.alive {
+	if n == nil || !n.Alive() {
 		return fmt.Errorf("primary %q is not a live node", prim)
 	}
-	return n.RT.WriteOp(volID, off, data)
+	return n.Runtime().WriteOp(volID, off, data)
 }
 
 // Flush drives a replicated flush marker (the durability barrier).
 func (c *Cluster) Flush(volID string) error {
 	prim := c.Status(volID).Primary
 	n := c.byID[prim]
-	if n == nil || !n.alive {
+	if n == nil || !n.Alive() {
 		return fmt.Errorf("primary %q is not a live node", prim)
 	}
-	return n.RT.FlushOp(volID)
+	return n.Runtime().FlushOp(volID)
 }
 
 // Crash stops a node: the runtime's stop path uses Held.Abandon, so
@@ -415,13 +525,14 @@ func (c *Cluster) Restart(id string) {
 	if n == nil {
 		c.T.Fatalf("no node %q", id)
 	}
-	if n.alive {
+	if n.Alive() {
 		return
 	}
-	idx := int(n.ip[len(n.ip)-1] - '0')
-	nn := c.newNode(id, n.Root, idx)
+	nn := c.newNode(id, n.Root, n.Idx)
+	n.mu.Lock()
 	n.RT = nn.RT
 	n.Port = nn.Port
+	n.mu.Unlock()
 	c.start(n)
 }
 

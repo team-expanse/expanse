@@ -99,6 +99,12 @@ func (d *ExvolDevice) ReadAt(p []byte, off int64) (int, error) {
 		return 0, experrors.New(experrors.KindInvalid, "exvol.device.read",
 			fmt.Sprintf("read [%d,%d) out of range (size %d)", off, off+int64(len(p)), size))
 	}
+	if d.coord != nil {
+		// Never return bytes that are not quorum-durable yet.
+		if err := d.coord.ReadBarrier(off, int64(len(p))); err != nil {
+			return 0, err
+		}
+	}
 	return d.local.ReadAt(p, off)
 }
 

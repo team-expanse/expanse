@@ -88,6 +88,29 @@ func TestCreateToElectedPrimaries(t *testing.T) {
 	}
 }
 
+// TestElectionSkipsStaleReplica: a Stale replica's higher sequence is an
+// uncommitted branch (a deposed primary's local-only ops), never evidence.
+func TestElectionSkipsStaleReplica(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n2", "n3") // n1 gone
+	seedVolume(t, ctx, st, "vol-stale", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	status, _, _ := storage.LoadStatus(ctx, st, "vol-stale")
+	status.Placement[1].Sequence = 12 // n2: highest, but Stale
+	status.Placement[1].Role = storage.RoleStale
+	status.Placement[2].Sequence = 11
+	_ = storage.SaveStatus(ctx, st, "vol-stale", status)
+
+	c := New(Options{St: st, Pool: "pool", IsLeader: func() bool { return true }, Alert: func(AlertEvent) {}})
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := storage.LoadStatus(ctx, st, "vol-stale")
+	if got.Primary != "n3" {
+		t.Fatalf("elected %q, want n3 (n2 is Stale)", got.Primary)
+	}
+}
+
 // TestElectionTieLowestNodeID.
 func TestElectionTieLowestNodeID(t *testing.T) {
 	ctx := context.Background()

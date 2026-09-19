@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/expanse/expanse/internal/storage/exvol/oplog"
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
 )
 
@@ -37,6 +38,9 @@ type Probe struct {
 	LastSeq   uint64
 	// CRCs maps each durable seq to the CRC it was applied under.
 	CRCs map[uint64]uint32
+	// Spans locates each claimed op's bytes (nil = unknown: nothing is
+	// ever treated as overwritten, so CRC checks stay strict).
+	Spans *oplog.Spans
 	// FetchOps returns ops (from, to] from this replica's durable copy.
 	FetchOps func(ctx context.Context, from, to uint64) ([]protocol.WriteOp, error)
 }
@@ -252,7 +256,7 @@ func levelOne(ctx context.Context, target Probe, maxSeq uint64, selfFetch func(c
 				}
 				// The bytes must match the target's OWN claim — a
 				// truncated zvol reads back zeros without error.
-				if claim, ok := target.CRCs[seq]; ok && crc32c(op.Data) != claim {
+				if _, _, err := target.vouch(op); err != nil {
 					claimsCurrent = false
 				}
 			}
@@ -341,10 +345,7 @@ func fetchHonest(ctx context.Context, probes []Probe, byID map[string]*Probe, se
 			if op.Seq != seq {
 				continue
 			}
-			if claim, ok := h.CRCs[seq]; ok && !op.Flush && crc32c(op.Data) != claim {
-				return protocol.WriteOp{}, false, fmt.Errorf("bytes from %s fail crc32c (claim %08x)", id, claim)
-			}
-			return op, true, nil
+			return h.vouch(op)
 		}
 		return protocol.WriteOp{}, false, fmt.Errorf("%s served no op %d", id, seq)
 	}
@@ -369,6 +370,25 @@ func fetchHonest(ctx context.Context, probes []Probe, byID map[string]*Probe, se
 		}
 	}
 	return protocol.WriteOp{}, firstErr
+}
+
+// vouch verifies a fetched op against this holder's own claim. A claim's
+// CRC covers the payload as first written, so an op whose range a later
+// op rewrote can only be checked by that later op: its current bytes are
+// served under a fresh CRC (the wire still validates them).
+func (p *Probe) vouch(op protocol.WriteOp) (protocol.WriteOp, bool, error) {
+	claim, claimed := p.CRCs[op.Seq]
+	if op.Flush || !claimed {
+		return op, true, nil
+	}
+	if p.Spans.Superseded(op.Seq) {
+		op.CRC = crc32c(op.Data)
+		return op, true, nil
+	}
+	if crc32c(op.Data) != claim {
+		return protocol.WriteOp{}, false, fmt.Errorf("bytes from %s fail crc32c (claim %08x)", p.NodeID, claim)
+	}
+	return op, true, nil
 }
 
 // FillOne sources one op for the CALLER's local fill (the mirror of 4b
@@ -398,11 +418,22 @@ func FillOne(ctx context.Context, probes []Probe, seq uint64) (protocol.WriteOp,
 func detectDivergence(probes []Probe) []Divergence {
 	bySeq := map[uint64]map[string]uint32{}
 	var seqs []uint64
+	overwritten := map[uint64]bool{}
+	for _, p := range probes {
+		for seq := range p.CRCs {
+			if p.Spans.Superseded(seq) {
+				overwritten[seq] = true
+			}
+		}
+	}
 	for _, p := range probes {
 		if !p.Reachable {
 			continue
 		}
 		for seq, crc := range p.CRCs {
+			if overwritten[seq] {
+				continue // re-recorded on leveling; the op that overwrote it is compared instead
+			}
 			if _, ok := bySeq[seq]; !ok {
 				bySeq[seq] = map[string]uint32{}
 				seqs = append(seqs, seq)

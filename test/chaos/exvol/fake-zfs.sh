@@ -95,6 +95,7 @@ zfs)
 		name=$(lastname "$@")
 		[ -f "$(snappath "$name")" ] || die "send: no snapshot $name"
 		cat "$(snappath "$name")"
+		printf 'FAKEZEND' # trailer: lets receive reject a stream cut short, like real zfs
 		;;
 
 	receive)
@@ -108,6 +109,11 @@ zfs)
 		f=$(devpath "$name")
 		mkdir -p "$(dirname "$f")"
 		cat > "$f.tmp" || die "receive $name"
+		if [ "$(tail -c 8 "$f.tmp")" != FAKEZEND ]; then
+			rm -f "$f.tmp"
+			die "receive $name: truncated stream"
+		fi
+		truncate -s -8 "$f.tmp" || die "receive $name"
 		mv "$f.tmp" "$f" || die "receive $name"
 		;;
 

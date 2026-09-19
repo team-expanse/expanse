@@ -84,6 +84,7 @@ type Coordinator struct {
 	mu       sync.Mutex
 	replicas map[string]*replicaState
 	oplog    *oplog.Store // durable seq->location journal (§4.3 4a); nil = memory-only
+	barrier  *commitBarrier
 }
 
 // AttachOplog wires the durable seq->location journal (§4.3 4a): every
@@ -119,6 +120,7 @@ func NewAt(volID string, replication int, local LocalWriter, replicas []Replica,
 		timeout:  staleTimeout,
 		results:  make(chan repResult, 4*len(replicas)+8),
 		replicas: make(map[string]*replicaState, len(replicas)),
+		barrier:  newCommitBarrier(),
 	}
 	for _, r := range replicas {
 		st := &replicaState{
@@ -184,6 +186,34 @@ func (c *Coordinator) retirePump(st *replicaState) {
 func (c *Coordinator) AddReplica(nodeID string, snd *transport.Sender) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.addReplicaLocked(nodeID, snd)
+}
+
+// ReviveCaughtUp re-admits a Stale replica with NO sequence gap. A Stale
+// replica is skipped by the live fan-out, so every op assigned after
+// `sent` (the last seq the caller delivered) would otherwise never reach
+// it — a trailing gap nothing notices on an idle volume. Under the write
+// lock (no op can be assigned) it delivers (sent, LastSeq] through send,
+// then starts the pump; on a delivery error the replica stays Stale.
+func (c *Coordinator) ReviveCaughtUp(nodeID string, snd *transport.Sender, sent uint64, send func(protocol.WriteOp) error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cur := c.p.LastAssigned(); cur > sent {
+		ops, err := c.fetchOpsLocked(sent, cur)
+		if err != nil {
+			return err
+		}
+		for _, op := range ops {
+			if err := send(op); err != nil {
+				return err
+			}
+		}
+	}
+	c.addReplicaLocked(nodeID, snd)
+	return nil
+}
+
+func (c *Coordinator) addReplicaLocked(nodeID string, snd *transport.Sender) {
 	if st, ok := c.replicas[nodeID]; ok {
 		if !st.stale {
 			return // healthy already; leave the pump alone
@@ -260,9 +290,12 @@ func (c *Coordinator) Flush() error {
 // local durable apply, fan-out, quorum ack. makeOp builds the wire op
 // from the assigned sequence; applyLocal is the primary's own durable
 // step (completed BEFORE fan-out); opName labels errors.
-func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal func() error, opName string) error {
+func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal func() error, opName string) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.barrier.isFenced() {
+		return fencedErr(opName)
+	}
 
 	// Step 1: lease gate. Immediate EIO, no queueing.
 	if c.lease != nil && !c.lease.Valid() {
@@ -275,8 +308,11 @@ func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal
 		return experrors.New(experrors.KindInternal, opName, "EIO: volume lease lost")
 	}
 
-	// Step 3+4: local durable write BEFORE fan-out.
+	// Step 3+4: local durable write BEFORE fan-out. Reads must not see
+	// it until quorum-durable (commitBarrier).
 	op := makeOp(seq)
+	c.barrier.begin(op.Offset, len(op.Data))
+	defer func() { c.barrier.finish(err == nil) }()
 	if err := applyLocal(); err != nil {
 		return experrors.Wrap(err, experrors.KindInternal, opName, "local replica write failed")
 	}
@@ -428,13 +464,19 @@ func (c *Coordinator) LastSeq() uint64 { return c.p.LastAssigned() }
 // flush markers come back as empty ops carrying the flag.
 func (c *Coordinator) FetchOps(from, to uint64) ([]protocol.WriteOp, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fetchOpsLocked(from, to)
+}
+
+// fetchOpsLocked is FetchOps for callers already holding c.mu.
+func (c *Coordinator) fetchOpsLocked(from, to uint64) ([]protocol.WriteOp, error) {
 	local := c.local
 	log := c.oplog
-	c.mu.Unlock()
 	if log == nil {
 		return nil, experrors.New(experrors.KindUnavailable, "exvol.primary", "no durable oplog wired")
 	}
 	records := log.Snapshot()
+	overwritten := supersededOps(records, from, c.p.LastAssigned())
 	ops := make([]protocol.WriteOp, 0, to-from)
 	for seq := from + 1; seq <= to; seq++ {
 		rec, ok := records[seq]
@@ -448,12 +490,27 @@ func (c *Coordinator) FetchOps(from, to uint64) ([]protocol.WriteOp, error) {
 				return nil, experrors.Wrap(err, experrors.KindInternal, "exvol.primary", "op re-read failed")
 			}
 			op.Data = buf
+			if overwritten.Superseded(seq) {
+				op.CRC = protocol.CRC32C(buf) // the claim covers bytes a later op replaced
+			}
 		} else {
 			op.Flush = true
 		}
 		ops = append(ops, op)
 	}
 	return ops, nil
+}
+
+// supersededOps indexes the ops in (from, last] so a fetch can tell which
+// had their range rewritten by a later one.
+func supersededOps(records map[uint64]oplog.Record, from, last uint64) *oplog.Spans {
+	spans := map[uint64]oplog.Span{}
+	for seq := from + 1; seq <= last; seq++ {
+		if rec, ok := records[seq]; ok {
+			spans[seq] = oplog.Span{Offset: uint64(rec.Offset), Length: uint32(rec.Length)}
+		}
+	}
+	return oplog.NewSpans(spans)
 }
 
 // Replication is the configured replication factor.
