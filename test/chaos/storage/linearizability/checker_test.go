@@ -63,15 +63,39 @@ func TestCheckRegister(t *testing.T) {
 }
 
 func TestCheckRegisterBudgetExceeded(t *testing.T) {
-	// 12 fully-concurrent indeterminate writes + an unexplainable read
-	// force a wide search; a tiny budget must error, never pass silently.
+	// 8 concurrent indeterminate writes, each observed by an overlapping
+	// read, plus one unexplainable read force a wide search; a tiny budget
+	// must error, never pass silently.
 	var ops []Op
-	for i := 1; i <= 12; i++ {
-		ops = append(ops, wInfo(i, uint64(i), 1))
+	for i := 1; i <= 8; i++ {
+		ops = append(ops, wInfo(i, uint64(i), 1), r(20+i, uint64(i), 2, 3))
 	}
-	ops = append(ops, r(99, 500, 2, 3))
+	ops = append(ops, r(99, 500, 4, 5))
 	if _, err := CheckRegister(ops, 10); err == nil {
 		t.Fatal("expected budget-exceeded error")
+	}
+}
+
+// An indeterminate write nobody read can only make a linearization
+// harder, so it must not widen the search however many there are.
+func TestUnobservedIndeterminateWritesArePruned(t *testing.T) {
+	ops := []Op{w(1, 7, 1, 2)}
+	for i := 0; i < 40; i++ {
+		ops = append(ops, wInfo(10+i, uint64(100+i), 1))
+	}
+	ops = append(ops, r(99, 7, 3, 4))
+	res, err := CheckRegister(ops, 50)
+	if err != nil || !res.OK {
+		t.Fatalf("res=%+v err=%v, want linearizable within a tiny budget", res, err)
+	}
+}
+
+// Pruning must not hide a violation: a lost acked write stays a failure.
+func TestPruningKeepsAckedWriteLossDetectable(t *testing.T) {
+	ops := []Op{w(1, 7, 1, 2), wInfo(2, 8, 1), r(3, 0, 3, 4)}
+	res, err := CheckRegister(ops, 1000)
+	if err != nil || res.OK {
+		t.Fatalf("res=%+v err=%v, want a violation", res, err)
 	}
 }
 

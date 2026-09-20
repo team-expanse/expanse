@@ -37,6 +37,7 @@ import (
 	"github.com/expanse/expanse/internal/storage/zfs"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
+	pb "github.com/expanse/expanse/proto"
 )
 
 const pool = "volumes" // fake pool name (mirrors the VM test pool)
@@ -68,34 +69,51 @@ type Cluster struct {
 	// Faults is non-nil only for NewFaultCluster clusters.
 	Faults *Faults
 
+	cfg Config
+
 	Nodes   []*Node
 	byID    map[string]*Node
 	logSink *testWriter
 	port    int
 }
 
+// Config overrides runtime tuning for every node; zero keeps the default.
+type Config struct {
+	StaleTimeout      time.Duration
+	ResyncBytesPerSec int64
+	OpReplayMaxOps    int
+
+	TransientRecoveryWindow time.Duration
+}
+
 // NewCluster brings up nodes reconciling on a fast tick. One shared
 // boltstore represents the replicated log every node reads/writes.
 func NewCluster(t *testing.T, ids ...string) *Cluster {
 	t.Helper()
-	return newCluster(t, false, ids...)
+	return newCluster(t, false, Config{}, ids...)
 }
 
 // NewFaultCluster is NewCluster with the per-link fault layer (Faults)
 // interposed on every replication connection and store view.
 func NewFaultCluster(t *testing.T, ids ...string) *Cluster {
 	t.Helper()
-	return newCluster(t, true, ids...)
+	return newCluster(t, true, Config{}, ids...)
 }
 
-func newCluster(t *testing.T, faulted bool, ids ...string) *Cluster {
+// NewFaultClusterWith is NewFaultCluster with runtime tuning applied.
+func NewFaultClusterWith(t *testing.T, cfg Config, ids ...string) *Cluster {
+	t.Helper()
+	return newCluster(t, true, cfg, ids...)
+}
+
+func newCluster(t *testing.T, faulted bool, cfg Config, ids ...string) *Cluster {
 	t.Helper()
 	st, err := boltstore.New(filepath.Join(t.TempDir(), "raft.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	c := &Cluster{T: t, St: st, byID: map[string]*Node{}}
+	c := &Cluster{T: t, St: st, byID: map[string]*Node{}, cfg: cfg}
 	// All nodes share one replication port (mirrors production, where
 	// every node listens on PortExvol); each binds its own loopback IP
 	// (127.0.0.<i> — the whole 127/8 is local), standing in for the
@@ -127,8 +145,23 @@ func newCluster(t *testing.T, faulted bool, ids ...string) *Cluster {
 	for _, n := range c.Nodes {
 		c.start(n)
 	}
+	t.Cleanup(c.removeNodeRoots) // registered first, so it runs after Stop
 	t.Cleanup(c.Stop)
 	return c
+}
+
+// removeNodeRoots deletes each node's directory, retrying briefly: an
+// orphaned fake-zfs child (its wrapper was killed with the run context)
+// can still be writing a snapshot, which fails t.TempDir's own removal.
+func (c *Cluster) removeNodeRoots() {
+	for _, n := range c.Nodes {
+		for i := 0; i < 50; i++ {
+			if os.RemoveAll(n.Root) == nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 func (c *Cluster) ctx() context.Context {
@@ -162,21 +195,26 @@ func (c *Cluster) Stop() {
 	}
 }
 
-// ProbeSeq is the controller's election probe (§4.3 4a): the node's
-// last durable sequence for volID, read over the replication transport.
-func (c *Cluster) ProbeSeq(volID, nodeID string) (uint64, error) {
+// Probe is the controller's election probe (§4.3 4a): the node's answer to a
+// QuerySeq for volID, read over the replication transport.
+func (c *Cluster) Probe(volID, nodeID string) (*pb.SeqQueryReply, error) {
 	n := c.byID[nodeID]
 	if n == nil {
-		return 0, fmt.Errorf("no such node %q", nodeID)
+		return nil, fmt.Errorf("no such node %q", nodeID)
 	}
 	ctx, cancel := context.WithTimeout(c.ctx(), time.Second)
 	defer cancel()
 	conn, err := transport.Dial(ctx, fmt.Sprintf("%s:%d", n.ip, n.Port))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer conn.Close() //nolint:errcheck
-	rep, err := conn.QuerySeq(volID)
+	return conn.QuerySeq(volID)
+}
+
+// ProbeSeq is Probe reduced to the node's last durable sequence.
+func (c *Cluster) ProbeSeq(volID, nodeID string) (uint64, error) {
+	rep, err := c.Probe(volID, nodeID)
 	if err != nil {
 		return 0, err
 	}
@@ -290,20 +328,25 @@ func (c *Cluster) newNode(id, oldRoot string, idx int) *Node {
 	zexec.ZpoolPath = filepath.Join(bin, "zpool")
 
 	rt := runtime.New(runtime.Options{
-		NodeID:           id,
-		St:               st,
-		Pool:             pool,
-		DataDir:          filepath.Join(root, "data"),
-		Logger:           c.nodeLogger(id),
-		AddrOf:           addrOf,
-		Port:             port,
-		ListenAddr:       ip + ":%d",
-		LeaseTTL:         2 * time.Second,
-		SnapshotInterval: 1 * time.Second,
-		SnapshotKeep:     5,
-		IsLeader:         func() bool { return true },
-		ZvolDevBase:      filepath.Join(root, "pool", "dev"), // the fake nests dev/ under the pool
-		ZFS:              zexec,
+		NodeID:            id,
+		St:                st,
+		Pool:              pool,
+		DataDir:           filepath.Join(root, "data"),
+		Logger:            c.nodeLogger(id),
+		AddrOf:            addrOf,
+		Port:              port,
+		ListenAddr:        ip + ":%d",
+		LeaseTTL:          2 * time.Second,
+		StaleTimeout:      c.cfg.StaleTimeout,
+		ResyncBytesPerSec: c.cfg.ResyncBytesPerSec,
+		OpReplayMaxOps:    c.cfg.OpReplayMaxOps,
+
+		TransientRecoveryWindow: c.cfg.TransientRecoveryWindow,
+		SnapshotInterval:        1 * time.Second,
+		SnapshotKeep:            5,
+		IsLeader:                func() bool { return true },
+		ZvolDevBase:             filepath.Join(root, "pool", "dev"), // the fake nests dev/ under the pool
+		ZFS:                     zexec,
 		AttachNBD: func(sock, volID, nbdDev string) error {
 			// No kernel NBD here: publish a plain symlink marker.
 			dir := filepath.Join(root, "exvol")
@@ -547,4 +590,46 @@ func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("timeout waiting for %s", what)
+}
+
+// FirstDivergence compares the first n bytes of volID's zvol on every
+// node and describes the first differing offset; "" means identical.
+func (c *Cluster) FirstDivergence(volID string, n int64) string {
+	const chunk = 1 << 20
+	files := make([]*os.File, len(c.Nodes))
+	for i, nd := range c.Nodes {
+		f, err := os.Open(nd.ZvolFile(volID))
+		if err != nil {
+			return fmt.Sprintf("%s: %v", nd.ID, err)
+		}
+		defer f.Close() //nolint:errcheck
+		files[i] = f
+	}
+	bufs := make([][]byte, len(files))
+	for i := range bufs {
+		bufs[i] = make([]byte, chunk)
+	}
+	for off := int64(0); off < n; off += chunk {
+		want := int(min(chunk, n-off))
+		for i, f := range files {
+			if _, err := f.ReadAt(bufs[i][:want], off); err != nil {
+				return fmt.Sprintf("%s read at %d: %v", c.Nodes[i].ID, off, err)
+			}
+		}
+		for i := 1; i < len(bufs); i++ {
+			if j := firstDiff(bufs[0][:want], bufs[i][:want]); j >= 0 {
+				return fmt.Sprintf("%s and %s differ at byte %d", c.Nodes[0].ID, c.Nodes[i].ID, off+int64(j))
+			}
+		}
+	}
+	return ""
+}
+
+func firstDiff(a, b []byte) int {
+	for i := range a {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return -1
 }

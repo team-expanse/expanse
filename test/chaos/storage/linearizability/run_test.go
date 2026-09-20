@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	volID      = "vol-linear"
-	minVolSize = 64 << 20
-	nClients   = 6
-	keyWindow  = 8  // concurrently hot blocks
-	opsPerKey  = 48 // bounds the exact checker's per-register work
-	checkSteps = 5_000_000
+	volID        = "vol-linear"
+	minVolSize   = 64 << 20
+	nClients     = 6
+	keyWindow    = 8  // concurrently hot blocks
+	opsPerKey    = 48 // bounds the exact checker's per-register work
+	checkSteps   = 5_000_000
+	settleMargin = 200 // blocks below the hot window still treated as possibly in flight
 )
 
 // runDuration: RUN_CHAOS=1 → 1 hour (§5 nightly); CHAOS_DURATION
@@ -58,6 +59,9 @@ func TestLinearizabilityUnderFaults(t *testing.T) {
 	pool := newKeyPool(keyWindow, opsPerKey, int(size/BlockSize))
 	w := NewWorkload(c, volID, pool, rec, nodes)
 	nem := NewNemesis(c, volID, nodes, t.Logf)
+	// Finished blocks must be byte-identical whenever the cluster is healthy: catches
+	// silent divergence when it happens instead of at the end of the hour.
+	nem.SetInvariant(func() string { return replicaDiff(c, pool.settledKeys(settleMargin)) })
 
 	waitPrimaryServes(t, c, w)
 
@@ -80,6 +84,8 @@ func TestLinearizabilityUnderFaults(t *testing.T) {
 	case <-time.After(dur):
 	case err := <-errs:
 		t.Error(err)
+	case <-nem.Failed():
+		t.Errorf("replicas diverged while the cluster was healthy: %s", nem.Failure())
 	}
 	close(stop)
 	wg.Wait()
@@ -152,6 +158,7 @@ func finalReads(t *testing.T, c *exvol.Cluster, w *Workload, pool *keyPool, nem 
 		for !w.read(-1, c.Node(c.Status(volID).Primary), key) {
 			if time.Now().After(deadline) {
 				last, _ := w.lastReadErr.Load().(string)
+				t.Logf("goroutine dump: %s", DumpGoroutines())
 				t.Fatalf("final read of block %d never succeeded: the volume did not recover (last read error: %s; nemesis: %q)",
 					key, last, nem.Stuck())
 			}

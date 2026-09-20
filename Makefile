@@ -30,10 +30,10 @@ perf: build      ## Check performance budgets
 	RUN_PERF=1 go test ./test/perf/... -v
 
 chaos:           ## Run the chaos suite at full length (5 min/scenario + 30 min blocks)
-	RUN_CHAOS=1 go test -count=1 -timeout 90m ./test/chaos/... -v
+	RUN_CHAOS=1 go test -count=1 -timeout 150m ./test/chaos/... -v
 
-chaos-storage:   ## Run the storage linearizability suite at full length (1 h nightly)
-	RUN_CHAOS=1 go test -count=1 -timeout 90m ./test/chaos/storage/linearizability/ -v
+chaos-storage:   ## Run the storage chaos suites at full length (1 h linearizability + ~25 min scenarios)
+	RUN_CHAOS=1 go test -count=1 -p 1 -timeout 120m ./test/chaos/storage/... -v
 
 clean:           ## Clean build artifacts
 	rm -rf bin result coverage.out

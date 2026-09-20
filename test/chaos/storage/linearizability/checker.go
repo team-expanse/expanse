@@ -112,7 +112,7 @@ type search struct {
 
 func newSearch(ops []Op, budget int) *search {
 	s := &search{
-		ops:    append([]Op(nil), ops...),
+		ops:    withoutUnobservedWrites(ops),
 		seen:   map[string]struct{}{},
 		budget: budget,
 	}
@@ -130,6 +130,28 @@ func newSearch(ops []Op, budget int) *search {
 	return s
 }
 
+// withoutUnobservedWrites drops indeterminate writes whose value no read
+// returned. Write values are unique, so such a write can only make a
+// linearization harder (it would overwrite the register); "it never
+// happened" is always a legal outcome. This keeps the search width tied to
+// writes the history actually depends on.
+func withoutUnobservedWrites(ops []Op) []Op {
+	seen := map[uint64]bool{}
+	for _, o := range ops {
+		if o.Kind == Read {
+			seen[o.Value] = true
+		}
+	}
+	kept := make([]Op, 0, len(ops))
+	for _, o := range ops {
+		if o.Indeterminate && o.Kind == Write && !seen[o.Value] {
+			continue
+		}
+		kept = append(kept, o)
+	}
+	return kept
+}
+
 // run tries to linearize the remaining ops given the register's current
 // value; linearized counts ops placed so far (for diagnostics).
 func (s *search) run(cur uint64, linearized int) (bool, error) {
@@ -140,7 +162,8 @@ func (s *search) run(cur uint64, linearized int) (bool, error) {
 		return true, nil // leftover indeterminate writes simply never happened
 	}
 	if s.steps++; s.steps > s.budget {
-		return false, fmt.Errorf("search budget %d exceeded (history too concurrent)", s.budget)
+		return false, fmt.Errorf("search budget %d exceeded (history too concurrent: %d ops, %d indeterminate writes)",
+			s.budget, len(s.ops), s.indeterminateWrites())
 	}
 	key := s.memoKey(cur)
 	if _, bad := s.seen[key]; bad {
@@ -180,6 +203,16 @@ func (s *search) run(cur uint64, linearized int) (bool, error) {
 	}
 	s.seen[key] = struct{}{}
 	return false, nil
+}
+
+func (s *search) indeterminateWrites() int {
+	n := 0
+	for _, o := range s.ops {
+		if o.Indeterminate {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *search) memoKey(cur uint64) string {

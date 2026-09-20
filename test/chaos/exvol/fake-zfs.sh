@@ -108,7 +108,8 @@ zfs)
 		name=$(lastname "$@")
 		f=$(devpath "$name")
 		mkdir -p "$(dirname "$f")"
-		cat > "$f.tmp" || die "receive $name"
+		# Keep holes: a dense copy makes every later fake snapshot copy the whole volume.
+		dd of="$f.tmp" bs=1M iflag=fullblock conv=sparse status=none || die "receive $name"
 		if [ "$(tail -c 8 "$f.tmp")" != FAKEZEND ]; then
 			rm -f "$f.tmp"
 			die "receive $name: truncated stream"

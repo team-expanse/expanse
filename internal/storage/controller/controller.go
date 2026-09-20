@@ -104,11 +104,7 @@ type Controller struct {
 
 	noCandRounds map[string]int // volID → consecutive no-evidence rounds
 
-	// candLatched marks volumes whose NeedsManualRecovery was set by
-	// the no-current-candidate path (not §9 divergence): unlike a
-	// divergence latch, it is exitable — a live candidate with probe
-	// evidence clears it (see Reconcile's manual-recovery case).
-	candLatched map[string]bool
+	latchNoted map[string]time.Time // volID → when a stuck latch was last reported
 }
 
 // New builds the controller. Call Run in a goroutine.
@@ -125,7 +121,7 @@ func New(opts Options) *Controller {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Controller{opts: opts, log: opts.Logger, rebuilds: map[string]int{}, noCandRounds: map[string]int{}, candLatched: map[string]bool{}}
+	return &Controller{opts: opts, log: opts.Logger, rebuilds: map[string]int{}, noCandRounds: map[string]int{}, latchNoted: map[string]time.Time{}}
 }
 
 // Run reconciles every tick until the context ends.
@@ -156,7 +152,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	meshed := c.meshedNodes(ctx)
+	meshed, err := c.meshedNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("controller: cannot read node membership; skipping this round: %w", err)
+	}
 	if err := c.reconcileBlocks(ctx, meshed); err != nil {
 		c.log.Warn("block volume reconcile failed", "err", err)
 	}
@@ -186,13 +185,22 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			// unavailability — when a meshed placement node presents
 			// live probe evidence, the volume is provably intact and
 			// election may proceed.
-			if c.candLatched[id] && c.liveCandidateExists(ctx, id, &status, meshed) {
-				delete(c.candLatched, id)
-				c.noCandRounds[id] = 0
-				status.State = storage.StateDegraded
-				if err := storage.CompareAndSwapStatus(ctx, c.opts.St, id, rev, status); err == nil {
-					c.log.Info("manual-recovery latch cleared: live candidate presented probe evidence", "vol", id)
-				}
+			if !storage.AutoLatched(ctx, c.opts.St, id) {
+				c.noteLatched(id, "latched by recovery or an operator (not by the no-candidate path)")
+				continue
+			}
+			live, why := c.liveCandidateExists(ctx, id, &status, meshed)
+			if !live {
+				c.noteLatched(id, why)
+				continue
+			}
+			c.noCandRounds[id] = 0
+			status.State = storage.StateDegraded
+			if err := storage.CompareAndSwapStatus(ctx, c.opts.St, id, rev, status); err == nil {
+				storage.ClearAutoLatch(ctx, c.opts.St, id)
+				c.log.Info("manual-recovery latch cleared: live candidate presented probe evidence", "vol", id)
+			} else {
+				c.log.Warn("manual-recovery latch: clearing CAS failed; will retry", "vol", id, "err", err)
 			}
 			continue
 		}
@@ -476,10 +484,16 @@ func (c *Controller) finalizeDelete(ctx context.Context, volID string, spec *sto
 // lowest node ID. The elected node's runtime acquires the volume lease
 // and runs T11's recovery (steps 4a–5) before serving.
 func (c *Controller) electPrimary(ctx context.Context, volID string, status *storage.Status, rev store.Revision, meshed map[string]bool) {
-	if status.Primary != "" && meshed[status.Primary] && !c.volLeaseExpired(ctx, volID) {
-		c.noCandRounds[volID] = 0
-		return // healthy primary: meshed, and its lease is either valid
-		// or not yet acquired (a fresh election is still mid-handshake)
+	if status.Primary != "" {
+		primaryMeshed := meshed[status.Primary]
+		leaseExpired := primaryMeshed && c.volLeaseExpired(ctx, volID)
+		if primaryMeshed && !leaseExpired {
+			c.noCandRounds[volID] = 0
+			return // healthy primary: meshed, and its lease is either valid
+			// or not yet acquired (a fresh election is still mid-handshake)
+		}
+		c.log.Info("re-electing: current primary is unusable", "vol", volID,
+			"primary", status.Primary, "meshed", primaryMeshed, "lease_expired", leaseExpired)
 	}
 	type cand struct {
 		id  string
@@ -503,8 +517,14 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 			err  error
 		}
 		var live []string // meshed placement order, for deterministic probe list
+		var why []string  // per placement, why it was or was not a candidate (for the refusal log)
 		for _, p := range status.Placement {
-			if meshed[p.NodeID] && p.Role != storage.RoleStale {
+			switch {
+			case !meshed[p.NodeID]:
+				why = append(why, p.NodeID+"(not meshed)")
+			case p.Role == storage.RoleStale:
+				why = append(why, p.NodeID+"(Stale)")
+			default:
 				live = append(live, p.NodeID)
 			}
 		}
@@ -522,6 +542,7 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 		cancel()
 		for _, pr := range results {
 			if pr.err != nil {
+				why = append(why, pr.node+"(probe failed)")
 				c.log.Warn("election probe failed; candidate not eligible",
 					"vol", volID, "node", pr.node, "err", pr.err)
 				continue
@@ -529,7 +550,8 @@ func (c *Controller) electPrimary(ctx context.Context, volID string, status *sto
 			cands = append(cands, cand{pr.node, pr.seq})
 		}
 		if len(cands) == 0 {
-			c.noCurrentCandidate(ctx, volID, status, rev)
+			informative := len(live) >= len(status.Placement)/2+1
+			c.noCurrentCandidate(ctx, volID, status, rev, strings.Join(why, " "), informative)
 			return
 		}
 		c.noCandRounds[volID] = 0
@@ -578,26 +600,34 @@ const probeBudget = 3 * time.Second
 // electing nobody keeps the volume read-only-fenced. After
 // NoCandidateRounds consecutive evidence-less rounds the volume is
 // flagged NeedsManualRecovery — suspected data loss, a human decides.
-func (c *Controller) noCurrentCandidate(ctx context.Context, volID string, status *storage.Status, rev store.Revision) {
-	c.noCandRounds[volID]++
+func (c *Controller) noCurrentCandidate(ctx context.Context, volID string, status *storage.Status, rev store.Revision, why string, informative bool) {
+	if informative { // too few probed nodes is a gap in the controller's view, not evidence of loss
+		c.noCandRounds[volID]++
+	}
 	rounds := c.noCandRounds[volID]
 	limit := c.opts.NoCandidateRounds
 	if limit <= 0 {
 		limit = 3
 	}
 	c.log.Warn("election refused: no candidate with live probe evidence",
-		"vol", volID, "rounds", rounds)
+		"vol", volID, "rounds", rounds, "primary", status.Primary, "candidates", why)
 	if c.opts.Alert != nil {
 		c.opts.Alert(AlertEvent{VolID: volID, Kind: "no-current-candidate", Detail: fmt.Sprintf("round %d of %d", rounds, limit)})
 	}
-	if rounds < limit {
+	if !informative || rounds < limit {
 		return
 	}
 	if status.State != storage.StateNeedsManualRecovery {
 		status.State = storage.StateNeedsManualRecovery
-		c.candLatched[volID] = true
+		// Marker first: a latch without it could never lift itself.
+		if err := storage.SetAutoLatch(ctx, c.opts.St, volID); err != nil {
+			c.log.Warn("election: cannot record the liftable latch marker; not latching", "vol", volID, "err", err)
+			return
+		}
 		if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err == nil {
 			c.log.Error("election: no current candidate — manual recovery required", "vol", volID, "rounds", rounds)
+		} else {
+			storage.ClearAutoLatch(ctx, c.opts.St, volID)
 		}
 	}
 }
@@ -607,21 +637,35 @@ func (c *Controller) noCurrentCandidate(ctx context.Context, volID string, statu
 // recovery latch: presence of a live, provable durable copy is the
 // strongest evidence the volume is intact, so keeping the volume
 // fenced would trade a transient outage for a permanent one.
-func (c *Controller) liveCandidateExists(ctx context.Context, volID string, status *storage.Status, meshed map[string]bool) bool {
+func (c *Controller) liveCandidateExists(ctx context.Context, volID string, status *storage.Status, meshed map[string]bool) (bool, string) {
 	if c.opts.ProbeSeq == nil {
-		return false
+		return false, "no probe wired"
 	}
 	pctx, cancel := context.WithTimeout(ctx, probeBudget)
 	defer cancel()
+	var why []string
 	for _, p := range status.Placement {
 		if !meshed[p.NodeID] {
+			why = append(why, p.NodeID+"(not meshed)")
 			continue
 		}
-		if _, err := c.opts.ProbeSeq(pctx, volID, p.NodeID); err == nil {
-			return true
+		_, err := c.opts.ProbeSeq(pctx, volID, p.NodeID)
+		if err == nil {
+			return true, ""
 		}
+		why = append(why, fmt.Sprintf("%s(probe failed: %v)", p.NodeID, err))
 	}
-	return false
+	return false, strings.Join(why, " ")
+}
+
+// noteLatched says why a latched volume is not being served, at most once a
+// minute per volume, so a stuck latch is never silent.
+func (c *Controller) noteLatched(volID, why string) {
+	if time.Since(c.latchNoted[volID]) < time.Minute {
+		return
+	}
+	c.latchNoted[volID] = time.Now()
+	c.log.Warn("volume stays latched for manual recovery", "vol", volID, "why", why)
 }
 
 // volLeaseExpired reports whether the volume's primary lease exists
@@ -772,11 +816,11 @@ func (c *Controller) maybeScrub(ctx context.Context) {
 // record whose lease has EXPIRED is a dead node. Nodes that publish no
 // lease at all (single-bolt clusters, tests) fall back to the record —
 // the pre-lease semantics.
-func (c *Controller) meshedNodes(ctx context.Context) map[string]bool {
+func (c *Controller) meshedNodes(ctx context.Context) (map[string]bool, error) {
 	out := map[string]bool{}
 	entries, err := c.opts.St.List(ctx, "/nodes/")
 	if err != nil {
-		return out
+		return nil, err
 	}
 	lm := lease.NewManager(c.opts.St, "storage-controller")
 	now := time.Now()
@@ -795,7 +839,7 @@ func (c *Controller) meshedNodes(ctx context.Context) map[string]bool {
 		}
 		out[id] = alive
 	}
-	return out
+	return out, nil
 }
 
 func (c *Controller) emitAlert(ev AlertEvent) {

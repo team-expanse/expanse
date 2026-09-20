@@ -38,3 +38,77 @@ func TestClaimsDiverge(t *testing.T) {
 		}
 	}
 }
+
+func TestOpReplayVerdict(t *testing.T) {
+	log := map[uint64]oplog.Record{9: {Offset: 16384, Length: 4096, CRC: 7}}
+	same := &pb.SeqInfo{Seq: 9, Offset: 16384, Length: 4096, Crc32C: 7}
+	other := &pb.SeqInfo{Seq: 9, Offset: 81920, Length: 4096, Crc32C: 1}
+	cases := []struct {
+		name string
+		q    *pb.SeqQueryReply
+		want opReplayVerdict
+	}{
+		{"current secondary", &pb.SeqQueryReply{LastSeq: 9, Ops: []*pb.SeqInfo{same}}, verdictReplay},
+		{"still serving as primary: its answer carries no claims", &pb.SeqQueryReply{LastSeq: 9, IsPrimary: true}, verdictDefer},
+		{"ahead of the primary", &pb.SeqQueryReply{LastSeq: 30}, verdictSnapshot},
+		{"another branch", &pb.SeqQueryReply{LastSeq: 9, Ops: []*pb.SeqInfo{other}}, verdictSnapshot},
+	}
+	for _, c := range cases {
+		if got := opReplayVerdictFor(c.q, 24, log); got != c.want {
+			t.Errorf("%s: verdict %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// A peer still serving as primary answers with a last seq and no claims: that is a
+// bound on what it may hold, not evidence, so recovery must not source ops from it.
+func TestPrimaryAnswerIsABoundNotEvidence(t *testing.T) {
+	q := &pb.SeqQueryReply{LastSeq: 90, IsPrimary: true}
+	p, evidence := probeFromAnswer("n1", q)
+	if evidence || p.Reachable {
+		t.Fatalf("a still-serving primary must not count as a reachable replica: %+v", p)
+	}
+	if !p.Answered || p.LastSeq != 90 {
+		t.Fatalf("its last seq must still bound what it could hold: %+v", p)
+	}
+	if _, evidence := probeFromAnswer("n2", &pb.SeqQueryReply{LastSeq: 90}); !evidence {
+		t.Fatal("an ordinary secondary's answer is evidence")
+	}
+}
+
+func answer(claims ...*pb.SeqInfo) *pb.SeqQueryReply {
+	return &pb.SeqQueryReply{LastSeq: 9, Ops: claims}
+}
+
+// A deposed primary's tail (written while isolated, never acked) conflicts with
+// the branch this node holds; with a quorum on this node's side it is the minority.
+func TestOffBranchPeersAreTheMinorityAgainstAQuorum(t *testing.T) {
+	local := map[uint64]oplog.Record{5: {Offset: 0, Length: 4096, CRC: 55}, 6: {Offset: 4096, Length: 4096, CRC: 66}}
+	peers := map[string]*pb.SeqQueryReply{
+		"n1": answer(seqClaim(5, 0, 4096, 55), seqClaim(6, 4096, 4096, 999)), // conflicts at 6
+		"n2": answer(seqClaim(5, 0, 4096, 55), seqClaim(6, 4096, 4096, 66)),  // agrees
+	}
+	off := offBranchPeers(local, peers, 2) // R=3: this node + n2 is a quorum
+	if !off["n1"] || off["n2"] || len(off) != 1 {
+		t.Fatalf("off-branch = %v, want only n1", off)
+	}
+}
+
+func TestNoPeerIsOffBranchWithoutAQuorumOnThisSide(t *testing.T) {
+	local := map[uint64]oplog.Record{6: {Offset: 4096, Length: 4096, CRC: 66}}
+	peers := map[string]*pb.SeqQueryReply{"n1": answer(seqClaim(6, 4096, 4096, 999))} // 1 vs 1: a real split
+	if off := offBranchPeers(local, peers, 2); len(off) != 0 {
+		t.Fatalf("off-branch = %v: without a majority the conflict is a genuine divergence", off)
+	}
+}
+
+func TestPeersThatOnlyShareNothingDoNotCountAsAgreeing(t *testing.T) {
+	local := map[uint64]oplog.Record{6: {Offset: 4096, Length: 4096, CRC: 66}}
+	peers := map[string]*pb.SeqQueryReply{
+		"n1": answer(seqClaim(6, 4096, 4096, 999)), // conflicts
+		"n2": answer(seqClaim(20, 0, 4096, 7)),     // overlaps nothing: proves nothing
+	}
+	if off := offBranchPeers(local, peers, 2); len(off) != 0 {
+		t.Fatalf("off-branch = %v: n2 does not confirm this node's branch", off)
+	}
+}

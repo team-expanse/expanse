@@ -601,3 +601,131 @@ func TestElectionHysteresisNoChurn(t *testing.T) {
 		t.Fatalf("revision %d → %d: hysteresis violated (CAS without a delta)", beforeRev, afterRev)
 	}
 }
+
+// A latch set because no node presented evidence (a control-plane blackout, not
+// data loss) must lift itself once a meshed node answers, and election must resume.
+func TestNoCandidateLatchLiftsWhenANodeAnswers(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-lift", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	if _, err := st.Put(ctx, store.Key("/leases/node-n1"), []byte(`{"h":"n1","e":-1}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	answering := false
+	c := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true },
+		ProbeSeq: func(ctx context.Context, volID, node string) (uint64, error) {
+			if answering && node != "n1" {
+				return 7, nil
+			}
+			return 0, context.DeadlineExceeded
+		},
+		NoCandidateRounds: 2,
+		Alert:             func(AlertEvent) {},
+	})
+	for i := 0; i < 2; i++ {
+		if err := c.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _, _ := storage.LoadStatus(ctx, st, "vol-lift"); got.State != storage.StateNeedsManualRecovery {
+		t.Fatalf("setup: state = %s, want the latch set", got.State)
+	}
+
+	answering = true
+	for i := 0; i < 3; i++ {
+		if err := c.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _, _ := storage.LoadStatus(ctx, st, "vol-lift")
+	if got.State == storage.StateNeedsManualRecovery || got.Primary == "n1" {
+		t.Fatalf("still latched or unelected: state=%s primary=%s (a live node answers probes)", got.State, got.Primary)
+	}
+}
+
+// Refusing to elect is right when the controller cannot see enough nodes, but
+// that is a gap in its view, not evidence of data loss: it must never latch.
+func TestRefusalWithTooFewProbedNodesNeverLatches(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-blind", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	for _, n := range []string{"n1", "n2", "n3"} { // every liveness lease looks lapsed (control-plane blackout)
+		if _, err := st.Put(ctx, store.Key("/leases/node-"+n), []byte(`{"h":"`+n+`","e":-1}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alerts := 0
+	c := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true },
+		ProbeSeq:          func(context.Context, string, string) (uint64, error) { return 0, context.DeadlineExceeded },
+		NoCandidateRounds: 2,
+		Alert:             func(AlertEvent) { alerts++ },
+	})
+	for i := 0; i < 6; i++ {
+		if err := c.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _, _ := storage.LoadStatus(ctx, st, "vol-blind")
+	if got.State == storage.StateNeedsManualRecovery {
+		t.Fatal("latched although no node could even be probed: that is blindness, not data loss")
+	}
+	if got.Primary != "n1" {
+		t.Fatalf("primary = %s: an unproven node must not be elected", got.Primary)
+	}
+	if alerts == 0 {
+		t.Fatal("the refusal must still be reported")
+	}
+}
+
+// The latch outlives the controller that set it: after a leader change the new
+// controller must lift a no-candidate latch, but never a divergence latch.
+func TestAutoLatchLiftsAcrossControllersButDivergenceStays(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedVolume(t, ctx, st, "vol-auto", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	seedVolume(t, ctx, st, "vol-div", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	if _, err := st.Put(ctx, store.Key("/leases/node-n1"), []byte(`{"h":"n1","e":-1}`)); err != nil {
+		t.Fatal(err)
+	}
+	dead := func(context.Context, string, string) (uint64, error) { return 0, context.DeadlineExceeded }
+	old := New(Options{St: st, Pool: "pool", IsLeader: func() bool { return true }, ProbeSeq: dead, NoCandidateRounds: 2, Alert: func(AlertEvent) {}})
+	for i := 0; i < 2; i++ {
+		if err := old.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// vol-div is latched by a divergence (no marker), like the runtime's markDiverged.
+	div, rev, _ := storage.LoadStatus(ctx, st, "vol-div")
+	div.State = storage.StateNeedsManualRecovery
+	if err := storage.CompareAndSwapStatus(ctx, st, "vol-div", rev, div); err != nil {
+		t.Fatal(err)
+	}
+	storage.ClearAutoLatch(ctx, st, "vol-div")
+
+	fresh := New(Options{
+		St: st, Pool: "pool", IsLeader: func() bool { return true }, Alert: func(AlertEvent) {},
+		ProbeSeq: func(_ context.Context, _, node string) (uint64, error) {
+			if node == "n1" {
+				return 0, context.DeadlineExceeded
+			}
+			return 7, nil
+		},
+	})
+	for i := 0; i < 3; i++ {
+		if err := fresh.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _, _ := storage.LoadStatus(ctx, st, "vol-auto"); got.State == storage.StateNeedsManualRecovery || got.Primary == "n1" {
+		t.Fatalf("vol-auto: state=%s primary=%s: a new controller must lift its predecessor's no-candidate latch", got.State, got.Primary)
+	}
+	if got, _, _ := storage.LoadStatus(ctx, st, "vol-div"); got.State != storage.StateNeedsManualRecovery {
+		t.Fatalf("vol-div: state=%s: a divergence latch is for a human", got.State)
+	}
+}

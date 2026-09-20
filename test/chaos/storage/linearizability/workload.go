@@ -84,6 +84,18 @@ func (p *keyPool) pick(rng *rand.Rand) (int, bool) {
 	return k, true
 }
 
+// settledKeys counts the low blocks that no client will touch again: every
+// block below the lowest hot one, less a margin for operations still in flight.
+func (p *keyPool) settledKeys(margin int) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	lowest := p.active[0]
+	for _, k := range p.active {
+		lowest = min(lowest, k)
+	}
+	return max(lowest-margin, 0)
+}
+
 // usedKeys is how many distinct blocks have been handed out.
 func (p *keyPool) usedKeys() int {
 	p.mu.Lock()

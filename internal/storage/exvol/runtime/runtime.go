@@ -86,6 +86,17 @@ type Options struct {
 	// ResyncBytesPerSec rate-limits resync streams (default 100 MiB/s).
 	ResyncBytesPerSec int64
 
+	// TransientRecoveryWindow is how long a volume's recovery may keep
+	// failing on transport errors alone (a holder unreachable mid-fetch)
+	// before it is treated as unfillable and latched for manual recovery.
+	// Default DefaultTransientRecoveryWindow.
+	TransientRecoveryWindow time.Duration
+
+	// StaleTimeout is how long a secondary may take to answer a write
+	// before the primary marks it Stale instead of stalling clients
+	// (default primary.DefaultStaleTimeout, §9).
+	StaleTimeout time.Duration
+
 	// OpReplayMaxOps bounds the op-replay fast path (default 4096): a
 	// Stale replica whose gap behind the primary is within this many
 	// ops is caught up by resending exactly those ops over the live
@@ -161,6 +172,8 @@ type Runtime struct {
 	zvolOf    map[string]string       // volID → local zvol path
 	specOf    map[string]storage.Spec // volID → spec (device reopen after receive)
 	lastSnap  map[string]time.Time
+	transient *transientTracker       // recovery failures that were only transport errors
+	verifying map[string]bool         // volumes with a currency-watchdog pass in flight
 	resyncing map[string]int          // node ID → in-flight resyncs (cap 2 per node)
 	oplogs    map[string]*oplog.Store // volID → durable seq->location journal (§4.3 4a), shared across role changes
 
@@ -204,6 +217,9 @@ func New(opts Options) *Runtime {
 	if opts.ResyncBytesPerSec <= 0 {
 		opts.ResyncBytesPerSec = 100 << 20
 	}
+	if opts.StaleTimeout <= 0 {
+		opts.StaleTimeout = primary.DefaultStaleTimeout
+	}
 	if opts.ResyncTimeout <= 0 {
 		opts.ResyncTimeout = 10 * time.Minute
 	}
@@ -245,6 +261,8 @@ func New(opts Options) *Runtime {
 		zvolOf:    map[string]string{},
 		specOf:    map[string]storage.Spec{},
 		lastSnap:  map[string]time.Time{},
+		transient: newTransientTracker(opts.TransientRecoveryWindow),
+		verifying: map[string]bool{},
 		resyncing: map[string]int{},
 		recv:      map[string]*resyncRecv{},
 		oplogs:    map[string]*oplog.Store{},
@@ -294,6 +312,9 @@ func (r *Runtime) stopAll() {
 		// object itself in place is safe: its own writer/conns are
 		// closed right below, so any straggling use just errors.
 		p.held.Abandon()
+		if p.coord != nil {
+			p.coord.Close() // waits out in-flight writes and retires the pumps, before the writer goes
+		}
 		p.writer.Close()
 		for _, cn := range p.conns {
 			cn.Close()
@@ -353,10 +374,10 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 					r.opts.Logger.Warn("primary ensure failed", "vol", id, "err", err)
 				} else {
 					r.reportSequence(ctx, spec.ID, status)
-					r.verifyServingCurrent(ctx, spec.ID)
+					r.verifyServingAsync(ctx, spec.ID)
 					r.applyResize(spec.ID, spec.SizeBytes)
 					r.periodicSnapshot(id, zvolPath)
-					r.publishStaleReplicas(ctx, spec.ID, status)
+					r.publishReplicaRoles(ctx, spec.ID)
 					// Replica convergence (adopt + resync) dials peers
 					// (up to ~12s of timeouts when a replica is down)
 					// and streams full images — never inline in the
@@ -1052,7 +1073,7 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 
 	held, err := r.lm.TryAcquire(ctx, "exvol-vol-"+spec.ID, r.opts.LeaseTTL)
 	if err != nil {
-		return fmt.Errorf("volume lease held by another primary: %w", err)
+		return fmt.Errorf("volume lease held by another primary (%s): %w", describeLease(ctx, r.opts.St, "exvol-vol-"+spec.ID), err)
 	}
 
 	w, err := localwrite.Open(devNode, int64(spec.SizeBytes))
@@ -1118,6 +1139,20 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 			}
 			var div *recovery.DivergedError
 			var unfill *recovery.UnfillableError
+			var transient *recovery.TransientError
+			if errors.As(err, &transient) {
+				if !r.transient.note(spec.ID, time.Now()) {
+					// A holder's link dropped mid-fetch: it may still hold
+					// the op. Fail closed (do not serve) but keep retrying.
+					r.opts.Logger.Warn("recovery deferred: a holder was unreachable mid-fetch; will retry", "vol", spec.ID, "seq", transient.Seq, "err", transient.Err)
+					return fmt.Errorf("volume recovery failed: %w", err)
+				}
+				// Failing on transport alone for a whole window: no better
+				// than a holder that never serves. Latch, as unfillable.
+				r.transient.clear(spec.ID)
+				unfill = &recovery.UnfillableError{Seq: transient.Seq, Err: transient.Err}
+				err = unfill
+			}
 			if errors.As(err, &div) {
 				// §9: refuse automatic recovery, preserve all copies,
 				// hand the decision to an operator.
@@ -1135,12 +1170,13 @@ func (r *Runtime) ensurePrimary(ctx context.Context, spec storage.Spec, status s
 			}
 			return fmt.Errorf("volume recovery failed: %w", err)
 		}
+		r.transient.clear(spec.ID)
 	}
 	var reps []primary.Replica
 	for nodeID, conn := range conns {
 		reps = append(reps, primary.Replica{NodeID: nodeID, Sender: transport.NewSender(conn, 0, 0)})
 	}
-	coord := primary.NewAt(spec.ID, spec.Replication, w, reps, held, 5*time.Second, startSeq)
+	coord := primary.NewAt(spec.ID, spec.Replication, w, reps, held, r.opts.StaleTimeout, startSeq)
 	if opStore != nil {
 		coord.AttachOplog(opStore)
 	}
@@ -1293,49 +1329,52 @@ func staleReplicas(st storage.Status) map[string]bool {
 // caller must NOT serve and must preserve all copies.
 func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Writer, conns map[string]*transport.Conn, stale map[string]bool, ops *oplog.Store) (recovery.Result, uint64, error) {
 	probes := make([]recovery.Probe, 0, len(conns)+1)
+	answers := map[string]*pb.SeqQueryReply{} // evidence peers' answers, for the branch check below
 	for nodeID, conn := range conns {
 		nodeID, conn := nodeID, conn
 		if stale[nodeID] {
 			// Its copy was already ruled untrustworthy (missed acked ops, or a
 			// deposed primary's uncommitted branch): not evidence, just a
-			// resync target — reported Stale (4d) like an unreachable one.
-			probes = append(probes, recovery.Probe{NodeID: nodeID, Reachable: false})
+			// resync target — reported Stale (4d) like an unreachable one. Its
+			// last seq is still asked for: as an upper bound on what it could
+			// hold, it lets a sole current replica prove it lacks nothing.
+			probe := recovery.Probe{NodeID: nodeID, Reachable: false}
+			if q, qerr := querySeqWithin(conn, volID, probeTimeout); qerr == nil {
+				probe.Answered, probe.LastSeq = true, q.GetLastSeq()
+			}
+			probes = append(probes, probe)
 			continue
 		}
-		qrep, err := conn.QuerySeq(volID) // step 4a
+		qrep, err := querySeqWithin(conn, volID, probeTimeout) // step 4a
 		if err != nil {
 			// Unreachable mid-recovery: step 4d marks it Stale.
 			probes = append(probes, recovery.Probe{NodeID: nodeID, Reachable: false})
 			continue
 		}
-		crcs := map[uint64]uint32{}
-		spans := map[uint64]oplog.Span{}
-		for _, op := range qrep.GetOps() {
-			crcs[op.GetSeq()] = op.GetCrc32C()
-			spans[op.GetSeq()] = oplog.Span{Offset: op.GetOffset(), Length: op.GetLength()}
+		probe, evidence := probeFromAnswer(nodeID, qrep)
+		if !evidence {
+			// Still serving as primary: report it Stale (4d) and resync it once it demotes.
+			probes = append(probes, probe)
+			continue
 		}
-		probes = append(probes, recovery.Probe{
-			NodeID:    nodeID,
-			Reachable: true,
-			LastSeq:   qrep.GetLastSeq(),
-			CRCs:      crcs,
-			Spans:     oplog.NewSpans(spans),
-			FetchOps: func(_ context.Context, from, to uint64) ([]protocol.WriteOp, error) {
-				frep, err := conn.FetchOps(volID, from, to)
-				if err != nil {
-					return nil, err
-				}
-				var ops []protocol.WriteOp
-				for _, req := range frep.GetOps() {
-					ops = append(ops, protocol.WriteOp{
-						Seq: req.GetSeq(), Offset: req.GetOffset(),
-						Data: req.GetData(), CRC: req.GetCrc32C(), Flush: req.GetFlush(),
-					})
-				}
-				return ops, nil
-			},
-		})
+		answers[nodeID] = qrep
+		probe.FetchOps = func(_ context.Context, from, to uint64) ([]protocol.WriteOp, error) {
+			frep, err := conn.FetchOps(volID, from, to)
+			if err != nil {
+				return nil, classifyFetchErr(err)
+			}
+			var ops []protocol.WriteOp
+			for _, req := range frep.GetOps() {
+				ops = append(ops, protocol.WriteOp{
+					Seq: req.GetSeq(), Offset: req.GetOffset(),
+					Data: req.GetData(), CRC: req.GetCrc32C(), Flush: req.GetFlush(),
+				})
+			}
+			return ops, nil
+		}
+		probes = append(probes, probe)
 	}
+	r.demoteOffBranchPeers(volID, ops, len(conns), probes, answers)
 	// The CALLING node's own durable copy may be behind the survivors:
 	// it acked ops under the old primary, but a restart (or the §4.3
 	// re-election itself) can leave its zvol missing ops the probes
@@ -1343,47 +1382,12 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 	// may have elected THIS node. Before serving, pull every op the
 	// local copy lacks from a reachable holder (mirror of 4b).
 	localLast := r.localLastSeq(volID)
-	// selfFetch re-reads ops from THIS node's durable copy for 4c
-	// leveling: claims from the local oplog, bytes via the writer.
-	var selfSpans *oplog.Spans // built once: recovery does not write
-	selfFetch := func(_ context.Context, from, to uint64) ([]protocol.WriteOp, error) {
-		var log map[uint64]secondary.OpRecord
+	selfFetch := newSelfFetcher(func() map[uint64]secondary.OpRecord {
 		if sec := r.secOf(volID); sec != nil {
-			log = sec.OpLog()
-		} else {
-			log = map[uint64]secondary.OpRecord{}
+			return sec.OpLog()
 		}
-		if selfSpans == nil {
-			m := make(map[uint64]oplog.Span, len(log))
-			for seq, rec := range log {
-				m[seq] = oplog.Span{Offset: uint64(rec.Offset), Length: uint32(rec.Length)}
-			}
-			selfSpans = oplog.NewSpans(m)
-		}
-		ops := make([]protocol.WriteOp, 0, to-from)
-		for seq := from + 1; seq <= to; seq++ {
-			rec, ok := log[seq]
-			if !ok {
-				return nil, experrors.New(experrors.KindUnavailable, "exvol.recoverVol.selfFetch",
-					fmt.Sprintf("op %d not in local oplog (filled by pull, not logged) — target must resync", seq))
-			}
-			op := protocol.WriteOp{Seq: seq, Offset: uint64(rec.Offset), CRC: rec.CRC}
-			if rec.Length > 0 {
-				buf := make([]byte, rec.Length)
-				if _, err := w.ReadAt(buf, int64(rec.Offset)); err != nil {
-					return nil, experrors.Wrap(err, experrors.KindInternal, "exvol.recoverVol.selfFetch", "self re-read")
-				}
-				op.Data = buf
-				if selfSpans.Superseded(seq) {
-					op.CRC = crc32c(buf) // a later op rewrote these bytes; the claim no longer describes them
-				}
-			} else {
-				op.Flush = true
-			}
-			ops = append(ops, op)
-		}
-		return ops, nil
-	}
+		return map[uint64]secondary.OpRecord{}
+	}, w).fetch
 	sendToReplica := func(_ context.Context, target string, op protocol.WriteOp) error { // 4c
 		conn := conns[target]
 		if conn == nil {
@@ -1421,6 +1425,19 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 			return nil
 		},
 		sendToReplica)
+	if errors.Is(err, recovery.ErrNoReachableReplica) {
+		// No trusted peer. Going offline is the wrong answer when this node
+		// provably holds every acked op: serve, and let the automatic resync
+		// bring the Stale peers back (writes resume once one has caught up).
+		sole, ok, why := recovery.SoleCurrent(probes, r.opts.NodeID, localLast)
+		if !ok {
+			r.opts.Logger.Warn("recovery: cannot serve as the sole current replica", "vol", volID, "why", why)
+			return recovery.Result{}, 0, err
+		}
+		r.opts.Logger.Warn("recovery: serving as the sole current replica; stale peers will be resynced automatically",
+			"vol", volID, "seq", localLast, "stale", sole.Stale)
+		res, err = sole, nil
+	}
 	if err != nil {
 		return recovery.Result{}, 0, err
 	}
@@ -1446,7 +1463,7 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 			// and called it recovery).
 			op, err := recovery.FillOne(ctx, probes, seq)
 			if err != nil {
-				return res, res.MaxSeq, &recovery.UnfillableError{Seq: seq, Err: err}
+				return res, res.MaxSeq, recovery.FetchFailure(seq, err)
 			}
 			if op.Flush {
 				err = w.Flush()
@@ -1519,6 +1536,33 @@ func (r *Runtime) recoverVol(ctx context.Context, volID string, w *localwrite.Wr
 	return res, res.MaxSeq, nil
 }
 
+// verifyServingTimeout bounds one watchdog pass, including its network I/O.
+const verifyServingTimeout = 10 * time.Second
+
+// verifyServingAsync runs the currency watchdog off the reconcile tick, one
+// pass per volume at a time. It dials a replica and does two round trips;
+// inline, a slow or blackholed replica froze the tick (status publication,
+// demotion checks) for as long as that replica took to answer.
+func (r *Runtime) verifyServingAsync(ctx context.Context, volID string) {
+	r.mu.Lock()
+	if r.verifying[volID] {
+		r.mu.Unlock()
+		return
+	}
+	r.verifying[volID] = true
+	r.mu.Unlock()
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			delete(r.verifying, volID)
+			r.mu.Unlock()
+		}()
+		vctx, cancel := context.WithTimeout(ctx, verifyServingTimeout)
+		defer cancel()
+		r.verifyServingCurrent(vctx, volID)
+	}()
+}
+
 // verifyServingInterval bounds how often the currency watchdog samples
 // the serving primary's own zvol (cheap: one oplog fetch + one re-read).
 const verifyServingInterval = 1 * time.Second
@@ -1589,6 +1633,9 @@ func (r *Runtime) verifyServingCurrent(ctx context.Context, volID string) {
 		return // availability first: a failed dial is not divergence
 	}
 	defer probe.Close()
+	// transport.Conn takes no context: closing it is how a deadline (or a
+	// shutdown) interrupts a QuerySeq/FetchOps stuck on a silent peer.
+	defer context.AfterFunc(ctx, func() { _ = probe.Close() })()
 	// Pick the next claimed op after the cursor (wrapping): the rotation
 	// walks the ENTIRE acked history over time, not just the hot tail.
 	qrep, err := probe.QuerySeq(volID)
@@ -1646,7 +1693,7 @@ func (r *Runtime) verifyServingCurrent(ctx context.Context, volID string) {
 		return
 	}
 	r.opts.Logger.Error("currency watchdog: primary zvol diverges from the replica's durable record — stepping down for re-recovery",
-		"vol", volID, "seq", seq, "off", op.GetOffset())
+		"vol", volID, "seq", seq, "off", op.GetOffset(), "replica", conn)
 	r.stopPrimary(volID)
 }
 
@@ -1776,11 +1823,23 @@ func (r *Runtime) stopPrimary(volID string) {
 	}
 	p.nsrv.Close()
 	p.held.Abandon()
+	if p.coord != nil {
+		p.coord.Close()
+	}
 	p.writer.Close()
 	for _, cn := range p.conns {
 		cn.Close()
 	}
+	r.adoptOwnWrites(volID)
 	r.detachDevice(volID)
+}
+
+// adoptOwnWrites raises the local secondary's last seq to what this node wrote
+// as primary (the shared oplog has them, its protocol counter does not).
+func (r *Runtime) adoptOwnWrites(volID string) {
+	if sec := r.secOf(volID); sec != nil {
+		sec.AttachOplogStore(r.volOplog(context.Background(), volID))
+	}
 }
 
 // localLastSeq is the calling node's own durable-copy last sequence for
@@ -1856,6 +1915,7 @@ func (r *Runtime) markDiverged(ctx context.Context, volID string) {
 	// lands, and say so when it does not.
 	var lastErr error
 	for i := 0; i < 20; i++ {
+		storage.ClearAutoLatch(ctx, r.opts.St, volID) // divergence is for a human, never self-lifting
 		status, rev, err := storage.LoadStatus(ctx, r.opts.St, volID)
 		if err != nil {
 			lastErr = err
@@ -1876,6 +1936,30 @@ func (r *Runtime) markDiverged(ctx context.Context, volID string) {
 		}
 	}
 	r.opts.Logger.Error("volume diverged — FAILED to record NeedsManualRecovery", "vol", volID, "err", lastErr)
+}
+
+// demoteOffBranchPeers turns peers that a quorum contradicts (see offBranchPeers)
+// into non-evidence, like Stale ones: their conflicting tail is resynced away
+// instead of being reported as a split brain that takes the volume offline.
+func (r *Runtime) demoteOffBranchPeers(volID string, ops *oplog.Store, peerCount int, probes []recovery.Probe, answers map[string]*pb.SeqQueryReply) {
+	if ops == nil || len(answers) == 0 {
+		return
+	}
+	replication := peerCount + 1
+	r.mu.Lock()
+	if spec, ok := r.specOf[volID]; ok && spec.Replication > 0 {
+		replication = spec.Replication
+	}
+	r.mu.Unlock()
+	off := offBranchPeers(ops.Snapshot(), answers, replication/2+1)
+	for i := range probes {
+		id := probes[i].NodeID
+		if !off[id] {
+			continue
+		}
+		r.opts.Logger.Warn("recovery: replica holds a branch a quorum contradicts (a deposed primary's uncommitted tail); it will be resynced, not treated as a split brain", "vol", volID, "replica", id)
+		probes[i] = recovery.Probe{NodeID: id, Answered: true, LastSeq: probes[i].LastSeq}
+	}
 }
 
 // dialReplica connects to a node's replication transport with a short
@@ -2287,26 +2371,23 @@ func (r *Runtime) periodicSnapshot(volID, zvolPath string) {
 		return
 	}
 	r.lastSnap[volID] = time.Now()
-	seq := p.coord.LastSeq()
 	r.mu.Unlock()
-	if seq == 0 {
-		return // nothing written yet
-	}
-	if _, err := resync.EnsureSnapshot(context.Background(), r.zfs, zvolPath, seq, r.opts.SnapshotKeep); err != nil {
+	err := p.coord.AtSeq(func(seq uint64) error {
+		if seq == 0 {
+			return nil // nothing written yet
+		}
+		_, err := resync.EnsureSnapshot(context.Background(), r.zfs, zvolPath, seq, r.opts.SnapshotKeep)
+		return err
+	})
+	if err != nil {
 		r.opts.Logger.Warn("resync snapshot failed", "vol", volID, "err", err)
 	}
 }
 
-// publishStaleReplicas syncs the coordinator's in-memory Stale set into
-// persisted status (§9 observability). markStale (primary.go) only flips
-// in-memory quorum-accounting state on the write hot path — deliberately,
-// so a write never pays a store CAS round-trip — which left `volume
-// inspect` reporting a replica "Secondary" for as long as it took
-// runResync to eventually revive it, even while that replica had already
-// been silently excluded from quorum and was falling behind. runResync's
-// own success path already restores Role to Secondary; this only needs
-// to cover the transition INTO staleness.
-func (r *Runtime) publishStaleReplicas(ctx context.Context, volID string, status storage.Status) {
+// publishReplicaRoles keeps the published roles equal to what this primary's
+// coordinator knows (see reconcileRoles), so a lost or skipped status write
+// heals on the next tick instead of leaving a replica published Stale forever.
+func (r *Runtime) publishReplicaRoles(ctx context.Context, volID string) {
 	r.mu.Lock()
 	p := r.prim[volID]
 	r.mu.Unlock()
@@ -2318,31 +2399,19 @@ func (r *Runtime) publishStaleReplicas(ctx context.Context, volID string, status
 	// volume that may never come, leaving this replica un-detected as
 	// Stale (and, worse, still counted toward quorum) indefinitely.
 	p.coord.DrainResults()
-	stale := map[string]bool{}
+	stale, live := map[string]bool{}, map[string]bool{}
 	for _, id := range p.coord.StaleReplicas() {
 		stale[id] = true
 	}
-	changed := false
-	for i := range status.Placement {
-		pl := &status.Placement[i]
-		if pl.NodeID == r.opts.NodeID || !stale[pl.NodeID] || pl.Role == storage.RoleStale {
-			continue
-		}
-		pl.Role = storage.RoleStale
-		pl.Healthy = false
-		changed = true
+	for _, id := range p.coord.ReplicaIDs() {
+		live[id] = true
 	}
-	if !changed {
-		return
-	}
-	if st, rev, err := storage.LoadStatus(ctx, r.opts.St, volID); err == nil {
-		for i := range st.Placement {
-			if stale[st.Placement[i].NodeID] {
-				st.Placement[i].Role = storage.RoleStale
-				st.Placement[i].Healthy = false
-			}
-		}
-		_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
+	resyncing := func(id string) bool { return r.resyncInFlight(id) > 0 }
+	err := storage.UpdateStatus(ctx, r.opts.St, volID, func(st *storage.Status) bool {
+		return reconcileRoles(st.Placement, r.opts.NodeID, stale, live, resyncing)
+	})
+	if err != nil {
+		r.opts.Logger.Warn("publishing replica roles failed; retrying next tick", "vol", volID, "err", err)
 	}
 }
 
@@ -2415,12 +2484,20 @@ func (r *Runtime) tryOpReplay(ctx context.Context, volID, target string, p *volP
 		return true, fmt.Errorf("op-replay: querySeq %s: %w", target, qerr)
 	}
 	targetSeq := qrep.GetLastSeq()
-	if targetSeq > primarySeq {
-		return false, nil // target claims to be ahead of us — not the brief-outage case
+	var primaryLog map[uint64]oplog.Record
+	if log := r.volOplog(ctx, volID); log != nil {
+		primaryLog = log.Snapshot()
 	}
-
-	if log := r.volOplog(ctx, volID); log != nil && claimsDiverge(qrep.GetOps(), log.Snapshot()) {
-		return false, nil // its tail is another branch (e.g. a deposed primary's); only a snapshot discards it
+	switch opReplayVerdictFor(qrep, primarySeq, primaryLog) {
+	case verdictDefer:
+		r.opts.Logger.Info("op-replay deferred: target still serves as primary; retrying after it demotes", "vol", volID, "target", target)
+		return true, fmt.Errorf("op-replay: %s still serves as primary", target)
+	case verdictSnapshot:
+		return false, nil // ahead of us, or its tail is another branch (a deposed primary's): only a snapshot discards it
+	}
+	if !claimsServeable(ctx, conn, volID, target, qrep) {
+		r.opts.Logger.Warn("op-replay refused: the replica cannot serve the ops its oplog claims; rebuilding it from a snapshot", "vol", volID, "target", target)
+		return false, nil
 	}
 
 	gap := primarySeq - targetSeq
@@ -2466,19 +2543,7 @@ func (r *Runtime) tryOpReplay(ctx context.Context, volID, target string, p *volP
 		return true, fmt.Errorf("op-replay: %w", aerr)
 	}
 
-	for i := range status.Placement {
-		pl := &status.Placement[i]
-		if pl.NodeID == target {
-			pl.Role = storage.RoleSecondary
-			pl.Healthy = true
-			pl.Sequence = primarySeq
-			pl.LastSeen = time.Now()
-		}
-	}
-	if st, rev, serr := storage.LoadStatus(ctx, r.opts.St, volID); serr == nil {
-		st.Placement = status.Placement
-		_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
-	}
+	r.publishResynced(ctx, volID, target, primarySeq)
 	r.opts.Logger.Info("op-replay resync complete", "vol", volID, "target", target,
 		"seq", primarySeq, "ops", gap)
 	return true, nil
@@ -2514,13 +2579,16 @@ func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string,
 		}
 	}
 
-	seq := p.coord.LastSeq()
 	// seq == 0 (fresh volume, nothing written): there is no @resync-0 to
 	// reference — take one anyway and full-send the (empty) zvol. The
 	// old behavior ("has no writes to resync") retried forever, keeping
 	// the replica stale indefinitely on an idle volume (the observed
-	// livelock).
-	if _, err := resync.EnsureSnapshot(ctx, r.zfs, zvolPath, seq, r.opts.SnapshotKeep); err != nil {
+	// livelock). Taken under the write lock so the snapshot holds every
+	// op up to its name (see Coordinator.AtSeq).
+	if err := p.coord.AtSeq(func(seq uint64) error {
+		_, err := resync.EnsureSnapshot(ctx, r.zfs, zvolPath, seq, r.opts.SnapshotKeep)
+		return err
+	}); err != nil {
 		return fmt.Errorf("resync snapshot: %w", err)
 	}
 	snaps, err := r.zfs.ListSnapshots(ctx, zvolPath)
@@ -2556,26 +2624,30 @@ func (r *Runtime) runResync(ctx context.Context, volID, target, zvolPath string,
 		return fmt.Errorf("re-admit resynced replica: %w", err)
 	}
 
-	// Status: the replica is Secondary again, durable at the adopted seq.
-	for i := range status.Placement {
-		pl := &status.Placement[i]
-		if pl.NodeID == target {
-			pl.Role = storage.RoleSecondary
-			pl.Healthy = true
-			pl.Sequence = out.Adopt
-			pl.LastSeen = time.Now()
-		}
-	}
-	if st, rev, err := storage.LoadStatus(ctx, r.opts.St, volID); err == nil {
-		st.Placement = status.Placement
-		_ = storage.CompareAndSwapStatus(ctx, r.opts.St, volID, rev, st)
-	}
+	r.publishResynced(ctx, volID, target, out.Adopt)
 	r.mu.Lock()
 	delete(p.snapshotOnly, target)
 	r.mu.Unlock()
 	r.opts.Logger.Info("resync complete", "vol", volID, "target", target,
 		"seq", out.Adopt, "incremental", !out.Full, "bytes", out.Bytes)
 	return nil
+}
+
+// publishResynced records that target is a Secondary again, durable at seq: only
+// its own entry changes, on the current record, retried against other writers.
+func (r *Runtime) publishResynced(ctx context.Context, volID, target string, seq uint64) {
+	err := storage.UpdateStatus(ctx, r.opts.St, volID, func(st *storage.Status) bool {
+		for i := range st.Placement {
+			if pl := &st.Placement[i]; pl.NodeID == target {
+				pl.Role, pl.Healthy, pl.Sequence, pl.LastSeen = storage.RoleSecondary, true, seq, time.Now()
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		r.opts.Logger.Warn("resync outcome not recorded; the next role reconcile will publish it", "vol", volID, "target", target, "err", err)
+	}
 }
 
 // catchUpLockedTail is how many ops may remain when admitCaughtUp takes
@@ -2626,6 +2698,7 @@ func (r *Runtime) admitCaughtUp(ctx context.Context, p *volPrimary, volID, targe
 		_ = fg.Close() // nothing was admitted; the connection is unused
 		return err
 	}
+	r.opts.Logger.Info("replica re-admitted to the live fan-out", "vol", volID, "target", target, "caught_up_to", sent)
 	return nil
 }
 

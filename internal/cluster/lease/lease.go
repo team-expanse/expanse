@@ -163,6 +163,26 @@ func (m *Manager) Acquire(ctx context.Context, name string, ttl time.Duration) (
 	}
 }
 
+// Maintain holds name until ctx ends and re-acquires it after any loss (a failed
+// renewal during a raft leader change ends a Held for good). Use it for liveness
+// records, where being briefly unheld is harmless but staying unheld is not.
+// onHeld is called with each newly acquired lease; the lease is released on exit.
+func (m *Manager) Maintain(ctx context.Context, name string, ttl time.Duration, onHeld func(*Held)) {
+	for ctx.Err() == nil {
+		h, err := m.Acquire(ctx, name, ttl)
+		if err != nil {
+			return // Acquire only fails once ctx is done
+		}
+		onHeld(h)
+		select {
+		case <-ctx.Done():
+			_ = m.Release(context.Background(), h) //nolint:errcheck // best effort on shutdown
+			return
+		case <-h.Done():
+		}
+	}
+}
+
 // TryAcquire returns immediately: (*Held, nil) on success,
 // (nil, ErrNotAcquired) if another live holder owns it, or a store error.
 func (m *Manager) TryAcquire(ctx context.Context, name string, ttl time.Duration) (*Held, error) {

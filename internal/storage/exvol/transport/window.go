@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/expanse/expanse/internal/storage/exvol/protocol"
@@ -22,7 +23,10 @@ type Sender struct {
 	inFlightOps   int
 	inFlightBytes uint64
 	pendingSizes  []uint64 // FIFO: bytes of each in-flight op, in send order
+	closed        bool
 }
+
+var errSenderClosed = errors.New("transport: sender closed")
 
 // NewSender wraps a Conn with a bounded in-flight window. Non-positive
 // limits default to the R3 limits (1024 ops / 64 MiB).
@@ -49,8 +53,12 @@ func (s *Sender) InFlight() int {
 // full. The op's reply MUST eventually be consumed via Recv.
 func (s *Sender) Submit(volID string, op protocol.WriteOp) error {
 	s.mu.Lock()
-	for s.inFlightOps >= s.windowOps || s.inFlightBytes+uint64(len(op.Data)) > s.windowBytes {
+	for !s.closed && (s.inFlightOps >= s.windowOps || s.inFlightBytes+uint64(len(op.Data)) > s.windowBytes) {
 		s.cond.Wait()
+	}
+	if s.closed {
+		s.mu.Unlock()
+		return errSenderClosed
 	}
 	s.inFlightOps++
 	s.inFlightBytes += uint64(len(op.Data))
@@ -92,5 +100,12 @@ func (s *Sender) release(n uint64) {
 	s.mu.Unlock()
 }
 
-// Close closes the underlying connection (unblocks a blocked Recv).
-func (s *Sender) Close() error { return s.c.Close() }
+// Close closes the underlying connection (unblocks a blocked Recv) and
+// fails any Submit parked on a full window.
+func (s *Sender) Close() error {
+	s.mu.Lock()
+	s.closed = true
+	s.cond.Broadcast()
+	s.mu.Unlock()
+	return s.c.Close()
+}

@@ -614,3 +614,56 @@ func TestAbandonStopsRenewalKeepsRecord(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// A liveness lease lost to a transient store outage must come back once the store
+// does: nothing else re-acquires it, and a node with no lease reads as dead forever.
+func TestMaintainReacquiresAfterAnOutage(t *testing.T) {
+	pst := &partStore{Store: newBoltStore(t)}
+	m := lease.NewManager(pst, "node-a")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	held := make(chan *lease.Held, 4)
+	go m.Maintain(ctx, "node-node-a", 600*time.Millisecond, func(h *lease.Held) { held <- h })
+
+	var first *lease.Held
+	select {
+	case first = <-held:
+	case <-time.After(2 * time.Second):
+		t.Fatal("never acquired")
+	}
+	pst.partition()
+	waitDone(t, first, 2*time.Second)
+	pst.heal()
+
+	select {
+	case second := <-held:
+		if !second.Valid() {
+			t.Fatal("re-acquired lease is not valid")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("lease was not re-acquired after the store healed")
+	}
+}
+
+func TestMaintainReleasesOnShutdown(t *testing.T) {
+	st := newBoltStore(t)
+	m := lease.NewManager(st, "node-a")
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		m.Maintain(ctx, "node-node-a", time.Second, func(*lease.Held) { got <- struct{}{} })
+		close(done)
+	}()
+	<-got
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Maintain did not return after ctx was canceled")
+	}
+	if rec, _ := lease.Inspect(context.Background(), st, "node-node-a"); rec != nil {
+		t.Fatalf("lease record %+v left behind after a clean shutdown", rec)
+	}
+}

@@ -3,8 +3,11 @@ package transport
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -397,6 +400,30 @@ func replyError(c *conn, err error) {
 	_ = c.w.Flush()                                    //nolint:errcheck
 }
 
+// ReplicaError is a handler-level error the peer ANSWERED with (msgError):
+// the peer is up and says it cannot serve this request.
+type ReplicaError struct{ Msg string }
+
+func (e *ReplicaError) Error() string { return "replica: " + e.Msg }
+
+// IsConnFailure reports whether err means the connection failed (closed,
+// reset, timed out) rather than the peer answering. It is deliberately a
+// positive list: anything unrecognised is NOT treated as a connection
+// failure, so callers stay on their stricter path.
+func IsConnFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var re *ReplicaError
+	if errors.As(err, &re) {
+		return false
+	}
+	var ne net.Error
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded) ||
+		errors.As(err, &ne)
+}
+
 // waitReply reads one reply frame for a request round-trip. An
 // msgError frame (the server's handler failed but the connection is
 // fine) surfaces as a Go error — NEVER as EOF. The old behavior (drop
@@ -409,7 +436,7 @@ func (c *Conn) waitReply(want frameType) ([]byte, error) {
 		return nil, err
 	}
 	if typ == msgError {
-		return nil, fmt.Errorf("replica: %s", payload)
+		return nil, &ReplicaError{Msg: string(payload)}
 	}
 	if typ != want {
 		return nil, fmt.Errorf("unexpected frame type %d, want %d", typ, want)

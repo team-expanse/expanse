@@ -58,19 +58,33 @@ type Replica struct {
 
 type repResult struct {
 	nodeID string
+	gen    uint64 // pump generation: results of a retired pump are dropped
 	seq    uint64
 	ack    bool
 	resync bool // secondary cannot apply (gap/window) → needs resync
 	err    error
 }
 
+// sentOp is an op handed to a replica's pump and not yet acked.
+type sentOp struct {
+	seq uint64
+	at  time.Time
+}
+
+// pipelineDepth bounds ops awaiting a reply per replica; it matches the
+// Sender's default window (R3), which is what actually limits in-flight ops.
+const pipelineDepth = 1024
+
 type replicaState struct {
 	id     string
 	snd    *transport.Sender
-	sendC  chan protocol.WriteOp // cap 1; full = still busy with a previous op (slow)
+	sendC  chan protocol.WriteOp // cap 1: hand-off to the submitter; the Sender window is the pipeline
 	stale  bool
+	gen    uint64
+	acked  uint64        // highest seq durably acked (cumulative: secondaries apply gaplessly)
+	sent   []sentOp      // un-acked ops, oldest first
 	stop   chan struct{} // closed to retire the pump (revive path)
-	exited chan struct{} // closed by the pump when it returns
+	exited chan struct{} // closed once the pump's goroutines have returned
 }
 
 // Coordinator serializes writes for one volume on one primary.
@@ -85,6 +99,7 @@ type Coordinator struct {
 	replicas map[string]*replicaState
 	oplog    *oplog.Store // durable seq->location journal (§4.3 4a); nil = memory-only
 	barrier  *commitBarrier
+	closed   bool // set by Close: this primary has been retired, writes are refused
 }
 
 // AttachOplog wires the durable seq->location journal (§4.3 4a): every
@@ -136,13 +151,27 @@ func NewAt(volID string, replication int, local LocalWriter, replicas []Replica,
 	return c
 }
 
-// startReplica runs the per-replica pump: one op at a time, Submit →
-// Recv in order (the Sender requires ordered Recv). Errors (conn dead)
-// end the pump; the coordinator notices and marks Stale.
+// startReplica runs the per-replica pump: a submitter feeds ops into the
+// Sender window in order while a receiver consumes replies in order, so a
+// slow replica trails by up to the window instead of pacing every write.
+// Errors (conn dead) end the pump; the coordinator marks the replica Stale.
 func (c *Coordinator) startReplica(st *replicaState) {
-	ch, stop := st.sendC, st.stop
+	stop, ch, snd, exited := st.stop, st.sendC, st.snd, st.exited
+	id, gen := st.id, st.gen
+	owed := make(chan struct{}, pipelineDepth) // one token per submitted op awaiting its reply
+	push := func(r repResult) bool {
+		r.nodeID, r.gen = id, gen
+		select {
+		case c.results <- r:
+			return true
+		case <-stop:
+			return false
+		}
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		defer close(st.exited)
+		defer wg.Done()
 		for {
 			select {
 			case <-stop:
@@ -151,19 +180,37 @@ func (c *Coordinator) startReplica(st *replicaState) {
 				if !ok {
 					return
 				}
-				if err := st.snd.Submit(c.volID, op); err != nil {
-					c.results <- repResult{nodeID: st.id, err: fmt.Errorf("submit: %w", err)}
+				if err := snd.Submit(c.volID, op); err != nil {
+					push(repResult{err: fmt.Errorf("submit: %w", err)})
 					return
 				}
-				rep, err := st.snd.Recv()
-				if err != nil {
-					c.results <- repResult{nodeID: st.id, err: fmt.Errorf("recv: %w", err)}
+				select {
+				case owed <- struct{}{}:
+				case <-stop:
 					return
 				}
-				c.results <- repResult{nodeID: st.id, seq: rep.Seq, ack: rep.ACK, resync: rep.Resync}
 			}
 		}
 	}()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-owed:
+			}
+			rep, err := snd.Recv()
+			if err != nil {
+				push(repResult{err: fmt.Errorf("recv: %w", err)})
+				return
+			}
+			if !push(repResult{seq: rep.Seq, ack: rep.ACK, resync: rep.Resync}) {
+				return
+			}
+		}
+	}()
+	go func() { wg.Wait(); close(exited) }()
 }
 
 // retirePump stops a replica's pump and waits for it to exit. Closing
@@ -176,6 +223,17 @@ func (c *Coordinator) retirePump(st *replicaState) {
 		close(st.stop)
 		_ = st.snd.Close()
 		<-st.exited
+	}
+}
+
+// Close retires every replica's pump and closes its connection. Call it
+// when the primary is torn down; the coordinator is unusable afterwards.
+func (c *Coordinator) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	for _, st := range c.replicas {
+		c.retirePump(st)
 	}
 }
 
@@ -224,6 +282,8 @@ func (c *Coordinator) addReplicaLocked(nodeID string, snd *transport.Sender) {
 		c.retirePump(st)
 		st.snd = snd
 		st.stale = false
+		st.gen++
+		st.acked, st.sent = 0, nil
 		st.stop = make(chan struct{})
 		st.exited = make(chan struct{})
 		st.sendC = make(chan protocol.WriteOp, 1)
@@ -293,6 +353,9 @@ func (c *Coordinator) Flush() error {
 func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal func() error, opName string) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return experrors.New(experrors.KindUnavailable, opName, "not primary for "+c.volID+": the primary has been retired")
+	}
 	if c.barrier.isFenced() {
 		return fencedErr(opName)
 	}
@@ -314,7 +377,7 @@ func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal
 	c.barrier.begin(op.Offset, len(op.Data))
 	defer func() { c.barrier.finish(err == nil) }()
 	if err := applyLocal(); err != nil {
-		return experrors.Wrap(err, experrors.KindInternal, opName, "local replica write failed")
+		return experrors.Wrap(err, experrors.KindInternal, opName, "local replica write failed: "+err.Error())
 	}
 	if c.oplog != nil {
 		// Recovery metadata (§4.3 4a), mirroring the secondary apply
@@ -323,78 +386,121 @@ func (c *Coordinator) replicate(makeOp func(uint64) protocol.WriteOp, applyLocal
 		c.oplog.Append(seq, oplog.Record{Offset: int64(op.Offset), Length: len(op.Data), CRC: op.CRC}, op.Flush)
 	}
 
-	// Step 5: fan-out to live secondaries. First drain pumps' pending
+	// Step 5: fan-out to live secondaries. First absorb pumps' pending
 	// results (a previous write may have returned early on quorum, or
 	// a pump may have died since).
 	c.drainResults()
-	live := make([]*replicaState, 0, len(c.replicas))
 	for _, st := range c.replicas {
 		if !st.stale {
-			live = append(live, st)
+			c.enqueue(st, op)
 		}
 	}
+	return c.awaitQuorum(op.Seq, opName)
+}
 
-	for _, st := range live {
-		// Submission backpressures on the pump, bounded by the stale
-		// timeout: a pump still busy with a previous op gets exactly
-		// one deadline to catch up. Skipping the op instead would
-		// open a permanent sequence gap (R2) — never an option. A
-		// pump stuck past the deadline is marked Stale (§9).
-		timer := time.NewTimer(c.timeout)
+// enqueue hands op to st's pump. A pump whose hand-off slot stays full
+// for a whole stale timeout is wedged behind a full window: Stale (§9).
+// Skipping the op instead would open a permanent sequence gap (R2).
+func (c *Coordinator) enqueue(st *replicaState, op protocol.WriteOp) {
+	timer := time.NewTimer(c.timeout)
+	defer timer.Stop()
+	for !st.stale {
 		select {
 		case st.sendC <- op:
-			timer.Stop()
+			st.sent = append(st.sent, sentOp{seq: op.Seq, at: time.Now()})
+			return
+		case res := <-c.results: // never let a full results queue wedge the pump
+			c.absorb(res)
 		case <-timer.C:
 			c.markStale(st)
 		}
 	}
+}
 
-	// Steps 6-8: collect replies until quorum (local + acks), marking
-	// slow replicas Stale at the deadline instead of blocking.
-	durable := 1
-	remaining := make(map[string]*replicaState, len(live))
-	for _, st := range live {
-		remaining[st.id] = st
-	}
+// awaitQuorum collects replies (steps 6-8) until seq is durable on a
+// quorum, marking replicas that miss the deadline Stale (§9) rather
+// than blocking on them.
+func (c *Coordinator) awaitQuorum(seq uint64, opName string) error {
 	deadline := time.NewTimer(c.timeout)
 	defer deadline.Stop()
-
-	for len(remaining) > 0 {
+	for {
+		durable := 1 + c.ackedThrough(seq)
 		if c.p.ShouldAck(durable) {
-			// Quorum reached — return now (step 8); slow replicas'
-			// late results are drained by the next write.
+			c.p.RecordAcked(seq)
 			return nil
+		}
+		if 1+c.ackedThrough(seq)+c.pendingFor(seq) < c.p.Quorum() {
+			return experrors.New(experrors.KindUnavailable, opName,
+				fmt.Sprintf("%s not quorum-durable: %d of %d replicas (quorum %d)", opName, durable, c.p.Replication, c.p.Quorum()))
 		}
 		select {
 		case res := <-c.results:
-			st := c.replicas[res.nodeID]
-			if res.err != nil {
-				delete(remaining, st.id)
-				c.markStale(st)
-				continue
-			}
-			if _, ok := remaining[res.nodeID]; !ok {
-				continue // late reply for a previous write — consumed
-			}
-			delete(remaining, st.id)
-			if res.ack {
-				durable++
-			} else if res.resync {
-				c.markStale(st) // cannot apply without resync
-			}
-			c.p.RecordAcked(seq)
+			c.absorb(res)
 		case <-deadline.C:
-			for _, st := range remaining {
-				c.markStale(st) // §9: slow, not failed — closed + excluded
-			}
-			remaining = nil
+			c.markUnackedStale(seq)
 		}
 	}
-	if c.p.ShouldAck(durable) {
-		return nil
+}
+
+// ackedThrough counts replicas that durably hold seq. An ack for a later
+// op counts too (replicas apply in order); an ack for an EARLIER op never
+// does, however late it arrives.
+func (c *Coordinator) ackedThrough(seq uint64) int {
+	n := 0
+	for _, st := range c.replicas {
+		if st.acked >= seq {
+			n++
+		}
 	}
-	return experrors.New(experrors.KindUnavailable, opName,
-		fmt.Sprintf("%s not quorum-durable: %d of %d replicas (quorum %d)", opName, durable, c.p.Replication, c.p.Quorum()))
+	return n
+}
+
+// pendingFor counts live replicas that may still ack seq.
+func (c *Coordinator) pendingFor(seq uint64) int {
+	n := 0
+	for _, st := range c.replicas {
+		if !st.stale && st.acked < seq {
+			n++
+		}
+	}
+	return n
+}
+
+func (c *Coordinator) markUnackedStale(seq uint64) {
+	for _, st := range c.replicas {
+		if st.acked < seq {
+			c.markStale(st)
+		}
+	}
+}
+
+// absorb applies one pump result: an ack advances the replica's
+// high-water mark; anything else means it cannot keep up and is Stale.
+func (c *Coordinator) absorb(res repResult) {
+	st := c.replicas[res.nodeID]
+	if st == nil || res.gen != st.gen || st.stale {
+		return
+	}
+	if res.err != nil || !res.ack {
+		c.markStale(st)
+		return
+	}
+	if res.seq > st.acked {
+		st.acked = res.seq
+	}
+	for len(st.sent) > 0 && st.sent[0].seq <= st.acked {
+		st.sent = st.sent[1:]
+	}
+}
+
+// expireSlow marks Stale every replica whose oldest un-acked op has been
+// outstanding longer than the stale timeout (§9).
+func (c *Coordinator) expireSlow() {
+	for _, st := range c.replicas {
+		if !st.stale && len(st.sent) > 0 && time.Since(st.sent[0].at) > c.timeout {
+			c.markStale(st)
+		}
+	}
 }
 
 // DrainResults processes any pending async pump failures without
@@ -412,17 +518,14 @@ func (c *Coordinator) DrainResults() {
 
 // drainResults consumes ALL pending pump output without blocking
 // (results from a previous early-returned write, or dead pumps),
-// updating staleness. Called only before fan-out, never during reply
-// collection.
+// updating staleness, then expires replicas that stopped acking.
 func (c *Coordinator) drainResults() {
 	for {
 		select {
 		case res := <-c.results:
-			st := c.replicas[res.nodeID]
-			if res.err != nil || res.resync {
-				c.markStale(st)
-			}
+			c.absorb(res)
 		default:
+			c.expireSlow()
 			return
 		}
 	}
@@ -453,8 +556,21 @@ func (c *Coordinator) StaleReplicas() []string {
 	return out
 }
 
-// LastSeq is the last assigned sequence number.
+// LastSeq is the last assigned sequence number. It can include a write
+// whose bytes are not applied locally yet; use AtSeq to pair a sequence
+// with state that must contain every op up to it.
 func (c *Coordinator) LastSeq() uint64 { return c.p.LastAssigned() }
+
+// AtSeq runs fn under the write lock with the last assigned sequence. A
+// write holds that lock from sequence assignment through local apply, so
+// while fn runs every op <= seq is applied: a snapshot taken inside fn and
+// named for seq really contains them, and a resync that replays only later
+// ops cannot lose one.
+func (c *Coordinator) AtSeq(fn func(seq uint64) error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return fn(c.p.LastAssigned())
+}
 
 // FetchOps re-reads ops (from, to] from the primary's own durable
 // copy — the op-replay resync path (runtime.tryOpReplay): a replica

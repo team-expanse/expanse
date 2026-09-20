@@ -34,6 +34,9 @@ type testReplica struct {
 	size  int64
 	mu    sync.Mutex
 	delay time.Duration // handler stall to simulate a slow replica
+
+	// delayFor, if set, stalls the handler per op sequence.
+	delayFor func(seq uint64) time.Duration
 }
 
 func newTestReplica(t *testing.T, id string, size int64) *testReplica {
@@ -49,6 +52,9 @@ func newTestReplica(t *testing.T, id string, size int64) *testReplica {
 			r.mu.Lock()
 			d := r.delay
 			r.mu.Unlock()
+			if r.delayFor != nil {
+				d += r.delayFor(op.Seq)
+			}
 			if d > 0 {
 				time.Sleep(d)
 			}

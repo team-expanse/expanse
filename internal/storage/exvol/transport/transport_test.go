@@ -515,3 +515,39 @@ func TestSenderConcurrentUse(t *testing.T) {
 		t.Errorf("lastSeq = %d, want %d", sec.LastSeq(), N)
 	}
 }
+
+// Closing a Sender must release a Submit parked on a full window;
+// otherwise retiring a slow replica's pump would hang forever.
+func TestCloseUnblocksSubmitOnFullWindow(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	srv := NewServer(ln, func(string) (Handler, error) {
+		return func(op protocol.WriteOp) protocol.Reply { <-gate; return protocol.Reply{ACK: true, Seq: op.Seq} }, nil
+	}, nil, 0)
+	go func() { _ = srv.Serve() }()
+	c, err := Dial(context.Background(), ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewSender(c, 1, 1<<20)
+	if err := s.Submit("vol-1", makeOp(1, 0, []byte("a"))); err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan error, 1)
+	go func() { blocked <- s.Submit("vol-1", makeOp(2, 0, []byte("b"))) }()
+	time.Sleep(50 * time.Millisecond)
+	_ = s.Close()
+	select {
+	case err := <-blocked:
+		if err == nil {
+			t.Fatal("Submit on a closed Sender must fail")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Submit stayed blocked after Close")
+	}
+}

@@ -20,6 +20,7 @@ import (
 //	Isolate  partition: links severed, store unreachable (errors)
 //	Pause    SIGSTOP analog: links and store calls stall, nothing errors
 //	SetDelay slow node: every byte through its links is delayed
+//	SeverOnFetch drop one connection when a recovery FetchOps request crosses a link
 type Faults struct {
 	mu       sync.Mutex
 	cond     *sync.Cond
@@ -27,6 +28,7 @@ type Faults struct {
 	isolated map[int]bool
 	paused   map[int]bool
 	delay    map[int]time.Duration
+	sever    map[[2]int]bool // armed one-shot FetchOps drops, by (src,dst)
 	links    []*link
 }
 
@@ -38,7 +40,7 @@ type link struct {
 }
 
 func newFaults() *Faults {
-	f := &Faults{isolated: map[int]bool{}, paused: map[int]bool{}, delay: map[int]time.Duration{}}
+	f := &Faults{isolated: map[int]bool{}, paused: map[int]bool{}, delay: map[int]time.Duration{}, sever: map[[2]int]bool{}}
 	f.cond = sync.NewCond(&f.mu)
 	return f
 }
@@ -79,17 +81,42 @@ func (f *Faults) serve(l *link, c net.Conn, backend string) {
 		return
 	}
 	l.track(c, b)
-	go f.pipe(l, c, b)
-	f.pipe(l, b, c)
+	go f.pipe(l, c, b, true)
+	f.pipe(l, b, c, false)
+}
+
+// fetchOpsFrame is the transport frame type of a recovery FetchOps request
+// (header: 4-byte length, 1 version, 1 type); each request is its own write.
+const fetchOpsFrame = 6
+
+// SeverOnFetch arms a one-shot fault: the next FetchOps request on the
+// src→dst link kills its connection instead of being delivered, the way a
+// link that drops mid-recovery does after the probe already succeeded.
+func (f *Faults) SeverOnFetch(src, dst int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sever[[2]int{src, dst}] = true
+}
+
+func (f *Faults) takeSever(src, dst int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := [2]int{src, dst}
+	armed := f.sever[k]
+	delete(f.sever, k)
+	return armed
 }
 
 // pipe copies a→b one chunk at a time, applying pause/partition/delay.
-func (f *Faults) pipe(l *link, a, b net.Conn) {
+func (f *Faults) pipe(l *link, a, b net.Conn, request bool) {
 	defer func() { _ = a.Close(); _ = b.Close(); l.untrack(a, b) }()
 	buf := make([]byte, 64<<10)
 	for {
 		n, err := a.Read(buf)
 		if n > 0 {
+			if request && n > 5 && buf[5] == fetchOpsFrame && f.takeSever(l.src, l.dst) {
+				return
+			}
 			if !f.gate(l.src, l.dst) {
 				return
 			}

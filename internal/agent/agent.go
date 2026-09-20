@@ -288,7 +288,8 @@ func New(cfg Config) (*Agent, error) {
 				}
 				// raft :7444 ↔ internal :7443, same host.
 				return net.JoinHostPort(host, fmt.Sprintf("%d", config.PortAPI)), true
-			})
+			},
+		)
 		// mTLS dial creds: the same node identity + CN-membership
 		// check as the server side. Built synchronously — a forwarded
 		// write can happen the instant the store opens, and a plaintext
@@ -683,7 +684,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	// renewable lease for its own ID. The storage controller judges
 	// mesh liveness by its expiry, so a HARD-killed node — which never
 	// gets to unpublish its mesh record — leaves the mesh view when
-	// the lease expires. Renewal is automatic (Held.renewLoop).
+	// the lease expires. Renewal is automatic (Held.renewLoop), and
+	// Maintain re-acquires after any loss: one failed renewal (a raft
+	// leader change) ends a Held for good, and a node left without the
+	// lease reads as dead to the controller, which then finds no candidates.
 	//
 	// A node that hard-crashed and restarted races its OWN prior
 	// lease: that record is still "held" (by this same node ID) until
@@ -697,18 +701,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	// goroutine so Run() doesn't block on it.
 	if a.ctl != nil && a.ctl.store != nil && !witness {
 		lm := lease.NewManager(a.ctl.store, a.cfg.NodeID)
-		go func() {
-			hl, err := lm.Acquire(ctx, "node-"+a.cfg.NodeID, 30*time.Second)
-			if err != nil {
-				if ctx.Err() == nil {
-					a.logger.Warn("node liveness lease unavailable", "err", err)
-				}
-				return
-			}
+		go lm.Maintain(ctx, "node-"+a.cfg.NodeID, 30*time.Second, func(hl *lease.Held) {
 			a.nodeLease = hl
-			<-ctx.Done()
-			_ = lm.Release(context.Background(), hl)
-		}()
+			a.logger.Info("node liveness lease held")
+		})
 	}
 
 	// Exvol volume runtime (Phase 06 T10).

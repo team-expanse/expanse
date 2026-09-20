@@ -748,3 +748,230 @@ func TestDeposedPrimaryUncommittedWritesDiscarded(t *testing.T) {
 		return want != nil && bytes.Equal(region("n1"), want) && bytes.Equal(region("n3"), want)
 	})
 }
+
+// staleElectee builds the scenario for the fetch-drop tests: n2 falls
+// behind while n1 and n3 keep acking, then n1 dies. n2 must fill from n3.
+func staleElectee(t *testing.T, volID string, cfg Config) (c *Cluster, n2, n3 int) {
+	t.Helper()
+	ids := []string{"n1", "n2", "n3"}
+	cfg.StaleTimeout = 500 * time.Millisecond
+	c = NewFaultClusterWith(t, cfg, ids...)
+	c.CreateVolume(volID, 1<<20, ids)
+	waitFor(t, 15*time.Second, "first record acked", func() bool { return c.writeAcks(volID, 0) == nil })
+	n2, n3 = c.byID["n2"].Idx, c.byID["n3"].Idx
+	c.Faults.Isolate(n2)
+	for i := 1; i < 6; i++ {
+		i := i
+		waitFor(t, 15*time.Second, fmt.Sprintf("record %d acked by n1+n3", i), func() bool { return c.writeAcks(volID, i) == nil })
+	}
+	c.Crash("n1")
+	c.Faults.Heal(n2)
+	return c, n2, n3
+}
+
+// TestRecoveryFetchDropIsRetriedNotLatched: the elected node has to fill
+// its copy from the one surviving holder, and that holder's link drops as
+// the first FetchOps goes out (after its probe already succeeded). That
+// says nothing about the holder's data, so recovery must be retried, not
+// latched as "claimed durability is missing".
+func TestRecoveryFetchDropIsRetriedNotLatched(t *testing.T) {
+	const volID = "vol-fetchdrop"
+	c, n2, n3 := staleElectee(t, volID, Config{})
+	c.Faults.SeverOnFetch(n2, n3)
+	c.Elect(volID, "n2")
+
+	waitFor(t, 45*time.Second, "n2 serves after its fetch was dropped once", func() bool { return c.writeAcks(volID, 20) == nil })
+	if !c.LogHas("recovery deferred") {
+		t.Fatal("the dropped fetch was never seen as transient: the fault did not fire, or recovery took another path")
+	}
+	if c.LogHas("manual recovery required") || c.Status(volID).State == storage.StateNeedsManualRecovery {
+		t.Fatal("a dropped connection latched the volume for manual recovery")
+	}
+	for i := 0; i < 6; i++ {
+		i := i
+		waitFor(t, 15*time.Second, fmt.Sprintf("acked record %d present on n2", i), func() bool { return c.byID["n2"].fileHas(t, volID, i) })
+	}
+}
+
+// TestPersistentFetchDropsStillLatch: a holder that answers probes but
+// never manages to serve is indistinguishable from a dishonest one, so
+// transport failures that persist past the window still stop for an
+// operator (the original §4.3 4b safeguard).
+func TestPersistentFetchDropsStillLatch(t *testing.T) {
+	const volID = "vol-fetchflap"
+	c, n2, n3 := staleElectee(t, volID, Config{TransientRecoveryWindow: 1500 * time.Millisecond})
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() { // every attempt's first fetch dies
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(20 * time.Millisecond):
+				c.Faults.SeverOnFetch(n2, n3)
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+	c.Elect(volID, "n2")
+
+	waitFor(t, 45*time.Second, "persistent transport failures latch the volume", func() bool {
+		return c.Status(volID).State == storage.StateNeedsManualRecovery
+	})
+	if !c.LogHas("recovery deferred") {
+		t.Fatal("expected some retries before the window ran out")
+	}
+}
+
+// TestSoleCurrentResyncsStale (name kept short: the NBD socket path embeds it): the primary dies while
+// one replica is Stale and the survivor is the only current copy. The volume
+// must not go offline (that survivor holds every acked write), and the Stale
+// peer must be brought back by itself, restoring full redundancy.
+func TestSoleCurrentResyncsStale(t *testing.T) {
+	const volID = "vol-sole"
+	ids := []string{"n1", "n2", "n3"}
+	c := NewFaultClusterWith(t, Config{StaleTimeout: 500 * time.Millisecond}, ids...)
+	c.CreateVolume(volID, 1<<20, ids)
+	waitFor(t, 15*time.Second, "first record acked", func() bool { return c.writeAcks(volID, 0) == nil })
+
+	// n2 misses acked writes and is published Stale; n1+n3 keep acking.
+	c.Faults.Isolate(c.byID["n2"].Idx)
+	for i := 1; i < 6; i++ {
+		i := i
+		waitFor(t, 15*time.Second, fmt.Sprintf("record %d acked by n1+n3", i), func() bool { return c.writeAcks(volID, i) == nil })
+	}
+	waitFor(t, 15*time.Second, "n2 published Stale", func() bool { return c.roleOf(volID, "n2") == storage.RoleStale })
+
+	// The primary dies; n2 is reachable again (still Stale), n3 is the only current copy.
+	c.Crash("n1")
+	c.Faults.Heal(c.byID["n2"].Idx)
+	c.Elect(volID, "n3")
+
+	// Writes need a second copy, so they succeed only once n2 was resynced by itself.
+	waitFor(t, 45*time.Second, "n3 serves and n2 rejoins", func() bool { return c.writeAcks(volID, 20) == nil })
+	if !c.LogHas("sole current replica") {
+		t.Fatal("the survivor never took the sole-current path")
+	}
+	waitFor(t, 30*time.Second, "n2 is a current secondary again", func() bool { return c.roleOf(volID, "n2") == storage.RoleSecondary })
+	for _, i := range []int{0, 1, 5, 20} {
+		i := i
+		waitFor(t, 15*time.Second, fmt.Sprintf("record %d on n2", i), func() bool { return c.byID["n2"].fileHas(t, volID, i) })
+	}
+}
+
+// TestTornReplicaRebuilt: a replica whose oplog survived a crash but whose
+// zvol lost the bytes must not be declared current on its oplog alone, whether it
+// missed a few ops while down ("behind") or is the old primary rejoining after a
+// failover ("failover", the vol-durability shape; the harness rebuilds it by another route too).
+func TestTornReplicaRebuilt(t *testing.T) {
+	t.Run("behind", func(t *testing.T) { tornReplicaIsRebuilt(t, "vol-tb", "n3", false) })
+	t.Run("failover", func(t *testing.T) { tornReplicaIsRebuilt(t, "vol-tf", "n1", true) })
+}
+
+func tornReplicaIsRebuilt(t *testing.T, volID, victim string, failover bool) {
+	const recs = 4
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+	waitFor(t, 15*time.Second, "first record acked", func() bool { return c.writeAcks(volID, 0) == nil })
+	for i := 1; i < recs; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, 15*time.Second, victim+" has every record", func() bool { return c.byID[victim].fileHas(t, volID, recs-1) })
+
+	c.Crash(victim)
+	zvol := c.byID[victim].zvolFile(volID) // same size, all zeros: the bytes never reached disk
+	if err := os.Truncate(zvol, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(zvol, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	last := recs - 1
+	if failover {
+		c.Elect(volID, "n2")
+	} else {
+		last = recs
+		if err := c.writeAcks(volID, recs); err != nil { // the survivors keep acking
+			t.Fatal(err)
+		}
+	}
+	c.Restart(victim)
+
+	for i := 0; i <= last; i++ {
+		i := i
+		waitFor(t, 60*time.Second, fmt.Sprintf("record %d rebuilt on %s", i, victim), func() bool { return c.byID[victim].fileHas(t, volID, i) })
+	}
+}
+
+// TestFencedPrimaryServesAgainPromptly: a real double failure fences the primary
+// (its writes lose quorum). Once the secondaries are back the volume must serve
+// again within a few lease terms, not minutes.
+func TestFencedPrimaryServesAgainPromptly(t *testing.T) {
+	const volID = "vol-fence"
+	c := NewCluster(t, "n1", "n2", "n3")
+	c.CreateVolume(volID, 1<<20, []string{"n1", "n2", "n3"})
+	waitFor(t, 15*time.Second, "first record acked", func() bool { return c.writeAcks(volID, 0) == nil })
+
+	c.Crash("n2")
+	c.Crash("n3")
+	if err := c.writeAcks(volID, 1); err == nil {
+		t.Fatal("a write with both secondaries down must not be acked")
+	}
+	c.Restart("n2")
+	c.Restart("n3")
+
+	start := time.Now()
+	waitFor(t, 30*time.Second, "primary serves again", func() bool { return c.writeAcks(volID, 2) == nil })
+	t.Logf("served again %v after the secondaries returned", time.Since(start).Round(100*time.Millisecond))
+	for _, id := range []string{"n1", "n2", "n3"} {
+		id := id
+		waitFor(t, 30*time.Second, "record 2 on "+id, func() bool { return c.byID[id].fileHas(t, volID, 2) })
+	}
+}
+
+// TestDemotedPrimaryReportsWhatItWrote: a node that led after following holds its
+// own writes in its durable oplog, so once it steps down its probe must say so (a
+// stale answer makes recovery look for ops that no replica's claims can supply).
+func TestDemotedPrimaryReportsWhatItWrote(t *testing.T) {
+	const volID = "vol-demoted"
+	ids := []string{"n1", "n2", "n3"}
+	c := NewCluster(t, ids...)
+	c.CreateVolume(volID, 1<<20, ids)
+	waitFor(t, 15*time.Second, "first record acked", func() bool { return c.writeAcks(volID, 0) == nil })
+
+	c.Elect(volID, "n2") // n2 was a secondary of n1 and now leads
+	waitFor(t, 20*time.Second, "n2 serves", func() bool { return c.writeAcks(volID, 1) == nil })
+	for i := 2; i < 6; i++ {
+		if err := c.writeAcks(volID, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, 15*time.Second, "n1 has every write", func() bool { return c.byID["n1"].fileHas(t, volID, 5) })
+	wrote, err := c.ProbeSeq(volID, "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.Elect(volID, "n3")
+	waitFor(t, 20*time.Second, "n2 demoted", func() bool { return !c.byID["n2"].DeviceAttached() })
+
+	got, err := c.ProbeSeq(volID, "n2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got < wrote {
+		t.Fatalf("demoted primary reports seq %d, but it wrote through %d", got, wrote)
+	}
+}
+
+func (c *Cluster) roleOf(volID, node string) storage.Role {
+	for _, pl := range c.Status(volID).Placement {
+		if pl.NodeID == node {
+			return pl.Role
+		}
+	}
+	return ""
+}

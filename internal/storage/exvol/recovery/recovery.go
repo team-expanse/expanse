@@ -14,6 +14,7 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"sort"
@@ -35,7 +36,12 @@ func crc32c(b []byte) uint32 { return crc32.Checksum(b, crc32cTable) }
 type Probe struct {
 	NodeID    string
 	Reachable bool
-	LastSeq   uint64
+	// Answered: the replica replied to the probe but is not trusted as
+	// evidence (its role is Stale: it missed acked ops, or holds a deposed
+	// primary's uncommitted branch). Only LastSeq is meaningful, as an upper
+	// bound on what it could hold; its claims are never used.
+	Answered bool
+	LastSeq  uint64
 	// CRCs maps each durable seq to the CRC it was applied under.
 	CRCs map[uint64]uint32
 	// Spans locates each claimed op's bytes (nil = unknown: nothing is
@@ -109,6 +115,44 @@ type SyncFailure struct {
 	Err    string
 }
 
+// ErrNoReachableReplica: no probed peer is trusted evidence. Callers may
+// still serve if SoleCurrent proves the candidate holds every acked op.
+var ErrNoReachableReplica = errors.New("recovery: no reachable replica to elect primary")
+
+// SoleCurrent decides whether the caller may serve when no peer is trusted
+// evidence (e.g. the old primary is dead and the only other replica is
+// Stale), so the volume stays available and the Stale peers are resynced.
+// It is safe when the candidate plus the peers that ANSWERED reach a read
+// quorum (R-Q+1: any such set intersects every ack quorum) and none of those
+// peers is ahead of the candidate: an acked op the candidate lacks would need
+// Q holders among peers that report nothing beyond it. Anything less could
+// silently drop an acked write, so it stays refused.
+func SoleCurrent(probes []Probe, selfID string, selfLast uint64) (res Result, ok bool, why string) {
+	r := len(probes) + 1
+	readQuorum := r - (r/2 + 1) + 1
+	heard := 1 // the candidate itself
+	for _, p := range probes {
+		if p.Reachable {
+			return Result{}, false, "a trusted peer exists: normal recovery applies"
+		}
+		if !p.Answered {
+			continue
+		}
+		heard++
+		if p.LastSeq > selfLast {
+			return Result{}, false, fmt.Sprintf("%s is ahead of the candidate (seq %d > %d) and may hold acked ops it lacks", p.NodeID, p.LastSeq, selfLast)
+		}
+	}
+	if heard < readQuorum {
+		return Result{}, false, fmt.Sprintf("only %d of %d replicas heard from; read quorum is %d", heard, r, readQuorum)
+	}
+	res = Result{NewPrimaryID: selfID, MaxSeq: selfLast, Synced: map[string]uint64{}}
+	for _, p := range probes {
+		res.Stale = append(res.Stale, p.NodeID)
+	}
+	return res, true, ""
+}
+
 // UnfillableError: an op that SOME reachable replica claims but NO
 // reachable replica can serve honestly (re-read fails, CRC mismatch,
 // conn drops mid-fetch). This is suspected data loss of claimed
@@ -124,6 +168,39 @@ func (e *UnfillableError) Error() string {
 }
 
 func (e *UnfillableError) Unwrap() error { return e.Err }
+
+// TransportError marks a fetch that failed before the holder answered (the
+// connection broke or timed out). It says nothing about the holder's data,
+// unlike an error the holder replied with or bytes that fail their CRC.
+type TransportError struct{ Err error }
+
+func (e *TransportError) Error() string { return "transport: " + e.Err.Error() }
+func (e *TransportError) Unwrap() error { return e.Err }
+
+// TransientError: no holder served an op, but at least one holder failed
+// only at the transport level, so the op may well exist. Retry recovery;
+// this is not evidence of lost data and must not latch the volume.
+type TransientError struct {
+	Seq uint64
+	Err error
+}
+
+func (e *TransientError) Error() string {
+	return fmt.Sprintf("recovery: op %d not fetchable yet, a holder was unreachable mid-fetch: %v", e.Seq, e.Err)
+}
+
+func (e *TransientError) Unwrap() error { return e.Err }
+
+// FetchFailure classifies a failed op fetch for the caller: transient
+// failures stay retryable, anything else means every holder that answered
+// could not serve the op honestly (UnfillableError, suspected data loss).
+func FetchFailure(seq uint64, err error) error {
+	var tr *TransientError
+	if errors.As(err, &tr) {
+		return err
+	}
+	return &UnfillableError{Seq: seq, Err: err}
+}
 
 // Recover runs the §4.3 failover recovery algorithm against the probed
 // replicas:
@@ -171,7 +248,7 @@ func Recover(ctx context.Context, probes []Probe, selfFetch func(ctx context.Con
 	}
 	plan := protocol.PlanRecovery(states)
 	if plan.NewPrimaryID == "" {
-		return Result{}, fmt.Errorf("recovery: no reachable replica to elect primary")
+		return Result{}, ErrNoReachableReplica
 	}
 
 	res := Result{
@@ -182,16 +259,14 @@ func Recover(ctx context.Context, probes []Probe, selfFetch func(ctx context.Con
 	}
 
 	// 4b: pull ops the new primary is missing. HONESTY RULE: a holder
-	// that fails to serve an op it CLAIMS to hold (re-read error, CRC
-	// mismatch, connection drop mid-fetch) is a dishonest holder — it
-	// must be excluded from sourcing, not treated as unreachable-network
-	// (the §4.3 4b flap). Try every reachable holder claiming the seq
-	// (divergence was already ruled out above, so any holder serves the
-	// same branch); only fail when NO holder can serve it honestly.
+	// that ANSWERS with an error or fabricated bytes is dishonest and is
+	// excluded from sourcing; only if no holder can serve an op is it
+	// unfillable. A holder whose connection merely failed mid-fetch is
+	// unreachable, not dishonest: that is a retryable TransientError.
 	for seq, src := range plan.PullOps {
 		op, err := fetchHonest(ctx, probes, byID, seq, src.NodeID)
 		if err != nil {
-			return res, &UnfillableError{Seq: seq, Err: err}
+			return res, FetchFailure(seq, err)
 		}
 		if applyToPrimary != nil {
 			if err := applyToPrimary(ctx, op); err != nil {
@@ -228,42 +303,56 @@ func Recover(ctx context.Context, probes []Probe, selfFetch func(ctx context.Con
 	return res, nil
 }
 
-// levelOne brings one replica to MaxSeq. Its CLAIMS (oplog) may lie —
-// a torn zvol behind honest oplog records (the §4.3 4a/4b gap) must be
-// caught, so the target's durability is SAMPLE-VERIFIED first: the
-// lowest and highest ops it CURRENTLY CLAIMS (its own CRCs map — not
-// literal seq 1, which a full resync can long since have rotated out
-// of every node's retained history) are re-read via its own FetchOps.
-// A failed sample means the claims are unserveable → the FULL op range
+// claimSamples is how many of a replica's newest claimed ops VerifyClaims re-reads.
+const claimSamples = 8
+
+// VerifyClaims checks a replica's CLAIMS (oplog) against its bytes: a torn
+// zvol behind honest oplog records (the §4.3 4a/4b gap) reads back zeros
+// without error. Its lowest CURRENT claim (not literal seq 1, which a full
+// resync can long since have rotated out) and its newest few are re-read via
+// its own FetchOps and must match its own CRCs.
+func (p Probe) VerifyClaims(ctx context.Context) error {
+	if p.FetchOps == nil {
+		return nil
+	}
+	for _, seq := range claimSample(p.CRCs) {
+		ops, err := p.FetchOps(ctx, seq-1, seq)
+		if err != nil {
+			return fmt.Errorf("%s cannot serve claimed op %d: %w", p.NodeID, seq, err)
+		}
+		for _, op := range ops {
+			if op.Seq != seq || op.Flush {
+				continue
+			}
+			if _, _, err := p.vouch(op); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// claimSample picks the lowest claimed seq plus the newest claimSamples.
+func claimSample(crcs map[uint64]uint32) []uint64 {
+	seqs := make([]uint64, 0, len(crcs))
+	for s := range crcs {
+		seqs = append(seqs, s)
+	}
+	sort.Slice(seqs, func(i, j int) bool { return seqs[i] < seqs[j] })
+	if len(seqs) <= claimSamples+1 {
+		return seqs
+	}
+	return append([]uint64{seqs[0]}, seqs[len(seqs)-claimSamples:]...)
+}
+
+// levelOne brings one replica to MaxSeq. Its claims are verified first
+// (VerifyClaims); a failed check means the claims are unserveable → the FULL op range
 // is resent from the caller's copy (the resends rebuild the missing
 // bytes; duplicates re-ACK idempotently on a healthy replica).
 func levelOne(ctx context.Context, target Probe, maxSeq uint64, selfFetch func(context.Context, uint64, uint64) ([]protocol.WriteOp, error), probes []Probe, byID map[string]*Probe, sendToReplica func(context.Context, string, protocol.WriteOp) error) error {
 	claimsCurrent := target.LastSeq >= maxSeq
-	if claimsCurrent && target.FetchOps != nil && maxSeq > 0 {
-		sampleSeqs := []uint64{maxSeq}
-		if lo := minClaimedSeq(target.CRCs); lo > 0 && lo != maxSeq {
-			sampleSeqs = append(sampleSeqs, lo)
-		}
-		for _, seq := range sampleSeqs {
-			ops, err := target.FetchOps(ctx, seq-1, seq)
-			if err != nil {
-				claimsCurrent = false // unserveable claims
-				break
-			}
-			for _, op := range ops {
-				if op.Seq != seq || op.Flush {
-					continue
-				}
-				// The bytes must match the target's OWN claim — a
-				// truncated zvol reads back zeros without error.
-				if _, _, err := target.vouch(op); err != nil {
-					claimsCurrent = false
-				}
-			}
-			if !claimsCurrent {
-				break
-			}
-		}
+	if claimsCurrent && maxSeq > 0 {
+		claimsCurrent = target.VerifyClaims(ctx) == nil
 	}
 	if claimsCurrent {
 		return nil // verified current; nothing to send
@@ -326,12 +415,14 @@ func fetchOne(ctx context.Context, seq uint64, selfFetch func(context.Context, u
 }
 
 // fetchHonest sources one op from among the reachable replicas that
-// claim to hold it, skipping holders that fail (re-read error, conn
-// drop). It verifies the fetched bytes against the holder's own probed
-// CRC (recovery 4a) — a holder serving bytes that do not match its own
-// claim is dishonest and is skipped too.
+// claim to hold it. A holder that ANSWERS with an error or serves bytes
+// that do not match its own probed CRC (recovery 4a) is dishonest and is
+// skipped. A holder whose connection fails mid-fetch (TransportError) is
+// merely unreachable: if nobody serves the op and any holder failed that
+// way, the result is a *TransientError, since that holder may still hold it.
 func fetchHonest(ctx context.Context, probes []Probe, byID map[string]*Probe, seq uint64, preferred string) (protocol.WriteOp, error) {
 	var firstErr error
+	sawTransport := false
 	try := func(id string) (protocol.WriteOp, bool, error) {
 		h := byID[id]
 		if h == nil || h.FetchOps == nil || !h.Reachable {
@@ -339,6 +430,10 @@ func fetchHonest(ctx context.Context, probes []Probe, byID map[string]*Probe, se
 		}
 		ops, err := h.FetchOps(ctx, seq-1, seq)
 		if err != nil {
+			var te *TransportError
+			if errors.As(err, &te) {
+				sawTransport = true
+			}
 			return protocol.WriteOp{}, false, err
 		}
 		for _, op := range ops {
@@ -354,7 +449,7 @@ func fetchHonest(ctx context.Context, probes []Probe, byID map[string]*Probe, se
 	} else {
 		firstErr = err
 	}
-	// Preferred holder is dishonest — try every other claimant.
+	// Preferred holder failed — try every other claimant.
 	for i := range probes {
 		p := &probes[i]
 		if p.NodeID == preferred || !p.Reachable {
@@ -368,6 +463,9 @@ func fetchHonest(ctx context.Context, probes []Probe, byID map[string]*Probe, se
 		} else {
 			firstErr = fmt.Errorf("%w; %s: %v", firstErr, p.NodeID, err)
 		}
+	}
+	if sawTransport {
+		return protocol.WriteOp{}, &TransientError{Seq: seq, Err: firstErr}
 	}
 	return protocol.WriteOp{}, firstErr
 }
@@ -410,7 +508,30 @@ func FillOne(ctx context.Context, probes []Probe, seq uint64) (protocol.WriteOp,
 			}
 		}
 	}
+	if preferred == "" {
+		return protocol.WriteOp{}, fmt.Errorf("no reachable replica claims op %d (%s)", seq, describeProbes(probes))
+	}
 	return fetchHonest(ctx, probes, byID, seq, preferred)
+}
+
+// describeProbes summarises what each replica reported, for failures where
+// the numbers are the whole story ("n2(last=9 claims=2 max=8)").
+func describeProbes(probes []Probe) string {
+	parts := make([]string, 0, len(probes))
+	for _, p := range probes {
+		if !p.Reachable {
+			parts = append(parts, p.NodeID+"(unreachable)")
+			continue
+		}
+		var max uint64
+		for s := range p.CRCs {
+			if s > max {
+				max = s
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s(last=%d claims=%d max=%d)", p.NodeID, p.LastSeq, len(p.CRCs), max))
+	}
+	return strings.Join(parts, " ")
 }
 
 // detectDivergence finds seqs applied with different CRCs on different
