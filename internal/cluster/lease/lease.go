@@ -133,8 +133,12 @@ func (m *Manager) term() uint64 {
 
 // Acquire attempts to take a lease; blocks until acquired or ctx done.
 func (m *Manager) Acquire(ctx context.Context, name string, ttl time.Duration) (*Held, error) {
+	return m.acquire(ctx, name, ttl, false)
+}
+
+func (m *Manager) acquire(ctx context.Context, name string, ttl time.Duration, reclaimOwn bool) (*Held, error) {
 	for {
-		h, err := m.TryAcquire(ctx, name, ttl)
+		h, err := m.tryAcquire(ctx, name, ttl, reclaimOwn)
 		if err == nil {
 			return h, nil
 		}
@@ -167,11 +171,16 @@ func (m *Manager) Acquire(ctx context.Context, name string, ttl time.Duration) (
 // renewal during a raft leader change ends a Held for good). Use it for liveness
 // records, where being briefly unheld is harmless but staying unheld is not.
 // onHeld is called with each newly acquired lease; the lease is released on exit.
+//
+// Maintain also takes back a record that already names this node: after a lost
+// write response the record is ours but no Held exists, and waiting out its TTL
+// would read the node as dead. That is only sound where holder IDs are unique per
+// node and the name is not fenced by Abandon — true of liveness records.
 func (m *Manager) Maintain(ctx context.Context, name string, ttl time.Duration, onHeld func(*Held)) {
 	for ctx.Err() == nil {
-		h, err := m.Acquire(ctx, name, ttl)
+		h, err := m.acquire(ctx, name, ttl, true)
 		if err != nil {
-			return // Acquire only fails once ctx is done
+			return // acquire only fails once ctx is done
 		}
 		onHeld(h)
 		select {
@@ -186,6 +195,10 @@ func (m *Manager) Maintain(ctx context.Context, name string, ttl time.Duration, 
 // TryAcquire returns immediately: (*Held, nil) on success,
 // (nil, ErrNotAcquired) if another live holder owns it, or a store error.
 func (m *Manager) TryAcquire(ctx context.Context, name string, ttl time.Duration) (*Held, error) {
+	return m.tryAcquire(ctx, name, ttl, false)
+}
+
+func (m *Manager) tryAcquire(ctx context.Context, name string, ttl time.Duration, reclaimOwn bool) (*Held, error) {
 	if ttl <= 0 {
 		return nil, errors.New(errors.KindInvalid, "lease.TryAcquire", "ttl must be positive")
 	}
@@ -215,7 +228,7 @@ func (m *Manager) TryAcquire(ctx context.Context, name string, ttl time.Duration
 	if derr != nil {
 		return nil, derr
 	}
-	if now.Before(time.Unix(0, v.ExpiresAtUnix)) {
+	if now.Before(time.Unix(0, v.ExpiresAtUnix)) && !(reclaimOwn && v.Holder == m.nodeID) {
 		return nil, ErrNotAcquired // live holder
 	}
 	rev, err = m.st.CompareAndSwap(ctx, key, cur.Revision, mustEncode(name, m.nodeID, m.term(), now.Add(ttl)))

@@ -667,3 +667,96 @@ func TestMaintainReleasesOnShutdown(t *testing.T) {
 		t.Fatalf("lease record %+v left behind after a clean shutdown", rec)
 	}
 }
+
+// lostAckStore applies a CAS but reports failure for the first n calls, as a
+// raft write does when its response is lost after the entry committed.
+type lostAckStore struct {
+	store.Store
+	mu sync.Mutex
+	n  int
+}
+
+func (s *lostAckStore) loseNext(n int) {
+	s.mu.Lock()
+	s.n = n
+	s.mu.Unlock()
+}
+
+func (s *lostAckStore) CompareAndSwap(ctx context.Context, k store.Key, expect store.Revision, v []byte) (store.Revision, error) {
+	rev, err := s.Store.CompareAndSwap(ctx, k, expect, v)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err == nil && s.n > 0 {
+		s.n--
+		return 0, errors.New(errors.KindUnavailable, "lostack.CAS", "response lost after commit")
+	}
+	return rev, err
+}
+
+// A create whose response was lost leaves a live record naming this node. Maintain
+// must take it back at once, not sit out a full TTL: a node without its liveness
+// record reads as dead.
+func TestMaintainReclaimsOwnRecordAfterLostAcquireResponse(t *testing.T) {
+	m := lease.NewManager(&lostAckStore{Store: newBoltStore(t), n: 1}, "node-a")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	held := make(chan *lease.Held, 2)
+	go m.Maintain(ctx, "node-node-a", time.Minute, func(h *lease.Held) { held <- h })
+	select {
+	case <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Maintain waited out the TTL on its own committed record")
+	}
+}
+
+// Same failure on renewal: Done closes (fail-fast is the safety rule) and Maintain
+// re-takes its own record without waiting for expiry.
+func TestMaintainReclaimsOwnRecordAfterLostRenewalResponse(t *testing.T) {
+	st := &lostAckStore{Store: newBoltStore(t)}
+	m := lease.NewManager(st, "node-a")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	held := make(chan *lease.Held, 4)
+	go m.Maintain(ctx, "node-node-a", 3*time.Second, func(h *lease.Held) { held <- h })
+	first := <-held
+	st.loseNext(1)
+	waitDone(t, first, 3*time.Second)
+	select {
+	case second := <-held:
+		if !second.Valid() {
+			t.Fatal("re-acquired lease is not valid")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Maintain waited out the TTL on its own committed record")
+	}
+}
+
+// Plain TryAcquire stays conservative: a deposed controller that Abandon()ed must not
+// be able to re-pin the record it deliberately left to expire.
+func TestTryAcquireRefusesOwnLiveRecord(t *testing.T) {
+	m := lease.NewManager(newBoltStore(t), "node-a")
+	ctx := context.Background()
+	h, err := m.TryAcquire(ctx, "vol", 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Abandon()
+	if _, err := m.TryAcquire(ctx, "vol", 10*time.Second); !stderrors.Is(err, lease.ErrNotAcquired) {
+		t.Fatalf("an abandoned record was re-taken by its own holder: %v", err)
+	}
+}
+
+// Reclaiming your own record must never let a second node in.
+func TestMaintainReclaimDoesNotAdmitAnotherNode(t *testing.T) {
+	st := newBoltStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	held := make(chan *lease.Held, 1)
+	go lease.NewManager(st, "node-a").Maintain(ctx, "vol", 10*time.Second, func(h *lease.Held) { held <- h })
+	<-held
+	if _, err := lease.NewManager(st, "node-b").TryAcquire(ctx, "vol", 10*time.Second); !stderrors.Is(err, lease.ErrNotAcquired) {
+		t.Fatalf("node-b acquired node-a's live lease: %v", err)
+	}
+}
