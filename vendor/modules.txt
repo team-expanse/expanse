@@ -10,6 +10,9 @@ filippo.io/hpke
 filippo.io/hpke/crypto
 filippo.io/hpke/crypto/ecdh
 filippo.io/hpke/internal/byteorder
+# github.com/anishathalye/porcupine v1.3.0
+## explicit; go 1.16
+github.com/anishathalye/porcupine
 # github.com/armon/go-metrics v0.4.1
 ## explicit; go 1.12
 github.com/armon/go-metrics

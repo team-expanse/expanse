@@ -3,8 +3,8 @@
 // register; concurrent clients record (call, return, op, result)
 // histories while a nemesis injects faults, and CheckHistory then
 // decides — exactly, per block — whether some total order consistent
-// with real time explains every observed read (Wing & Gong search with
-// state memoisation).
+// with real time explains every observed read. The search is Porcupine's
+// (github.com/anishathalye/porcupine), not ours.
 //
 // The scenario (run_test.go) drives the in-process exvol harness
 // (test/chaos/exvol) with a per-link fault layer: kill / partition /
@@ -23,8 +23,12 @@ package linearizability
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/anishathalye/porcupine"
 )
 
 // Kind is the operation type.
@@ -59,7 +63,9 @@ type Result struct {
 
 // CheckHistory groups ops by block and checks each independently
 // (registers compose: a history is linearizable iff every key's is).
-func CheckHistory(ops []Op, budget int) (Result, error) {
+// timeout bounds the search per block; an unfinished search is an error,
+// never a pass.
+func CheckHistory(ops []Op, timeout time.Duration) (Result, error) {
 	byKey := map[int][]Op{}
 	for _, o := range ops {
 		byKey[o.Key] = append(byKey[o.Key], o)
@@ -70,7 +76,7 @@ func CheckHistory(ops []Op, budget int) (Result, error) {
 	}
 	sort.Ints(keys)
 	for _, k := range keys {
-		res, err := CheckRegister(byKey[k], budget)
+		res, err := CheckRegister(byKey[k], timeout)
 		if err != nil {
 			return Result{Key: k}, fmt.Errorf("key %d: %w", k, err)
 		}
@@ -83,58 +89,17 @@ func CheckHistory(ops []Op, budget int) (Result, error) {
 }
 
 // CheckRegister decides linearizability of one register whose initial
-// value is 0. budget bounds search steps; exceeding it is an error, never
-// a pass.
-func CheckRegister(ops []Op, budget int) (Result, error) {
-	s := newSearch(ops, budget)
-	ok, err := s.run(0, 0)
-	if err != nil {
-		return Result{}, err
-	}
-	if ok {
-		return Result{OK: true}, nil
-	}
-	return Result{Reason: s.explain()}, nil
-}
-
-const never = int64(1) << 62
-
-type search struct {
-	ops     []Op
-	ret     []int64 // effective return: indeterminate writes never return
-	done    []bool
-	pending int // definite ops not yet linearized
-	seen    map[string]struct{}
-	steps   int
-	budget  int
-	deepest int
-}
-
-func newSearch(ops []Op, budget int) *search {
-	s := &search{
-		ops:    withoutUnobservedWrites(ops),
-		seen:   map[string]struct{}{},
-		budget: budget,
-	}
-	sort.Slice(s.ops, func(i, j int) bool { return s.ops[i].Call < s.ops[j].Call })
-	s.ret = make([]int64, len(s.ops))
-	s.done = make([]bool, len(s.ops))
-	for i, o := range s.ops {
-		s.ret[i] = o.Return
-		if o.Indeterminate {
-			s.ret[i] = never
-		} else {
-			s.pending++
-		}
-	}
-	return s
+// value is 0. An indeterminate write is modelled as one that never
+// returned: it may take effect at any time after its call, and linearizing
+// it last is always available, so "it never happened" stays legal.
+func CheckRegister(ops []Op, timeout time.Duration) (Result, error) {
+	return checkRegister(withoutUnobservedWrites(ops), timeout)
 }
 
 // withoutUnobservedWrites drops indeterminate writes whose value no read
-// returned. Write values are unique, so such a write can only make a
-// linearization harder (it would overwrite the register); "it never
-// happened" is always a legal outcome. This keeps the search width tied to
-// writes the history actually depends on.
+// returned. Such a write can always be linearized last, after every read, so
+// it can never explain or contradict one — and left in, every ordering of the
+// pending writes is searched.
 func withoutUnobservedWrites(ops []Op) []Op {
 	seen := map[uint64]bool{}
 	for _, o := range ops {
@@ -152,87 +117,50 @@ func withoutUnobservedWrites(ops []Op) []Op {
 	return kept
 }
 
-// run tries to linearize the remaining ops given the register's current
-// value; linearized counts ops placed so far (for diagnostics).
-func (s *search) run(cur uint64, linearized int) (bool, error) {
-	if linearized > s.deepest {
-		s.deepest = linearized
-	}
-	if s.pending == 0 {
-		return true, nil // leftover indeterminate writes simply never happened
-	}
-	if s.steps++; s.steps > s.budget {
-		return false, fmt.Errorf("search budget %d exceeded (history too concurrent: %d ops, %d indeterminate writes)",
-			s.budget, len(s.ops), s.indeterminateWrites())
-	}
-	key := s.memoKey(cur)
-	if _, bad := s.seen[key]; bad {
-		return false, nil
-	}
-	horizon := never // earliest return among unlinearized definite ops
-	for i := range s.ops {
-		if !s.done[i] && s.ret[i] < horizon {
-			horizon = s.ret[i]
-		}
-	}
-	for i, o := range s.ops {
-		if s.done[i] || o.Call >= horizon {
-			continue // o began after some pending op already returned
-		}
-		next, legal := cur, true
-		if o.Kind == Write {
-			next = o.Value
-		} else {
-			legal = o.Value == cur
-		}
-		if !legal {
-			continue
-		}
-		s.done[i] = true
-		if !o.Indeterminate {
-			s.pending--
-		}
-		ok, err := s.run(next, linearized+1)
-		s.done[i] = false
-		if !o.Indeterminate {
-			s.pending++
-		}
-		if err != nil || ok {
-			return ok, err
-		}
-	}
-	s.seen[key] = struct{}{}
-	return false, nil
-}
-
-func (s *search) indeterminateWrites() int {
-	n := 0
-	for _, o := range s.ops {
+func checkRegister(ops []Op, timeout time.Duration) (Result, error) {
+	hist := make([]porcupine.Operation, len(ops))
+	for i, o := range ops {
+		in := registerInput{write: o.Kind == Write, value: o.Value}
+		ret := o.Return
 		if o.Indeterminate {
-			n++
+			ret = math.MaxInt64
 		}
+		hist[i] = porcupine.Operation{ClientId: o.Client, Input: in, Call: o.Call, Output: o.Value, Return: ret}
 	}
-	return n
+	switch porcupine.CheckOperationsTimeout(registerModel, hist, timeout) {
+	case porcupine.Ok:
+		return Result{OK: true}, nil
+	case porcupine.Illegal:
+		return Result{Reason: explain(ops)}, nil
+	default:
+		return Result{}, fmt.Errorf("search did not finish within %v (%d ops)", timeout, len(ops))
+	}
 }
 
-func (s *search) memoKey(cur uint64) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d|", cur)
-	for _, d := range s.done {
-		if d {
-			b.WriteByte('1')
-		} else {
-			b.WriteByte('0')
+type registerInput struct {
+	write bool
+	value uint64
+}
+
+// registerModel is a single read/write register starting at 0.
+var registerModel = porcupine.Model{
+	Init: func() interface{} { return uint64(0) },
+	Step: func(state, input, output interface{}) (bool, interface{}) {
+		in := input.(registerInput)
+		if in.write {
+			return true, in.value
 		}
-	}
-	return b.String()
+		return output.(uint64) == state.(uint64), state
+	},
 }
 
 // explain renders the offending history so a failure is debuggable.
-func (s *search) explain() string {
+func explain(ops []Op) string {
+	sorted := append([]Op(nil), ops...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Call < sorted[j].Call })
 	var b strings.Builder
-	fmt.Fprintf(&b, "no linearization (deepest prefix %d of %d ops):", s.deepest, len(s.ops))
-	for _, o := range s.ops {
+	fmt.Fprintf(&b, "no linearization of %d ops:", len(sorted))
+	for _, o := range sorted {
 		kind, end := "W", fmt.Sprint(o.Return)
 		if o.Kind == Read {
 			kind = "R"

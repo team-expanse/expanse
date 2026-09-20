@@ -18,7 +18,7 @@ const (
 	nClients     = 6
 	keyWindow    = 8  // concurrently hot blocks
 	opsPerKey    = 48 // bounds the exact checker's per-register work
-	checkSteps   = 5_000_000
+	checkTimeout = 2 * time.Minute
 	settleMargin = 200 // blocks below the hot window still treated as possibly in flight
 )
 
@@ -107,7 +107,7 @@ func TestLinearizabilityUnderFaults(t *testing.T) {
 	if writes == 0 {
 		t.Fatal("no writes were acked: the run proved nothing")
 	}
-	res, err := CheckHistory(ops, checkSteps)
+	res, err := CheckHistory(ops, checkTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}

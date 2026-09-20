@@ -25,6 +25,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+require github.com/anishathalye/porcupine v1.3.0
+
 require (
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect

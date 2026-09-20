@@ -46,6 +46,7 @@ These do the heavy lifting of the data plane. Expanse configures and orchestrate
 | `robfig/cron` | Schedule expressions for scheduled blocks | A cron parser |
 | `gopkg.in/yaml.v3` | Block manifests, installer config | A YAML parser |
 | `google/uuid` | Identity generation | UUID generation |
+| `anishathalye/porcupine` | Linearizability checking of recorded histories (test-only) | A Wing & Gong checker — our 246-line one was replaced after 430k generated histories and a 13.6k-op recorded run gave identical verdicts |
 
 ## 3. Planned — feature phases that will adopt rather than build
 
@@ -61,7 +62,6 @@ Named here so the adoption decision is made in advance, not rediscovered mid-pha
 | On-prem LLMs | **Ollama** / llama.cpp, OpenAI-compatible surface | Already present as a block definition |
 | Cloud backup | **restic** or **kopia** | Dedupe + encryption to S3-compatible storage; snapshot for consistency |
 | Observability | **Prometheus-compatible** TSDB + Grafana | Export metrics; do not write a TSDB |
-| Linearizability checking | **Porcupine** | Replaces our hand-written 246-line checker |
 
 ## 4. Removed
 
