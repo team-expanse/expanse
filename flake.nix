@@ -84,6 +84,7 @@
           vol-snapshot = mkTest "vol-snapshot" ./nix/tests/vol-snapshot.nix;
           vol-perf = mkTest "vol-perf" ./nix/tests/vol-perf.nix;
           vol-drbd-spike = mkTest "vol-drbd-spike" ./nix/tests/vol-drbd-spike.nix;
+          vol-drbd-nodeid-spike = mkTest "vol-drbd-nodeid-spike" ./nix/tests/vol-drbd-nodeid-spike.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
