@@ -1,0 +1,6 @@
+Sep 20 22:43:38 n1 kernel: drbd r1/0 drbd1 n2: uuid_compare()=split-brain-auto-recover by rule=bitmap-both
+Sep 20 22:43:38 n1 kernel: drbd r1/0 drbd1 n2: helper command: /run/current-system/sw/bin/drbdadm initial-split-brain
+Sep 20 22:43:38 n1 kernel: drbd r1/0 drbd1 n2: helper command: /run/current-system/sw/bin/drbdadm initial-split-brain exit code 0
+Sep 20 22:43:38 n1 kernel: drbd r1/0 drbd1 n2: Split-Brain detected but unresolved, dropping connection!
+Sep 20 22:43:38 n1 kernel: drbd r1/0 drbd1 n2: helper command: /run/current-system/sw/bin/drbdadm split-brain
+Sep 20 22:43:38 n1 kernel: drbd r1/0 drbd1 n2: helper command: /run/current-system/sw/bin/drbdadm split-brain exit code 0
