@@ -90,6 +90,11 @@ func CheckAll(budgets []Budget) error {
 			// (they share one fixture; CheckAll leaves them unmeasured
 			// so TestBudgets does not re-run the load windows).
 			b.Measured = -1
+		case "exvol_seqwrite_ratio", "exvol_seqread_ratio", "exvol_randwrite_ratio",
+			"exvol_randread_ratio", "exvol_fsync_p99_us", "vol_failover_ms", "vol_resync_mbps":
+			// VM-only (Phase 06 T23): fio and failover need a real ZFS
+			// pool and real primary crashes (nix/tests/vol-perf.nix).
+			b.Measured = -1
 		case "proxy_rss_bytes", "vip_failover_ms":
 			// VM-only: RSS needs the isolated expanse-agent process
 			// (G5.14), failover needs real lease/ARP churn
