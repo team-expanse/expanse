@@ -7,12 +7,12 @@ import (
 	experrors "github.com/expanse/expanse/internal/errors"
 )
 
-func exvolClass(rep int, selector map[string]string) StorageClass {
-	return StorageClass{Name: "default", Driver: "exvol", Replication: rep, NodeSelector: selector}
+func drbdClass(rep int, selector map[string]string) StorageClass {
+	return StorageClass{Name: "default", Driver: "drbd", Replication: rep, NodeSelector: selector}
 }
 
 func node(id string, free uint64, labels map[string]string) NodeInfo {
-	return NodeInfo{ID: id, PoolName: "rpool", FreeBytes: free, Labels: labels}
+	return NodeInfo{ID: id, FreeBytes: free, Labels: labels}
 }
 
 func ids(ns []NodeInfo) []string {
@@ -24,7 +24,7 @@ func ids(ns []NodeInfo) []string {
 }
 
 func TestSelectNodesEvenSpreadDistinctNodes(t *testing.T) {
-	class := exvolClass(3, nil)
+	class := drbdClass(3, nil)
 	nodes := []NodeInfo{
 		node("n1", 100<<30, nil),
 		node("n2", 100<<30, nil),
@@ -49,7 +49,7 @@ func TestSelectNodesEvenSpreadDistinctNodes(t *testing.T) {
 }
 
 func TestSelectNodesPrefersMoreFreeSpace(t *testing.T) {
-	class := exvolClass(3, nil)
+	class := drbdClass(3, nil)
 	nodes := []NodeInfo{
 		node("n1", 10<<30, nil),
 		node("n2", 900<<30, nil),
@@ -68,7 +68,7 @@ func TestSelectNodesPrefersMoreFreeSpace(t *testing.T) {
 }
 
 func TestSelectNodesExcludesExistingPlacements(t *testing.T) {
-	class := exvolClass(2, nil)
+	class := drbdClass(2, nil)
 	nodes := []NodeInfo{
 		node("n1", 900<<30, nil),
 		node("n2", 800<<30, nil),
@@ -89,7 +89,7 @@ func TestSelectNodesExcludesExistingPlacements(t *testing.T) {
 }
 
 func TestSelectNodesNodeSelector(t *testing.T) {
-	class := exvolClass(2, map[string]string{"disk": "ssd"})
+	class := drbdClass(2, map[string]string{"disk": "ssd"})
 	nodes := []NodeInfo{
 		node("n1", 900<<30, map[string]string{"disk": "hdd"}),
 		node("n2", 800<<30, map[string]string{"disk": "ssd", "zone": "a"}),
@@ -108,7 +108,7 @@ func TestSelectNodesNodeSelector(t *testing.T) {
 }
 
 func TestSelectNodesInsufficientNodes(t *testing.T) {
-	class := exvolClass(3, nil)
+	class := drbdClass(3, nil)
 	nodes := []NodeInfo{node("n1", 100<<30, nil), node("n2", 100<<30, nil)}
 	_, err := SelectNodes(class, nodes, nil)
 	if experrors.KindOf(err) != experrors.KindResourceExhausted {
@@ -117,7 +117,7 @@ func TestSelectNodesInsufficientNodes(t *testing.T) {
 }
 
 func TestSelectNodesInsufficientAfterExclusions(t *testing.T) {
-	class := exvolClass(2, nil)
+	class := drbdClass(2, nil)
 	nodes := []NodeInfo{node("n1", 900<<30, nil), node("n2", 800<<30, nil), node("n3", 700<<30, nil)}
 	_, err := SelectNodes(class, nodes, []string{"n1", "n2"})
 	if experrors.KindOf(err) != experrors.KindResourceExhausted {
@@ -126,7 +126,7 @@ func TestSelectNodesInsufficientAfterExclusions(t *testing.T) {
 }
 
 func TestSelectNodesSelectorTooNarrow(t *testing.T) {
-	class := exvolClass(3, map[string]string{"disk": "ssd"})
+	class := drbdClass(3, map[string]string{"disk": "ssd"})
 	nodes := []NodeInfo{
 		node("n1", 900<<30, map[string]string{"disk": "ssd"}),
 		node("n2", 800<<30, map[string]string{"disk": "ssd"}),
@@ -139,7 +139,7 @@ func TestSelectNodesSelectorTooNarrow(t *testing.T) {
 }
 
 func TestSelectNodesUnknownFreeSpaceStillEligible(t *testing.T) {
-	class := exvolClass(2, nil)
+	class := drbdClass(2, nil)
 	nodes := []NodeInfo{
 		node("n1", 0, nil), // unknown free space
 		node("n2", 100<<30, nil),
@@ -156,7 +156,7 @@ func TestSelectNodesUnknownFreeSpaceStillEligible(t *testing.T) {
 }
 
 func TestSelectNodesDeterministicTieBreak(t *testing.T) {
-	class := exvolClass(2, nil)
+	class := drbdClass(2, nil)
 	nodes := []NodeInfo{
 		node("n3", 100<<30, nil),
 		node("n1", 100<<30, nil),
@@ -186,7 +186,7 @@ func TestSelectNodesDeterministicTieBreak(t *testing.T) {
 
 func TestSelectNodesInvalidReplication(t *testing.T) {
 	for _, rep := range []int{0, -1} {
-		_, err := SelectNodes(exvolClass(rep, nil), []NodeInfo{node("n1", 1, nil)}, nil)
+		_, err := SelectNodes(drbdClass(rep, nil), []NodeInfo{node("n1", 1, nil)}, nil)
 		if experrors.KindOf(err) != experrors.KindInvalid {
 			t.Errorf("rep=%d KindOf = %v, want invalid", rep, experrors.KindOf(err))
 		}
@@ -194,7 +194,7 @@ func TestSelectNodesInvalidReplication(t *testing.T) {
 }
 
 func TestSelectNodesReplicationOne(t *testing.T) {
-	class := exvolClass(1, nil)
+	class := drbdClass(1, nil)
 	nodes := []NodeInfo{node("n1", 10<<30, nil), node("n2", 100<<30, nil)}
 	got, err := SelectNodes(class, nodes, nil)
 	if err != nil {
@@ -206,7 +206,7 @@ func TestSelectNodesReplicationOne(t *testing.T) {
 }
 
 func TestSelectNodesSelectorEmptyMatchesAll(t *testing.T) {
-	class := exvolClass(2, map[string]string{})
+	class := drbdClass(2, map[string]string{})
 	nodes := []NodeInfo{
 		node("n1", 100<<30, nil),
 		node("n2", 200<<30, map[string]string{"anything": "x"}),
@@ -221,8 +221,8 @@ func TestSelectNodesSelectorEmptyMatchesAll(t *testing.T) {
 }
 
 func TestSelectNodesMissingID(t *testing.T) {
-	class := exvolClass(1, nil)
-	nodes := []NodeInfo{{PoolName: "rpool"}}
+	class := drbdClass(1, nil)
+	nodes := []NodeInfo{{}}
 	_, err := SelectNodes(class, nodes, nil)
 	if experrors.KindOf(err) != experrors.KindInvalid {
 		t.Errorf("KindOf = %v, want invalid", experrors.KindOf(err))

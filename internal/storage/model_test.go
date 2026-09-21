@@ -29,14 +29,13 @@ func testVolume() Volume {
 		Class:       "default",
 		Replication: 3,
 		Placement: []Replica{
-			{NodeID: "n1", Role: RolePrimary, ZvolPath: "rpool/volumes/vol-1a2b3c4d5e6f7a8b", Sequence: 42, LastSeen: time.Unix(1700000000, 0).UTC(), Healthy: true},
-			{NodeID: "n2", Role: RoleSecondary, ZvolPath: "rpool/volumes/vol-1a2b3c4d5e6f7a8b", Sequence: 42, LastSeen: time.Unix(1700000000, 0).UTC(), Healthy: true},
-			{NodeID: "n3", Role: RoleSecondary, ZvolPath: "rpool/volumes/vol-1a2b3c4d5e6f7a8b", Sequence: 40, LastSeen: time.Unix(1699999999, 0).UTC(), Healthy: true},
+			{NodeID: "n1", Role: RolePrimary, LastSeen: time.Unix(1700000000, 0).UTC(), Healthy: true},
+			{NodeID: "n2", Role: RoleSecondary, LastSeen: time.Unix(1700000000, 0).UTC(), Healthy: true},
+			{NodeID: "n3", Role: RoleSecondary, LastSeen: time.Unix(1699999999, 0).UTC(), Healthy: true},
 		},
 		Generation: 7,
 		State:      StateHealthy,
 		Primary:    "n1",
-		Sequence:   42,
 	}
 }
 
@@ -81,7 +80,7 @@ func TestSaveLoadStatusRoundTrip(t *testing.T) {
 	}
 	want := v.Status()
 	if got.Generation != want.Generation || got.State != want.State ||
-		got.Primary != want.Primary || got.Sequence != want.Sequence {
+		got.Primary != want.Primary {
 		t.Errorf("scalar fields mismatch: got %+v, want %+v", got, want)
 	}
 	if len(got.Placement) != len(want.Placement) {

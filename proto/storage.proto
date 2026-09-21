@@ -52,10 +52,8 @@ message VolumeSpec {
 message Replica {
   string node_id = 1;
   ReplicaRole role = 2;
-  // e.g. "rpool/volumes/vol-1a2b".
-  string zvol_path = 3;
-  // Last durable sequence on this replica (§4.3).
-  uint64 sequence = 4;
+  reserved 3, 4;
+  reserved "zvol_path", "sequence";
   // Last time this replica responded, UnixNano.
   int64 last_seen_unix_nano = 5;
   bool healthy = 6;
@@ -69,13 +67,7 @@ message VolumeStatus {
   VolumeState state = 2;
   // Node ID holding the primary lease.
   string primary = 3;
-  // Last acked write sequence.
-  uint64 sequence = 4;
+  reserved 4, 6;
+  reserved "sequence", "manual_recovered";
   repeated Replica placement = 5;
-  // Set when an operator chose a branch after §9 divergence
-  // (`expanse ctl volume diverged --choose`): the next primary
-  // bring-up adopts this status's sequence instead of re-running the
-  // automatic recovery algorithm (which would re-detect the
-  // divergence). Cleared once the primary is up.
-  bool manual_recovered = 6;
 }

@@ -205,7 +205,7 @@ func (c *Controller) processVolumeOps(ctx context.Context, ids []string) error {
 				// The spec is "immutable-except-size" (storage.Spec's own
 				// doc comment) — size is the one field the controller
 				// mutates outside creation, grow-only (G6.14): the
-				// per-node runtimes converge the zvol/device to it.
+				// per-node runtimes converge the LV and DRBD device to it.
 				spec, specRev, serr := storage.LoadSpecRev(ctx, c.opts.St, volID)
 				if serr != nil {
 					break

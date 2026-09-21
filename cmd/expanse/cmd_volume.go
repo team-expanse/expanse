@@ -25,7 +25,7 @@ const volumePendingKeyPrefix = "/volumes/_pending/"
 func newVolumeCmd(opts *ctlOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "volume",
-		Short: "Exvol volume management",
+		Short: "Replicated volume management",
 	}
 
 	var sizeStr, class string

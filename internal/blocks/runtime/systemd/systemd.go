@@ -61,7 +61,7 @@ type Spec struct {
 	// must open them explicitly under ProtectSystem=strict).
 	VolumeMounts []string `json:"volumeMounts,omitempty"`
 	// BindPaths bind host directories into the unit's namespace as
-	// "host[:inUnit]" entries (T14 §4.7: exvol volume mounts).
+	// "host[:inUnit]" entries (T14 §4.7: volume mounts).
 	BindPaths []string `json:"bindPaths,omitempty"`
 	// Credentials map systemd credential name -> source path, surfaced
 	// with LoadCredential= (never env vars, never /nix/store files).

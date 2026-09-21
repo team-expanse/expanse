@@ -9,14 +9,12 @@ import (
 
 // NodeInfo is the placement algorithm's view of one candidate node
 // (§4.6 placement bullet). The volume controller (T13) refreshes
-// FreeBytes from zfs.PoolStatus; here it's just data.
+// FreeBytes; here it's just data.
 type NodeInfo struct {
 	ID string
 	// Labels is the node's label set, matched against a storage class's
 	// NodeSelector (every selector key/value must be present).
 	Labels map[string]string
-	// PoolName is the local ZFS pool exvol would place the zvol on.
-	PoolName string
 	// FreeBytes is the pool's free space. Nodes with unknown free space
 	// (0) sort after known quantities but are still eligible.
 	FreeBytes uint64

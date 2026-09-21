@@ -1,24 +1,10 @@
-// Package linearizability is the Phase 06 T21 Jepsen-style history
-// checker for exvol block volumes. Every 4 KiB block is a read/write
-// register; concurrent clients record (call, return, op, result)
-// histories while a nemesis injects faults, and CheckHistory then
-// decides — exactly, per block — whether some total order consistent
-// with real time explains every observed read. The search is Porcupine's
-// (github.com/anishathalye/porcupine), not ours.
-//
-// The scenario (run_test.go) drives the in-process exvol harness
-// (test/chaos/exvol) with a per-link fault layer: kill / partition /
-// SIGSTOP-pause the primary or a secondary, or slow a node's links, one
-// fault at a time with recovery in between. Writes are write+flush; a
-// write whose outcome is unknown is "indeterminate" and may or may not
-// have taken effect. Every block is finally read back through the settled
-// primary and all replicas must hold identical bytes.
-//
-//	go test ./test/chaos/storage/linearizability/                 # 45 s (default)
-//	CHAOS_DURATION=5m go test ...                                 # any length
-//	RUN_CHAOS=1 go test -timeout 90m ./test/chaos/storage/linearizability/   # 1 h nightly (make chaos-storage)
-//
-// Any acked-write loss is a release blocker.
+// Package linearizability is a Jepsen-style history checker for block volumes.
+// Every 4 KiB block is a read/write register; clients record (call, return, op,
+// result) histories and CheckHistory decides, exactly and per block, whether
+// some total order consistent with real time explains every observed read. The
+// search is Porcupine's (github.com/anishathalye/porcupine), not ours. A write
+// whose outcome is unknown is "indeterminate" and may or may not have taken
+// effect. Any acked-write loss is a release blocker.
 package linearizability
 
 import (

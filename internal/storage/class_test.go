@@ -11,11 +11,11 @@ func TestParseStorageClassesSpecExample(t *testing.T) {
 	raw := []byte(`
 storageClasses:
   - name: default
-    driver: exvol
+    driver: drbd
     replication: 3
     params: { compression: zstd, recordsize: 128k, sync: standard }
   - name: fast
-    driver: exvol
+    driver: drbd
     replication: 2
     params: { compression: lz4, recordsize: 16k, sync: always }
     nodeSelector: { disk: ssd }
@@ -33,7 +33,7 @@ storageClasses:
 	if len(classes) != 4 {
 		t.Fatalf("got %d classes, want 4", len(classes))
 	}
-	if classes[0].Name != "default" || classes[0].Driver != "exvol" || classes[0].Replication != 3 {
+	if classes[0].Name != "default" || classes[0].Driver != "drbd" || classes[0].Replication != 3 {
 		t.Errorf("default class: %+v", classes[0])
 	}
 	if classes[1].Name != "fast" || classes[1].Replication != 2 {
@@ -70,11 +70,11 @@ func TestParseStorageClassesEmptyYieldsDefault(t *testing.T) {
 
 func TestParseStorageClassesDefaults(t *testing.T) {
 	dc := DefaultStorageClass()
-	if dc.Name != "default" || dc.Driver != "exvol" || dc.Replication != 3 {
+	if dc.Name != "default" || dc.Driver != "drbd" || dc.Replication != 3 {
 		t.Errorf("unexpected defaults: %+v", dc)
 	}
-	if dc.Params["compression"] != "zstd" || dc.Params["recordsize"] != "128k" || dc.Params["sync"] != "standard" {
-		t.Errorf("default params: %+v", dc.Params)
+	if len(dc.Params) != 0 {
+		t.Errorf("default class has no driver params, got %+v", dc.Params)
 	}
 }
 
@@ -85,7 +85,7 @@ func TestParseStorageClassesValidation(t *testing.T) {
 	}{
 		{"missing name", `
 storageClasses:
-  - driver: exvol
+  - driver: drbd
     replication: 3`},
 		{"missing driver", `
 storageClasses:
@@ -94,20 +94,20 @@ storageClasses:
 		{"replication too high", `
 storageClasses:
   - name: x
-    driver: exvol
+    driver: drbd
     replication: 6`},
 		{"replication negative", `
 storageClasses:
   - name: x
-    driver: exvol
+    driver: drbd
     replication: -1`},
 		{"duplicate name", `
 storageClasses:
   - name: x
-    driver: exvol
+    driver: drbd
     replication: 3
   - name: x
-    driver: exvol
+    driver: drbd
     replication: 2`},
 	}
 	for _, tc := range cases {
@@ -122,8 +122,8 @@ storageClasses:
 
 func TestGetClass(t *testing.T) {
 	classes := []StorageClass{
-		{Name: "default", Driver: "exvol", Replication: 3},
-		{Name: "fast", Driver: "exvol", Replication: 2},
+		{Name: "default", Driver: "drbd", Replication: 3},
+		{Name: "fast", Driver: "drbd", Replication: 2},
 	}
 	got, ok := GetClass(classes, "fast")
 	if !ok || got.Replication != 2 {

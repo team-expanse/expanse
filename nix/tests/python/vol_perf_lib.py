@@ -30,19 +30,19 @@ def parse_fio(text, direction):
     )
 
 
-def ratio(exvol, local):
+def ratio(vol, local):
     if local <= 0:
         raise ValueError("local baseline is zero; cannot form a ratio")
-    return exvol / local
+    return vol / local
 
 
 def profile_ratios(local, remote):
     """Budget-named ratios: bandwidth for sequential profiles, IOPS for random."""
     return {
-        "exvol_seqwrite_ratio": ratio(remote["seqwrite"].bw_bytes, local["seqwrite"].bw_bytes),
-        "exvol_seqread_ratio": ratio(remote["seqread"].bw_bytes, local["seqread"].bw_bytes),
-        "exvol_randwrite_ratio": ratio(remote["randwrite"].iops, local["randwrite"].iops),
-        "exvol_randread_ratio": ratio(remote["randread"].iops, local["randread"].iops),
+        "vol_seqwrite_ratio": ratio(remote["seqwrite"].bw_bytes, local["seqwrite"].bw_bytes),
+        "vol_seqread_ratio": ratio(remote["seqread"].bw_bytes, local["seqread"].bw_bytes),
+        "vol_randwrite_ratio": ratio(remote["randwrite"].iops, local["randwrite"].iops),
+        "vol_randread_ratio": ratio(remote["randread"].iops, local["randread"].iops),
     }
 
 

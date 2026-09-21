@@ -32,7 +32,7 @@ import (
 	"github.com/expanse/expanse/internal/proxy"
 
 	volctlc "github.com/expanse/expanse/internal/storage/controller"
-	expmount "github.com/expanse/expanse/internal/storage/exvol/mount"
+	expmount "github.com/expanse/expanse/internal/storage/mount"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"

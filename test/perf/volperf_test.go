@@ -1,5 +1,5 @@
 // Phase 06 T23 storage budgets. They are measured inside the vol-perf
-// VM test (nix/tests/vol-perf.nix) against a real ZFS pool, so this
+// VM test (nix/tests/vol-perf.nix) against a real LVM volume group, so this
 // package only pins their definitions and keeps CheckAll from
 // reporting them as measured here.
 package perf
@@ -22,10 +22,10 @@ func budgetByName(t *testing.T, name string) Budget {
 
 func TestVolumeBudgetsPinTheSpecFloors(t *testing.T) {
 	floors := map[string]float64{
-		"exvol_seqwrite_ratio":  0.75,
-		"exvol_seqread_ratio":   0.95,
-		"exvol_randwrite_ratio": 0.60,
-		"exvol_randread_ratio":  0.95,
+		"vol_seqwrite_ratio":  0.75,
+		"vol_seqread_ratio":   0.95,
+		"vol_randwrite_ratio": 0.60,
+		"vol_randread_ratio":  0.95,
 	}
 	for name, min := range floors {
 		if got := budgetByName(t, name); got.Min != min || got.Max != 0 {
@@ -38,8 +38,8 @@ func TestVolumeBudgetsPinTheCeilings(t *testing.T) {
 	if got := budgetByName(t, "vol_failover_ms"); got.Max != 20000 {
 		t.Errorf("vol_failover_ms max=%v, want 20000 (G6.4)", got.Max)
 	}
-	if got := budgetByName(t, "exvol_fsync_p99_us"); got.Max <= 0 {
-		t.Errorf("exvol_fsync_p99_us needs an absolute ceiling, got %v", got.Max)
+	if got := budgetByName(t, "vol_fsync_p99_us"); got.Max <= 0 {
+		t.Errorf("vol_fsync_p99_us needs an absolute ceiling, got %v", got.Max)
 	}
 }
 
@@ -54,7 +54,7 @@ func TestVolumeResyncRateIsAFloorFromG67(t *testing.T) {
 func TestVolumeBudgetsAreLeftUnmeasuredHere(t *testing.T) {
 	var vol []Budget
 	for _, b := range LoadBudgets() {
-		if strings.HasPrefix(b.Name, "exvol_") || strings.HasPrefix(b.Name, "vol_") {
+		if strings.HasPrefix(b.Name, "vol_") {
 			vol = append(vol, b)
 		}
 	}

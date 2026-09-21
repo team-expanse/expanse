@@ -51,24 +51,19 @@ type Capabilities struct {
 // (§4.2).
 type StorageClass struct {
 	Name         string            `yaml:"name"`
-	Driver       string            `yaml:"driver"` // "exvol", "local", "ceph"
+	Driver       string            `yaml:"driver"` // "drbd", "local", "ceph"
 	Replication  int               `yaml:"replication"`
 	Params       map[string]string `yaml:"params"`
 	NodeSelector map[string]string `yaml:"nodeSelector"`
 }
 
-// DefaultStorageClass is used when no classes are configured: exvol,
+// DefaultStorageClass is used when no classes are configured: drbd,
 // replication 3 (the §4.2 example's implicit baseline).
 func DefaultStorageClass() StorageClass {
 	return StorageClass{
 		Name:        "default",
-		Driver:      "exvol",
+		Driver:      "drbd",
 		Replication: 3,
-		Params: map[string]string{
-			"compression": "zstd",
-			"recordsize":  "128k",
-			"sync":        "standard",
-		},
 	}
 }
 
@@ -103,7 +98,7 @@ func ParseStorageClasses(raw []byte) ([]StorageClass, error) {
 		}
 		// Replication 0 is legal for drivers that manage their own
 		// redundancy (e.g. ceph erasure coding, §4.2's example class);
-		// exvol classes must set 1..5.
+		// drbd classes must set 1..5.
 		if c.Replication < 0 || c.Replication > 5 {
 			return nil, experrors.New(experrors.KindInvalid, "storage.ParseStorageClasses", "storage class "+c.Name+" replication out of range 0..5")
 		}

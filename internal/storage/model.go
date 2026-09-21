@@ -1,5 +1,5 @@
 // Package storage holds the volume data model and store persistence for
-// exvol (Phase 06 §4.1): the Volume/Replica shapes, their proto-marshaled
+// replicated volumes (Phase 06 §4.1): the Volume/Replica shapes, their proto-marshaled
 // store records at /volumes/<id>/spec and /volumes/<id>/status, and the
 // CAS-based update idiom shared with the rest of the tree (blocks, VIPs).
 package storage
@@ -118,14 +118,11 @@ func roleFromProto(p pb.ReplicaRole) Role {
 type Replica struct {
 	NodeID   string
 	Role     Role
-	ZvolPath string
-	// Sequence is the last durable sequence on this replica (§4.3).
-	Sequence uint64
 	LastSeen time.Time
 	Healthy  bool
 }
 
-// Volume is the spec + live status of one exvol volume (§4.1). Spec is
+// Volume is the spec + live status of one replicated volume (§4.1). Spec is
 // written once by the controller; Status is CAS-updated as replicas and
 // the primary evolve.
 type Volume struct {
@@ -139,7 +136,6 @@ type Volume struct {
 	Generation  uint64      // bumped on every membership change
 	State       VolumeState // Creating|Healthy|Degraded|ReadOnly|Resyncing|Failed|Deleting
 	Primary     string      // node ID holding the primary lease
-	Sequence    uint64      // last acked write sequence
 }
 
 // Spec is the immutable-except-size configuration half of a Volume.
@@ -157,14 +153,7 @@ type Status struct {
 	Generation uint64
 	State      VolumeState
 	Primary    string
-	Sequence   uint64
 	Placement  []Replica
-	// ManualRecovered: an operator chose a branch after §9 divergence
-	// (`expanse ctl volume diverged --choose`); the next primary
-	// bring-up adopts Sequence instead of re-running the automatic
-	// recovery algorithm (which would re-detect the divergence).
-	// Cleared once the primary is up.
-	ManualRecovered bool
 }
 
 // Spec returns the spec half of the volume.
@@ -185,7 +174,6 @@ func (v Volume) Status() Status {
 		Generation: v.Generation,
 		State:      v.State,
 		Primary:    v.Primary,
-		Sequence:   v.Sequence,
 		Placement:  append([]Replica(nil), v.Placement...),
 	}
 }
@@ -236,8 +224,6 @@ func replicaToProto(r Replica) *pb.Replica {
 	return &pb.Replica{
 		NodeId:           r.NodeID,
 		Role:             r.Role.proto(),
-		ZvolPath:         r.ZvolPath,
-		Sequence:         r.Sequence,
 		LastSeenUnixNano: r.LastSeen.UnixNano(),
 		Healthy:          r.Healthy,
 	}
@@ -247,8 +233,6 @@ func replicaFromProto(p *pb.Replica) Replica {
 	return Replica{
 		NodeID:   p.GetNodeId(),
 		Role:     roleFromProto(p.GetRole()),
-		ZvolPath: p.GetZvolPath(),
-		Sequence: p.GetSequence(),
 		LastSeen: time.Unix(0, p.GetLastSeenUnixNano()).UTC(),
 		Healthy:  p.GetHealthy(),
 	}
@@ -257,11 +241,9 @@ func replicaFromProto(p *pb.Replica) Replica {
 // StatusToProto marshals a status into its store representation.
 func StatusToProto(s Status) *pb.VolumeStatus {
 	p := &pb.VolumeStatus{
-		Generation:      s.Generation,
-		State:           s.State.proto(),
-		Primary:         s.Primary,
-		Sequence:        s.Sequence,
-		ManualRecovered: s.ManualRecovered,
+		Generation: s.Generation,
+		State:      s.State.proto(),
+		Primary:    s.Primary,
 	}
 	for _, r := range s.Placement {
 		p.Placement = append(p.Placement, replicaToProto(r))
@@ -272,11 +254,9 @@ func StatusToProto(s Status) *pb.VolumeStatus {
 // StatusFromProto unmarshals a status from its store representation.
 func StatusFromProto(p *pb.VolumeStatus) Status {
 	s := Status{
-		Generation:      p.GetGeneration(),
-		State:           stateFromProto(p.GetState()),
-		Primary:         p.GetPrimary(),
-		Sequence:        p.GetSequence(),
-		ManualRecovered: p.GetManualRecovered(),
+		Generation: p.GetGeneration(),
+		State:      stateFromProto(p.GetState()),
+		Primary:    p.GetPrimary(),
 	}
 	for _, r := range p.GetPlacement() {
 		s.Placement = append(s.Placement, replicaFromProto(r))

@@ -25,7 +25,7 @@ func sampleSpec() Spec {
 			"/persist/expanse/blocks/web/z",
 			"/persist/expanse/blocks/web/a",
 		},
-		// T14 §4.7: exvol volume mounts bind into the unit namespace
+		// T14 §4.7: volume mounts bind into the unit namespace
 		// as host:declared-mount-path pairs.
 		BindPaths: []string{
 			"/var/lib/expanse/volumes/vol-b/mnt:/var/lib/postgresql",

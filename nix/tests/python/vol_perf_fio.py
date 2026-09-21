@@ -72,7 +72,7 @@ def compare_devices(m, raw_dev, dev, peer_ip):
         f"allowance {allowance} us (2x local + RTT {rtt_us} us)"
     )
 
-    measured = dict(ratios, exvol_fsync_p99_us=fsync_us)
+    measured = dict(ratios, vol_fsync_p99_us=fsync_us)
     problems = check_budgets(measured, BUDGETS)
     if fsync_us > allowance:
         problems.append(f"fsync p99 {fsync_us} us exceeds 2x local + 1 RTT = {allowance} us")

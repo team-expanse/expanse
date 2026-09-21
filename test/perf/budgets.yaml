@@ -79,23 +79,23 @@ budgets:
     unit: ratio
     min: 0.8             # L4 proxy throughput vs direct loopback (iperf3 stand-in)
   # Phase 06 storage budgets (§5 perf tests). All VM-measured by
-  # nix/tests/vol-perf.nix on a real ZFS pool — CheckAll leaves them
-  # unmeasured (-1). Ratios are exvol R=3 over a raw local zvol with the
+  # nix/tests/vol-perf.nix on a real LVM volume group — CheckAll leaves them
+  # unmeasured (-1). Ratios are DRBD R=3 over a raw local LV with the
   # same properties on the same VM. The ratios and vol_resync_mbps are
-  # floors; exvol_fsync_p99_us and vol_failover_ms are ceilings.
-  - name: exvol_seqwrite_ratio
+  # floors; vol_fsync_p99_us and vol_failover_ms are ceilings.
+  - name: vol_seqwrite_ratio
     unit: ratio
     min: 0.75            # seq write 1M qd=32 (G6.8)
-  - name: exvol_seqread_ratio
+  - name: vol_seqread_ratio
     unit: ratio
     min: 0.95            # seq read 1M qd=32 (reads are local)
-  - name: exvol_randwrite_ratio
+  - name: vol_randwrite_ratio
     unit: ratio
     min: 0.60            # rand write 4k qd=64 (G6.9)
-  - name: exvol_randread_ratio
+  - name: vol_randread_ratio
     unit: ratio
     min: 0.95            # rand read 4k qd=64
-  - name: exvol_fsync_p99_us
+  - name: vol_fsync_p99_us
     unit: us
     max: 20000           # absolute ceiling; the test also enforces <= 2x local + 1 RTT
   - name: vol_failover_ms

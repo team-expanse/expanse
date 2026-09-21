@@ -1,6 +1,6 @@
 # Expanse Makefile
 
-.PHONY: help build test lint fmt proto vm-test perf chaos chaos-storage clean
+.PHONY: help build test lint fmt proto vm-test perf chaos clean
 
 help:            ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -31,9 +31,6 @@ perf: build      ## Check performance budgets
 
 chaos:           ## Run the chaos suite at full length (5 min/scenario + 30 min blocks)
 	RUN_CHAOS=1 go test -count=1 -timeout 150m ./test/chaos/... -v
-
-chaos-storage:   ## Run the storage chaos suites at full length (1 h linearizability + ~25 min scenarios)
-	RUN_CHAOS=1 go test -count=1 -p 1 -timeout 120m ./test/chaos/storage/... -v
 
 clean:           ## Clean build artifacts
 	rm -rf bin result coverage.out

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -69,51 +68,31 @@ func fixtureVolume(t *testing.T) *volEntry {
 		id:   "vol-abc",
 		spec: &pb.VolumeSpec{Name: "db", SizeBytes: 10 << 30},
 		st: &pb.VolumeStatus{
-			State:    pb.VolumeState_VOLUME_STATE_HEALTHY,
-			Primary:  "n1",
-			Sequence: 42,
+			State:   pb.VolumeState_VOLUME_STATE_HEALTHY,
+			Primary: "n1",
 			Placement: []*pb.Replica{
-				{NodeId: "n1", Role: pb.ReplicaRole_REPLICA_ROLE_PRIMARY, Sequence: 42, LastSeenUnixNano: time.Now().UnixNano()},
-				{NodeId: "n2", Role: pb.ReplicaRole_REPLICA_ROLE_SECONDARY, Sequence: 40, LastSeenUnixNano: time.Now().UnixNano()},
-				{NodeId: "n3", Role: pb.ReplicaRole_REPLICA_ROLE_STALE, Sequence: 12},
+				{NodeId: "n1", Role: pb.ReplicaRole_REPLICA_ROLE_PRIMARY, Healthy: true, LastSeenUnixNano: time.Now().UnixNano()},
+				{NodeId: "n2", Role: pb.ReplicaRole_REPLICA_ROLE_SECONDARY, Healthy: true, LastSeenUnixNano: time.Now().UnixNano()},
+				{NodeId: "n3", Role: pb.ReplicaRole_REPLICA_ROLE_STALE},
 			},
 		},
 	}
 }
 
-// TestPrintInspectShowsPerReplicaSeqAndLag is §4.8's called-out
-// feature: the inspect view answers "is my data safe?" — per-replica
-// sequence numbers and lag must be there.
-func TestPrintInspectShowsPerReplicaSeqAndLag(t *testing.T) {
+func TestPrintInspectShowsEveryReplicaWithRoleAndHealth(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printInspect(context.Background(), &buf, nil, fixtureVolume(t)); err != nil {
-		t.Fatal(err)
-	}
+	printInspect(&buf, fixtureVolume(t))
 	out := buf.String()
 	for _, want := range []string{
-		"volume db (vol-abc)",
-		"state:    Healthy",
-		"primary:  n1",
-		"sequence: 42",
-		"n1",
-		"n2",
-		"n3",
+		"volume db (vol-abc)", "state:    Healthy", "primary:  n1",
+		"n1", "primary   ", "n2", "secondary", "n3", "stale", "true", "false", "never",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("inspect output missing %q:\n%s", want, out)
 		}
 	}
-	// Lags: primary 0, n2 lags by 2, n3 (stale) by 30.
-	if !strings.Contains(out, "0") || !strings.Contains(out, "2") || !strings.Contains(out, "30") {
-		t.Errorf("inspect output missing lag columns:\n%s", out)
-	}
-	// Roles render human-readable.
-	if !strings.Contains(out, "primary") || !strings.Contains(out, "secondary") || !strings.Contains(out, "stale") {
-		t.Errorf("inspect output missing roles:\n%s", out)
-	}
 }
 
-// TestVolumeCommandSurface: every §4.8 subcommand exists with its flags.
 func TestVolumeCommandSurface(t *testing.T) {
 	cmd := newVolumeCmd(&ctlOpts{})
 	want := map[string][]string{
@@ -121,12 +100,8 @@ func TestVolumeCommandSurface(t *testing.T) {
 		"list":         {},
 		"delete":       {},
 		"inspect":      {},
-		"resize":       {"size"},
-		"snapshot":     {"name"},
-		"restore":      {"snapshot"},
 		"move-primary": {"to"},
-		"resync":       {"replica", "full"},
-		"verify":       {},
+		"diverged":     {},
 	}
 	for name, flags := range want {
 		sub, _, err := cmd.Find([]string{name})
@@ -139,12 +114,14 @@ func TestVolumeCommandSurface(t *testing.T) {
 			}
 		}
 	}
-	div, _, err := cmd.Find([]string{"diverged"})
-	if err != nil || div.Name() != "diverged" {
-		t.Fatal("subcommand diverged missing")
-	}
-	if div.Flags().Lookup("choose") == nil {
-		t.Error("diverged: flag --choose missing (§9 valve)")
+}
+
+func TestRetiredSubcommandsAreGone(t *testing.T) {
+	cmd := newVolumeCmd(&ctlOpts{})
+	for _, name := range []string{"resync", "verify", "snapshot", "restore", "resize"} {
+		if sub, _, _ := cmd.Find([]string{name}); sub != nil && sub.Name() == name {
+			t.Errorf("%s is still registered but nothing implements it", name)
+		}
 	}
 }
 
@@ -167,7 +144,7 @@ func TestInspectAgainstFixture(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "sequence: 42") || !strings.Contains(buf.String(), "n2") {
+	if !strings.Contains(buf.String(), "primary:  n1") || !strings.Contains(buf.String(), "n2") {
 		t.Errorf("inspect via socket wrong:\n%s", buf.String())
 	}
 }
@@ -197,45 +174,19 @@ func TestDeleteOpWritesRequest(t *testing.T) {
 	}
 }
 
-// TestResyncFlagsParse: --replica is required, --full is honored.
-func TestResyncFlagsParse(t *testing.T) {
-	v := fixtureVolume(t)
+func TestDivergedListsOnlyVolumesNeedingManualRecovery(t *testing.T) {
+	bad, ok := fixtureVolume(t), fixtureVolume(t)
+	bad.st.State = pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY
+	bad.spec.Name = "split"
 	fs := &fakeStore{kv: map[string][]byte{
-		"/volumes/vol-abc/spec":   mustProto(t, v.spec),
-		"/volumes/vol-abc/status": mustProto(t, v.st),
+		"/volumes/vol-bad/spec":   mustProto(t, bad.spec),
+		"/volumes/vol-bad/status": mustProto(t, bad.st),
+		"/volumes/vol-ok/spec":    mustProto(t, ok.spec),
+		"/volumes/vol-ok/status":  mustProto(t, ok.st),
 	}}
 	opts, stop := serveCLI(t, fs)
 	defer stop()
 
-	cmd := newVolumeCmd(opts)
-	cmd.SetArgs([]string{"resync", "db"}) // no --replica
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--replica") {
-		t.Fatalf("want --replica required error, got %v", err)
-	}
-
-	cmd = newVolumeCmd(opts)
-	cmd.SetArgs([]string{"resync", "db", "--replica", "n2", "--full"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	op := string(fs.kv["/volumes/_ops/resync/vol-abc"])
-	if !strings.Contains(op, `"replica":"n2"`) || !strings.Contains(op, `"full":true`) {
-		t.Errorf("resync op wrong: %s", op)
-	}
-}
-
-// TestDivergedListAndChoose: §9's human-in-the-loop valve.
-func TestDivergedListAndChoose(t *testing.T) {
-	v := fixtureVolume(t)
-	v.st.State = pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY
-	fs := &fakeStore{kv: map[string][]byte{
-		"/volumes/vol-abc/spec":   mustProto(t, v.spec),
-		"/volumes/vol-abc/status": mustProto(t, v.st),
-	}}
-	opts, stop := serveCLI(t, fs)
-	defer stop()
-
-	// Listing form.
 	cmd := newVolumeCmd(opts)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -243,19 +194,8 @@ func TestDivergedListAndChoose(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "db") || !strings.Contains(buf.String(), "--choose") {
-		t.Errorf("diverged listing wrong:\n%s", buf.String())
-	}
-
-	// Choose form writes the recover op.
-	cmd = newVolumeCmd(opts)
-	cmd.SetArgs([]string{"diverged", "db", "--choose", "n2"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	op := string(fs.kv["/volumes/_ops/recover/vol-abc"])
-	if !strings.Contains(op, `"choose":"n2"`) {
-		t.Errorf("recover op wrong: %s (keys %v)", op, fs.kv)
+	if out := buf.String(); !strings.Contains(out, "split") || strings.Contains(out, "db") {
+		t.Errorf("diverged listing wrong:\n%s", out)
 	}
 }
 
@@ -267,5 +207,3 @@ func mustProto(t *testing.T, m pbproto.Message) []byte {
 	}
 	return b
 }
-
-var _ = fmt.Sprint // keep fmt when test bodies evolve

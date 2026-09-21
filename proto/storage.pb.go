@@ -242,10 +242,6 @@ type Replica struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	NodeId string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	Role   ReplicaRole            `protobuf:"varint,2,opt,name=role,proto3,enum=expanse.storage.v1.ReplicaRole" json:"role,omitempty"`
-	// e.g. "rpool/volumes/vol-1a2b".
-	ZvolPath string `protobuf:"bytes,3,opt,name=zvol_path,json=zvolPath,proto3" json:"zvol_path,omitempty"`
-	// Last durable sequence on this replica (§4.3).
-	Sequence uint64 `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	// Last time this replica responded, UnixNano.
 	LastSeenUnixNano int64 `protobuf:"varint,5,opt,name=last_seen_unix_nano,json=lastSeenUnixNano,proto3" json:"last_seen_unix_nano,omitempty"`
 	Healthy          bool  `protobuf:"varint,6,opt,name=healthy,proto3" json:"healthy,omitempty"`
@@ -297,20 +293,6 @@ func (x *Replica) GetRole() ReplicaRole {
 	return ReplicaRole_REPLICA_ROLE_UNSPECIFIED
 }
 
-func (x *Replica) GetZvolPath() string {
-	if x != nil {
-		return x.ZvolPath
-	}
-	return ""
-}
-
-func (x *Replica) GetSequence() uint64 {
-	if x != nil {
-		return x.Sequence
-	}
-	return 0
-}
-
 func (x *Replica) GetLastSeenUnixNano() int64 {
 	if x != nil {
 		return x.LastSeenUnixNano
@@ -333,18 +315,10 @@ type VolumeStatus struct {
 	Generation uint64      `protobuf:"varint,1,opt,name=generation,proto3" json:"generation,omitempty"`
 	State      VolumeState `protobuf:"varint,2,opt,name=state,proto3,enum=expanse.storage.v1.VolumeState" json:"state,omitempty"`
 	// Node ID holding the primary lease.
-	Primary string `protobuf:"bytes,3,opt,name=primary,proto3" json:"primary,omitempty"`
-	// Last acked write sequence.
-	Sequence  uint64     `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	Placement []*Replica `protobuf:"bytes,5,rep,name=placement,proto3" json:"placement,omitempty"`
-	// Set when an operator chose a branch after §9 divergence
-	// (`expanse ctl volume diverged --choose`): the next primary
-	// bring-up adopts this status's sequence instead of re-running the
-	// automatic recovery algorithm (which would re-detect the
-	// divergence). Cleared once the primary is up.
-	ManualRecovered bool `protobuf:"varint,6,opt,name=manual_recovered,json=manualRecovered,proto3" json:"manual_recovered,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	Primary       string     `protobuf:"bytes,3,opt,name=primary,proto3" json:"primary,omitempty"`
+	Placement     []*Replica `protobuf:"bytes,5,rep,name=placement,proto3" json:"placement,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VolumeStatus) Reset() {
@@ -398,25 +372,11 @@ func (x *VolumeStatus) GetPrimary() string {
 	return ""
 }
 
-func (x *VolumeStatus) GetSequence() uint64 {
-	if x != nil {
-		return x.Sequence
-	}
-	return 0
-}
-
 func (x *VolumeStatus) GetPlacement() []*Replica {
 	if x != nil {
 		return x.Placement
 	}
 	return nil
-}
-
-func (x *VolumeStatus) GetManualRecovered() bool {
-	if x != nil {
-		return x.ManualRecovered
-	}
-	return false
 }
 
 var File_proto_storage_proto protoreflect.FileDescriptor
@@ -432,23 +392,19 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x14\n" +
 	"\x05class\x18\x05 \x01(\tR\x05class\x12 \n" +
-	"\vreplication\x18\x06 \x01(\x05R\vreplication\"\xd9\x01\n" +
+	"\vreplication\x18\x06 \x01(\x05R\vreplication\"\xc1\x01\n" +
 	"\aReplica\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x123\n" +
-	"\x04role\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.ReplicaRoleR\x04role\x12\x1b\n" +
-	"\tzvol_path\x18\x03 \x01(\tR\bzvolPath\x12\x1a\n" +
-	"\bsequence\x18\x04 \x01(\x04R\bsequence\x12-\n" +
+	"\x04role\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.ReplicaRoleR\x04role\x12-\n" +
 	"\x13last_seen_unix_nano\x18\x05 \x01(\x03R\x10lastSeenUnixNano\x12\x18\n" +
-	"\ahealthy\x18\x06 \x01(\bR\ahealthy\"\x81\x02\n" +
+	"\ahealthy\x18\x06 \x01(\bR\ahealthyJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\tzvol_pathR\bsequence\"\xe2\x01\n" +
 	"\fVolumeStatus\x12\x1e\n" +
 	"\n" +
 	"generation\x18\x01 \x01(\x04R\n" +
 	"generation\x125\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.VolumeStateR\x05state\x12\x18\n" +
-	"\aprimary\x18\x03 \x01(\tR\aprimary\x12\x1a\n" +
-	"\bsequence\x18\x04 \x01(\x04R\bsequence\x129\n" +
-	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacement\x12)\n" +
-	"\x10manual_recovered\x18\x06 \x01(\bR\x0fmanualRecovered*\x8e\x02\n" +
+	"\aprimary\x18\x03 \x01(\tR\aprimary\x129\n" +
+	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacementJ\x04\b\x04\x10\x05J\x04\b\x06\x10\aR\bsequenceR\x10manual_recovered*\x8e\x02\n" +
 	"\vVolumeState\x12\x1c\n" +
 	"\x18VOLUME_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15VOLUME_STATE_CREATING\x10\x01\x12\x18\n" +

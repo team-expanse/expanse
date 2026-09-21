@@ -22,8 +22,8 @@ FIO_READ = json.dumps(
 )
 
 BUDGETS = [
-    {"name": "exvol_seqwrite_ratio", "min": 0.75},
-    {"name": "exvol_fsync_p99_us", "max": 20000},
+    {"name": "vol_seqwrite_ratio", "min": 0.75},
+    {"name": "vol_fsync_p99_us", "max": 20000},
 ]
 
 
@@ -52,7 +52,7 @@ class ParseFio(unittest.TestCase):
 
 
 class Ratio(unittest.TestCase):
-    def test_ratio_is_exvol_over_local(self):
+    def test_ratio_is_vol_over_local(self):
         self.assertAlmostEqual(lib.ratio(75.0, 100.0), 0.75)
 
     def test_zero_local_is_an_error_not_infinity(self):
@@ -81,10 +81,10 @@ class ProfileRatios(unittest.TestCase):
         self.assertEqual(
             got,
             {
-                "exvol_seqwrite_ratio": 0.5,
-                "exvol_seqread_ratio": 0.95,
-                "exvol_randwrite_ratio": 0.5,
-                "exvol_randread_ratio": 0.5,
+                "vol_seqwrite_ratio": 0.5,
+                "vol_seqread_ratio": 0.95,
+                "vol_randwrite_ratio": 0.5,
+                "vol_randread_ratio": 0.5,
             },
         )
 
@@ -96,33 +96,33 @@ class FsyncAllowance(unittest.TestCase):
 
 class CheckBudgets(unittest.TestCase):
     def test_floor_met_and_ceiling_met_is_clean(self):
-        got = {"exvol_seqwrite_ratio": 0.8, "exvol_fsync_p99_us": 900}
+        got = {"vol_seqwrite_ratio": 0.8, "vol_fsync_p99_us": 900}
         self.assertEqual(lib.check_budgets(got, BUDGETS), [])
 
     def test_below_floor_is_reported_with_name_and_values(self):
-        got = {"exvol_seqwrite_ratio": 0.5}
+        got = {"vol_seqwrite_ratio": 0.5}
         msgs = lib.check_budgets(got, BUDGETS)
         self.assertEqual(len(msgs), 1)
-        self.assertIn("exvol_seqwrite_ratio", msgs[0])
+        self.assertIn("vol_seqwrite_ratio", msgs[0])
         self.assertIn("0.5", msgs[0])
         self.assertIn("0.75", msgs[0])
 
     def test_above_ceiling_is_reported(self):
-        msgs = lib.check_budgets({"exvol_fsync_p99_us": 30000}, BUDGETS)
+        msgs = lib.check_budgets({"vol_fsync_p99_us": 30000}, BUDGETS)
         self.assertEqual(len(msgs), 1)
-        self.assertIn("exvol_fsync_p99_us", msgs[0])
+        self.assertIn("vol_fsync_p99_us", msgs[0])
 
     def test_budget_without_a_measurement_is_ignored(self):
         self.assertEqual(lib.check_budgets({}, BUDGETS), [])
 
     def test_measurement_without_a_budget_is_an_error(self):
         with self.assertRaises(KeyError):
-            lib.check_budgets({"exvol_typo_ratio": 1.0}, BUDGETS)
+            lib.check_budgets({"vol_typo_ratio": 1.0}, BUDGETS)
 
 
 class BudgetLookup(unittest.TestCase):
     def test_returns_the_named_budget(self):
-        self.assertEqual(lib.budget(BUDGETS, "exvol_fsync_p99_us")["max"], 20000)
+        self.assertEqual(lib.budget(BUDGETS, "vol_fsync_p99_us")["max"], 20000)
 
     def test_unknown_budget_is_an_error(self):
         with self.assertRaises(KeyError):

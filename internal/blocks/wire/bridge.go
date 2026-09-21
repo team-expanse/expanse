@@ -25,7 +25,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/errors"
 	expstorage "github.com/expanse/expanse/internal/storage"
-	expmount "github.com/expanse/expanse/internal/storage/exvol/mount"
+	expmount "github.com/expanse/expanse/internal/storage/mount"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	pb "github.com/expanse/expanse/proto"
