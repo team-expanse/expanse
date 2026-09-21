@@ -203,7 +203,7 @@ func TestVolumeIDDiffersForARecreatedName(t *testing.T) {
 	if volumeID("data", 7) == volumeID("data", 8) {
 		t.Error("a recreated volume reused the id of the deleted one, and so its stale LVs")
 	}
-	if volumeID("data", 7) != volumeID("data", 7) {
+	if first, again := volumeID("data", 7), volumeID("data", 7); first != again {
 		t.Error("id not stable across retries of one request")
 	}
 }

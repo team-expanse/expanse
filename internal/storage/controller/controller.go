@@ -1,23 +1,15 @@
-// Package controller is the leader-side volume controller (Phase 06
-// T13, §4.6). One instance runs on the Raft leader — leader-only work
-// is the Phase 04/05 pattern (an IsLeader gate checked every tick),
-// not a third mechanism. Responsibilities per spec:
+// Package controller is the leader-side volume controller. One instance runs on
+// the Raft leader (an IsLeader gate checked every tick). It plans; the node
+// runtimes (volume.Node) act. Responsibilities:
 //
-//   - volume deletion end-to-end (mark Deleting → runtimes destroy
-//     their local zvols → controller drops the records); creation is
-//     the leader-gated runtime loop (T10) using T03's placement;
-//   - primary election (highest-seq rule, ties by lowest node ID —
-//     §4.3 failover step 2; the elected runtime runs T11's recovery
-//     before serving);
-//   - under-replication detection with alerts (§4.6);
-//   - replica rebuild when a node is permanently lost: replacement
-//     placement + Resyncing row; the runtimes converge via T12's
-//     resync (full or incremental as appropriate). Scheduling is
-//     bounded — max 2 rebuilds in flight per node;
-//   - monthly scrub scheduling per pool.
+//   - placement of queued creates (place.go);
+//   - primary election among healthy replicas (election.go). DRBD quorum and
+//     the volume lease make promotion safe, so election only chooses who tries;
+//   - deletion: mark Deleting, wait for every node to drop its placement row,
+//     then release the allocation and drop the records (delete.go);
+//   - the volume's derived state and under-replication alerts (§4.6).
 //
-// StateNeedsManualRecovery volumes are never touched (§9: a human
-// decides; `expanse ctl volume diverged`, T15).
+// Volumes in StateNeedsManualRecovery are never touched: a human decides.
 package controller
 
 import (
@@ -25,9 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
@@ -39,61 +29,30 @@ import (
 	pbproto "google.golang.org/protobuf/proto"
 )
 
-// ZFS is the controller's destructive surface (*zfs.Exec satisfies it).
-type ZFS interface {
-	DestroyZvol(ctx context.Context, zvol string, recursive bool) error
-	Scrub(ctx context.Context, pool string) error
-}
-
 // Options configures the controller.
 type Options struct {
 	NodeID string
 	St     store.Store
-	Pool   string
 	Logger *slog.Logger
 
-	// IsLeader gates every mutating action: only the Raft leader
-	// plans (the Phase 04/05 leader-only pattern).
+	// IsLeader gates every mutating action: only the Raft leader plans.
 	IsLeader func() bool
 
-	// ZFS performs pool scrubs and zvol destroys (nil in unit tests).
-	ZFS ZFS
-
-	// Alert receives under-replication / placement events (§4.6
-	// "alert if it cannot be met").
+	// Alert receives under-replication events (§4.6 "alert if it cannot be met").
 	Alert func(AlertEvent)
 
 	// Interval is the reconcile cadence (default 5 s).
 	Interval time.Duration
 
-	// ScrubInterval is the monthly scrub cadence (default 30d).
-	ScrubInterval time.Duration
-
-	// MaxRebuildsPerNode bounds concurrent rebuilds scheduled onto one
-	// node (spec: max 2 resync-class operations per node).
-	MaxRebuildsPerNode int
-
-	// ProbeSeq asks a candidate node for the LIVE last sequence of its
-	// durable copy of volID (recovery 4a QuerySeq over the exvol
-	// transport). When set, election requires probe evidence of
-	// currency — the store's placement.Sequence is written
-	// asynchronously and is not trusted. nil (unit tests) falls back
-	// to placement.Sequence.
-	ProbeSeq func(ctx context.Context, volID, nodeID string) (uint64, error)
-
-	// Alloc hands out each volume's DRBD minor, port and node-ids at creation.
+	// Alloc hands out each volume's DRBD minor, port and node-ids at creation
+	// and takes them back at deletion.
 	Alloc *drbd.Allocator
-
-	// NoCandidateRounds is how many consecutive election rounds with
-	// zero live probe evidence flag NeedsManualRecovery (§9). Default
-	// 3 — one bad probe round must not flip a volume to manual mode.
-	NoCandidateRounds int
 }
 
 // AlertEvent is a controller-raised alert.
 type AlertEvent struct {
 	VolID  string
-	Kind   string // "under-replication" | "no-rebuild-target"
+	Kind   string // "under-replication"
 	Detail string
 	Have   int
 	Want   int
@@ -101,14 +60,8 @@ type AlertEvent struct {
 
 // Controller is the leader-side volume controller.
 type Controller struct {
-	opts      Options
-	log       *slog.Logger
-	rebuilds  map[string]int // node ID → scheduled rebuilds in flight
-	lastScrub time.Time
-
-	noCandRounds map[string]int // volID → consecutive no-evidence rounds
-
-	latchNoted map[string]time.Time // volID → when a stuck latch was last reported
+	opts Options
+	log  *slog.Logger
 }
 
 // New builds the controller. Call Run in a goroutine.
@@ -116,16 +69,10 @@ func New(opts Options) *Controller {
 	if opts.Interval <= 0 {
 		opts.Interval = 5 * time.Second
 	}
-	if opts.ScrubInterval <= 0 {
-		opts.ScrubInterval = 30 * 24 * time.Hour
-	}
-	if opts.MaxRebuildsPerNode <= 0 {
-		opts.MaxRebuildsPerNode = 2
-	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Controller{opts: opts, log: opts.Logger, rebuilds: map[string]int{}, noCandRounds: map[string]int{}, latchNoted: map[string]time.Time{}}
+	return &Controller{opts: opts, log: opts.Logger}
 }
 
 // Run reconciles every tick until the context ends.
@@ -168,62 +115,36 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.log.Warn("volume ops failed", "err", err)
 	}
 	for _, id := range ids {
-		spec, err := storage.LoadSpec(ctx, c.opts.St, id)
-		if err != nil {
-			c.log.Warn("reconcile: load spec failed; skipping volume this round", "vol", id, "err", err)
-			continue
-		}
-		status, rev, err := storage.LoadStatus(ctx, c.opts.St, id)
-		if err != nil {
-			c.log.Warn("reconcile: load status failed; skipping volume this round", "vol", id, "err", err)
-			continue
-		}
-		switch status.State {
-		case storage.StateDeleting:
-			c.finalizeDelete(ctx, id, &spec, &status)
-			continue
-		case storage.StateNeedsManualRecovery:
-			// §9: a human decides; the controller never touches a
-			// DIVERGED volume. But a latch set by the no-candidate path
-			// (transient multi-node churn: leases lapse under raft
-			// leader loss, nodes reboot) must not turn into permanent
-			// unavailability — when a meshed placement node presents
-			// live probe evidence, the volume is provably intact and
-			// election may proceed.
-			if !storage.AutoLatched(ctx, c.opts.St, id) {
-				c.noteLatched(id, "latched by recovery or an operator (not by the no-candidate path)")
-				continue
-			}
-			live, why := c.liveCandidateExists(ctx, id, &status, meshed)
-			if !live {
-				c.noteLatched(id, why)
-				continue
-			}
-			c.noCandRounds[id] = 0
-			status.State = storage.StateDegraded
-			if err := storage.CompareAndSwapStatus(ctx, c.opts.St, id, rev, status); err == nil {
-				storage.ClearAutoLatch(ctx, c.opts.St, id)
-				c.log.Info("manual-recovery latch cleared: live candidate presented probe evidence", "vol", id)
-			} else {
-				c.log.Warn("manual-recovery latch: clearing CAS failed; will retry", "vol", id, "err", err)
-			}
-			continue
-		}
-		c.electPrimary(ctx, id, &status, rev, meshed)
-		if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
-			c.log.Warn("reconcile: reload status after electPrimary failed; skipping rest of round", "vol", id, "err", err)
-			continue // deleted mid-flight
-		}
-		_ = rev
-		c.enforceReplication(ctx, id, &spec, &status, rev, meshed)
-		if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
-			c.log.Warn("reconcile: reload status after enforceReplication failed; skipping rebuild check", "vol", id, "err", err)
-			continue
-		}
-		c.rebuildLostReplicas(ctx, id, &spec, &status, rev, meshed)
+		c.reconcileVolume(ctx, id, meshed)
 	}
-	c.maybeScrub(ctx)
 	return nil
+}
+
+// reconcileVolume runs one volume through its passes; each pass reloads what the last changed.
+func (c *Controller) reconcileVolume(ctx context.Context, id string, meshed map[string]bool) {
+	spec, err := storage.LoadSpec(ctx, c.opts.St, id)
+	if err != nil {
+		c.log.Warn("reconcile: load spec failed; skipping volume this round", "vol", id, "err", err)
+		return
+	}
+	status, rev, err := storage.LoadStatus(ctx, c.opts.St, id)
+	if err != nil {
+		c.log.Warn("reconcile: load status failed; skipping volume this round", "vol", id, "err", err)
+		return
+	}
+	switch status.State {
+	case storage.StateDeleting:
+		c.finalizeDelete(ctx, id, &spec, &status)
+		return
+	case storage.StateNeedsManualRecovery:
+		return // a human decides; the controller never touches a diverged volume
+	}
+	c.electPrimary(ctx, id, &status, rev, meshed)
+	if status, rev, err = storage.LoadStatus(ctx, c.opts.St, id); err != nil {
+		c.log.Warn("reconcile: reload status after election failed", "vol", id, "err", err)
+		return
+	}
+	c.enforceReplication(ctx, id, &spec, &status, rev, meshed)
 }
 
 // processVolumeOps consumes operator requests written by
@@ -386,30 +307,22 @@ func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool
 	return nil
 }
 
-// movePrimaryForBlock elects the volume primary among the nodes that
-// host the block (highest replica Sequence, lowest node ID on ties).
+// movePrimaryForBlock names the node that should be primary among those hosting
+// the block: the lowest node ID holding a live replica.
 func (c *Controller) movePrimaryForBlock(vol storage.Status, block map[string]bool, meshed map[string]bool) {
 	if vol.Primary != "" && block[vol.Primary] {
 		return // primary already co-located
 	}
-	type cand struct {
-		id  string
-		seq uint64
-		rev store.Revision
-	}
-	var best *cand
+	best := ""
 	for _, p := range vol.Placement {
-		if !block[p.NodeID] || !meshed[p.NodeID] {
-			continue
-		}
-		if best == nil || p.Sequence > best.seq || (p.Sequence == best.seq && p.NodeID < best.id) {
-			best = &cand{id: p.NodeID, seq: p.Sequence}
+		if block[p.NodeID] && meshed[p.NodeID] && (best == "" || p.NodeID < best) {
+			best = p.NodeID
 		}
 	}
-	if best == nil {
+	if best == "" {
 		return // the block lives nowhere we hold a replica yet
 	}
-	c.log.Info("primary moves to block host", "vol_primary", vol.Primary, "to", best.id, "seq", best.seq)
+	c.log.Info("primary moves to block host", "vol_primary", vol.Primary, "to", best)
 }
 
 // blockNodes maps a block's active placement node IDs.
@@ -456,363 +369,6 @@ func splitBlockKey2(k string) (ns, name string) {
 	return rest, ""
 }
 
-// Delete marks a volume Deleting (the runtimes destroy their local
-// zvols; the next reconcile drops the records).
-func (c *Controller) Delete(ctx context.Context, volID string) error {
-	status, rev, err := storage.LoadStatus(ctx, c.opts.St, volID)
-	if err != nil {
-		return err
-	}
-	status.State = storage.StateDeleting
-	return storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, status)
-}
-
-// finalizeDelete destroys local state for a deleting volume and drops
-// the records.
-func (c *Controller) finalizeDelete(ctx context.Context, volID string, spec *storage.Spec, status *storage.Status) {
-	if c.opts.ZFS != nil {
-		for _, p := range status.Placement {
-			_ = c.opts.ZFS.DestroyZvol(ctx, p.ZvolPath, true) //nolint:errcheck — already gone is fine
-		}
-	}
-	_ = c.opts.St.Delete(ctx, storage.SpecKey(volID), 0)
-	_ = c.opts.St.Delete(ctx, storage.StatusKey(volID), 0)
-	c.log.Info("volume deleted", "vol", volID, "name", spec.Name)
-}
-
-// electPrimary keeps a valid primary elected by the highest-seq rule
-// (§4.3 failover step 2). With ProbeSeq wired (production), a
-// candidate must present LIVE probe evidence (4a QuerySeq) that its
-// durable copy reaches the highest probed sequence — the store's
-// placement.Sequence is asynchronous and can elect a node whose zvol
-// was lost (the VM runs elected a torn zvol this way). Ties break by
-// lowest node ID. The elected node's runtime acquires the volume lease
-// and runs T11's recovery (steps 4a–5) before serving.
-func (c *Controller) electPrimary(ctx context.Context, volID string, status *storage.Status, rev store.Revision, meshed map[string]bool) {
-	if status.Primary != "" {
-		primaryMeshed := meshed[status.Primary]
-		leaseExpired := primaryMeshed && c.volLeaseExpired(ctx, volID)
-		if primaryMeshed && !leaseExpired {
-			c.noCandRounds[volID] = 0
-			return // healthy primary: meshed, and its lease is either valid
-			// or not yet acquired (a fresh election is still mid-handshake)
-		}
-		c.log.Info("re-electing: current primary is unusable", "vol", volID,
-			"primary", status.Primary, "meshed", primaryMeshed, "lease_expired", leaseExpired)
-	}
-	type cand struct {
-		id  string
-		seq uint64
-	}
-	var cands []cand
-	if c.opts.ProbeSeq != nil {
-		// Currency gate (T17.4): only nodes whose durable copy answers
-		// a live probe are eligible, and only at the highest probed
-		// sequence — a node whose oplog is behind must be leveled by
-		// recovery, not handed the write path. Probes run IN PARALLEL
-		// under one round deadline: a sequential probe lets a dead
-		// candidate consume the whole budget before a live one is ever
-		// asked (observed in the durability VM run — the dead node's
-		// dial timeout starved the live replica, refusing elections
-		// that had a perfectly good candidate).
-		pctx, cancel := context.WithTimeout(ctx, probeBudget)
-		type probeRes struct {
-			node string
-			seq  uint64
-			err  error
-		}
-		var live []string // meshed placement order, for deterministic probe list
-		var why []string  // per placement, why it was or was not a candidate (for the refusal log)
-		for _, p := range status.Placement {
-			switch {
-			case !meshed[p.NodeID]:
-				why = append(why, p.NodeID+"(not meshed)")
-			case p.Role == storage.RoleStale:
-				why = append(why, p.NodeID+"(Stale)")
-			default:
-				live = append(live, p.NodeID)
-			}
-		}
-		results := make([]probeRes, len(live))
-		var wg sync.WaitGroup
-		for i, node := range live {
-			wg.Add(1)
-			go func(i int, node string) {
-				defer wg.Done()
-				seq, err := c.opts.ProbeSeq(pctx, volID, node)
-				results[i] = probeRes{node: node, seq: seq, err: err}
-			}(i, node)
-		}
-		wg.Wait()
-		cancel()
-		for _, pr := range results {
-			if pr.err != nil {
-				why = append(why, pr.node+"(probe failed)")
-				c.log.Warn("election probe failed; candidate not eligible",
-					"vol", volID, "node", pr.node, "err", pr.err)
-				continue
-			}
-			cands = append(cands, cand{pr.node, pr.seq})
-		}
-		if len(cands) == 0 {
-			informative := len(live) >= len(status.Placement)/2+1
-			c.noCurrentCandidate(ctx, volID, status, rev, strings.Join(why, " "), informative)
-			return
-		}
-		c.noCandRounds[volID] = 0
-	} else {
-		for _, p := range status.Placement {
-			if meshed[p.NodeID] && p.Role != storage.RoleStale {
-				cands = append(cands, cand{p.NodeID, p.Sequence})
-			}
-		}
-		if len(cands) == 0 {
-			return // no meshed replica can serve; under-replication covers
-		}
-	}
-	sort.Slice(cands, func(i, j int) bool {
-		if cands[i].seq != cands[j].seq {
-			return cands[i].seq > cands[j].seq // highest seq wins
-		}
-		return cands[i].id < cands[j].id // ties → lowest node ID
-	})
-	// Hysteresis: a re-election that changes nothing (same primary,
-	// same state) must not CAS — revision churn from a sticky
-	// situation re-triggers the runtimes' demotion paths every tick.
-	wantState := status.State
-	if status.State == storage.StateHealthy && (status.Primary == "" || status.Primary != cands[0].id) {
-		wantState = storage.StateDegraded // recovery (T11) levels it first
-	}
-	if status.Primary == cands[0].id && status.State == wantState {
-		return
-	}
-	status.Primary = cands[0].id
-	status.State = wantState
-	if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err != nil {
-		c.log.Warn("primary election CAS failed; will retry next round", "vol", volID, "primary", status.Primary, "seq", cands[0].seq, "err", err)
-	} else {
-		c.log.Info("primary elected", "vol", volID, "primary", status.Primary, "seq", cands[0].seq)
-	}
-}
-
-// probeBudget bounds one full election round's probes; the wired probe
-// dial inherits this deadline.
-const probeBudget = 3 * time.Second
-
-// noCurrentCandidate is the §9 refusal path: the old primary is gone
-// (or fenced) and NO candidate presented live evidence of a current
-// durable copy. Electing one anyway would serve a possibly-stale zvol;
-// electing nobody keeps the volume read-only-fenced. After
-// NoCandidateRounds consecutive evidence-less rounds the volume is
-// flagged NeedsManualRecovery — suspected data loss, a human decides.
-func (c *Controller) noCurrentCandidate(ctx context.Context, volID string, status *storage.Status, rev store.Revision, why string, informative bool) {
-	if informative { // too few probed nodes is a gap in the controller's view, not evidence of loss
-		c.noCandRounds[volID]++
-	}
-	rounds := c.noCandRounds[volID]
-	limit := c.opts.NoCandidateRounds
-	if limit <= 0 {
-		limit = 3
-	}
-	c.log.Warn("election refused: no candidate with live probe evidence",
-		"vol", volID, "rounds", rounds, "primary", status.Primary, "candidates", why)
-	if c.opts.Alert != nil {
-		c.opts.Alert(AlertEvent{VolID: volID, Kind: "no-current-candidate", Detail: fmt.Sprintf("round %d of %d", rounds, limit)})
-	}
-	if !informative || rounds < limit {
-		return
-	}
-	if status.State != storage.StateNeedsManualRecovery {
-		status.State = storage.StateNeedsManualRecovery
-		// Marker first: a latch without it could never lift itself.
-		if err := storage.SetAutoLatch(ctx, c.opts.St, volID); err != nil {
-			c.log.Warn("election: cannot record the liftable latch marker; not latching", "vol", volID, "err", err)
-			return
-		}
-		if err := storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status); err == nil {
-			c.log.Error("election: no current candidate — manual recovery required", "vol", volID, "rounds", rounds)
-		} else {
-			storage.ClearAutoLatch(ctx, c.opts.St, volID)
-		}
-	}
-}
-
-// liveCandidateExists reports whether any meshed placement node answers
-// a live currency probe. Used ONLY to exit the no-candidate manual-
-// recovery latch: presence of a live, provable durable copy is the
-// strongest evidence the volume is intact, so keeping the volume
-// fenced would trade a transient outage for a permanent one.
-func (c *Controller) liveCandidateExists(ctx context.Context, volID string, status *storage.Status, meshed map[string]bool) (bool, string) {
-	if c.opts.ProbeSeq == nil {
-		return false, "no probe wired"
-	}
-	pctx, cancel := context.WithTimeout(ctx, probeBudget)
-	defer cancel()
-	var why []string
-	for _, p := range status.Placement {
-		if !meshed[p.NodeID] {
-			why = append(why, p.NodeID+"(not meshed)")
-			continue
-		}
-		_, err := c.opts.ProbeSeq(pctx, volID, p.NodeID)
-		if err == nil {
-			return true, ""
-		}
-		why = append(why, fmt.Sprintf("%s(probe failed: %v)", p.NodeID, err))
-	}
-	return false, strings.Join(why, " ")
-}
-
-// noteLatched says why a latched volume is not being served, at most once a
-// minute per volume, so a stuck latch is never silent.
-func (c *Controller) noteLatched(volID, why string) {
-	if time.Since(c.latchNoted[volID]) < time.Minute {
-		return
-	}
-	c.latchNoted[volID] = time.Now()
-	c.log.Warn("volume stays latched for manual recovery", "vol", volID, "why", why)
-}
-
-// volLeaseExpired reports whether the volume's primary lease exists
-// and has lapsed (15s skew allowance, matching meshedNodes). That is
-// the proof the primary died: a rebooted node is meshed again, but its
-// volume lease died with the crash (TTL ≪ boot time) — it must
-// REPROVE itself via re-election and recovery, not silently resume
-// serving a possibly-behind zvol. A MISSING record is NOT expiry: a
-// freshly elected primary may not have acquired its lease yet.
-func (c *Controller) volLeaseExpired(ctx context.Context, volID string) bool {
-	lm := lease.NewManager(c.opts.St, "storage-controller")
-	l, ok, err := lm.Inspect(ctx, "exvol-vol-"+volID)
-	if err != nil || !ok {
-		return false
-	}
-	return time.Now().After(l.ExpiresAt.Add(15 * time.Second))
-}
-
-// enforceReplication derives the volume's live State from its actual
-// reachable, healthy replica count (§4.6, G6.11/G6.12): Degraded once
-// replicas drop below the replication factor but a write quorum is
-// still reachable (still readable+writable); ReadOnly once even a
-// write quorum is unreachable — reads still succeed from the primary's
-// local copy, writes already fail fast with EIO via the primary's own
-// quorum-ack rejection (never hang), this just makes that visible.
-// Recovers back to Degraded/Healthy as replicas rejoin and resync —
-// unlike a one-way degrade, staying Degraded forever after a rejoin
-// would misreport a fully-recovered volume as still impaired.
-func (c *Controller) enforceReplication(ctx context.Context, volID string, spec *storage.Spec, status *storage.Status, rev store.Revision, meshed map[string]bool) {
-	healthy := 0
-	for _, p := range status.Placement {
-		if p.Healthy && meshed[p.NodeID] {
-			healthy++
-		}
-	}
-	// floor(R/2)+1 — matches the primary's own write-ack quorum
-	// (protocol.Primary.Quorum) exactly.
-	quorum := spec.Replication/2 + 1
-	want := storage.StateHealthy
-	switch {
-	case healthy < quorum:
-		want = storage.StateReadOnly
-	case healthy < spec.Replication:
-		want = storage.StateDegraded
-	}
-	if want != storage.StateHealthy {
-		c.emitAlert(AlertEvent{
-			VolID: volID, Kind: "under-replication",
-			Have: healthy, Want: spec.Replication,
-			Detail: "replication factor cannot be met",
-		})
-	}
-	switch status.State {
-	case storage.StateHealthy, storage.StateDegraded, storage.StateReadOnly:
-		if status.State != want {
-			status.State = want
-			_ = storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status)
-		}
-	}
-}
-
-// rebuildLostReplicas replaces replicas on permanently-lost nodes:
-// replacement placement (spread via T03, preferring nodes with free
-// space), the replacement row marked Resyncing. The runtimes converge:
-// the new node creates its zvol, the primary fans out to it and T12's
-// resync fills it (full or incremental as appropriate). Scheduling is
-// bounded: max MaxRebuildsPerNode in flight per node.
-func (c *Controller) rebuildLostReplicas(ctx context.Context, volID string, spec *storage.Spec, status *storage.Status, rev store.Revision, meshed map[string]bool) {
-	lost := false
-	var existing []string
-	var freeNodes []string
-	for _, p := range status.Placement {
-		existing = append(existing, p.NodeID)
-		if !meshed[p.NodeID] {
-			lost = true
-		}
-	}
-	if !lost {
-		return
-	}
-	for id := range meshed {
-		if c.rebuilds[id] < c.opts.MaxRebuildsPerNode {
-			freeNodes = append(freeNodes, id)
-		}
-	}
-	sort.Strings(freeNodes)
-	infos := make([]storage.NodeInfo, 0, len(freeNodes))
-	for _, id := range freeNodes {
-		infos = append(infos, storage.NodeInfo{ID: id, PoolName: c.opts.Pool})
-	}
-	class := storage.DefaultStorageClass()
-	class.Replication = 1 // one replacement replica per pass
-	chosen, err := storage.SelectNodes(class, infos, existing)
-	if err != nil {
-		c.emitAlert(AlertEvent{
-			VolID: volID, Kind: "no-rebuild-target",
-			Detail: "no node available for replica rebuild",
-		})
-		return
-	}
-	repl := chosen[0]
-	c.rebuilds[repl.ID]++
-	c.log.Info("replica rebuild scheduled", "vol", volID, "new node", repl.ID)
-	for i := range status.Placement {
-		p := &status.Placement[i]
-		if !meshed[p.NodeID] {
-			// The replacement takes over the row (the zvol path is
-			// per-volume, not per-node).
-			p.NodeID = repl.ID
-			p.Role = storage.RoleResyncing
-			p.Healthy = false
-			p.Sequence = 0
-			break
-		}
-	}
-	_ = storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status)
-}
-
-// RebuildDone releases one scheduled rebuild slot (called when the
-// runtimes complete or abandon a rebuild).
-func (c *Controller) RebuildDone(nodeID string) {
-	if c.rebuilds[nodeID] > 0 {
-		c.rebuilds[nodeID]--
-	}
-}
-
-// maybeScrub schedules a monthly scrub per pool (§4.6).
-func (c *Controller) maybeScrub(ctx context.Context) {
-	if c.opts.ZFS == nil {
-		return
-	}
-	if time.Since(c.lastScrub) < c.opts.ScrubInterval {
-		return
-	}
-	c.lastScrub = time.Now()
-	if err := c.opts.ZFS.Scrub(ctx, c.opts.Pool); err != nil {
-		c.log.Warn("scrub schedule failed", "pool", c.opts.Pool, "err", err)
-	} else {
-		c.log.Info("scrub scheduled", "pool", c.opts.Pool)
-	}
-}
-
 // meshedNodes lists node IDs considered alive for placement and
 // election decisions. A node publishes a mesh record that PERSISTS
 // through a hard kill (qemu quit never unpublishes anything), so the
@@ -853,15 +409,4 @@ func (c *Controller) emitAlert(ev AlertEvent) {
 	}
 	c.log.Warn("volume alert", "vol", ev.VolID, "kind", ev.Kind,
 		"have", ev.Have, "want", ev.Want, "detail", ev.Detail)
-}
-
-// ErrNoFit is placement space-accounting refusal.
-type errNoFit struct {
-	vol, node string
-	need      uint64
-	free      uint64
-}
-
-func (e *errNoFit) Error() string {
-	return fmt.Sprintf("volume %s does not fit on %s: needs %d, pool free %d", e.vol, e.node, e.need, e.free)
 }

@@ -36,8 +36,6 @@ import (
 	volctlc "github.com/expanse/expanse/internal/storage/controller"
 	expmount "github.com/expanse/expanse/internal/storage/exvol/mount"
 	exvolrt "github.com/expanse/expanse/internal/storage/exvol/runtime"
-	exvoltp "github.com/expanse/expanse/internal/storage/exvol/transport"
-	expzfs "github.com/expanse/expanse/internal/storage/zfs"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -382,31 +380,11 @@ func New(cfg Config) (*Agent, error) {
 		a.volctl = volctlc.New(volctlc.Options{
 			NodeID: cfg.NodeID,
 			St:     st,
-			Pool:   cfg.ExvolPool,
 			IsLeader: func() bool {
 				if a.ctl == nil || a.ctl.store == nil {
 					return false
 				}
 				return a.ctl.store.IsLeader()
-			},
-			ZFS: expzfs.New(),
-			ProbeSeq: func(ctx context.Context, volID, nodeID string) (uint64, error) {
-				addr, perr := a.meshAddrOf(nodeID)
-				if perr != nil {
-					return 0, perr
-				}
-				pctx, cancel := context.WithTimeout(ctx, time.Second)
-				defer cancel()
-				conn, perr := exvoltp.Dial(pctx, fmt.Sprintf("%s:%d", addr, config.PortExvol))
-				if perr != nil {
-					return 0, perr
-				}
-				defer conn.Close()
-				rep, perr := conn.QuerySeq(volID)
-				if perr != nil {
-					return 0, perr
-				}
-				return rep.GetLastSeq(), nil
 			},
 			Logger: logger,
 		})
