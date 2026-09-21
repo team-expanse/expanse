@@ -1,227 +1,87 @@
-"""vol-resync-incremental testScript body (G6.6, G6.7).
+"""vol-resync-incremental (X4): a replica that missed writes catches up by bitmap, not by full copy.
 
-Create a 10 GiB volume, write 5 GiB, take a secondary offline, write
-100 MiB more, bring it back, and prove the resync that catches it up
-is incremental, not a full copy: bytes received over exp0 must stay
-well under the 5 GiB baseline (< 500 MiB) and the whole resync must
-finish inside 60 s. The incremental path may be either op-replay
-(runtime.tryOpReplay — resending exactly the missed ops over the live
-write protocol; the common case, since a replica from the volume's
-original placement has no @resync-<seq> snapshot to diff against yet)
-or a ZFS `send -i` once a snapshot lineage exists; either satisfies
-G6.6's bound. Finish by checksumming the written range on both nodes
-to prove the incremental catch-up landed correctly, not just quickly.
+A replication-3 volume is filled, one secondary's link is cut, and a small region is overwritten
+on the primary. When the link returns, the bytes the returning node receives over the mesh must be
+close to what was overwritten (far below the volume size) and the resync must finish inside the
+budget, with every replica byte-identical. A control then forces a full resync on the same node: it
+must move about the whole volume, which shows the counter can tell the two apart.
 
-Spliced (via readFile, see vol-resync-incremental.nix) after
-cluster-common.py, which provides n1/n2/n3, form(), wait_agent_ready(),
-and friends.
+Runs after cluster-common.py and vol_cluster.py.
 """
 
-VOL = "rsi"
-FIVE_GIB_MB = 5 * 1024
-DRIFT_MB = 100
-BLK_MB = 4
+SIZE_MIB = 1024
+DRIFT_MIB = 100
+DRIFT_AT_MIB = 400
+NAME = "vrsi"
+MAX_BYTES = 5 * DRIFT_MIB * 1024 * 1024 // 2  # 2.5x the drift; a full copy is 4x this
+MAX_SECONDS = 60
+FULL_COPY_MIN = 9 * SIZE_MIB * 1024 * 1024 // 10
 
 
-def vol_inspect(m):
-    rc, out = m.execute(
-        f"expanse ctl volume inspect {VOL} --socket /run/expanse/agent.sock 2>&1"
-    )
-    return out if rc == 0 else ""
+def rx_bytes(m):
+    """Bytes received on the mesh interface, which carries all DRBD traffic."""
+    for line in m.succeed("cat /proc/net/dev").splitlines():
+        if line.strip().startswith("exp0:"):
+            return int(line.split(":", 1)[1].split()[0])
+    raise Exception(f"no exp0 on {m.name}")
 
 
-def machine_by_name(name):
-    for mm in [n1, n2, n3]:
-        if mm.name == name:
-            return mm
-    return None
+def resync_measured(primary, victim, res, trigger):
+    """Run trigger, then return (bytes the victim received, seconds) until every replica is UpToDate."""
+    before, start = rx_bytes(victim), time.time()
+    trigger()
+    wait_for(lambda: fully_replicated(primary, res), "every replica to be UpToDate", 300)
+    return rx_bytes(victim) - before, time.time() - start
 
 
-def primary_node():
-    for m in [n1, n2, n3]:
-        out = vol_inspect(m)
-        for ln in out.splitlines():
-            if "primary:" in ln:
-                pid = ln.split()[-1]
-                mm = machine_by_name(pid)
-                if mm is not None:
-                    return mm
-    raise AssertionError("no primary in inspect output")
+def invalidate(primary, victim, res):
+    victim.succeed(f"drbdadm invalidate {res}")
+    wait_for(lambda: not fully_replicated(primary, res), "the invalidation to reach the primary", 30)
 
 
-def wait_primary_ready(timeout=120):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        for m in [n1, n2, n3]:
-            if m.execute("ls /dev/exvol 2>/dev/null")[1].strip():
-                return m
-        time.sleep(2)
-    raise AssertionError(f"no ready primary within {timeout}s")
+def dump_on_failure(res, machines):
+    for m in machines:
+        print(f"[{m.name}] drbd:\n{m.execute(f'drbdsetup status {res} --verbose --statistics 2>&1')[1]}")
 
 
-def replica_rows(out):
-    """Parse printInspect's REPLICA/ROLE/SEQ/LAG/LAST-SEEN table rows."""
-    return [
-        ln.split()
-        for ln in out.splitlines()
-        if len(ln.split()) >= 5
-        and ln.split()[1] in ("primary", "secondary", "stale", "resyncing")
-    ]
+form("vrsi")
 
+with subtest("a replication-3 volume is created and filled"):
+    n1.succeed(f"expanse ctl volume create {NAME} --size {SIZE_MIB}Mi --replication 3")
+    wait_for(lambda: (volume_row(n1, NAME) or {}).get("state") == "healthy", "the volume to be Healthy", 120)
+    res = volume_row(n1, NAME)["id"]
+    wait_for(lambda: len(primaries(res)) == 1, "one primary")
+    primary = primaries(res)[0]
+    victim = [m for m in NODES if m is not primary][0]
+    dev = device_of(primary)
+    fill_paced(primary, dev, SIZE_MIB)
+    wait_for(lambda: fully_replicated(primary, res), "the replicas to be UpToDate")
+    print(f"{primary.name} is primary, {victim.name} will miss {DRIFT_MIB} MiB of writes")
 
-def wait_all_current(timeout=180):
-    """All 3 replicas report role primary/secondary at lag 0 — proves the
-    about-to-be-stopped victim provably holds the full 5 GiB baseline
-    before it goes offline, not just a quorum subset of it."""
-    deadline = time.time() + timeout
-    out = ""
-    while time.time() < deadline:
-        out = vol_inspect(primary_node())
-        rows = replica_rows(out)
-        if len(rows) == 3 and all(
-            r[1] in ("primary", "secondary") and r[3] == "0" for r in rows
-        ):
-            return out
-        time.sleep(3)
-    raise AssertionError(f"replicas never converged to lag 0 within {timeout}s:\n{out}")
+with subtest("a secondary is cut off and the primary overwrites a region"):
+    victim.block()
+    wait_for(lambda: connection_of(primary, res, victim) != "Connected", f"{victim.name} to be seen as gone", 120)
+    primary.succeed(f"dd if=/dev/urandom of={dev} bs=1M seek={DRIFT_AT_MIB} count={DRIFT_MIB} oflag=direct conv=notrunc,fsync")
+    want = checksum(primary, dev, SIZE_MIB)
 
+with subtest("the returning node receives about what it missed, in time"):
+    try:
+        received, seconds = resync_measured(primary, victim, res, victim.unblock)
+    except Exception:
+        dump_on_failure(res, [primary, victim])
+        raise
+    mib = received / 1024 / 1024
+    print(f"incremental resync: {mib:.0f} MiB received in {seconds:.0f}s for {DRIFT_MIB} MiB overwritten")
+    assert received < MAX_BYTES, f"received {mib:.0f} MiB for a {DRIFT_MIB} MiB drift: this is more than a bitmap resync"
+    assert seconds < MAX_SECONDS, f"resync took {seconds:.0f}s, budget {MAX_SECONDS}s"
 
-def wait_resynced(victim_name, timeout=60):
-    """Poll until `victim_name` rejoins the table as primary/secondary
-    (not stale/resyncing) alongside the other 2 replicas."""
-    deadline = time.time() + timeout
-    out = ""
-    while time.time() < deadline:
-        out = vol_inspect(primary_node())
-        rows = replica_rows(out)
-        by_name = {r[0]: r for r in rows}
-        v = by_name.get(victim_name)
-        if len(rows) == 3 and v is not None and v[1] in ("primary", "secondary"):
-            return out
-        time.sleep(2)
-    raise AssertionError(f"{victim_name} did not resync within {timeout}s:\n{out}")
+with subtest("every replica holds the same bytes"):
+    for m in NODES:
+        assert checksum(m, f"/dev/vg0/{res}", SIZE_MIB) == want, f"{m.name} differs from the primary"
 
-
-def exp0_rx_bytes(m):
-    rc, out = m.execute("cat /proc/net/dev")
-    assert rc == 0, "reading /proc/net/dev failed"
-    for ln in out.splitlines():
-        if ln.strip().startswith("exp0:"):
-            return int(ln.split(":", 1)[1].split()[0])
-    raise AssertionError(f"no exp0 line in /proc/net/dev on {m.name}:\n{out}")
-
-
-def paced_write(m, dev, seek_4m, total_blocks_4m, chunk_blocks=64, pause=0.5):
-    """Write `total_blocks_4m` 4 MiB blocks in chunk_blocks-sized bursts
-    with a short pause between them, instead of one uninterrupted dd.
-
-    A single multi-GiB dd saturates this VM harness's shared virtual
-    network link for its whole duration: WireGuard-encrypted exp0
-    replication traffic and raft's unrelated 192.168.1.x control-plane
-    traffic multiplex over the same emulated link here, and minutes of
-    sustained saturation reliably blew raft's 1 s heartbeat timeout and
-    tripped a spurious leader election mid-write — not a protocol bug
-    (§9's rate-limiting note is about resync traffic specifically;
-    foreground writes are deliberately never throttled by the product,
-    confirmed unaffected by vCPU count). Pacing the test's own write
-    bursts avoids saturating the shared link without changing how much
-    data ends up written or read back.
-    """
-    off = seek_4m
-    remaining = total_blocks_4m
-    while remaining > 0:
-        n = min(chunk_blocks, remaining)
-        m.succeed(f"dd if=/dev/urandom of={dev} bs=4M seek={off} count={n} conv=fsync,notrunc")
-        off += n
-        remaining -= n
-        if remaining > 0:
-            time.sleep(pause)
-
-
-def checksum_range(m, vol_id, blocks_4m):
-    rc, out = m.execute(
-        # iflag=direct: read the disk, not a page cache that may still
-        # hold pre-resync content.
-        f"dd iflag=direct if=/dev/zvol/volumes/volumes/{vol_id} bs=4M "
-        f"count={blocks_4m} 2>/dev/null | sha256sum | cut -d' ' -f1"
-    )
-    assert rc == 0 and out.strip(), f"checksum read failed on {m.name}: {out}"
-    return out.strip()
-
-
-form("volresync")
-
-with subtest("volume created, primary attached"):
-    n1.succeed(f"expanse ctl volume create {VOL} --size 10Gi")
-    for m in [n1, n2, n3]:
-        m.wait_until_succeeds(
-            "zfs list -H -o name -t volume | grep -q '^volumes/volumes/vol-'", timeout=90
-        )
-    primary = wait_primary_ready()
-    vol_id = primary.succeed("ls -1 /dev/exvol").strip()
-    dev = "/dev/exvol/" + vol_id
-    print(f"primary: {primary.name}  vol_id: {vol_id}")
-
-with subtest("write 5 GiB baseline; all 3 replicas converge to lag 0"):
-    paced_write(primary, dev, 0, FIVE_GIB_MB // BLK_MB)
-    wait_all_current(timeout=180)
-
-with subtest("stop a secondary (n3 unless n3 is primary)"):
-    secondaries = [m for m in [n1, n2, n3] if m.name != primary.name]
-    victim = secondaries[-1]  # [n1, n2, n3] minus primary: n3 survives last
-    print(f"victim: {victim.name}")
-    victim.succeed("systemctl stop expansed.service")
-
-with subtest("write 100 MiB more while the victim is down"):
-    paced_write(primary, dev, FIVE_GIB_MB // BLK_MB, DRIFT_MB // BLK_MB)
-
-with subtest("restart the victim; measure resync bytes and duration over exp0"):
-    victim.succeed("systemctl start expansed.service")
-    victim.wait_for_unit("expansed.service")
-    wait_agent_ready(victim)
-    victim.wait_until_succeeds("ip -4 -o addr show exp0", timeout=60)
-
-    baseline_rx = exp0_rx_bytes(victim)
-    start = time.time()
-    wait_resynced(victim.name, timeout=60)
-    elapsed = time.time() - start
-    received = exp0_rx_bytes(victim) - baseline_rx
-    print(f"resync: {received} bytes received on {victim.name}'s exp0 in {elapsed:.1f}s")
-
-    assert received < 500 * 1024 * 1024, (
-        f"resync sent {received} bytes (>= 500 MiB) over a 100 MiB drift — "
-        "looks like a full copy, not an incremental zfs send (G6.6)"
-    )
-    assert elapsed < 60, f"resync took {elapsed:.1f}s (> 60s budget, G6.7)"
-
-with subtest("victim's zvol checksum matches the primary's over the written range"):
-    total_blocks = (FIVE_GIB_MB + DRIFT_MB) // BLK_MB
-    want = checksum_range(primary, vol_id, total_blocks)
-    got = checksum_range(victim, vol_id, total_blocks)
-    if got != want:
-        # EVIDENCE: which side actually lied? Per-node snapshot identity
-        # (a resync that picked the wrong/no common ancestor shows up
-        # here), plus 4 MiB block-level localization of the mismatch
-        # (pre-drift baseline vs. the 100 MiB drift region).
-        for m in [primary, victim]:
-            print(f"EVIDENCE[{m.name}] snaps:", m.execute(
-                "zfs list -H -p -o name,used,written,creation -t snapshot "
-                "-r volumes/volumes 2>&1 | head -20"
-            )[1])
-            print(f"EVIDENCE[{m.name}] inspect:", vol_inspect(m))
-        blocks_want, blocks_got = [], []
-        for m, out_list in [(primary, blocks_want), (victim, blocks_got)]:
-            for b in range(total_blocks):
-                rc, h = m.execute(
-                    f"dd iflag=direct if=/dev/zvol/volumes/volumes/{vol_id} bs=4M "
-                    f"skip={b} count=1 2>/dev/null | sha256sum | cut -d' ' -f1"
-                )
-                out_list.append(h.strip())
-        diff = [b for b in range(total_blocks) if blocks_want[b] != blocks_got[b]]
-        print(f"EVIDENCE differing 4MiB blocks ({len(diff)}/{total_blocks}): {diff[:20]}")
-        print(f"EVIDENCE drift region is blocks [{FIVE_GIB_MB // BLK_MB}, {total_blocks})")
-    assert got == want, f"{victim.name} checksum {got} != primary's {want} (G6.15)"
-    print(
-        f"RESYNC-INCREMENTAL TEST PASSED: {received} bytes over exp0 (< 500 MiB), "
-        f"resync in {elapsed:.1f}s (< 60s), checksums match"
-    )
+with subtest("control: an invalidated replica is copied whole"):
+    full, full_seconds = resync_measured(primary, victim, res, lambda: invalidate(primary, victim, res))
+    print(f"full resync: {full / 1024 / 1024:.0f} MiB received in {full_seconds:.0f}s")
+    assert full > FULL_COPY_MIN, "a full resync moved less than the volume: the byte count cannot separate the two cases"
+    assert checksum(victim, f"/dev/vg0/{res}", SIZE_MIB) == want
+    print(f"VOL-RESYNC-INCREMENTAL PASSED: {mib:.0f} MiB in {seconds:.0f}s incremental, {full / 1024 / 1024:.0f} MiB full")

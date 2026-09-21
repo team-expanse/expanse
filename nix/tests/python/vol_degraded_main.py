@@ -19,12 +19,7 @@ REBUILD_BUDGET_S = 300  # the configured wait plus retire, forget, create and sy
 
 
 def row(m):
-    """The controller's row for the volume as m sees it, or None."""
-    for line in m.execute("expanse ctl volume list 2>&1")[1].splitlines():
-        cols = line.split()
-        if len(cols) >= 6 and cols[1] == NAME:
-            return {"id": cols[0], "state": cols[3].lower().removeprefix("volume_state_"), "nodes": sorted(cols[5].split(","))}
-    return None
+    return volume_row(m, NAME)
 
 
 def state_of(m):
