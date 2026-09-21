@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/expanse/expanse/internal/config"
 	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 )
@@ -24,10 +25,10 @@ const (
 // Range is an inclusive span of allocatable numbers.
 type Range struct{ Lo, Hi int }
 
-// Default ranges: 1000 volumes per cluster. B8 opens DefaultPorts in the firewall.
+// Default ranges: 1000 volumes per cluster. DefaultPorts is what the firewall opens on the mesh.
 var (
 	DefaultMinors = Range{Lo: 0, Hi: 999}
-	DefaultPorts  = Range{Lo: 7800, Hi: 8799}
+	DefaultPorts  = Range{Lo: config.DRBDPortLo, Hi: config.DRBDPortHi}
 )
 
 // Allocation is the persisted DRBD identity of one resource: its cluster-wide

@@ -31,7 +31,7 @@ let
     environment.systemPackages = [ pkgs.lvm2 pkgs.thin-provisioning-tools pkgs.e2fsprogs pkgs.iptables volctl ];
     virtualisation.emptyDiskImages = [ 1024 ];
     virtualisation.memorySize = 1024;
-    networking.firewall.allowedTCPPortRanges = [{ from = 7800; to = 8799; }];
+    networking.firewall.allowedTCPPortRanges = [{ from = 9500; to = 10499; }];
   };
 in
 {

@@ -9,4 +9,9 @@ const (
 	PortJoin       = 7446 // Join/bootstrap service (TLS, token-authenticated)
 	PortMDNS       = 5353 // mDNS discovery (UDP)
 	PortUI         = 8443 // Web UI (Phase 08)
+
+	// DRBD replication ports, opened on the mesh interface only. Kept clear of every
+	// port above so a volume's port never collides with a service on the node.
+	DRBDPortLo = 9500
+	DRBDPortHi = 10499
 )

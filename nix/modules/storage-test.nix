@@ -53,8 +53,8 @@ in
     services.lvm.boot.thin.enable = true;
     environment.systemPackages = [ pkgs.lvm2 pkgs.thin-provisioning-tools pkgs.e2fsprogs ];
 
-    # DRBD replication runs over the mesh; the ports are B8's production rule.
-    networking.firewall.interfaces.exp0.allowedTCPPortRanges = [{ from = 7800; to = 8799; }];
+    # DRBD replication runs over the mesh; the agent's ruleset admits the same range in production (vol-firewall).
+    networking.firewall.interfaces.exp0.allowedTCPPortRanges = [{ from = 9500; to = 10499; }];
 
     expanse.agent.storageVG = cfg.vgName;
     expanse.agent.storagePool = cfg.poolName;

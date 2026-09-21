@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"bytes"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -8,6 +9,10 @@ import (
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/binaryutil"
+	"github.com/google/nftables/expr"
+	"golang.org/x/sys/unix"
+
+	"github.com/expanse/expanse/internal/config"
 )
 
 // fakeConn records every operation in order, without a kernel.
@@ -124,9 +129,9 @@ func TestBootstrapShape(t *testing.T) {
 		t.Fatalf("want 4 dynamic sets, got %v", f.addedSets)
 	}
 	// §4.5 rule inventory: 2 ct + lo + icmp + icmpv6 + mesh + 4 tcp svc +
-	// 2 udp svc + 3 mgmt + 2 vip + 4 peer-any-iface cluster rules + 1 log = 22.
-	if f.rules != 22 {
-		t.Fatalf("want 22 static rules, got %d", f.rules)
+	// 2 udp svc + 3 mgmt + 2 vip + 4 peer-any-iface cluster rules + 1 drbd + 1 log = 23.
+	if f.rules != 23 {
+		t.Fatalf("want 23 static rules, got %d", f.rules)
 	}
 }
 
@@ -237,6 +242,7 @@ func TestRenderIsVerbatim(t *testing.T) {
 		"udp dport 51820 ip saddr @cluster_peers accept",
 		`iifname "exp0" tcp dport { 7443, 7444, 7445, 7446 } accept`,
 		`iifname "exp0" udp dport { 7445, 53 } accept`,
+		`iifname "exp0" tcp dport 9500-10499 accept`,
 		"tcp dport 22 accept",
 		"tcp dport 8443 accept",
 		"udp dport 5353 accept",
@@ -268,5 +274,60 @@ func TestSyncErrorPropagates(t *testing.T) {
 	err := Sync(f, Desired{TCPPorts: []uint16{80}})
 	if err == nil {
 		t.Fatal("want error")
+	}
+}
+
+// drbdRules returns the static rules that match a destination-port range.
+func drbdRules() []*nftables.Rule {
+	t := &nftables.Table{Family: nftables.TableFamilyINet, Name: Table}
+	var found []*nftables.Rule
+	for _, r := range staticRules(t, &nftables.Chain{Name: Chain, Table: t}) {
+		for _, e := range r.Exprs {
+			if _, ok := e.(*expr.Range); ok {
+				found = append(found, r)
+			}
+		}
+	}
+	return found
+}
+
+func TestDRBDPortsAreAcceptedOnTheMeshInterfaceOnly(t *testing.T) {
+	rules := drbdRules()
+	if len(rules) != 1 {
+		t.Fatalf("want exactly one port-range rule, got %d", len(rules))
+	}
+	var onExp0, onTCP, accepts bool
+	var span *expr.Range
+	for _, e := range rules[0].Exprs {
+		switch v := e.(type) {
+		case *expr.Cmp:
+			onExp0 = onExp0 || bytes.Equal(v.Data, ifname("exp0"))
+			onTCP = onTCP || bytes.Equal(v.Data, []byte{unix.IPPROTO_TCP})
+		case *expr.Range:
+			span = v
+		case *expr.Verdict:
+			accepts = v.Kind == expr.VerdictAccept
+		}
+	}
+	if !onExp0 || !onTCP || !accepts {
+		t.Errorf("rule must accept tcp on iifname exp0 (exp0=%v tcp=%v accept=%v)", onExp0, onTCP, accepts)
+	}
+	lo, hi := binaryutil.BigEndian.PutUint16(config.DRBDPortLo), binaryutil.BigEndian.PutUint16(config.DRBDPortHi)
+	if span.Op != expr.CmpOpEq || !bytes.Equal(span.FromData, lo) || !bytes.Equal(span.ToData, hi) {
+		t.Errorf("rule spans %x-%x, want %x-%x", span.FromData, span.ToData, lo, hi)
+	}
+}
+
+func TestNoServicePortFallsInTheDRBDRange(t *testing.T) {
+	services := map[string]int{
+		"mesh": PortMesh, "ca": PortCA, "raft": PortRaft, "join": PortJoin, "mgmt": PortMgmt,
+		"ssh": PortSSH, "web ui": PortWebUI, "mdns": PortMDNS, "dns": PortDNSNode,
+		"api": config.PortAPI, "config raft": config.PortRaft, "memberlist": config.PortMemberlist,
+		"config join": config.PortJoin, "config mdns": config.PortMDNS, "config ui": config.PortUI,
+	}
+	for name, port := range services {
+		if port >= config.DRBDPortLo && port <= config.DRBDPortHi {
+			t.Errorf("%s port %d is inside the DRBD range %d-%d", name, port, config.DRBDPortLo, config.DRBDPortHi)
+		}
 	}
 }

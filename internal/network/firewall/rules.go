@@ -15,6 +15,8 @@ import (
 	"github.com/google/nftables/binaryutil"
 	"github.com/google/nftables/expr"
 	"golang.org/x/sys/unix"
+
+	"github.com/expanse/expanse/internal/config"
 )
 
 // TableName / ChainName identify the generated ruleset.
@@ -165,6 +167,12 @@ func staticRules(t *nftables.Table, ch *nftables.Chain) []*nftables.Rule {
 			&expr.Lookup{SourceRegister: 1, SetName: set, Invert: false},
 		}...)
 	}
+	dportRange := func(p byte, lo, hi uint16) []expr.Any {
+		return append(proto(p), []expr.Any{
+			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
+			&expr.Range{Op: expr.CmpOpEq, Register: 1, FromData: binaryutil.BigEndian.PutUint16(lo), ToData: binaryutil.BigEndian.PutUint16(hi)},
+		}...)
+	}
 	saddrSet := func(set string) []expr.Any {
 		return []expr.Any{
 			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 12, Len: 4},
@@ -242,6 +250,9 @@ func staticRules(t *nftables.Table, ch *nftables.Chain) []*nftables.Rule {
 		add(append(append(iifname("exp0"), dportEq(p, unix.IPPROTO_UDP)...), &expr.Verdict{Kind: expr.VerdictAccept})...)
 	}
 
+	// DRBD replication — only over the overlay
+	add(append(append(iifname("exp0"), dportRange(unix.IPPROTO_TCP, config.DRBDPortLo, config.DRBDPortHi)...), &expr.Verdict{Kind: expr.VerdictAccept})...)
+
 	// management
 	add(append(dportEq(PortSSH, unix.IPPROTO_TCP), &expr.Verdict{Kind: expr.VerdictAccept})...)
 	add(append(dportEq(PortWebUI, unix.IPPROTO_TCP), &expr.Verdict{Kind: expr.VerdictAccept})...)
@@ -286,6 +297,8 @@ func Render(d Desired) string {
 	w("    # cluster services — only over the overlay")
 	w(`    iifname "exp0" tcp dport { %d, %d, %d, %d } accept`, PortCA, PortRaft, PortJoin, PortMgmt)
 	w(`    iifname "exp0" udp dport { %d, %d } accept`, PortJoin, PortDNSNode)
+	w("    # DRBD replication — only over the overlay")
+	w(`    iifname "exp0" tcp dport %d-%d accept`, config.DRBDPortLo, config.DRBDPortHi)
 	w("    # management")
 	w("    tcp dport %d accept", PortSSH)
 	w("    tcp dport %d accept", PortWebUI)
