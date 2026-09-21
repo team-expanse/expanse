@@ -64,3 +64,17 @@ def device_bytes(m):
 
 def head_sha(m, count_mib=32):
     return m.succeed(f"dd if=/dev/drbd0 bs=1M count={count_mib} iflag=direct 2>/dev/null | sha256sum").split()[0]
+
+
+def observe(m, ids):
+    """volctl observe on m: {host: replica}, plus 'quorum'. ids maps host -> node-id."""
+    members = ",".join(f"{h}={i}" for h, i in ids.items())
+    out = json.loads(volctl(m, f"observe -name {NAME} -self {m.name} -members {members}"))
+    view = {r["NodeID"]: r for r in out["Replicas"]}
+    view["quorum"] = out["Quorum"]
+    return view
+
+
+def roles(view):
+    """{host: (Role, Healthy)} of an observe() view."""
+    return {h: (r["Role"], r["Healthy"]) for h, r in view.items() if h != "quorum"}

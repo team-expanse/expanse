@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/expanse/expanse/internal/storage/drbd"
@@ -30,11 +31,12 @@ var commands = map[string]command{
 	"desired":   desired,
 	"reconcile": reconcile,
 	"hold":      hold,
+	"observe":   observe,
 }
 
 func main() {
 	if len(os.Args) < 2 || commands[os.Args[1]] == nil {
-		fmt.Fprintln(os.Stderr, "usage: volctl alloc|assign|retire|ack|show|desired|reconcile|hold [flags]")
+		fmt.Fprintln(os.Stderr, "usage: volctl alloc|assign|retire|ack|show|desired|reconcile|hold|observe [flags]")
 		os.Exit(2)
 	}
 	if err := commands[os.Args[1]](context.Background(), os.Args[2:], os.Stdout); err != nil {
@@ -209,4 +211,36 @@ func reconcile(ctx context.Context, args []string, out io.Writer) error {
 		return perr
 	}
 	return err
+}
+
+func observe(ctx context.Context, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("observe", flag.ContinueOnError)
+	name := fs.String("name", "", "resource name")
+	self := fs.String("self", "", "this node")
+	ids := fs.String("members", "", "host=node-id,host=node-id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	members, err := parseMembers(*ids)
+	if err != nil {
+		return err
+	}
+	st, err := drbd.New().Status(ctx, *name)
+	if err != nil {
+		return err
+	}
+	return printJSON(out, volume.Observe(st, *self, members))
+}
+
+func parseMembers(s string) ([]drbd.Member, error) {
+	var members []drbd.Member
+	for _, kv := range strings.Split(s, ",") {
+		host, id, ok := strings.Cut(kv, "=")
+		n, err := strconv.Atoi(id)
+		if !ok || err != nil {
+			return nil, errors.New("members wants host=node-id,host=node-id")
+		}
+		members = append(members, drbd.Member{Host: host, NodeID: n})
+	}
+	return members, nil
 }
