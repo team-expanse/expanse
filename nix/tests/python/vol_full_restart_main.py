@@ -10,23 +10,8 @@ Runs after cluster-common.py and vol_cluster.py.
 """
 
 SIZE_MIB = 512
-CHUNK_MIB = 64
-CHUNK_PAUSE_S = 0.5
 HEALTHY_BUDGET_S = 60  # from every agent being up, not from power-on
 VG = "vg0"
-
-
-def checksum(m, dev):
-    return m.succeed(f"dd if={dev} bs=1M count={SIZE_MIB} iflag=direct 2>/dev/null | sha256sum | cut -d' ' -f1").strip()
-
-
-def fill_paced(m, dev):
-    """Bursts with pauses: one long dd saturates the shared test link and trips a raft election."""
-    for seek in range(0, SIZE_MIB, CHUNK_MIB):
-        m.succeed(
-            f"dd if=/dev/urandom of={dev} bs=1M seek={seek} count={CHUNK_MIB} oflag=direct conv=fsync,notrunc"
-        )
-        time.sleep(CHUNK_PAUSE_S)
 
 
 def controller_healthy(m):
@@ -48,8 +33,8 @@ with subtest("volume created, replicated and filled"):
     wait_for(lambda: all(fully_replicated(m, res) for m in NODES), "every replica UpToDate", 300)
     wait_for(lambda: len(primaries(res)) == 1, "one primary")
     primary = primaries(res)[0]
-    fill_paced(primary, device_of(primary))
-    ref = checksum(primary, device_of(primary))
+    fill_paced(primary, device_of(primary), SIZE_MIB)
+    ref = checksum(primary, device_of(primary), SIZE_MIB)
     print(f"reference checksum: {ref}")
 
 with subtest("hard-kill all three nodes together"):
@@ -77,7 +62,7 @@ with subtest("cold start: one Primary, every replica UpToDate, Healthy within bu
 
 with subtest("the data is intact on the DRBD device and on every replica's LV"):
     primary = primaries(res)[0]
-    assert checksum(primary, device_of(primary)) == ref, "DRBD device does not hold the pre-crash data"
+    assert checksum(primary, device_of(primary), SIZE_MIB) == ref, "DRBD device does not hold the pre-crash data"
     for m in NODES:
-        assert checksum(m, f"/dev/{VG}/{res}") == ref, f"{m.name}'s replica differs from the pre-crash data"
+        assert checksum(m, f"/dev/{VG}/{res}", SIZE_MIB) == ref, f"{m.name}'s replica differs from the pre-crash data"
     print(f"VOL-FULL-RESTART PASSED: recovered in {elapsed:.0f}s, all replicas match the pre-crash checksum")

@@ -27,6 +27,10 @@ type fakeConverger struct {
 	present map[string]bool
 	forgot  []int
 	err     error
+
+	snapped, restored []string
+	snapErr           error
+	restoreErr        error
 }
 
 func (f *fakeConverger) Reconcile(_ context.Context, d Desired) (Result, error) {

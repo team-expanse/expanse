@@ -1,10 +1,15 @@
-# §6 vol-snapshot (G6.13): write A, snapshot, write B, restore the
-# snapshot — content must be back to A, B must be gone, and every
-# replica must agree (the restore-triggered resync of the other two
-# replicas must actually converge, not just the primary's own zvol).
+# Phase 1 E3: snapshot a live replicated DRBD volume, overwrite it, restore it.
+# The scenario is python/vol_snapshot_main.py.
 { self }:
 { pkgs, lib, ... }:
 let
+  lint = pkgs.runCommand "vol-snapshot-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    export PYTHONDONTWRITEBYTECODE=1
+    for f in ${./cluster-common.py} ${./python/vol_cluster.py} ${./python/vol_snapshot_main.py}; do
+      python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
+    done
+    touch $out
+  '';
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
@@ -17,21 +22,10 @@ let
     expanse.agent.enable = true;
     expanse.hostId = "0000000${toString idx}";
     expanse.hostname = "n${toString idx}";
-    expanse.agent.exvolPool = "volumes";
     expanse.storage-test.enable = true;
-    expanse.storage-test.poolSizeMB = 6144;
     expanse.agent.raftAdvertise = "192.168.1.${toString idx}:7444";
-    boot.kernelModules = [ "nbd" ];
     virtualisation.memorySize = 2048;
-    virtualisation.diskSize = 12 * 1024;
-    networking.firewall.interfaces.exp0.allowedTCPPorts = [ 9440 ];
-    environment.systemPackages = with pkgs; [ zfs nbd python3 ];
   };
-  lint = pkgs.runCommand "vol-snapshot-lint" { } ''
-    ${pkgs.python3}/bin/python3 -m py_compile ${./python/vol_snapshot_main.py}
-    cat ${./cluster-common.py} ${./python/vol_snapshot_main.py} | ${pkgs.python3}/bin/python3 -c 'import sys; compile(sys.stdin.read(), "testscript", "exec")'
-    touch $out
-  '';
 in
 {
   name = "expanse-vol-snapshot";
@@ -45,6 +39,7 @@ in
   testScript = ''
     # ${lint}
     ${builtins.readFile ./cluster-common.py}
+    ${builtins.readFile ./python/vol_cluster.py}
     ${builtins.readFile ./python/vol_snapshot_main.py}
   '';
 }

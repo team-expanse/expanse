@@ -20,6 +20,8 @@ type Converger interface {
 	Reconcile(ctx context.Context, d Desired) (Result, error)
 	Remove(ctx context.Context, name string) error
 	Present(ctx context.Context, name string) (bool, error)
+	Snapshot(ctx context.Context, name, snap string) error
+	Restore(ctx context.Context, d Desired, snap string) error
 }
 
 // Leader keeps one volume primary on this node until ctx ends and demotes it on
@@ -131,6 +133,7 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 	errs := n.acknowledge(ctx, id, res.Forgot)
 	if lead {
 		n.startLeading(ctx, al)
+		errs = append(errs, n.runOps(ctx, d))
 	}
 	return errors.Join(append(errs, n.publish(ctx, d))...)
 }

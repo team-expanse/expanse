@@ -6,20 +6,23 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	pbproto "google.golang.org/protobuf/proto"
 
 	"github.com/expanse/expanse/internal/quantity"
+	"github.com/expanse/expanse/internal/storage"
 	pb "github.com/expanse/expanse/proto"
 )
 
 // volEntry is one volume's store view for the ctl commands (T15 §4.8).
 type volEntry struct {
-	id   string
-	spec *pb.VolumeSpec
-	st   *pb.VolumeStatus
+	id    string
+	spec  *pb.VolumeSpec
+	st    *pb.VolumeStatus
+	snaps []storage.SnapshotRecord
 }
 
 // loadVolumes indexes all volumes by name from the local store copy (Stale), so
@@ -39,6 +42,13 @@ func loadVolumes(ctx context.Context, cl pb.NodeServiceClient) (map[string]*volE
 		if v == nil {
 			v = &volEntry{id: id}
 			out[id] = v
+		}
+		if name, ok := strings.CutPrefix(suffix, "snapshots/"); ok {
+			var r storage.SnapshotRecord
+			if json.Unmarshal(e.GetValue(), &r) == nil && r.Name == name {
+				v.snaps = append(v.snaps, r)
+			}
+			continue
 		}
 		switch suffix {
 		case "spec":
@@ -141,6 +151,53 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	}
 	resize.Flags().StringVar(&sizeStr, "size", "", "new size (e.g. 20Gi)")
 
+	var snapName, restoreName string
+	snapshot := &cobra.Command{
+		Use:   "snapshot <name>",
+		Short: "Snapshot a volume on its primary node (crash-consistent)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			return withClient(c, opts, func(ctx context.Context, cl pb.NodeServiceClient) error {
+				v, err := resolveVol(ctx, cl, args[0])
+				if err != nil {
+					return err
+				}
+				if err := checkSnapshotRequest(v, snapName); err != nil {
+					return err
+				}
+				if err := putOp(ctx, cl, "snapshot", v.id, map[string]string{"target": args[0], "name": snapName}); err != nil {
+					return err
+				}
+				fmt.Fprintf(c.OutOrStdout(), "snapshot %q of volume %q requested; it is taken on the primary (%s)\n", snapName, args[0], v.st.GetPrimary())
+				return nil
+			})
+		},
+	}
+	snapshot.Flags().StringVar(&snapName, "name", "", "snapshot name (lowercase letters, digits, dashes)")
+
+	restore := &cobra.Command{
+		Use:   "restore <name>",
+		Short: "Roll a volume back to a snapshot; stop everything using the volume first",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			return withClient(c, opts, func(ctx context.Context, cl pb.NodeServiceClient) error {
+				v, err := resolveVol(ctx, cl, args[0])
+				if err != nil {
+					return err
+				}
+				if err := checkRestoreRequest(v, restoreName); err != nil {
+					return err
+				}
+				if err := putOp(ctx, cl, "restore", v.id, map[string]string{"target": args[0], "name": restoreName}); err != nil {
+					return err
+				}
+				fmt.Fprintf(c.OutOrStdout(), "restore of volume %q to snapshot %q requested; every replica is overwritten\n", args[0], restoreName)
+				return nil
+			})
+		},
+	}
+	restore.Flags().StringVar(&restoreName, "snapshot", "", "snapshot to restore")
+
 	insp := &cobra.Command{
 		Use:   "inspect <name>",
 		Short: "Placement, primary and per-replica role and health",
@@ -190,7 +247,51 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	}
 	move.Flags().StringVar(&toNode, "to", "", "destination node (must hold a replica)")
 
-	return []*cobra.Command{del, resize, insp, move, diverged}
+	return []*cobra.Command{del, resize, snapshot, restore, insp, move, diverged}
+}
+
+func (v *volEntry) snapshot(name string) (storage.SnapshotRecord, bool) {
+	for _, r := range v.snaps {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return storage.SnapshotRecord{}, false
+}
+
+// checkSnapshotRequest refuses, before anything is queued, a name that is missing,
+// malformed or already taken.
+func checkSnapshotRequest(v *volEntry, name string) error {
+	if name == "" {
+		return fmt.Errorf("--name is required")
+	}
+	if err := storage.ValidSnapshotName(name); err != nil {
+		return err
+	}
+	if r, ok := v.snapshot(name); ok {
+		return fmt.Errorf("volume %q already has a snapshot %q, held by %s", nameOf(v), name, r.Node)
+	}
+	return nil
+}
+
+// checkRestoreRequest refuses a snapshot that does not exist or that the current
+// primary does not hold: the snapshot lives on one node and the copy runs there.
+func checkRestoreRequest(v *volEntry, name string) error {
+	if name == "" {
+		return fmt.Errorf("--snapshot is required")
+	}
+	r, ok := v.snapshot(name)
+	if !ok {
+		names := make([]string, len(v.snaps))
+		for i, s := range v.snaps {
+			names[i] = s.Name
+		}
+		return fmt.Errorf("volume %q has no snapshot %q (it has: %s)", nameOf(v), name, strings.Join(names, ", "))
+	}
+	if primary := v.st.GetPrimary(); r.Node != primary {
+		return fmt.Errorf("snapshot %q is held by %s but the primary is %s; run `volume move-primary %s --to %s` first", name, r.Node, primary, nameOf(v), r.Node)
+	}
+	return nil
 }
 
 // printInspect renders `volume inspect`: which replicas exist and how each reports.
@@ -206,6 +307,12 @@ func printInspect(w io.Writer, v *volEntry) {
 			seen = relTime(p.GetLastSeenUnixNano())
 		}
 		fmt.Fprintf(w, "  %-16s %-12s %-8t %s\n", p.GetNodeId(), roleStr(p.GetRole()), p.GetHealthy(), seen)
+	}
+	if len(v.snaps) > 0 {
+		fmt.Fprintf(w, "  snapshots:\n  %-16s %-12s %s\n", "NAME", "HELD BY", "TAKEN")
+		for _, s := range v.snaps {
+			fmt.Fprintf(w, "  %-16s %-12s %s\n", s.Name, s.Node, relTime(s.CreatedAt.UnixNano()))
+		}
 	}
 }
 

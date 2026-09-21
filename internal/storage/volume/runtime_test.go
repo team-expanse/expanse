@@ -48,7 +48,7 @@ func (j *journal) mutating() []string {
 	var out []string
 	for _, c := range j.calls {
 		switch c {
-		case "lvm.get", "drbd.status", "drbd.has-md", "drbd.adjust-pending":
+		case "lvm.get", "lvm.list", "drbd.status", "drbd.has-md", "drbd.adjust-pending":
 		default:
 			out = append(out, c)
 		}
@@ -106,6 +106,7 @@ type fakeDRBD struct {
 	j                  *journal
 	lvm                *fakeLVM
 	hasMD, up          bool
+	role               drbd.Role
 	pending            bool
 	usableKiB          uint64
 	mdErr, forgetErr   error
@@ -123,7 +124,7 @@ func (f *fakeDRBD) Status(_ context.Context, res string) (*drbd.Status, error) {
 	if !f.up {
 		return nil, experrors.New(experrors.KindNotFound, "fake", res)
 	}
-	return &drbd.Status{Name: res, Volumes: []drbd.Volume{{SizeKiB: f.usableKiB}}}, nil
+	return &drbd.Status{Name: res, Role: f.role, Volumes: []drbd.Volume{{SizeKiB: f.usableKiB}}}, nil
 }
 
 func (f *fakeDRBD) HasMetadata(context.Context, string) (bool, error) {

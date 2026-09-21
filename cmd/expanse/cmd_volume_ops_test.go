@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	pbproto "google.golang.org/protobuf/proto"
 
+	"github.com/expanse/expanse/internal/storage"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -100,6 +101,8 @@ func TestVolumeCommandSurface(t *testing.T) {
 		"list":         {},
 		"delete":       {},
 		"resize":       {"size"},
+		"snapshot":     {"name"},
+		"restore":      {"snapshot"},
 		"inspect":      {},
 		"move-primary": {"to"},
 		"diverged":     {},
@@ -119,7 +122,7 @@ func TestVolumeCommandSurface(t *testing.T) {
 
 func TestRetiredSubcommandsAreGone(t *testing.T) {
 	cmd := newVolumeCmd(&ctlOpts{})
-	for _, name := range []string{"resync", "verify", "snapshot", "restore"} {
+	for _, name := range []string{"resync", "verify"} {
 		if sub, _, _ := cmd.Find([]string{name}); sub != nil && sub.Name() == name {
 			t.Errorf("%s is still registered but nothing implements it", name)
 		}
@@ -220,12 +223,17 @@ func resizeStore(t *testing.T) *fakeStore {
 
 func runResize(t *testing.T, fs *fakeStore, args ...string) error {
 	t.Helper()
+	return runVolume(t, fs, append([]string{"resize"}, args...)...)
+}
+
+func runVolume(t *testing.T, fs *fakeStore, args ...string) error {
+	t.Helper()
 	opts, stop := serveCLI(t, fs)
 	defer stop()
 	cmd := newVolumeCmd(opts)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs(append([]string{"resize"}, args...))
+	cmd.SetArgs(args)
 	return cmd.Execute()
 }
 
@@ -264,5 +272,105 @@ func TestResizeNeedsAValidSizeAndAKnownVolume(t *testing.T) {
 	}
 	if err := runResize(t, resizeStore(t), "nope", "--size", "20Gi"); err == nil {
 		t.Error("unknown volume: want an error")
+	}
+}
+
+// snapStore is the fixture volume (primary n1) with the given snapshots recorded on nodes.
+func snapStore(t *testing.T, held map[string]string) *fakeStore {
+	t.Helper()
+	fs := resizeStore(t)
+	for name, node := range held {
+		fs.kv["/volumes/vol-abc/snapshots/"+name] = []byte(`{"name":"` + name + `","node":"` + node + `"}`)
+	}
+	return fs
+}
+
+func TestSnapshotQueuesAnOpNamingTheSnapshot(t *testing.T) {
+	fs := snapStore(t, nil)
+	if err := runVolume(t, fs, "snapshot", "db", "--name", "before"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(fs.kv["/volumes/_ops/snapshot/vol-abc"]), `"name":"before"`; !strings.Contains(got, want) {
+		t.Errorf("op %q lacks %s", got, want)
+	}
+}
+
+func TestSnapshotRefusesABadOrTakenNameWithoutQueueingAnything(t *testing.T) {
+	for name, args := range map[string][]string{
+		"no name":    {"snapshot", "db"},
+		"bad name":   {"snapshot", "db", "--name", "Bad Name"},
+		"taken name": {"snapshot", "db", "--name", "before"},
+		"no volume":  {"snapshot", "nope", "--name", "x"},
+	} {
+		fs := snapStore(t, map[string]string{"before": "n1"})
+		if err := runVolume(t, fs, args...); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+		if _, ok := fs.kv["/volumes/_ops/snapshot/vol-abc"]; ok {
+			t.Errorf("%s: an op was queued", name)
+		}
+	}
+}
+
+func TestRestoreQueuesAnOpForASnapshotHeldByThePrimary(t *testing.T) {
+	fs := snapStore(t, map[string]string{"before": "n1"})
+	if err := runVolume(t, fs, "restore", "db", "--snapshot", "before"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(fs.kv["/volumes/_ops/restore/vol-abc"]), `"name":"before"`; !strings.Contains(got, want) {
+		t.Errorf("op %q lacks %s", got, want)
+	}
+}
+
+func TestRestoreRefusesAnUnknownSnapshotOrOneHeldElsewhere(t *testing.T) {
+	cases := map[string]struct {
+		held map[string]string
+		args []string
+		want string
+	}{
+		"unknown":    {map[string]string{"other": "n1"}, []string{"restore", "db", "--snapshot", "before"}, "other"},
+		"held by n2": {map[string]string{"before": "n2"}, []string{"restore", "db", "--snapshot", "before"}, "--to n2"},
+		"no flag":    {map[string]string{"before": "n1"}, []string{"restore", "db"}, "--snapshot"},
+	}
+	for name, tc := range cases {
+		fs := snapStore(t, tc.held)
+		err := runVolume(t, fs, tc.args...)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error %v, want one mentioning %q", name, err, tc.want)
+		}
+		if _, ok := fs.kv["/volumes/_ops/restore/vol-abc"]; ok {
+			t.Errorf("%s: an op was queued", name)
+		}
+	}
+}
+
+func TestInspectListsSnapshotsWithTheirHolders(t *testing.T) {
+	v := fixtureVolume(t)
+	v.snaps = []storage.SnapshotRecord{{Name: "before", Node: "n1", CreatedAt: time.Now().Add(-time.Hour)}}
+	var buf bytes.Buffer
+	printInspect(&buf, v)
+	for _, want := range []string{"snapshots:", "before", "n1", "1h"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("inspect lacks %q:\n%s", want, buf.String())
+		}
+	}
+}
+
+func TestLoadVolumesAttachesSnapshotRecordsAndIgnoresUnknownKeys(t *testing.T) {
+	fs := snapStore(t, map[string]string{"before": "n1"})
+	fs.kv["/volumes/vol-abc/notes/x"] = []byte("?")
+	opts, stop := serveCLI(t, fs)
+	defer stop()
+	conn, err := dial(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	vols, err := loadVolumes(context.Background(), pb.NewNodeServiceClient(conn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vols["db"].snaps; len(got) != 1 || got[0].Name != "before" || got[0].Node != "n1" {
+		t.Errorf("snaps %+v, want before on n1", got)
 	}
 }

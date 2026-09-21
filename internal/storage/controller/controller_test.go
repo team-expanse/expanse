@@ -311,6 +311,25 @@ func TestDeleteFinishesEvenIfTheAllocationWasAlreadyReleased(t *testing.T) {
 	}
 }
 
+func TestDeleteDropsTheVolumesSnapshotRecords(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	seedMesh(st, "n1")
+	seedVolume(t, st, "vol-a", 1, nil, "", storage.StateDeleting)
+	for _, id := range []string{"vol-a", "vol-ab"} {
+		if err := storage.PutSnapshot(ctx, st, id, storage.SnapshotRecord{Name: "s", Node: "n1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+	if recs, _ := storage.ListSnapshotRecords(ctx, st, "vol-a"); len(recs) != 0 {
+		t.Errorf("a deleted volume keeps its snapshot records: %+v", recs)
+	}
+	if recs, _ := storage.ListSnapshotRecords(ctx, st, "vol-ab"); len(recs) != 1 {
+		t.Errorf("another volume's records were touched: %+v", recs)
+	}
+}
+
 func TestNeedsManualRecoveryIsUntouched(t *testing.T) {
 	st := newStore(t)
 	seedMesh(st, "n2", "n3")

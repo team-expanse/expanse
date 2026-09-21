@@ -31,6 +31,10 @@ func (c *Controller) finalizeDelete(ctx context.Context, volID string, spec *sto
 			return
 		}
 	}
+	if err := storage.DeleteSnapshotRecords(ctx, c.opts.St, volID); err != nil {
+		c.log.Warn("cannot drop the snapshot records of a deleted volume; will retry", "vol", volID, "err", err)
+		return
+	}
 	_ = c.opts.St.Delete(ctx, storage.SpecKey(volID), 0)
 	_ = c.opts.St.Delete(ctx, storage.StatusKey(volID), 0)
 	c.log.Info("volume deleted", "vol", volID, "name", spec.Name)

@@ -1,4 +1,4 @@
-"""DRBD helpers shared by the three-node vol-* VM tests (vol-agent, vol-durability).
+"""DRBD helpers shared by the three-node vol-* VM tests.
 
 Runs after cluster-common.py, which provides re, time and the n1..n3 machines.
 """
@@ -36,3 +36,15 @@ def wait_for(predicate, what, timeout=240):
 
 def device_of(m):
     return "/dev/" + m.succeed("ls /dev | grep -E '^drbd[0-9]+$' | head -1").strip()
+
+
+def checksum(m, dev, mib):
+    """sha256 of the first mib MiB of dev, read past the page cache."""
+    return m.succeed(f"dd if={dev} bs=1M count={mib} iflag=direct 2>/dev/null | sha256sum | cut -d' ' -f1").strip()
+
+
+def fill_paced(m, dev, mib, chunk_mib=64, pause_s=0.5):
+    """Random data in bursts with pauses: one long dd saturates the shared test link and trips a raft election."""
+    for seek in range(0, mib, chunk_mib):
+        m.succeed(f"dd if=/dev/urandom of={dev} bs=1M seek={seek} count={chunk_mib} oflag=direct conv=fsync,notrunc")
+        time.sleep(pause_s)

@@ -1,149 +1,84 @@
-"""vol-snapshot testScript body (G6.13).
+"""vol-snapshot: snapshot a live replicated volume, overwrite it, restore it.
 
-Write A, take a named snapshot, write B over the same range, restore
-the snapshot: content must be back to A, and every replica (not just
-the primary's own zvol) must agree once the restore-triggered resync
-of the other two converges.
+Write A, snapshot, write B over the same range, restore: the DRBD device and every replica's
+LV must hold A again. The restore is a copy through the DRBD device, so it must refuse to
+run under a mounted filesystem (the kernel's exclusive open) and proceed once it is unmounted.
+Deleting the volume must take its snapshot LVs with it.
 
-No node ever crashes in this test — restore is exercised as a live
-primary rolling its own zvol back and marking its secondaries Stale;
-vol-degraded.nix/vol-resync-incremental.nix already cover the crash/
-resync machinery this reuses.
-
-Spliced (via readFile, see vol-snapshot.nix) after cluster-common.py,
-which provides n1/n2/n3, form(), wait_agent_ready(), and friends.
+Runs after cluster-common.py and vol_cluster.py.
 """
 
-VOL = "vsnap"
-BASE_MB = 256
-BLK_MB = 4
-SNAP_NAME = "snapA"
+SIZE_MIB = 256
+VG = "vg0"
+SNAP = "snapa"
+MNT = "/mnt/vol"
 
 
-def vol_inspect(m):
-    rc, out = m.execute(
-        f"expanse ctl volume inspect {VOL} --socket /run/expanse/agent.sock 2>&1"
-    )
-    return out if rc == 0 else ""
+def snapshot_lv(name):
+    return f"/dev/{VG}/{name}-snap-{SNAP}"
 
 
-def machine_by_name(name):
-    for mm in [n1, n2, n3]:
-        if mm.name == name:
-            return mm
-    return None
+def snapshot_listed(m):
+    return SNAP in m.execute("expanse ctl volume inspect vsnap 2>&1")[1]
 
 
-def state_of(out):
-    for ln in out.splitlines():
-        if ln.strip().startswith("state:"):
-            return ln.split()[-1]
-    return ""
+def replicas_hold(ref):
+    return all(checksum(m, f"/dev/{VG}/{res}", SIZE_MIB) == ref for m in NODES)
 
 
-def wait_primary_ready(timeout=120):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        for m in [n1, n2, n3]:
-            if m.execute("ls /dev/exvol 2>/dev/null")[1].strip():
-                return m
-        time.sleep(2)
-    raise AssertionError(f"no ready primary within {timeout}s")
-
-
-def wait_state(primary, want, timeout=60):
-    deadline = time.time() + timeout
-    out = ""
-    while time.time() < deadline:
-        out = vol_inspect(primary)
-        if state_of(out) == want:
-            return out
-        time.sleep(1)
-    raise AssertionError(f"state never reached {want} within {timeout}s:\n{out}")
-
-
-def replica_rows(out):
-    return [
-        ln.split()
-        for ln in out.splitlines()
-        if len(ln.split()) >= 5
-        and ln.split()[1] in ("primary", "secondary", "stale", "resyncing")
-    ]
-
-
-def wait_all_current(primary, timeout=180):
-    deadline = time.time() + timeout
-    out = ""
-    while time.time() < deadline:
-        out = vol_inspect(primary)
-        rows = replica_rows(out)
-        if len(rows) == 3 and all(
-            r[1] in ("primary", "secondary") and r[3] == "0" for r in rows
-        ):
-            return out
-        time.sleep(3)
-    raise AssertionError(f"replicas never converged to lag 0 within {timeout}s:\n{out}")
-
-
-def checksum_range(m, vol_id, blocks_4m, skip=0):
-    rc, out = m.execute(
-        f"dd iflag=direct if=/dev/zvol/volumes/volumes/{vol_id} bs=4M skip={skip} "
-        f"count={blocks_4m} 2>/dev/null | sha256sum | cut -d' ' -f1"
-    )
-    assert rc == 0 and out.strip(), f"checksum read failed on {m.name}: {out}"
-    return out.strip()
+def lvs_left(m):
+    return m.succeed("lvs --noheadings -o lv_name vg0 | grep -c '^ *vol-' || true").strip()
 
 
 form("volsnap")
 
-with subtest("volume created, primary attached"):
-    n1.succeed(f"expanse ctl volume create {VOL} --size 2Gi")
-    for m in [n1, n2, n3]:
-        m.wait_until_succeeds(
-            "zfs list -H -o name -t volume | grep -q '^volumes/volumes/vol-'", timeout=90
-        )
-    primary = wait_primary_ready()
-    vol_id = primary.succeed("ls -1 /dev/exvol").strip()
-    dev = "/dev/exvol/" + vol_id
-    print(f"primary: {primary.name}  vol_id: {vol_id}")
+with subtest("volume created, replicated and holding A"):
+    n1.succeed(f"expanse ctl volume create vsnap --size {SIZE_MIB}Mi --replication 3")
+    for m in NODES:
+        m.wait_until_succeeds("drbdadm status | grep -q '^vol-'", timeout=180)
+    res = n1.succeed("drbdadm status | head -1 | cut -d' ' -f1").strip()
+    wait_for(lambda: all(fully_replicated(m, res) for m in NODES), "every replica UpToDate", 300)
+    wait_for(lambda: len(primaries(res)) == 1, "one primary")
+    primary = primaries(res)[0]
+    dev = device_of(primary)
+    fill_paced(primary, dev, SIZE_MIB)
+    ref_a = checksum(primary, dev, SIZE_MIB)
 
-with subtest("write A, snapshot, write B over the same range"):
-    primary.succeed(
-        f"dd if=/dev/urandom of={dev} bs=4M count={BASE_MB // BLK_MB} conv=fsync,notrunc"
-    )
-    wait_all_current(primary, timeout=180)
-    checksum_a = checksum_range(primary, vol_id, BASE_MB // BLK_MB)
+with subtest("snapshot: recorded, held by the primary, an LV on it"):
+    n1.succeed("expanse ctl volume snapshot vsnap --name snapa")
+    wait_for(lambda: snapshot_listed(n1), "the snapshot to be recorded", 60)
+    inspect = n1.succeed("expanse ctl volume inspect vsnap")
+    assert re.search(rf"{SNAP}\s+{primary.name}\b", inspect), f"snapshot not held by the primary {primary.name}:\n{inspect}"
+    origin = primary.succeed(f"lvs --noheadings -o origin {VG}/{res}-snap-{SNAP}").strip()
+    assert origin == res, f"snapshot LV origin is {origin!r}, want {res}"
 
-    primary.succeed(f"expanse ctl volume snapshot {VOL} --name {SNAP_NAME}")
-    # The CLI only queues the op; the agent snapshots on its next tick.
-    # Writing B before the snapshot exists would make it capture A+B.
-    primary.wait_until_succeeds(
-        f"zfs list -H -t snapshot -o name | grep -q '/{vol_id}@{SNAP_NAME}$'", timeout=60
-    )
+with subtest("write B over the same range"):
+    fill_paced(primary, dev, SIZE_MIB)
+    wait_for(lambda: all(fully_replicated(m, res) for m in NODES), "every replica UpToDate", 300)
+    ref_b = checksum(primary, dev, SIZE_MIB)
+    assert ref_b != ref_a, "write B produced the same content as A (bad test data)"
 
-    primary.succeed(
-        f"dd if=/dev/urandom of={dev} bs=4M count={BASE_MB // BLK_MB} conv=fsync,notrunc"
-    )
-    wait_all_current(primary, timeout=180)
-    checksum_b = checksum_range(primary, vol_id, BASE_MB // BLK_MB)
-    assert checksum_b != checksum_a, "write B produced the same content as A (bad test data)"
+with subtest("restore: every replica holds A again and B is gone"):
+    n1.succeed("expanse ctl volume restore vsnap --snapshot snapa")
+    wait_for(lambda: checksum(primary, dev, SIZE_MIB) == ref_a, "the primary to hold A", 180)
+    wait_for(lambda: all(fully_replicated(m, res) for m in NODES), "every replica UpToDate", 300)
+    wait_for(lambda: replicas_hold(ref_a), "every replica's LV to hold A", 60)
+    assert checksum(primary, snapshot_lv(res), SIZE_MIB) == ref_a, "the snapshot did not keep A through B and the restore"
 
-with subtest("restore snapshot: content == A, B is gone (G6.13)"):
-    primary.succeed(f"expanse ctl volume restore {VOL} --snapshot {SNAP_NAME}")
+with subtest("restore refuses a mounted volume, then runs once it is unmounted"):
+    primary.succeed(f"mkfs.ext4 -q -F {dev} && mkdir -p {MNT} && mount {dev} {MNT} && echo canary > {MNT}/canary && sync")
+    n1.succeed("expanse ctl volume restore vsnap --snapshot snapa")
+    time.sleep(10)  # several sync passes; the copy must keep failing on the exclusive open
+    primary.succeed(f"grep -q canary {MNT}/canary")
+    journal = primary.succeed("journalctl -u expansed.service --no-pager")
+    assert "exclusively" in journal, "no refusal logged: the restore did not even try, or ran under the mount"
+    primary.succeed(f"umount {MNT}")
+    wait_for(lambda: checksum(primary, dev, SIZE_MIB) == ref_a, "the queued restore to run after the unmount", 180)
+    wait_for(lambda: all(fully_replicated(m, res) for m in NODES), "every replica UpToDate", 300)
+    wait_for(lambda: replicas_hold(ref_a), "every replica's LV to hold A", 60)
 
-    deadline = time.time() + 60
-    got = ""
-    while time.time() < deadline:
-        got = checksum_range(primary, vol_id, BASE_MB // BLK_MB)
-        if got == checksum_a:
-            break
-        time.sleep(2)
-    assert got == checksum_a, f"primary content after restore = {got}, want A = {checksum_a}"
-    assert got != checksum_b, "primary still shows B's content after restore"
-
-with subtest("all replicas agree post-restore (G6.13, G6.15)"):
-    wait_all_current(primary, timeout=180)
-    for m in [n1, n2, n3]:
-        got = checksum_range(m, vol_id, BASE_MB // BLK_MB)
-        assert got == checksum_a, f"{m.name} checksum {got} != restored A {checksum_a}"
-    print("VOL-SNAPSHOT TEST PASSED: restore reverted to A, B is gone, all replicas agree")
+with subtest("deleting the volume deletes its snapshots"):
+    n1.succeed("expanse ctl volume delete vsnap")
+    for m in NODES:
+        wait_for(lambda m=m: lvs_left(m) == "0", f"{m.name} to drop every vol LV", 180)
+    print("VOL-SNAPSHOT PASSED: restore reverted to A on every replica, a mounted volume was refused, delete removed the snapshots")

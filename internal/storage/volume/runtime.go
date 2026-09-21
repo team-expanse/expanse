@@ -55,7 +55,9 @@ type Runtime struct {
 	VG, Pool      string
 	ConfigDir     string
 	SplitBrainCmd string
-	mu            sync.Mutex
+	// Copy overwrites dst with the first n bytes of src; nil means copyDevice.
+	Copy func(ctx context.Context, src, dst string, n uint64) error
+	mu   sync.Mutex
 }
 
 func (r *Runtime) configPath(name string) string { return filepath.Join(r.ConfigDir, name+".res") }
@@ -268,8 +270,8 @@ func (r *Runtime) Present(ctx context.Context, name string) (bool, error) {
 	return err == nil, err
 }
 
-// Remove takes a volume off this node: down, then its config, then the backing
-// LV. It is safe to repeat and stops at the first failure, so the next call resumes.
+// Remove takes a volume off this node: down, then its config, then its snapshots
+// and the backing LV. It is safe to repeat and stops at the first failure, so the next call resumes.
 // The caller must have demoted the volume first.
 func (r *Runtime) Remove(ctx context.Context, name string) error {
 	r.mu.Lock()
@@ -285,6 +287,9 @@ func (r *Runtime) Remove(ctx context.Context, name string) error {
 		return experrors.Wrap(err, experrors.KindInternal, "volume.Remove", "remove config of "+name)
 	}
 	if ok, err := r.Present(ctx, name); err != nil || !ok {
+		return err
+	}
+	if err := r.removeSnapshots(ctx, name); err != nil {
 		return err
 	}
 	return r.LVM.Remove(ctx, r.VG, name)
