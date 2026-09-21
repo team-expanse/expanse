@@ -33,6 +33,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage"
+	"github.com/expanse/expanse/internal/storage/drbd"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	pbproto "google.golang.org/protobuf/proto"
@@ -79,6 +80,9 @@ type Options struct {
 	// asynchronously and is not trusted. nil (unit tests) falls back
 	// to placement.Sequence.
 	ProbeSeq func(ctx context.Context, volID, nodeID string) (uint64, error)
+
+	// Alloc hands out each volume's DRBD minor, port and node-ids at creation.
+	Alloc *drbd.Allocator
 
 	// NoCandidateRounds is how many consecutive election rounds with
 	// zero live probe evidence flag NeedsManualRecovery (§9). Default
@@ -148,13 +152,14 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if !leader {
 		return nil
 	}
-	ids, err := storage.ListVolumeIDs(ctx, c.opts.St)
-	if err != nil {
-		return err
-	}
 	meshed, err := c.meshedNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("controller: cannot read node membership; skipping this round: %w", err)
+	}
+	c.processPending(ctx, meshed)
+	ids, err := storage.ListVolumeIDs(ctx, c.opts.St)
+	if err != nil {
+		return err
 	}
 	if err := c.reconcileBlocks(ctx, meshed); err != nil {
 		c.log.Warn("block volume reconcile failed", "err", err)
