@@ -2,6 +2,8 @@ package volume
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -55,6 +57,8 @@ type Runtime struct {
 	SplitBrainCmd string
 	mu            sync.Mutex
 }
+
+func (r *Runtime) configPath(name string) string { return filepath.Join(r.ConfigDir, name+".res") }
 
 func backingSize(size uint64) uint64 {
 	return size + mdBase + (size+gib-1)/gib*mdPerGiB
@@ -123,7 +127,7 @@ func (p *pass) backing(ctx context.Context) error {
 }
 
 func (p *pass) config(context.Context) error {
-	path := filepath.Join(p.ConfigDir, p.d.Name+".res")
+	path := p.configPath(p.d.Name)
 	if have, err := os.ReadFile(path); err == nil && string(have) == p.cfg {
 		return nil
 	}
@@ -250,4 +254,35 @@ func (p *pass) forget(ctx context.Context) error {
 		p.res.Forgot = append(p.res.Forgot, id)
 	}
 	return nil
+}
+
+// Present reports whether the volume's backing LV exists on this node.
+func (r *Runtime) Present(ctx context.Context, name string) (bool, error) {
+	_, err := r.LVM.Get(ctx, r.VG, name)
+	if experrors.KindOf(err) == experrors.KindNotFound {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Remove takes a volume off this node: down, then its config, then the backing
+// LV. It is safe to repeat and stops at the first failure, so the next call resumes.
+// The caller must have demoted the volume first.
+func (r *Runtime) Remove(ctx context.Context, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, err := r.DRBD.Status(ctx, name); err == nil {
+		if err := r.DRBD.Down(ctx, name); err != nil {
+			return err
+		}
+	} else if experrors.KindOf(err) != experrors.KindNotFound {
+		return err
+	}
+	if err := os.Remove(r.configPath(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return experrors.Wrap(err, experrors.KindInternal, "volume.Remove", "remove config of "+name)
+	}
+	if ok, err := r.Present(ctx, name); err != nil || !ok {
+		return err
+	}
+	return r.LVM.Remove(ctx, r.VG, name)
 }

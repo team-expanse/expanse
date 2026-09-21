@@ -59,9 +59,9 @@ func (j *journal) mutating() []string {
 // fakeLVM embeds the interface so an unexpected call panics.
 type fakeLVM struct {
 	lvm.LVM
-	j   *journal
-	lvs map[string]lvm.LV
-	err error
+	j              *journal
+	lvs            map[string]lvm.LV
+	err, removeErr error
 }
 
 func roundUp(n uint64) uint64 { return (n + extent - 1) / extent * extent }
@@ -110,6 +110,7 @@ type fakeDRBD struct {
 	usableKiB          uint64
 	mdErr, forgetErr   error
 	createMDErr, upErr error
+	downErr            error
 }
 
 const mdOverheadKiB = 100
