@@ -73,6 +73,12 @@ in
       description = "Thin pool inside storageVG. Empty = thick volumes.";
     };
 
+    storageLostAfter = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "How long a node stays gone before its volume replicas are rebuilt elsewhere (e.g. 10m). Empty = the agent default.";
+    };
+
     raftAdvertise = lib.mkOption {
       type = lib.types.str;
       default = "";
@@ -159,6 +165,7 @@ in
           optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}" +
           optionalString (cfg.storageVG != "") " --storage-vg ${cfg.storageVG}" +
           optionalString (cfg.storagePool != "") " --storage-pool ${cfg.storagePool}" +
+          optionalString (cfg.storageLostAfter != "") " --storage-lost-after ${cfg.storageLostAfter}" +
           optionalString (cfg.raftAdvertise != "") " --raft-advertise ${cfg.raftAdvertise}" +
           optionalString cfg.firewall " --firewall";
         # A killed or crashed agent leaves its volumes Primary in the kernel, which would

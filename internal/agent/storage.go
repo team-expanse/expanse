@@ -66,7 +66,7 @@ func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) {
 		Thin: cfg.StoragePool != "",
 	}
 	a.volctl = volctlc.New(volctlc.Options{
-		NodeID: cfg.NodeID, St: st, Alloc: alloc, Logger: logger,
+		NodeID: cfg.NodeID, St: st, Alloc: alloc, Logger: logger, LostAfter: cfg.StorageLostAfter,
 		IsLeader: func() bool { return a.ctl != nil && a.ctl.store != nil && a.ctl.store.IsLeader() },
 	})
 }

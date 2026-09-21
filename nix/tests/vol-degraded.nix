@@ -1,13 +1,15 @@
-# §6 vol-degraded (G6.11, G6.12): R=3, kill 1 secondary — the volume
-# must report Degraded and stay fully readable+writable; kill a 2nd —
-# it must report ReadOnly, reads keep working from the primary's local
-# copy, and writes fail fast with EIO (never hang, reusing T09's
-# lease/quorum-loss EIO guarantee, proven here end to end). Restore
-# both and the volume must recover to Healthy with all 3 replicas
-# checksum-equal.
+# Phase 1 C5: a replica whose node stays gone is rebuilt on a spare node. The scenario is
+# python/vol_degraded_main.py.
 { self }:
 { pkgs, lib, ... }:
 let
+  lint = pkgs.runCommand "vol-degraded-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    export PYTHONDONTWRITEBYTECODE=1
+    for f in ${./cluster-common.py} ${./python/vol_cluster.py} ${./python/vol_degraded_main.py}; do
+      python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
+    done
+    touch $out
+  '';
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
@@ -20,24 +22,11 @@ let
     expanse.agent.enable = true;
     expanse.hostId = "0000000${toString idx}";
     expanse.hostname = "n${toString idx}";
-    expanse.agent.exvolPool = "volumes";
     expanse.storage-test.enable = true;
-    expanse.storage-test.poolSizeMB = 6144;
-    # Stable raft advertise across a crash/restore cycle — same
-    # rationale as vol-durability.nix: a hard-killed node must rejoin
-    # at the SAME address, not a re-guessed per-boot one.
+    expanse.agent.storageLostAfter = "30s";
     expanse.agent.raftAdvertise = "192.168.1.${toString idx}:7444";
-    boot.kernelModules = [ "nbd" ];
     virtualisation.memorySize = 2048;
-    virtualisation.diskSize = 12 * 1024;
-    networking.firewall.interfaces.exp0.allowedTCPPorts = [ 9440 ];
-    environment.systemPackages = with pkgs; [ zfs nbd python3 ];
   };
-  lint = pkgs.runCommand "vol-degraded-lint" { } ''
-    ${pkgs.python3}/bin/python3 -m py_compile ${./python/vol_degraded_main.py}
-    cat ${./cluster-common.py} ${./python/vol_degraded_main.py} | ${pkgs.python3}/bin/python3 -c 'import sys; compile(sys.stdin.read(), "testscript", "exec")'
-    touch $out
-  '';
 in
 {
   name = "expanse-vol-degraded";
@@ -51,6 +40,7 @@ in
   testScript = ''
     # ${lint}
     ${builtins.readFile ./cluster-common.py}
+    ${builtins.readFile ./python/vol_cluster.py}
     ${builtins.readFile ./python/vol_degraded_main.py}
   '';
 }

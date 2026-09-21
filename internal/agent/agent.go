@@ -102,6 +102,9 @@ type Config struct {
 	StorageVG string
 	// StoragePool is the thin pool inside StorageVG; empty makes thick volumes.
 	StoragePool string
+	// StorageLostAfter is how long a node stays gone before its replicas are rebuilt
+	// on another node (default controller.DefaultLostAfter).
+	StorageLostAfter time.Duration
 	// DRBDConfigDir receives one DRBD resource file per volume (default /etc/drbd.d).
 	DRBDConfigDir string
 	// Firewall enables the §4.5 nftables ruleset (T19/T20): static

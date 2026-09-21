@@ -28,6 +28,7 @@ func newAgentCmd() *cobra.Command {
 		storageVG   string
 		storagePool string
 		drbdCfgDir  string
+		lostAfter   string
 		firewall    bool
 	)
 	cmd := &cobra.Command{
@@ -67,6 +68,13 @@ func newAgentCmd() *cobra.Command {
 				}
 				cfg.ControllerPeriod = d
 			}
+			if lostAfter != "" {
+				d, err := parseDuration(lostAfter)
+				if err != nil {
+					return fmt.Errorf("--storage-lost-after: %w", err)
+				}
+				cfg.StorageLostAfter = d
+			}
 			a, err := agent.New(cfg)
 			if err != nil {
 				return fmt.Errorf("init agent: %w", err)
@@ -90,6 +98,7 @@ func newAgentCmd() *cobra.Command {
 		"DNS forwarders (T17), comma-separated ip:port; empty = /etc/resolv.conf")
 	cmd.Flags().StringVar(&storageVG, "storage-vg", "", "LVM volume group for volume replicas; empty = volume storage disabled")
 	cmd.Flags().StringVar(&storagePool, "storage-pool", "", "thin pool inside --storage-vg; empty = thick volumes")
+	cmd.Flags().StringVar(&lostAfter, "storage-lost-after", "", "how long a node stays gone before its volume replicas are rebuilt elsewhere (default 10m)")
 	cmd.Flags().StringVar(&drbdCfgDir, "drbd-config-dir", "", "directory for DRBD resource files (default /etc/drbd.d)")
 	cmd.Flags().BoolVar(&firewall, "firewall", false,
 		"apply the §4.5 nftables ruleset (static skeleton + store-driven dynamic sets)")

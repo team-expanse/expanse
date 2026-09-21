@@ -7,7 +7,8 @@
 //     the volume lease make promotion safe, so election only chooses who tries;
 //   - deletion: mark Deleting, wait for every node to drop its placement row,
 //     then release the allocation and drop the records (delete.go);
-//   - the volume's derived state and under-replication alerts (§4.6).
+//   - the volume's derived state and under-replication alerts (§4.6);
+//   - rebuilding the replicas of a node that stays gone (rebuild.go).
 //
 // Volumes in StateNeedsManualRecovery are never touched: a human decides.
 package controller
@@ -46,6 +47,13 @@ type Options struct {
 	// Alloc hands out each volume's DRBD minor, port and node-ids at creation
 	// and takes them back at deletion.
 	Alloc *drbd.Allocator
+
+	// LostAfter is how long a node stays gone before its replicas are rebuilt
+	// elsewhere (default DefaultLostAfter).
+	LostAfter time.Duration
+
+	// Now is the clock for that wait (default time.Now).
+	Now func() time.Time
 }
 
 // AlertEvent is a controller-raised alert.
@@ -61,6 +69,9 @@ type AlertEvent struct {
 type Controller struct {
 	opts Options
 	log  *slog.Logger
+
+	// downSince is when each unreachable node was first seen down. Only Reconcile touches it.
+	downSince map[string]time.Time
 }
 
 // New builds the controller. Call Run in a goroutine.
@@ -71,7 +82,13 @@ func New(opts Options) *Controller {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Controller{opts: opts, log: opts.Logger}
+	if opts.LostAfter <= 0 {
+		opts.LostAfter = DefaultLostAfter
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	return &Controller{opts: opts, log: opts.Logger, downSince: map[string]time.Time{}}
 }
 
 // Run reconciles every tick until the context ends.
@@ -102,6 +119,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("controller: cannot read node membership; skipping this round: %w", err)
 	}
+	c.forgetLiveNodes(meshed)
 	c.processPending(ctx, meshed)
 	ids, err := storage.ListVolumeIDs(ctx, c.opts.St)
 	if err != nil {
@@ -144,6 +162,7 @@ func (c *Controller) reconcileVolume(ctx context.Context, id string, meshed map[
 		return
 	}
 	c.enforceReplication(ctx, id, &spec, &status, rev, meshed)
+	c.rebuildReplicas(ctx, id, &spec, meshed)
 }
 
 // processVolumeOps consumes operator requests written by
