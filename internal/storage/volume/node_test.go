@@ -32,6 +32,9 @@ type fakeConverger struct {
 	snapErr           error
 	restoreErr        error
 
+	verified, resynced []string
+	checkErr           error
+
 	rejoined  []bool // the discard flag of each Rejoin
 	rejoinErr error
 	onRejoin  func()

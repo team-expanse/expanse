@@ -27,7 +27,10 @@ const (
 	ConnConnecting Connection = "Connecting"
 	ConnStandAlone Connection = "StandAlone"
 
+	ReplOff         Replication = "Off"
 	ReplEstablished Replication = "Established"
+	ReplVerifyS     Replication = "VerifyS"
+	ReplVerifyT     Replication = "VerifyT"
 	ReplSyncSource  Replication = "SyncSource"
 	ReplSyncTarget  Replication = "SyncTarget"
 	ReplPausedSyncS Replication = "PausedSyncS"

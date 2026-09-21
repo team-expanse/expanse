@@ -113,6 +113,7 @@ type fakeDRBD struct {
 	createMDErr, upErr error
 	downErr            error
 	peers              []drbd.Peer
+	disk               drbd.DiskState
 }
 
 const mdOverheadKiB = 100
@@ -125,7 +126,7 @@ func (f *fakeDRBD) Status(_ context.Context, res string) (*drbd.Status, error) {
 	if !f.up {
 		return nil, experrors.New(experrors.KindNotFound, "fake", res)
 	}
-	return &drbd.Status{Name: res, Role: f.role, Volumes: []drbd.Volume{{SizeKiB: f.usableKiB}}, Peers: f.peers}, nil
+	return &drbd.Status{Name: res, Role: f.role, Volumes: []drbd.Volume{{SizeKiB: f.usableKiB, DiskState: f.disk}}, Peers: f.peers}, nil
 }
 
 func (f *fakeDRBD) HasMetadata(context.Context, string) (bool, error) {
@@ -170,6 +171,16 @@ func (f *fakeDRBD) Connect(context.Context, string) error {
 
 func (f *fakeDRBD) ConnectDiscarding(context.Context, string) error {
 	f.j.add("drbd.connect-discarding")
+	return nil
+}
+
+func (f *fakeDRBD) Verify(context.Context, string) error {
+	f.j.add("drbd.verify")
+	return nil
+}
+
+func (f *fakeDRBD) Invalidate(context.Context, string) error {
+	f.j.add("drbd.invalidate")
 	return nil
 }
 

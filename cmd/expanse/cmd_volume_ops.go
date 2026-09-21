@@ -257,7 +257,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	diverged.Flags().StringVar(&survivor, "choose", "", "node whose data is kept (the other replicas discard theirs)")
 	move.Flags().StringVar(&toNode, "to", "", "destination node (must hold a replica)")
 
-	return []*cobra.Command{del, resize, snapshot, restore, insp, move, diverged}
+	return append([]*cobra.Command{del, resize, snapshot, restore, insp, move, diverged}, newVolumeCheckCmds(opts)...)
 }
 
 func (v *volEntry) snapshot(name string) (storage.SnapshotRecord, bool) {

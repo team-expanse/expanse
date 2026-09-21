@@ -109,6 +109,8 @@ func TestVolumeCommandSurface(t *testing.T) {
 		"inspect":      {},
 		"move-primary": {"to"},
 		"diverged":     {"choose"},
+		"verify":       {},
+		"resync":       {"node"},
 	}
 	for name, flags := range want {
 		sub, _, err := cmd.Find([]string{name})
@@ -119,15 +121,6 @@ func TestVolumeCommandSurface(t *testing.T) {
 			if sub.Flags().Lookup(f) == nil {
 				t.Errorf("%s: flag --%s missing", name, f)
 			}
-		}
-	}
-}
-
-func TestRetiredSubcommandsAreGone(t *testing.T) {
-	cmd := newVolumeCmd(&ctlOpts{})
-	for _, name := range []string{"resync", "verify"} {
-		if sub, _, _ := cmd.Find([]string{name}); sub != nil && sub.Name() == name {
-			t.Errorf("%s is still registered but nothing implements it", name)
 		}
 	}
 }
@@ -439,5 +432,98 @@ func TestChoosingRefusesWhatTheVolumeCannotHonourAndQueuesNothing(t *testing.T) 
 		if len(tc.fs.puts) != 0 {
 			t.Errorf("%s: wrote %v", name, tc.fs.puts)
 		}
+	}
+}
+
+// healthyStore is a volume whose three replicas are all in sync, n1 being the primary.
+func healthyStore(t *testing.T, edit ...func(*pb.VolumeStatus)) *fakeStore {
+	t.Helper()
+	v := fixtureVolume(t)
+	v.st.Placement[2] = &pb.Replica{NodeId: "n3", Role: pb.ReplicaRole_REPLICA_ROLE_SECONDARY, Healthy: true}
+	for _, e := range edit {
+		e(v.st)
+	}
+	return &fakeStore{kv: map[string][]byte{
+		"/volumes/vol-abc/spec":   mustProto(t, v.spec),
+		"/volumes/vol-abc/status": mustProto(t, v.st),
+	}}
+}
+
+func TestVerifyQueuesOneRequestForThePrimaryToCarryOut(t *testing.T) {
+	fs := healthyStore(t)
+	opts, stop := serveCLI(t, fs)
+	defer stop()
+	cmd := newVolumeCmd(opts)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"verify", "db"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/volumes/_ops/verify/vol-abc"}; !reflect.DeepEqual(fs.puts, want) {
+		t.Errorf("writes %v, want %v", fs.puts, want)
+	}
+	if !strings.Contains(out.String(), "n1") {
+		t.Errorf("output does not say the primary runs it:\n%s", out.String())
+	}
+}
+
+func TestResyncQueuesARequestForTheNamedReplicaAndSaysItIsRebuilt(t *testing.T) {
+	fs := healthyStore(t)
+	opts, stop := serveCLI(t, fs)
+	defer stop()
+	cmd := newVolumeCmd(opts)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"resync", "db", "--node", "n2"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/volumes/_ops/resync/vol-abc/n2"}; !reflect.DeepEqual(fs.puts, want) {
+		t.Errorf("writes %v, want %v", fs.puts, want)
+	}
+	for _, want := range []string{"n2", "rebuilt", "discard"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestVerifyAndResyncRefuseAVolumeThatIsNotFullyInSyncAndQueueNothing(t *testing.T) {
+	degraded := func(s *pb.VolumeStatus) { s.State = pb.VolumeState_VOLUME_STATE_DEGRADED }
+	diverged := func(s *pb.VolumeStatus) { s.State = pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY }
+	behind := func(s *pb.VolumeStatus) { s.Placement[1].Healthy = false }
+	alone := func(s *pb.VolumeStatus) { s.Placement = s.Placement[:1] }
+	for name, tc := range map[string]struct {
+		fs   *fakeStore
+		args []string
+	}{
+		"verify degraded":         {healthyStore(t, degraded), []string{"verify", "db"}},
+		"verify diverged":         {healthyStore(t, diverged), []string{"verify", "db"}},
+		"verify a replica behind": {healthyStore(t, behind), []string{"verify", "db"}},
+		"verify one replica":      {healthyStore(t, alone), []string{"verify", "db"}},
+		"verify unknown":          {healthyStore(t), []string{"verify", "nope"}},
+		"resync degraded":         {healthyStore(t, degraded), []string{"resync", "db", "--node", "n2"}},
+		"resync diverged":         {healthyStore(t, diverged), []string{"resync", "db", "--node", "n2"}},
+		"resync a replica behind": {healthyStore(t, behind), []string{"resync", "db", "--node", "n3"}},
+		"resync one replica":      {healthyStore(t, alone), []string{"resync", "db", "--node", "n1"}},
+		"resync the primary":      {healthyStore(t), []string{"resync", "db", "--node", "n1"}},
+		"resync a non-member":     {healthyStore(t), []string{"resync", "db", "--node", "n9"}},
+		"resync no node":          {healthyStore(t), []string{"resync", "db"}},
+		"resync unknown":          {healthyStore(t), []string{"resync", "nope", "--node", "n2"}},
+	} {
+		if err := runVolume(t, tc.fs, tc.args...); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+		if len(tc.fs.puts) != 0 {
+			t.Errorf("%s: wrote %v", name, tc.fs.puts)
+		}
+	}
+}
+
+func TestResyncWithoutANodeSaysWhichFlagIsMissing(t *testing.T) {
+	err := runVolume(t, healthyStore(t), "resync", "db")
+	if err == nil || !strings.Contains(err.Error(), "--node") {
+		t.Errorf("error %v, want one naming --node", err)
 	}
 }

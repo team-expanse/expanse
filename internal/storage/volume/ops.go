@@ -16,6 +16,7 @@ import (
 const (
 	opSnapshot = "snapshot"
 	opRestore  = "restore"
+	opVerify   = "verify"
 )
 
 type snapshotOp struct {
@@ -24,13 +25,14 @@ type snapshotOp struct {
 
 func opKey(kind, id string) store.Key { return store.Key("/volumes/_ops/" + kind + "/" + id) }
 
-// runOps carries out the snapshot and restore requests queued for a volume this
+// runOps carries out the snapshot, restore and verify requests queued for a volume this
 // node leads. A refused request is dropped with a log line; one that failed for a
 // passing reason stays queued and is retried on the next sync.
 func (n *Node) runOps(ctx context.Context, d Desired) error {
 	return errors.Join(
 		n.runOp(ctx, opSnapshot, d.Name, func(name string) error { return n.takeSnapshot(ctx, d, name) }),
 		n.runOp(ctx, opRestore, d.Name, func(name string) error { return n.restoreSnapshot(ctx, d, name) }),
+		n.runBareOp(ctx, opKey(opVerify, d.Name), opVerify, d.Name, func() error { return n.RT.Verify(ctx, d.Name) }),
 	)
 }
 
@@ -44,14 +46,28 @@ func (n *Node) runOp(ctx context.Context, kind, id string, do func(name string) 
 		n.log().Warn("dropping an unreadable request", "kind", kind, "vol", id, "err", err)
 		return n.St.Delete(ctx, opKey(kind, id), 0)
 	}
-	switch err := do(op.Name); experrors.KindOf(err) {
+	return n.settle(ctx, opKey(kind, id), kind, id, do(op.Name))
+}
+
+// runBareOp is runOp for a request that carries no argument.
+func (n *Node) runBareOp(ctx context.Context, key store.Key, kind, id string, do func() error) error {
+	if _, err := n.St.Get(ctx, key); err != nil {
+		return nil // nothing queued
+	}
+	return n.settle(ctx, key, kind, id, do())
+}
+
+// settle finishes a request given the outcome of carrying it out: a refusal is
+// logged and drops it, any other failure leaves it queued.
+func (n *Node) settle(ctx context.Context, key store.Key, kind, id string, err error) error {
+	switch experrors.KindOf(err) {
 	case "":
 	case experrors.KindInvalid, experrors.KindNotFound:
-		n.log().Warn("request refused", "kind", kind, "vol", id, "snapshot", op.Name, "err", err)
+		n.log().Warn("request refused", "kind", kind, "vol", id, "err", err)
 	default:
 		return err
 	}
-	return n.St.Delete(ctx, opKey(kind, id), 0)
+	return n.St.Delete(ctx, key, 0)
 }
 
 // takeSnapshot snapshots this node's replica and records it, so the cluster knows
