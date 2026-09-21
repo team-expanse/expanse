@@ -12,6 +12,8 @@ import (
 
 const (
 	maxNodeID = 31 // DRBD 9 supports node-ids 0..31
+	// MaxNodeID is exported for callers that validate ids before rendering.
+	MaxNodeID = maxNodeID
 	maxMinor  = 1<<20 - 1
 	minPort   = 1024
 	maxPort   = 65535

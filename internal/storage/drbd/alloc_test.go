@@ -259,3 +259,92 @@ func TestNeverUsedIDsAreExhaustedBeforeAnyRecycling(t *testing.T) {
 		t.Errorf("recycled id %d while never-used ids remain", dead)
 	}
 }
+
+func retireOf(t *testing.T, a *Allocator, hosts ...string) int {
+	t.Helper()
+	ctx := context.Background()
+	mustAllocate(t, a, "vol-a")
+	for _, h := range hosts {
+		if _, err := a.AssignNodeID(ctx, "vol-a", h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := a.RetireNode(ctx, "vol-a", hosts[len(hosts)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestAckForgottenWaitsForEverySurvivor(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	dead := retireOf(t, a, "n1", "n2", "n3")
+	for i, host := range []string{"n1", "n2"} {
+		if err := a.AckForgotten(ctx, "vol-a", dead, host); err != nil {
+			t.Fatal(err)
+		}
+		al, _ := a.Get(ctx, "vol-a")
+		forgotten := len(al.Forgotten) == 1
+		if forgotten != (i == 1) {
+			t.Errorf("after %d of 2 acks: forgotten=%v, %+v", i+1, forgotten, al)
+		}
+	}
+	al, _ := a.Get(ctx, "vol-a")
+	if len(al.Retired) != 0 || len(al.Acks) != 0 {
+		t.Errorf("bookkeeping left behind: %+v", al)
+	}
+}
+
+func TestAckForgottenIsIdempotent(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	dead := retireOf(t, a, "n1", "n2", "n3")
+	for _, host := range []string{"n1", "n1", "n1"} {
+		if err := a.AckForgotten(ctx, "vol-a", dead, host); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if al, _ := a.Get(ctx, "vol-a"); len(al.Forgotten) != 0 {
+		t.Errorf("one survivor acking three times completed the forget: %+v", al)
+	}
+	a.AckForgotten(ctx, "vol-a", dead, "n2")
+	if err := a.AckForgotten(ctx, "vol-a", dead, "n2"); err != nil {
+		t.Errorf("ack after completion should be a no-op, got %v", err)
+	}
+}
+
+func TestAckForgottenAlsoNeedsAReplacementAddedMeanwhile(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	dead := retireOf(t, a, "n1", "n2", "n3")
+	a.AssignNodeID(ctx, "vol-a", "n4")
+	a.AckForgotten(ctx, "vol-a", dead, "n1")
+	a.AckForgotten(ctx, "vol-a", dead, "n2")
+	if al, _ := a.Get(ctx, "vol-a"); len(al.Forgotten) != 0 {
+		t.Errorf("forgotten before the new member acked: %+v", al)
+	}
+	a.AckForgotten(ctx, "vol-a", dead, "n4")
+	if al, _ := a.Get(ctx, "vol-a"); len(al.Forgotten) != 1 {
+		t.Errorf("not forgotten after every member acked: %+v", al)
+	}
+}
+
+func TestAckForgottenRejectsStrangers(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	dead := retireOf(t, a, "n1", "n2")
+	wantKind(t, a.AckForgotten(ctx, "vol-a", dead, "ghost"), experrors.KindInvalid)
+	wantKind(t, a.AckForgotten(ctx, "vol-a", 25, "n1"), experrors.KindNotFound)
+	wantKind(t, a.AckForgotten(ctx, "nope", dead, "n1"), experrors.KindNotFound)
+}
+
+func TestForgottenIDIsReusableAfterAcks(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	fillNodeIDs(t, a)
+	dead, _ := a.RetireNode(ctx, "vol-a", "h5")
+	for i := 0; i <= maxNodeID; i++ {
+		if i != 5 {
+			a.AckForgotten(ctx, "vol-a", dead, fmt.Sprintf("h%d", i))
+		}
+	}
+	if id, err := a.AssignNodeID(ctx, "vol-a", "fresh"); err != nil || id != dead {
+		t.Errorf("want recycled id %d, got %d, %v", dead, id, err)
+	}
+}

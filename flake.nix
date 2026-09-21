@@ -88,6 +88,8 @@
           vol-drbd-status-capture = mkTest "vol-drbd-status-capture" ./nix/tests/vol-drbd-status-capture.nix;
           vol-drbd-config = mkTest "vol-drbd-config" ./nix/tests/vol-drbd-config.nix;
           vol-lvm = mkTest "vol-lvm" ./nix/tests/vol-lvm.nix;
+          vol-drbd-probe = mkTest "vol-drbd-probe" ./nix/tests/vol-drbd-probe.nix;
+          vol-runtime = mkTest "vol-runtime" ./nix/tests/vol-runtime.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;

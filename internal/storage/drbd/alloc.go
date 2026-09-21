@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +42,8 @@ type Allocation struct {
 	// Retired ids belonged to dropped replicas whose slot survivors may still
 	// hold; they cannot be reused until ConfirmForgotten.
 	Retired []int `json:"retired,omitempty"`
+	// Acks lists, per retired id, the members that have forgotten it so far.
+	Acks map[int][]string `json:"acks,omitempty"`
 	// Forgotten ids were dropped on every survivor and may be recycled once
 	// the never-used ids run out.
 	Forgotten []int `json:"forgotten,omitempty"`
@@ -182,6 +185,12 @@ func (a *Allocator) ConfirmForgotten(ctx context.Context, name string, id int) e
 	return a.update(ctx, name, func(al *Allocation) error { return al.confirmForgotten(id) })
 }
 
+// AckForgotten records that host ran forget-peer for a retired id. Once every
+// current member has, the id becomes reusable. It is safe to repeat.
+func (a *Allocator) AckForgotten(ctx context.Context, name string, id int, host string) error {
+	return a.update(ctx, name, func(al *Allocation) error { return al.ack(id, host) })
+}
+
 // update applies fn to the record under compare-and-swap, retrying on races.
 func (a *Allocator) update(ctx context.Context, name string, fn func(*Allocation) error) error {
 	const op = "drbd.Allocator.update"
@@ -247,12 +256,37 @@ func (al *Allocation) retire(host string) (int, error) {
 	return id, nil
 }
 
+func (al *Allocation) ack(id int, host string) error {
+	if slices.Contains(al.Forgotten, id) {
+		return nil
+	}
+	if !slices.Contains(al.Retired, id) {
+		return experrors.New(experrors.KindNotFound, "drbd.Allocation.ack", fmt.Sprintf("resource %q: node-id %d is not retired", al.Name, id))
+	}
+	if _, member := al.NodeIDs[host]; !member {
+		return experrors.New(experrors.KindInvalid, "drbd.Allocation.ack", fmt.Sprintf("resource %q: %q is not a member", al.Name, host))
+	}
+	if al.Acks == nil {
+		al.Acks = map[int][]string{}
+	}
+	if !slices.Contains(al.Acks[id], host) {
+		al.Acks[id] = append(al.Acks[id], host)
+	}
+	for member := range al.NodeIDs {
+		if !slices.Contains(al.Acks[id], member) {
+			return nil
+		}
+	}
+	return al.confirmForgotten(id)
+}
+
 func (al *Allocation) confirmForgotten(id int) error {
 	i := sort.SearchInts(al.Retired, id)
 	if i == len(al.Retired) || al.Retired[i] != id {
 		return experrors.New(experrors.KindNotFound, "drbd.Allocation.confirmForgotten", fmt.Sprintf("resource %q: node-id %d is not retired", al.Name, id))
 	}
 	al.Retired = append(al.Retired[:i:i], al.Retired[i+1:]...)
+	delete(al.Acks, id)
 	al.Forgotten = insertSorted(al.Forgotten, id)
 	return nil
 }
