@@ -105,6 +105,7 @@ type nodeRig struct {
 	conv  *fakeConverger
 	lead  *fakeLeader
 	drbd  kernel
+	marks SplitBrainMarks
 }
 
 func fixtureStatus(t *testing.T, name string) *drbd.Status {
@@ -134,8 +135,13 @@ func newNodeRig(t *testing.T) *nodeRig {
 		lead:  &fakeLeader{opts: map[string]HoldOptions{}, running: map[string]bool{}, started: make(chan string, 8)},
 		drbd:  kernel{st: map[string]*drbd.Status{}},
 	}
+	marks, err := NewSplitBrainMarks(filepath.Join(t.TempDir(), "split-brain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.marks = marks
 	r.node = &Node{
-		Self: "n1", St: st, Alloc: r.alloc, RT: r.conv, DRBD: r.drbd, Lead: r.lead.lead,
+		Splits: marks, Self: "n1", St: st, Alloc: r.alloc, RT: r.conv, DRBD: r.drbd, Lead: r.lead.lead,
 		Addr: func(host string) (netip.Addr, error) {
 			return netip.MustParseAddr("10.0.0." + host[1:]), nil
 		},
@@ -371,8 +377,76 @@ func TestNoPromotionWhileTheVolumeNeedsManualRecovery(t *testing.T) {
 		t.Fatal("led a volume that needs manual recovery")
 	case <-time.After(50 * time.Millisecond):
 	}
-	if len(r.conv.desired) != 1 {
-		t.Error("the resource should still be kept up for inspection")
+}
+
+// Adjusting a resource the kernel dropped would reconnect it and start the split-brain over.
+func TestADivergedVolumeIsLeftAsTheKernelDroppedIt(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2")
+	r.setState(t, storage.StateNeedsManualRecovery)
+	r.mustSync(t)
+	if len(r.conv.desired) != 0 {
+		t.Errorf("reconciled a diverged volume: %d passes", len(r.conv.desired))
+	}
+}
+
+func TestADivergedVolumeStillReportsItsReplica(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2")
+	r.drbd.st[vol] = fixtureStatus(t, "healthy-secondary.n2.json")
+	r.node.Self = "n2"
+	r.setState(t, storage.StateNeedsManualRecovery)
+	r.mustSync(t)
+	if row, _ := r.row(t, "n2"); row.LastSeen.IsZero() {
+		t.Errorf("row not published: %+v", row)
+	}
+}
+
+func TestAKernelSplitBrainMarkMovesTheVolumeToManualRecovery(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2")
+	r.mustSync(t)
+	waitStarted(t, r.lead)
+	runHandler(t, r.marks, vol)
+	r.mustSync(t)
+	if got := r.status(t).State; got != storage.StateNeedsManualRecovery {
+		t.Errorf("state = %s", got)
+	}
+	if r.lead.isRunning(vol) {
+		t.Error("the primary kept leading a diverged volume")
+	}
+}
+
+func TestASplitBrainMarkDoesNotOverwriteADeletingVolume(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2")
+	r.setState(t, storage.StateDeleting)
+	runHandler(t, r.marks, vol)
+	r.mustSync(t)
+	if got := r.status(t).State; got != storage.StateDeleting {
+		t.Errorf("state = %s", got)
+	}
+}
+
+func TestDeletingAVolumeForgetsItsSplitBrainMark(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2")
+	r.mustSync(t)
+	runHandler(t, r.marks, vol)
+	r.setState(t, storage.StateDeleting)
+	r.mustSync(t)
+	if got, _ := r.marks.Marked(vol); got {
+		t.Error("the mark outlived the volume")
+	}
+}
+
+func TestAMarkOfAnotherVolumeChangesNothing(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2")
+	runHandler(t, r.marks, "vol-other")
+	r.mustSync(t)
+	if got := r.status(t).State; got != storage.StateHealthy {
+		t.Errorf("state = %s", got)
 	}
 }
 
@@ -537,5 +611,33 @@ func TestSyncRetriesAPublishThatLostARaceWithTheController(t *testing.T) {
 	r.mustSync(t)
 	if row, _ := r.row(t, "n3"); row.Role != storage.RoleResyncing {
 		t.Errorf("row = %+v: the publish was lost", row)
+	}
+}
+
+// deletingStore marks the volume Deleting just before the first write it is asked to make.
+type deletingStore struct {
+	store.Store
+	once sync.Once
+}
+
+func (s *deletingStore) CompareAndSwap(ctx context.Context, k store.Key, rev store.Revision, v []byte) (store.Revision, error) {
+	s.once.Do(func() {
+		st, _, err := storage.LoadStatus(ctx, s.Store, vol)
+		if err == nil {
+			st.State = storage.StateDeleting
+			_ = storage.SaveStatus(ctx, s.Store, vol, st)
+		}
+	})
+	return s.Store.CompareAndSwap(ctx, k, rev, v)
+}
+
+func TestASplitBrainMarkLosesToADeleteRequestedMeanwhile(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2")
+	runHandler(t, r.marks, vol)
+	r.node.St = &deletingStore{Store: r.st}
+	r.mustSync(t)
+	if got := r.status(t).State; got != storage.StateDeleting {
+		t.Errorf("state = %s: the mark overwrote the delete", got)
 	}
 }

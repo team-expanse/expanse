@@ -82,6 +82,7 @@
           vol-full-restart = mkTest "vol-full-restart" ./nix/tests/vol-full-restart.nix;
           vol-resync-incremental = mkTest "vol-resync-incremental" ./nix/tests/vol-resync-incremental.nix;
           vol-no-double-primary = mkTest "vol-no-double-primary" ./nix/tests/vol-no-double-primary.nix;
+          vol-split-brain = mkTest "vol-split-brain" ./nix/tests/vol-split-brain.nix;
           vol-resize = mkTest "vol-resize" ./nix/tests/vol-resize.nix;
           vol-snapshot = mkTest "vol-snapshot" ./nix/tests/vol-snapshot.nix;
           vol-drbd-spike = mkTest "vol-drbd-spike" ./nix/tests/vol-drbd-spike.nix;

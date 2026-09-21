@@ -42,6 +42,8 @@ type Node struct {
 	RT    Converger
 	DRBD  drbd.DRBD
 	Lead  Leader
+	// Splits holds the kernel's split-brain reports for this node's replicas.
+	Splits SplitBrainMarks
 	// Addr resolves a member host to its mesh address.
 	Addr func(host string) (netip.Addr, error)
 	Thin bool
@@ -122,7 +124,16 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	lead := status.Primary == n.Self && status.State != storage.StateNeedsManualRecovery
+	diverged, err := n.diverged(ctx, id, &status)
+	if err != nil {
+		return err
+	}
+	if diverged {
+		// An adjust would reconnect the dropped resource and repeat the split-brain.
+		n.stopLeading(id)
+		return n.publish(ctx, d)
+	}
+	lead := status.Primary == n.Self
 	if !lead {
 		n.stopLeading(id)
 	}
@@ -136,6 +147,26 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 		errs = append(errs, n.runOps(ctx, d))
 	}
 	return errors.Join(append(errs, n.publish(ctx, d))...)
+}
+
+// diverged reports whether the volume needs manual recovery, moving it there when
+// the kernel has reported a split-brain. Nothing here resolves it.
+func (n *Node) diverged(ctx context.Context, id string, status *storage.Status) (bool, error) {
+	if status.State == storage.StateNeedsManualRecovery {
+		return true, nil
+	}
+	marked, err := n.Splits.Marked(id)
+	if err != nil || !marked {
+		return false, err
+	}
+	status.State = storage.StateNeedsManualRecovery
+	return true, n.updateStatus(ctx, id, func(st *storage.Status) bool {
+		if st.State == storage.StateDeleting || st.State == storage.StateNeedsManualRecovery {
+			return false
+		}
+		st.State = storage.StateNeedsManualRecovery
+		return true
+	})
 }
 
 // ignoreMissing treats a record that is not there yet (creation is two writes) as no work.
@@ -178,6 +209,9 @@ func (n *Node) release(ctx context.Context, id string, placed bool) error {
 	}
 	if present {
 		if err := n.RT.Remove(ctx, id); err != nil {
+			return err
+		}
+		if err := n.Splits.Clear(id); err != nil {
 			return err
 		}
 	}

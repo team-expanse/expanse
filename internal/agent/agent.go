@@ -361,7 +361,9 @@ func New(cfg Config) (*Agent, error) {
 
 	// DRBD volume stack: cluster nodes with a configured volume group only.
 	if cfg.StorageVG != "" {
-		a.initStorage(cfg, st, logger)
+		if err := a.initStorage(cfg, st, logger); err != nil {
+			return nil, err
+		}
 	}
 
 	// Block API (T20.5a): served on the agent socket when a block

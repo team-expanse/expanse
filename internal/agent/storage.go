@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"path/filepath"
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
@@ -23,6 +24,8 @@ const (
 	volumeLeaseTTL       = 10 * time.Second
 	volumeSyncInterval   = 2 * time.Second
 	defaultDRBDConfigDir = "/etc/drbd.d"
+	// splitBrainDir, under the data directory, is where the kernel's split-brain handler leaves its marks.
+	splitBrainDir = "split-brain"
 )
 
 // volumeRunner is the node loop that converges this machine's volume replicas;
@@ -47,7 +50,11 @@ func (a *Agent) runVolumes(ctx context.Context, cancel context.CancelFunc) func(
 
 // initStorage wires the DRBD volume stack: the node loop that converges the
 // replicas placed here, and the leader-side controller that plans them.
-func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) {
+func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) error {
+	marks, err := volume.NewSplitBrainMarks(filepath.Join(cfg.DataDir, splitBrainDir))
+	if err != nil {
+		return fmt.Errorf("split-brain markers: %w", err)
+	}
 	dr := drbd.New()
 	mounts := mount.New(nil, dr, "")
 	a.recon.Register(mounts)
@@ -55,9 +62,10 @@ func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) {
 	leases := lease.NewManager(st, cfg.NodeID)
 	alloc := drbd.NewAllocator(st, drbd.DefaultMinors, drbd.DefaultPorts)
 	a.volnode = &volume.Node{
-		Self: cfg.NodeID, St: st, Alloc: alloc, DRBD: dr, Log: logger,
+		Splits: marks, Self: cfg.NodeID, St: st, Alloc: alloc, DRBD: dr, Log: logger,
 		RT: &volume.Runtime{
 			LVM: lvm.New(), DRBD: dr, VG: cfg.StorageVG, Pool: cfg.StoragePool, ConfigDir: cfg.DRBDConfigDir,
+			SplitBrainCmd: marks.Handler(),
 		},
 		Lead: func(ctx context.Context, res string, opt volume.HoldOptions) error {
 			return promoter.Lead(ctx, leases, volume.LeaseName(res), res, volumeLeaseTTL, opt)
@@ -69,6 +77,7 @@ func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) {
 		NodeID: cfg.NodeID, St: st, Alloc: alloc, Logger: logger, LostAfter: cfg.StorageLostAfter,
 		IsLeader: func() bool { return a.ctl != nil && a.ctl.store != nil && a.ctl.store.IsLeader() },
 	})
+	return nil
 }
 
 // meshAddr resolves a node to its exp0 overlay address: the .1 of the /24 in its
