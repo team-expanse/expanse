@@ -99,6 +99,7 @@ func TestVolumeCommandSurface(t *testing.T) {
 		"create":       {"size", "class", "replication"},
 		"list":         {},
 		"delete":       {},
+		"resize":       {"size"},
 		"inspect":      {},
 		"move-primary": {"to"},
 		"diverged":     {},
@@ -118,7 +119,7 @@ func TestVolumeCommandSurface(t *testing.T) {
 
 func TestRetiredSubcommandsAreGone(t *testing.T) {
 	cmd := newVolumeCmd(&ctlOpts{})
-	for _, name := range []string{"resync", "verify", "snapshot", "restore", "resize"} {
+	for _, name := range []string{"resync", "verify", "snapshot", "restore"} {
 		if sub, _, _ := cmd.Find([]string{name}); sub != nil && sub.Name() == name {
 			t.Errorf("%s is still registered but nothing implements it", name)
 		}
@@ -206,4 +207,62 @@ func mustProto(t *testing.T, m pbproto.Message) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func resizeStore(t *testing.T) *fakeStore {
+	t.Helper()
+	v := fixtureVolume(t)
+	return &fakeStore{kv: map[string][]byte{
+		"/volumes/vol-abc/spec":   mustProto(t, v.spec),
+		"/volumes/vol-abc/status": mustProto(t, v.st),
+	}}
+}
+
+func runResize(t *testing.T, fs *fakeStore, args ...string) error {
+	t.Helper()
+	opts, stop := serveCLI(t, fs)
+	defer stop()
+	cmd := newVolumeCmd(opts)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(append([]string{"resize"}, args...))
+	return cmd.Execute()
+}
+
+func TestResizeOpCarriesTheNewSizeInBytes(t *testing.T) {
+	fs := resizeStore(t)
+	if err := runResize(t, fs, "db", "--size", "20Gi"); err != nil {
+		t.Fatal(err)
+	}
+	op, ok := fs.kv["/volumes/_ops/resize/vol-abc"]
+	if !ok {
+		t.Fatalf("resize op not written; keys: %v", fs.kv)
+	}
+	if want := `"sizeBytes":21474836480`; !strings.Contains(string(op), want) {
+		t.Errorf("op payload %s lacks %s", op, want)
+	}
+}
+
+func TestResizeRefusesAShrinkOrANoOpWithoutWritingAnOp(t *testing.T) {
+	for _, size := range []string{"5Gi", "10Gi"} {
+		fs := resizeStore(t)
+		if err := runResize(t, fs, "db", "--size", size); err == nil {
+			t.Errorf("--size %s: want an error, got none", size)
+		}
+		if _, ok := fs.kv["/volumes/_ops/resize/vol-abc"]; ok {
+			t.Errorf("--size %s: an op was written for a request that is not a grow", size)
+		}
+	}
+}
+
+func TestResizeNeedsAValidSizeAndAKnownVolume(t *testing.T) {
+	if err := runResize(t, resizeStore(t), "db"); err == nil {
+		t.Error("missing --size: want an error")
+	}
+	if err := runResize(t, resizeStore(t), "db", "--size", "lots"); err == nil {
+		t.Error("unparsable --size: want an error")
+	}
+	if err := runResize(t, resizeStore(t), "nope", "--size", "20Gi"); err == nil {
+		t.Error("unknown volume: want an error")
+	}
 }

@@ -93,7 +93,7 @@ func putOp(ctx context.Context, cl pb.NodeServiceClient, kind, volID string, val
 }
 
 func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
-	var toNode string
+	var toNode, sizeStr string
 
 	del := &cobra.Command{
 		Use:   "delete <name>",
@@ -113,6 +113,33 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 			})
 		},
 	}
+
+	resize := &cobra.Command{
+		Use:   "resize <name>",
+		Short: "Grow the volume (grow-only; a shrink is refused because DRBD cannot shrink)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			b, err := quantity.ParseBytes(sizeStr)
+			if err != nil {
+				return fmt.Errorf("--size: %w", err)
+			}
+			return withClient(c, opts, func(ctx context.Context, cl pb.NodeServiceClient) error {
+				v, err := resolveVol(ctx, cl, args[0])
+				if err != nil {
+					return err
+				}
+				if have := v.spec.GetSizeBytes(); uint64(b.N) <= have {
+					return fmt.Errorf("--size %s is not larger than the current %s; volumes only grow", sizeStr, humanBytes(have))
+				}
+				if err := putOp(ctx, cl, "resize", v.id, map[string]any{"target": args[0], "sizeBytes": b.N}); err != nil {
+					return err
+				}
+				fmt.Printf("volume %q resize to %s requested\n", args[0], sizeStr)
+				return nil
+			})
+		},
+	}
+	resize.Flags().StringVar(&sizeStr, "size", "", "new size (e.g. 20Gi)")
 
 	insp := &cobra.Command{
 		Use:   "inspect <name>",
@@ -163,7 +190,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	}
 	move.Flags().StringVar(&toNode, "to", "", "destination node (must hold a replica)")
 
-	return []*cobra.Command{del, insp, move, diverged}
+	return []*cobra.Command{del, resize, insp, move, diverged}
 }
 
 // printInspect renders `volume inspect`: which replicas exist and how each reports.
