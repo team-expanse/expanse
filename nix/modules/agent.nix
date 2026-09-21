@@ -143,9 +143,9 @@ in
       before = [ "expanse-ui.service" ];
 
       unitConfig = { };
-      # The volume runtime shells out to lvm and drbdadm/drbdsetup; the
-      # unit's own Environment=PATH is minimal.
-      path = with pkgs; [ lvm2 drbd ];
+      # The volume runtime shells out to lvm and drbdadm/drbdsetup, and the mount
+      # manager to util-linux, e2fsprogs and cmp; the unit's own PATH is minimal.
+      path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils ];
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
@@ -179,8 +179,8 @@ in
         # Hardening (tightened further in Phase 14). sysctl writes need
         # kernel tunables; the store lives under /persist.
         NoNewPrivileges = true;
-        ProtectHome = true;
-        PrivateTmp = true;
+        # No PrivateTmp or ProtectHome: either gives the unit a private, slave mount namespace,
+        # and the volume mounts it makes for the block units would never reach the host.
         ProtectKernelTunables = false;
         RestrictSUIDSGID = true;
         LockPersonality = true;

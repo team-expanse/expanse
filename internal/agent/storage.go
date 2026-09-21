@@ -12,6 +12,7 @@ import (
 	volctlc "github.com/expanse/expanse/internal/storage/controller"
 	"github.com/expanse/expanse/internal/storage/drbd"
 	"github.com/expanse/expanse/internal/storage/lvm"
+	"github.com/expanse/expanse/internal/storage/mount"
 	"github.com/expanse/expanse/internal/storage/volume"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -48,7 +49,9 @@ func (a *Agent) runVolumes(ctx context.Context, cancel context.CancelFunc) func(
 // replicas placed here, and the leader-side controller that plans them.
 func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) {
 	dr := drbd.New()
-	promoter := &volume.Promoter{DRBD: dr, Log: logger}
+	mounts := mount.New(nil, dr, "")
+	a.recon.Register(mounts)
+	promoter := &volume.Promoter{DRBD: dr, Consumer: mounts, Log: logger}
 	leases := lease.NewManager(st, cfg.NodeID)
 	alloc := drbd.NewAllocator(st, drbd.DefaultMinors, drbd.DefaultPorts)
 	a.volnode = &volume.Node{

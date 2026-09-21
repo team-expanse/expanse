@@ -32,7 +32,6 @@ import (
 	"github.com/expanse/expanse/internal/proxy"
 
 	volctlc "github.com/expanse/expanse/internal/storage/controller"
-	expmount "github.com/expanse/expanse/internal/storage/mount"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -355,9 +354,6 @@ func New(cfg Config) (*Agent, error) {
 	}
 	nixDriver := nix.New()
 	r.Register(nixman.New(nixDriver, os.Stdout))
-	// Exvol volume attach/mount (T14 §4.7): wait for the device,
-	// format only if blank (never reformat), mount noatime.
-	r.Register(expmount.New(nil, ""))
 	a.recon = r
 
 	// DRBD volume stack: cluster nodes with a configured volume group only.

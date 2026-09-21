@@ -115,6 +115,19 @@ func TestRenderOmitsHandlerWhenUnset(t *testing.T) {
 	}
 }
 
+// An open must never promote: only the lease-gated promoter may make a node Primary.
+func TestRenderDisablesAutoPromote(t *testing.T) {
+	for _, n := range []int{1, 2, 3, 5} {
+		got, err := resource(n).Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, "auto-promote no;") {
+			t.Errorf("%d replicas: auto-promote not disabled in:\n%s", n, got)
+		}
+	}
+}
+
 func TestRenderQuorumNeedsThreeReplicas(t *testing.T) {
 	for n, want := range map[int]string{1: "quorum off;", 2: "quorum off;", 3: "quorum majority;", 5: "quorum majority;"} {
 		got, err := resource(n).Render()

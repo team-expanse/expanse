@@ -3,107 +3,90 @@ package mount
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
-	"sync"
 	"testing"
 	"time"
+
+	experrors "github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/reconcile"
+	"github.com/expanse/expanse/internal/storage/drbd"
 )
 
-var fmu sync.Mutex
+const (
+	volID = "vol-a"
+	dev   = "/dev/drbd7"
+)
 
-// fakeRunner records commands and answers the filesystem probes.
-type fakeRunner struct {
-	mu       sync.Mutex
-	commands []string
-	devices  map[string]string // device → exists
-	filesys  map[string]string // device → fs TYPE (blkid)
-	mounted  map[string]string // device → target
-	failMKFS bool
+// fakeHost plays the parts of the machine the manager shells out to.
+type fakeHost struct {
+	calls    []string
+	fsType   map[string]string // device → blkid TYPE
+	blank    map[string]bool   // device → first MiB is all zero
+	unread   bool              // cmp cannot read the device
+	mounted  map[string]string // mount point → device
+	busy     bool              // a plain umount fails
+	devBytes uint64
+	fsBytes  uint64
 }
 
-func newRunner() *fakeRunner {
-	return &fakeRunner{
-		filesys: map[string]string{},
-		mounted: map[string]string{},
+func newHost() *fakeHost {
+	return &fakeHost{
+		fsType:   map[string]string{},
+		blank:    map[string]bool{dev: true},
+		mounted:  map[string]string{},
+		devBytes: 1 << 30,
+		fsBytes:  1 << 30,
 	}
 }
 
-var ws = regexp.MustCompile(`\s+`)
+func exit(code int) error { return &ExitError{Code: code} }
 
-func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cmd := ws.ReplaceAllString(name+" "+strings.Join(args, " "), " ")
-	f.commands = append(f.commands, cmd)
-	switch {
-	case strings.HasPrefix(cmd, "test -e "):
-		dev := strings.TrimPrefix(cmd, "test -e ")
-		if _, ok := f.devices[dev]; !ok {
-			return "", fmt.Errorf("exit status 1")
+func (h *fakeHost) Run(_ context.Context, name string, args ...string) (string, error) {
+	cmd := strings.Join(append([]string{name}, args...), " ")
+	h.calls = append(h.calls, cmd)
+	switch name {
+	case "blkid":
+		if t := h.fsType[args[len(args)-1]]; t != "" {
+			return t + "\n", nil
 		}
-		return "", nil
-	case strings.HasPrefix(cmd, "blkid "):
-		dev := strings.Fields(cmd)[5]
-		if t, ok := f.filesys[dev]; ok {
-			return t, nil
-		}
-		return "", fmt.Errorf("exit status 2") // blkid's "nothing found"
-	case strings.HasPrefix(cmd, "mkfs."):
-		dev := strings.Fields(cmd)[2]
-		if f.failMKFS {
-			return "", fmt.Errorf("mkfs boom")
-		}
-		fs := strings.TrimPrefix(strings.Fields(cmd)[0], "mkfs.")
-		f.filesys[dev] = fs
-		return "", nil
-	case strings.HasPrefix(cmd, "mount "):
-		parts := strings.Fields(cmd)
-		dev, target := parts[3], parts[4]
-		f.mounted[dev] = target
-		return "", nil
-	case strings.HasPrefix(cmd, "findmnt -rn -S"):
-		dev := strings.Fields(cmd)[5]
-		if t, ok := f.mounted[dev]; ok {
-			return t, nil
-		}
-		return "", fmt.Errorf("exit status 1")
-	case strings.HasPrefix(cmd, "umount"):
-		var target string
-		if strings.Contains(cmd, " -l") {
-			target = strings.Fields(cmd)[2]
-		} else {
-			target = strings.Fields(cmd)[1]
-		}
-		for d, t := range f.mounted {
-			if t == target {
-				delete(f.mounted, d)
-			}
-		}
-		if strings.Contains(cmd, " -l") {
+		return "", exit(2)
+	case "cmp":
+		switch {
+		case h.unread:
+			return "", exit(2)
+		case h.blank[args[len(args)-1]]:
 			return "", nil
 		}
-		return "", fmt.Errorf("target is busy")
-	case strings.HasPrefix(cmd, "mkdir"):
-		return "", nil
+		return "differ", exit(1)
+	case "mkfs.ext4":
+		h.fsType[args[1]] = "ext4"
+	case "findmnt":
+		if d, ok := h.mounted[args[len(args)-3]]; ok {
+			return d + "\n", nil
+		}
+		return "", exit(1)
+	case "mount":
+		h.mounted[args[3]] = args[2]
+	case "umount":
+		if args[0] == "-l" {
+			delete(h.mounted, args[1])
+		} else if h.busy {
+			return "", exit(32)
+		} else {
+			delete(h.mounted, args[0])
+		}
+	case "blockdev":
+		return fmt.Sprintf("%d\n", h.devBytes), nil
+	case "dumpe2fs":
+		return fmt.Sprintf("Block count:              %d\nBlock size:               4096\n", h.fsBytes/4096), nil
+	case "resize2fs":
+		h.fsBytes = h.devBytes
 	}
 	return "", nil
 }
 
-// addDevice registers a device as present (race-safe for the wait test).
-func (f *fakeRunner) addDevice(dev string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.devices == nil {
-		f.devices = map[string]string{}
-	}
-	f.devices[dev] = "blk"
-}
-
-func (f *fakeRunner) has(prefix string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, c := range f.commands {
+func (h *fakeHost) ran(prefix string) bool {
+	for _, c := range h.calls {
 		if strings.HasPrefix(c, prefix) {
 			return true
 		}
@@ -111,119 +94,242 @@ func (f *fakeRunner) has(prefix string) bool {
 	return false
 }
 
-func spec(id, mp, fs string) Resource {
-	return Resource{VolID: id, MountPath: mp, Filesystem: fs}
+type fakeDRBD struct {
+	role drbd.Role
+	err  error
 }
 
-// TestAttachFormatsBlankDeviceOnly is §4.7 step 4's hard rule: a
-// pre-existing filesystem is NEVER reformatted.
-func TestAttachFormatsBlankDeviceOnly(t *testing.T) {
-	ctx := context.Background()
-	r := newRunner()
-	m := New(r, "")
-	m.Wait = 50 * time.Millisecond
-	r.devices = map[string]string{"/dev/exvol/vol-a": "blk"}
+func (f fakeDRBD) Status(context.Context, string) (*drbd.Status, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &drbd.Status{Role: f.role, Volumes: []drbd.Volume{{Minor: 7}}}, nil
+}
 
-	// Blank device → mkfs once, mounted noatime.
-	if err := m.attach(ctx, spec("vol-a", "/var/lib/db", "ext4")); err != nil {
+func manager(h *fakeHost, role drbd.Role) *Manager {
+	m := New(h, fakeDRBD{role: role}, "")
+	m.Grace = time.Millisecond
+	return m
+}
+
+func spec(fs string) Resource {
+	return Resource{VolID: volID, MountPath: "/var/lib/db", Filesystem: fs}
+}
+
+func TestAttachFormatsABlankDeviceAndMountsTheDRBDDevice(t *testing.T) {
+	h := newHost()
+	if err := manager(h, drbd.RolePrimary).attach(context.Background(), spec("ext4")); err != nil {
 		t.Fatal(err)
 	}
-	if !r.has("mkfs.ext4 -F /dev/exvol/vol-a") {
-		t.Fatal("blank device must be formatted")
+	if !h.ran("mkfs.ext4 -F "+dev) || h.mounted[HostPath("", volID)] != dev {
+		t.Fatalf("want a formatted %s mounted at %s, got calls %v", dev, HostPath("", volID), h.calls)
 	}
-	if r.mounted["/dev/exvol/vol-a"] != HostPath("", "vol-a") {
-		t.Fatalf("mounted at %q, want %q", r.mounted["/dev/exvol/vol-a"], HostPath("", "vol-a"))
-	}
-
-	// Pre-existing filesystem → NO mkfs command, still mounted.
-	r2 := newRunner()
-	m2 := New(r2, "")
-	m2.Wait = 50 * time.Millisecond
-	r2.devices = map[string]string{"/dev/exvol/vol-b": "blk"}
-	r2.filesys["/dev/exvol/vol-b"] = "ext4" // fs exists
-	if err := m2.attach(ctx, spec("vol-b", "/var/lib/db", "ext4")); err != nil {
-		t.Fatal(err)
-	}
-	if r2.has("mkfs") {
-		t.Fatal("NEVER reformat an existing filesystem — mkfs ran")
-	}
-	if r2.mounted["/dev/exvol/vol-b"] == "" {
-		t.Fatal("existing-fs device must still be mounted")
-	}
-
-	// filesystem "none" (raw device) → never format.
-	r3 := newRunner()
-	m3 := New(r3, "")
-	m3.Wait = 50 * time.Millisecond
-	r3.devices = map[string]string{"/dev/exvol/vol-c": "blk"}
-	if err := m3.attach(ctx, spec("vol-c", "/raw", "none")); err != nil {
-		t.Fatal(err)
-	}
-	if r3.has("mkfs") {
-		t.Fatal("filesystem none must never be formatted")
+	if !h.ran("mount -o noatime " + dev) {
+		t.Fatalf("mount must be noatime: %v", h.calls)
 	}
 }
 
-// TestAttachWaitsForDevice: the device appears mid-wait (§4.7 step 3,
-// 30 s bound — shortened here).
-func TestAttachWaitsForDevice(t *testing.T) {
-	ctx := context.Background()
-	r := newRunner()
-	m := New(r, "")
-	m.Wait = 2 * time.Second
-	r.devices = nil // device absent
-	done := make(chan error, 1)
-	go func() { done <- m.attach(ctx, spec("vol-d", "/x", "ext4")) }()
-	time.Sleep(100 * time.Millisecond)
-	r.addDevice("/dev/exvol/vol-d") // device appears
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("attach failed: %v", err)
+func TestAttachNeverFormatsAnExistingFilesystem(t *testing.T) {
+	h := newHost()
+	h.fsType[dev] = "ext4"
+	h.blank[dev] = false
+	if err := manager(h, drbd.RolePrimary).attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	if h.ran("mkfs") || h.mounted[HostPath("", volID)] != dev {
+		t.Fatalf("an existing filesystem must be mounted untouched: %v", h.calls)
+	}
+}
+
+func TestAttachNeverFormatsDataItDoesNotRecognise(t *testing.T) {
+	h := newHost()
+	h.blank[dev] = false
+	err := manager(h, drbd.RolePrimary).attach(context.Background(), spec("ext4"))
+	if err == nil || h.ran("mkfs") || h.ran("mount") {
+		t.Fatalf("unrecognised data must be refused, not formatted: err=%v calls=%v", err, h.calls)
+	}
+}
+
+func TestAttachNeverFormatsADeviceItCannotRead(t *testing.T) {
+	h := newHost()
+	h.unread = true
+	err := manager(h, drbd.RolePrimary).attach(context.Background(), spec("ext4"))
+	if err == nil || h.ran("mkfs") {
+		t.Fatalf("a read failure (quorum loss) must not read as blank: err=%v calls=%v", err, h.calls)
+	}
+}
+
+func TestAttachLeavesARawDeviceAlone(t *testing.T) {
+	for _, fs := range []string{"", "none"} {
+		h := newHost()
+		if err := manager(h, drbd.RolePrimary).attach(context.Background(), spec(fs)); err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("attach did not return after the device appeared")
-	}
-	if !r.has("mount -o noatime /dev/exvol/vol-d") {
-		t.Fatal("expected noatime mount")
+		if h.ran("mkfs") {
+			t.Errorf("filesystem %q must never be formatted", fs)
+		}
 	}
 }
 
-// TestAttachTimeout: a device that never appears fails within the
-// bound (never hangs).
-func TestAttachTimeout(t *testing.T) {
-	r := newRunner()
-	m := New(r, "")
-	m.Wait = 200 * time.Millisecond
-	err := m.attach(context.Background(), spec("vol-e", "/x", "ext4"))
-	if err == nil || !strings.Contains(err.Error(), "did not appear") {
-		t.Fatalf("want timeout error, got %v", err)
+// Opening a DRBD device on a Secondary would promote it behind the lease's back.
+func TestAttachTouchesNothingUnlessThisNodeIsPrimary(t *testing.T) {
+	for _, role := range []drbd.Role{drbd.RoleSecondary, drbd.RoleUnknown} {
+		h := newHost()
+		err := manager(h, role).attach(context.Background(), spec("ext4"))
+		if err == nil || experrors.KindOf(err) != experrors.KindConflict {
+			t.Fatalf("role %q: want a Conflict, got %v", role, err)
+		}
+		if len(h.calls) != 0 {
+			t.Fatalf("role %q: the device was touched: %v", role, h.calls)
+		}
 	}
 }
 
-// TestDetachLazyFallback: a busy mount unmounts with `umount -l`.
-func TestDetachLazyFallback(t *testing.T) {
-	r := newRunner()
-	m := New(r, "")
-	r.mounted["/dev/exvol/vol-f"] = HostPath("", "vol-f")
-	res, err := m.Load("exvol-attach:vol-f", []byte(`{"volId":"vol-f","mountPath":"/x"}`))
+func TestAttachFailsForAVolumeDRBDDoesNotKnow(t *testing.T) {
+	h := newHost()
+	m := New(h, fakeDRBD{err: experrors.New(experrors.KindNotFound, "t", "no such resource")}, "")
+	if err := m.attach(context.Background(), spec("ext4")); err == nil || len(h.calls) != 0 {
+		t.Fatalf("want an error and no commands, got %v / %v", err, h.calls)
+	}
+}
+
+func TestAttachIsRepeatable(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	for i := 0; i < 2; i++ {
+		if err := m.attach(context.Background(), spec("ext4")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(strings.Join(h.calls, "\n"), "mount -o"); n != 1 {
+		t.Fatalf("mounted %d times, want once: %v", n, h.calls)
+	}
+}
+
+func observe(t *testing.T, m *Manager) reconcile.Observed {
+	t.Helper()
+	r, err := m.Load("volume-mount:"+volID, []byte(`{"volId":"vol-a","mountPath":"/x","filesystem":"ext4"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Delete(context.Background(), res); err != nil {
+	o, err := m.Observe(context.Background(), r)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.has("umount -l " + HostPath("", "vol-f")) {
-		t.Fatal("lazy fallback not used")
+	return o
+}
+
+func TestObserveIsInSyncOnlyOnceMountedAtFullSize(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	if observe(t, m).InSync {
+		t.Fatal("an unmounted volume is not in sync")
 	}
-	if _, ok := r.mounted["/dev/exvol/vol-f"]; ok {
-		t.Fatal("mount still recorded after detach")
+	if err := m.attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	if !observe(t, m).InSync {
+		t.Fatal("a mounted, full-size volume is in sync")
+	}
+	h.devBytes = 2 << 30
+	if observe(t, m).InSync {
+		t.Fatal("a device larger than its filesystem is not in sync")
 	}
 }
 
-// TestResourceRoundTrip: Load validates required fields.
-func TestResourceRoundTrip(t *testing.T) {
-	m := New(newRunner(), "")
+func TestPlanGrowsAMountedFilesystemAfterAResize(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	if err := m.attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	h.devBytes = 2 << 30
+	r, _ := m.Load("volume-mount:"+volID, []byte(`{"volId":"vol-a","mountPath":"/x","filesystem":"ext4"}`))
+	acts, err := m.Plan(context.Background(), r, observe(t, m))
+	if err != nil || len(acts) != 1 {
+		t.Fatalf("want one action, got %v / %v", acts, err)
+	}
+	if h.ran("umount") {
+		t.Fatal("growing must be online")
+	}
+	if err := m.Apply(context.Background(), acts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ran("resize2fs "+dev) || !observe(t, m).InSync {
+		t.Fatalf("want the filesystem grown to the device: %v", h.calls)
+	}
+}
+
+func TestReleaseUnmountsAndIsRepeatable(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	if err := m.attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := m.Release(context.Background(), volID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.mounted) != 0 {
+		t.Fatalf("still mounted: %v", h.mounted)
+	}
+}
+
+func TestReleaseOfAnUnmountedVolumeRunsNoUnmount(t *testing.T) {
+	h := newHost()
+	if err := manager(h, drbd.RolePrimary).Release(context.Background(), volID); err != nil {
+		t.Fatal(err)
+	}
+	if h.ran("umount") {
+		t.Fatalf("nothing was mounted: %v", h.calls)
+	}
+}
+
+func TestReleaseFallsBackToALazyUnmountWhenBusy(t *testing.T) {
+	h := newHost()
+	h.busy = true
+	m := manager(h, drbd.RolePrimary)
+	if err := m.attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Release(context.Background(), volID); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ran("umount -l "+HostPath("", volID)) || len(h.mounted) != 0 {
+		t.Fatalf("lazy fallback not used: %v", h.calls)
+	}
+}
+
+func TestReleaseStopsWaitingWhenCancelled(t *testing.T) {
+	h := newHost()
+	h.busy = true
+	m := manager(h, drbd.RolePrimary)
+	m.Grace = time.Minute
+	if err := m.attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.Release(ctx, volID); err == nil {
+		t.Fatal("a cancelled release must report failure")
+	}
+}
+
+func TestDeleteUnmountsTheVolume(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	if err := m.attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := m.Load("volume-mount:"+volID, []byte(`{"volId":"vol-a","mountPath":"/x"}`))
+	if err := m.Delete(context.Background(), r); err != nil || len(h.mounted) != 0 {
+		t.Fatalf("delete left %v mounted (err %v)", h.mounted, err)
+	}
+}
+
+func TestLoadValidatesTheRequiredFields(t *testing.T) {
+	m := manager(newHost(), drbd.RolePrimary)
 	if _, err := m.Load("x", []byte(`{"mountPath":"/x"}`)); err == nil {
 		t.Fatal("volId required")
 	}

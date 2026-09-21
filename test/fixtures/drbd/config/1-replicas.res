@@ -11,6 +11,7 @@ resource vol-a1 {
     rr-conflict disconnect;
   }
   options {
+    auto-promote no;
     quorum off;
   }
   handlers {

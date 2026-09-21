@@ -81,9 +81,9 @@ func (r Resource) Render() (string, error) {
 
 func optionsBlock(replicas int) string {
 	if replicas < minQuorumReplicas {
-		return "  options {\n    quorum off;\n  }\n"
+		return "  options {\n    auto-promote no;\n    quorum off;\n  }\n"
 	}
-	return "  options {\n    quorum majority;\n    on-no-quorum io-error;\n  }\n"
+	return "  options {\n    auto-promote no;\n    quorum majority;\n    on-no-quorum io-error;\n  }\n"
 }
 
 func formatAddr(a netip.Addr, port int) string {

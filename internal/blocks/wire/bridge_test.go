@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
+	expstorage "github.com/expanse/expanse/internal/storage"
+	expmount "github.com/expanse/expanse/internal/storage/mount"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	pb "github.com/expanse/expanse/proto"
@@ -171,5 +173,65 @@ func TestBridgeSyncConverges(t *testing.T) {
 	}
 	if _, err := st.Get(ctx2, key); err != nil {
 		t.Error("live desired key was removed too")
+	}
+}
+
+// seedVolume gives the placed block a storage entry backed by a volume whose
+// primary is the given node.
+func seedVolume(t *testing.T, ctx context.Context, st *raftstore.Store, primary string) {
+	t.Helper()
+	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blk pb.Block
+	if err := proto.Unmarshal(e.Value, &blk); err != nil {
+		t.Fatal(err)
+	}
+	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data"}}
+	out, err := proto.Marshal(&blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: "data", Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: primary}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func hasKey(ctx context.Context, st *raftstore.Store, key string) bool {
+	_, err := st.Get(ctx, store.Key(key))
+	return err == nil
+}
+
+// The mount resource follows the volume's primary: it is written on that node
+// only and removed from a node the primary has left.
+func TestBridgeMountsTheVolumeOnItsPrimaryOnly(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080)
+	seedVolume(t, ctx, st, "n1")
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mountKey := func(node string) string { return "/node/" + node + "/resources/" + expmount.Type + ":vol-1" }
+	if !hasKey(ctx, st, mountKey("n1")) || hasKey(ctx, st, mountKey("n2")) {
+		t.Fatalf("want the mount on n1 only (n1=%v n2=%v)", hasKey(ctx, st, mountKey("n1")), hasKey(ctx, st, mountKey("n2")))
+	}
+
+	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: "n2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if hasKey(ctx, st, mountKey("n1")) || !hasKey(ctx, st, mountKey("n2")) {
+		t.Fatalf("the mount must follow the primary to n2 (n1=%v n2=%v)", hasKey(ctx, st, mountKey("n1")), hasKey(ctx, st, mountKey("n2")))
 	}
 }

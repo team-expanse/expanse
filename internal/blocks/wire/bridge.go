@@ -134,8 +134,8 @@ func (b *Bridge) Sync(ctx context.Context) error {
 			// Canonical reconciler format: "type: <type>" header then
 			// the payload (Phase 02 convention).
 			want[key] = append([]byte("type: "+systemd.TypeBlockReplica+"\n"), spec...)
-			// §4.7: the node serving the volume's PRIMARY attaches the
-			// device and mounts it for this block's unit. One attach
+			// §4.7: the node serving the volume's PRIMARY mounts the
+			// device for this block's unit. One attach
 			// resource per (node, volume, mountPath).
 			for _, st := range blk.GetSpec().GetStorage() {
 				v, ok := vols[st.GetName()]
@@ -148,7 +148,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 					MountPath:  st.GetMountPath(),
 					Filesystem: "ext4",
 				})
-				akey := resourcePrefix + p.GetNodeId() + "/resources/exvol-attach:" + v.id
+				akey := resourcePrefix + p.GetNodeId() + "/resources/" + expmount.Type + ":" + v.id
 				want[akey] = append([]byte("type: "+expmount.Type+"\n"), ares...)
 			}
 		}
@@ -161,7 +161,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 	}
 	for _, e := range existing {
 		k := string(e.Key)
-		if !strings.Contains(k, "/resources/block-replica:") {
+		if !isBridgeKey(k) {
 			continue
 		}
 		if v, ok := want[k]; ok && string(v) == string(e.Value) {
@@ -181,6 +181,11 @@ func (b *Bridge) Sync(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// isBridgeKey reports whether a desired-state key is one the bridge owns.
+func isBridgeKey(k string) bool {
+	return strings.Contains(k, "/resources/block-replica:") || strings.Contains(k, "/resources/"+expmount.Type+":")
 }
 
 // volumeRef is one cluster volume's placement view.
