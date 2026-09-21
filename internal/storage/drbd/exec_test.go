@@ -60,6 +60,10 @@ func TestCommandArguments(t *testing.T) {
 		},
 		{"connect", func(e *Exec) error { return e.Connect(context.Background(), "r0") }, []string{"drbdadm", "connect", "r0"}},
 		{
+			"connect-discarding", func(e *Exec) error { return e.ConnectDiscarding(context.Background(), "r0") },
+			[]string{"drbdadm", "connect", "--discard-my-data", "r0"},
+		},
+		{
 			"disconnect", func(e *Exec) error { return e.Disconnect(context.Background(), "r0") },
 			[]string{"drbdadm", "disconnect", "r0"},
 		},

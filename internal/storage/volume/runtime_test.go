@@ -112,6 +112,7 @@ type fakeDRBD struct {
 	mdErr, forgetErr   error
 	createMDErr, upErr error
 	downErr            error
+	peers              []drbd.Peer
 }
 
 const mdOverheadKiB = 100
@@ -124,7 +125,7 @@ func (f *fakeDRBD) Status(_ context.Context, res string) (*drbd.Status, error) {
 	if !f.up {
 		return nil, experrors.New(experrors.KindNotFound, "fake", res)
 	}
-	return &drbd.Status{Name: res, Role: f.role, Volumes: []drbd.Volume{{SizeKiB: f.usableKiB}}}, nil
+	return &drbd.Status{Name: res, Role: f.role, Volumes: []drbd.Volume{{SizeKiB: f.usableKiB}}, Peers: f.peers}, nil
 }
 
 func (f *fakeDRBD) HasMetadata(context.Context, string) (bool, error) {
@@ -159,6 +160,21 @@ func (f *fakeDRBD) Adjust(context.Context, string) error {
 func (f *fakeDRBD) Resize(context.Context, string) error {
 	f.j.add("drbd.resize")
 	f.sync()
+	return nil
+}
+
+func (f *fakeDRBD) Connect(context.Context, string) error {
+	f.j.add("drbd.connect")
+	return nil
+}
+
+func (f *fakeDRBD) ConnectDiscarding(context.Context, string) error {
+	f.j.add("drbd.connect-discarding")
+	return nil
+}
+
+func (f *fakeDRBD) Disconnect(context.Context, string) error {
+	f.j.add("drbd.disconnect")
 	return nil
 }
 

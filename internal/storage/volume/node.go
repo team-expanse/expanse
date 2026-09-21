@@ -22,6 +22,8 @@ type Converger interface {
 	Present(ctx context.Context, name string) (bool, error)
 	Snapshot(ctx context.Context, name, snap string) error
 	Restore(ctx context.Context, d Desired, snap string) error
+	// Rejoin reconnects a replica dropped after a split-brain, discarding its data or keeping it.
+	Rejoin(ctx context.Context, d Desired, discard bool) error
 }
 
 // Leader keeps one volume primary on this node until ctx ends and demotes it on
@@ -122,6 +124,9 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 	}
 	d, err := n.desired(al, spec)
 	if err != nil {
+		return err
+	}
+	if err := n.runResolve(ctx, d, status); err != nil {
 		return err
 	}
 	diverged, err := n.diverged(ctx, id, &status)

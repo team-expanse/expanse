@@ -31,6 +31,23 @@ type fakeConverger struct {
 	snapped, restored []string
 	snapErr           error
 	restoreErr        error
+
+	rejoined  []bool // the discard flag of each Rejoin
+	rejoinErr error
+	onRejoin  func()
+}
+
+func (f *fakeConverger) Rejoin(_ context.Context, _ Desired, discard bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.onRejoin != nil {
+		f.onRejoin()
+	}
+	if f.rejoinErr != nil {
+		return f.rejoinErr
+	}
+	f.rejoined = append(f.rejoined, discard)
+	return nil
 }
 
 func (f *fakeConverger) Reconcile(_ context.Context, d Desired) (Result, error) {

@@ -36,6 +36,9 @@ type DRBD interface {
 	// AdjustPending reports whether the running config differs from the file.
 	AdjustPending(ctx context.Context, res string) (bool, error)
 	Connect(ctx context.Context, res string) error
+	// ConnectDiscarding connects and, where the handshake finds a split-brain, makes
+	// this side the one whose changes are thrown away.
+	ConnectDiscarding(ctx context.Context, res string) error
 	Disconnect(ctx context.Context, res string) error
 	ForgetPeer(ctx context.Context, res string, nodeID int) error
 	Status(ctx context.Context, res string) (*Status, error)
@@ -116,6 +119,9 @@ func (e *Exec) Invalidate(ctx context.Context, res string) error {
 	return e.adm(ctx, "invalidate", res)
 }
 func (e *Exec) Connect(ctx context.Context, res string) error { return e.adm(ctx, "connect", res) }
+func (e *Exec) ConnectDiscarding(ctx context.Context, res string) error {
+	return e.adm(ctx, "connect", res, "--discard-my-data")
+}
 func (e *Exec) Disconnect(ctx context.Context, res string) error {
 	return e.adm(ctx, "disconnect", res)
 }

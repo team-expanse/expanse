@@ -8,14 +8,18 @@ Both sides must still hold the data only they wrote, and stay disconnected until
 
 A control first cuts the primary briefly without any write; that heals as an ordinary resync.
 
+The operator then resolves it with `volume diverged --choose`: the survivor keeps its data, the other
+replica discards its changes and resyncs, the marks are cleared and the volume is Healthy again. A
+second split-brain follows with the roles swapped and the discarding replica's DRBD down (as after a
+reboot, where a diverged volume is not brought up on its own), which proves detection re-arms.
+
 Runs after cluster-common.py and vol_cluster.py.
 """
 
 SIZE_MIB = 128
 NAME = "vsb"
 MARKS = "/persist/expanse/split-brain"
-OLD_WRITE_MIB = 5  # written on the old primary while it is cut off
-NEW_WRITE_MIB = 9  # written on the promoted peer meanwhile
+ROUNDS = [(5, 9, False), (11, 13, True)]  # MiB the old primary and the promoted peer write; whether the loser is down
 
 
 def state_of(m):
@@ -73,41 +77,88 @@ with subtest("control: a brief cut with no write on either side is not a split-b
     for m in holders:
         m.fail(f"test -e {MARKS}/{res}")
 
-with subtest("the cut primary keeps writing while its peer is promoted and writes too"):
+def diverge(res, holders, old_mib, new_mib):
+    """The primary is cut off and keeps writing while its peer is promoted and writes too."""
     old = primaries(res, holders)[0]
     new = [m for m in holders if m is not old][0]
     print(f"old primary {old.name}, peer {new.name}")
     old.block()
     try:
-        old_sum = write_region(old, res, OLD_WRITE_MIB)
+        old_sum = write_region(old, res, old_mib)
         wait_for(lambda: role_of(new, res) == "Primary", "the peer to be promoted", 180)
-        new_sum = write_region(new, res, NEW_WRITE_MIB)
+        new_sum = write_region(new, res, new_mib)
     finally:
         old.unblock()
+    return old, new, old_sum, new_sum
 
-with subtest("the volume lands in NeedsManualRecovery with both sides dropped"):
-    try:
-        wait_for(lambda: state_of(n3) == "needsmanualrecovery", "NeedsManualRecovery", 180)
-        wait_for(lambda: all(peer_dropped(m, res) for m in holders), "both sides to drop the connection", 60)
-    except Exception:
-        dump_on_failure(res)
-        raise
+
+def splits_reported(m):
+    return int(m.succeed("journalctl -k --no-pager | grep -c 'Split-Brain detected' || true").strip() or 0)
+
+
+def zeros_sum():
+    return n3.succeed("dd if=/dev/zero bs=1M count=1 2>/dev/null | sha256sum | cut -d' ' -f1").strip()
+
+
+def check_held_apart(res, holders, reported, old, new, old_mib, new_mib, old_sum, new_sum):
+    wait_for(lambda: state_of(n3) == "needsmanualrecovery", "NeedsManualRecovery", 180)
+    wait_for(lambda: all(peer_dropped(m, res) for m in holders), "both sides to drop the connection", 60)
     for m in holders:
         m.succeed(f"test -e {MARKS}/{res}")
-        assert "Split-Brain detected" in m.succeed("journalctl -k --no-pager"), f"{m.name}: the kernel did not report a split-brain"
+        assert splits_reported(m) > reported[m.name], f"{m.name}: the kernel did not report a new split-brain"
     listing = n3.succeed("expanse ctl volume diverged")
     assert NAME in listing and "NeedsManualRecovery" in listing, f"volume diverged did not list the volume:\n{listing}"
-
-with subtest("nothing is resolved: no primary, still dropped, and each side keeps what only it wrote"):
     wait_for(lambda: not primaries(res, holders), "the diverged volume to be taken out of service", 60)
     time.sleep(30)  # several agent ticks and a connect-int: nothing may reconnect or resync
     assert state_of(n3) == "needsmanualrecovery"
     for m in holders:
         assert peer_dropped(m, res), f"{m.name} reconnected:\n{drbd_status(m, res)}"
         assert "SyncSource" not in drbd_status(m, res) and "SyncTarget" not in drbd_status(m, res)
-    zeros = n3.succeed("dd if=/dev/zero bs=1M count=1 2>/dev/null | sha256sum | cut -d' ' -f1").strip()
-    assert region_sum(old, res, OLD_WRITE_MIB) == old_sum, "the old primary lost its own write"
-    assert region_sum(new, res, NEW_WRITE_MIB) == new_sum, "the promoted peer lost its own write"
-    assert region_sum(old, res, NEW_WRITE_MIB) == zeros, "the old primary received the peer's write"
-    assert region_sum(new, res, OLD_WRITE_MIB) == zeros, "the promoted peer received the old primary's write"
-    print("VOL-SPLIT-BRAIN PASSED")
+    zeros = zeros_sum()
+    assert region_sum(old, res, old_mib) == old_sum, "the old primary lost its own write"
+    assert region_sum(new, res, new_mib) == new_sum, "the promoted peer lost its own write"
+    assert region_sum(old, res, new_mib) == zeros, "the old primary received the peer's write"
+    assert region_sum(new, res, old_mib) == zeros, "the promoted peer received the old primary's write"
+
+
+def resolve(res, holders, survivor, loser, kept_mib, gone_mib, kept_sum, loser_down):
+    """Keep survivor's data; the loser's changes are discarded and it resyncs from the survivor."""
+    if loser_down:
+        loser.succeed(f"drbdadm down {res}")
+        time.sleep(10)  # the node loop must not bring a diverged volume back up by itself
+        loser.fail(f"drbdsetup status {res}")
+    out = n3.succeed(f"expanse ctl volume diverged {NAME} --choose {survivor.name}")
+    print(out)
+    wait_for(lambda: state_of(n3) == "healthy", "the volume to be Healthy again", 240)
+    wait_for(lambda: len(primaries(res, holders)) == 1 and all(in_sync(m, res) for m in holders), "one primary and both replicas UpToDate", 120)
+    for m in holders:
+        m.fail(f"test -e {MARKS}/{res}")
+    zeros = zeros_sum()
+    for m in holders:
+        assert region_sum(m, res, kept_mib) == kept_sum, f"{m.name} lacks the survivor's write"
+        assert region_sum(m, res, gone_mib) == zeros, f"{m.name} still holds the discarded write"
+    writer = primaries(res, holders)[0]
+    fresh = write_region(writer, res, 1)
+    wait_for(lambda: all(region_sum(m, res, 1) == fresh for m in holders), "a new write to reach both replicas", 60)
+
+
+for old_mib, new_mib, loser_down in ROUNDS:
+    reported = {m.name: splits_reported(m) for m in holders}
+    old, new, old_sum, new_sum = diverge(res, holders, old_mib, new_mib)
+    try:
+        check_held_apart(res, holders, reported, old, new, old_mib, new_mib, old_sum, new_sum)
+    except Exception:
+        dump_on_failure(res)
+        raise
+    # round one keeps the old primary's data, round two the promoted peer's
+    survivor, loser = (old, new) if not loser_down else (new, old)
+    kept = (old_mib, old_sum) if survivor is old else (new_mib, new_sum)
+    gone = new_mib if survivor is old else old_mib
+    with subtest(f"choosing {survivor.name} keeps its data and {loser.name} discards its own (loser down: {loser_down})"):
+        try:
+            resolve(res, holders, survivor, loser, kept[0], gone, kept[1], loser_down)
+        except Exception:
+            dump_on_failure(res)
+            raise
+
+print("VOL-SPLIT-BRAIN PASSED")

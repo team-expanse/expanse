@@ -239,12 +239,22 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 		},
 	}
 
+	var survivor string
 	diverged := &cobra.Command{
-		Use:   "diverged",
-		Short: "List volumes that need manual recovery (split-brain is never resolved automatically)",
-		Args:  cobra.NoArgs,
-		RunE:  func(c *cobra.Command, _ []string) error { return divergedList(c, opts) },
+		Use:   "diverged [name --choose <node>]",
+		Short: "List volumes that need manual recovery; with a name, keep one replica's data and discard the others'",
+		Long: "Split-brain is never resolved automatically. Without arguments this lists the diverged volumes.\n" +
+			"`diverged <name> --choose <node>` keeps the data on <node> and DISCARDS every change made on the\n" +
+			"other replicas since the split, then puts the volume back in service.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if len(args) == 0 && survivor == "" {
+				return divergedList(c, opts)
+			}
+			return divergedResolve(c, opts, args, survivor)
+		},
 	}
+	diverged.Flags().StringVar(&survivor, "choose", "", "node whose data is kept (the other replicas discard theirs)")
 	move.Flags().StringVar(&toNode, "to", "", "destination node (must hold a replica)")
 
 	return []*cobra.Command{del, resize, snapshot, restore, insp, move, diverged}
@@ -314,6 +324,57 @@ func printInspect(w io.Writer, v *volEntry) {
 			fmt.Fprintf(w, "  %-16s %-12s %s\n", s.Name, s.Node, relTime(s.CreatedAt.UnixNano()))
 		}
 	}
+}
+
+// planResolve names the replicas that discard their data followed by the survivor,
+// refusing a choice the volume cannot honour. The survivor goes last: it waits for
+// the others' requests to be consumed, so all of them must already be queued.
+func planResolve(v *volEntry, survivor string) ([]string, error) {
+	if v.st.GetState() != pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY {
+		return nil, fmt.Errorf("volume %q is %s, not diverged", nameOf(v), stateStr(v.st.GetState()))
+	}
+	var order []string
+	held := false
+	for _, p := range v.st.GetPlacement() {
+		if p.GetNodeId() == survivor {
+			held = true
+			continue
+		}
+		order = append(order, p.GetNodeId())
+	}
+	if !held {
+		return nil, fmt.Errorf("%s holds no replica of volume %q", survivor, nameOf(v))
+	}
+	return append(order, survivor), nil
+}
+
+// divergedResolve queues one request per replica for the chosen survivor.
+func divergedResolve(c *cobra.Command, opts *ctlOpts, args []string, survivor string) error {
+	switch {
+	case len(args) == 0:
+		return fmt.Errorf("name the volume to resolve: diverged <name> --choose %s", survivor)
+	case survivor == "":
+		return fmt.Errorf("--choose <node> is required: it names the replica whose data is kept")
+	}
+	return withClient(c, opts, func(ctx context.Context, cl pb.NodeServiceClient) error {
+		v, err := resolveVol(ctx, cl, args[0])
+		if err != nil {
+			return err
+		}
+		order, err := planResolve(v, survivor)
+		if err != nil {
+			return err
+		}
+		for _, node := range order {
+			// the node is part of the key so each replica consumes only its own request
+			if err := putOp(ctx, cl, "resolve", v.id+"/"+node, map[string]string{"survivor": survivor}); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(c.OutOrStdout(), "volume %q: %s keeps its data; %s discard theirs and resync from it\n",
+			args[0], survivor, strings.Join(order[:len(order)-1], ", "))
+		return nil
+	})
 }
 
 // divergedList is the listing form of `volume diverged`.

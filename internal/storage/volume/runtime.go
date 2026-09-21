@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	experrors "github.com/expanse/expanse/internal/errors"
@@ -293,4 +294,48 @@ func (r *Runtime) Remove(ctx context.Context, name string) error {
 		return err
 	}
 	return r.LVM.Remove(ctx, r.VG, name)
+}
+
+// Rejoin reconnects a replica the kernel dropped after a split-brain. With discard
+// this side's changes are thrown away in favour of its peers'; without, it is the
+// side that keeps its data. It never adjusts (that would reconnect without the
+// discard flag) and never creates the backing device: a missing one is an error.
+func (r *Runtime) Rejoin(ctx context.Context, d Desired, discard bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := &pass{Runtime: r, d: d}
+	if err := p.prepare(); err != nil {
+		return err
+	}
+	if _, err := r.LVM.Get(ctx, r.VG, d.Name); err != nil {
+		return err
+	}
+	if err := p.config(ctx); err != nil {
+		return err
+	}
+	st, err := r.DRBD.Status(ctx, d.Name)
+	if experrors.KindOf(err) == experrors.KindNotFound {
+		if err = p.start(ctx); err == nil {
+			st, err = r.DRBD.Status(ctx, d.Name) // starting connects it, so its peers are Connecting now
+		}
+	}
+	if err != nil {
+		return err
+	}
+	return p.reconnect(ctx, st, discard)
+}
+
+func (p *pass) reconnect(ctx context.Context, st *drbd.Status, discard bool) error {
+	if discard {
+		if slices.ContainsFunc(st.Peers, func(pr drbd.Peer) bool { return pr.Connection == drbd.ConnConnecting }) {
+			if err := p.DRBD.Disconnect(ctx, p.d.Name); err != nil {
+				return err
+			}
+		}
+		return p.DRBD.ConnectDiscarding(ctx, p.d.Name)
+	}
+	if !slices.ContainsFunc(st.Peers, func(pr drbd.Peer) bool { return pr.Connection == drbd.ConnStandAlone }) {
+		return nil
+	}
+	return p.DRBD.Connect(ctx, p.d.Name)
 }

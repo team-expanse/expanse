@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,8 @@ import (
 // surface for the volume CLI (Get/List/Put/Delete KeyValue).
 type fakeStore struct {
 	pb.UnimplementedNodeServiceServer
-	kv map[string][]byte
+	kv   map[string][]byte
+	puts []string // keys in the order they were written
 }
 
 func (f *fakeStore) GetKeyValue(_ context.Context, r *pb.GetKeyValueRequest) (*pb.GetKeyValueResponse, error) {
@@ -34,6 +36,7 @@ func (f *fakeStore) GetKeyValue(_ context.Context, r *pb.GetKeyValueRequest) (*p
 
 func (f *fakeStore) PutKeyValue(_ context.Context, r *pb.PutKeyValueRequest) (*pb.PutKeyValueResponse, error) {
 	f.kv[r.GetKey()] = r.GetValue()
+	f.puts = append(f.puts, r.GetKey())
 	return &pb.PutKeyValueResponse{}, nil
 }
 
@@ -105,7 +108,7 @@ func TestVolumeCommandSurface(t *testing.T) {
 		"restore":      {"snapshot"},
 		"inspect":      {},
 		"move-primary": {"to"},
-		"diverged":     {},
+		"diverged":     {"choose"},
 	}
 	for name, flags := range want {
 		sub, _, err := cmd.Find([]string{name})
@@ -372,5 +375,69 @@ func TestLoadVolumesAttachesSnapshotRecordsAndIgnoresUnknownKeys(t *testing.T) {
 	}
 	if got := vols["db"].snaps; len(got) != 1 || got[0].Name != "before" || got[0].Node != "n1" {
 		t.Errorf("snaps %+v, want before on n1", got)
+	}
+}
+
+func divergedStore(t *testing.T) *fakeStore {
+	t.Helper()
+	v := fixtureVolume(t)
+	v.st.State = pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY
+	return &fakeStore{kv: map[string][]byte{
+		"/volumes/vol-abc/spec":   mustProto(t, v.spec),
+		"/volumes/vol-abc/status": mustProto(t, v.st),
+	}}
+}
+
+func TestChoosingASurvivorQueuesARequestPerReplicaWithTheSurvivorLast(t *testing.T) {
+	fs := divergedStore(t)
+	if err := runVolume(t, fs, "diverged", "db", "--choose", "n2"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/volumes/_ops/resolve/vol-abc/n1", "/volumes/_ops/resolve/vol-abc/n3", "/volumes/_ops/resolve/vol-abc/n2"}
+	if !reflect.DeepEqual(fs.puts, want) {
+		t.Errorf("writes %v, want %v", fs.puts, want)
+	}
+	for _, k := range want {
+		if got := string(fs.kv[k]); got != `{"survivor":"n2"}` {
+			t.Errorf("%s = %s", k, got)
+		}
+	}
+}
+
+func TestChoosingSaysWhichReplicasLoseTheirChanges(t *testing.T) {
+	opts, stop := serveCLI(t, divergedStore(t))
+	defer stop()
+	cmd := newVolumeCmd(opts)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"diverged", "db", "--choose", "n2"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"n2", "keeps", "n1", "n3", "discard"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestChoosingRefusesWhatTheVolumeCannotHonourAndQueuesNothing(t *testing.T) {
+	healthy := resizeStore(t)
+	for name, tc := range map[string]struct {
+		fs   *fakeStore
+		args []string
+	}{
+		"not diverged":          {healthy, []string{"diverged", "db", "--choose", "n1"}},
+		"survivor not a member": {divergedStore(t), []string{"diverged", "db", "--choose", "n9"}},
+		"unknown volume":        {divergedStore(t), []string{"diverged", "nope", "--choose", "n1"}},
+		"no survivor named":     {divergedStore(t), []string{"diverged", "db"}},
+		"no volume named":       {divergedStore(t), []string{"diverged", "--choose", "n1"}},
+	} {
+		if err := runVolume(t, tc.fs, tc.args...); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+		if len(tc.fs.puts) != 0 {
+			t.Errorf("%s: wrote %v", name, tc.fs.puts)
+		}
 	}
 }
