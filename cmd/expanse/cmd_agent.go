@@ -11,22 +11,24 @@ import (
 
 func newAgentCmd() *cobra.Command {
 	var (
-		dataDir    string
-		socket     string
-		period     string
-		ctlPeriod  string
-		dryRun     bool
-		enableTCP  bool
-		role       string
-		raftBind   string
-		raftAdv    string
-		blockCat   string
-		blockFlake string
-		extPool    string
-		extIface   string
-		dnsUp      string
-		exvolPool  string
-		firewall   bool
+		dataDir     string
+		socket      string
+		period      string
+		ctlPeriod   string
+		dryRun      bool
+		enableTCP   bool
+		role        string
+		raftBind    string
+		raftAdv     string
+		blockCat    string
+		blockFlake  string
+		extPool     string
+		extIface    string
+		dnsUp       string
+		storageVG   string
+		storagePool string
+		drbdCfgDir  string
+		firewall    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -45,7 +47,9 @@ func newAgentCmd() *cobra.Command {
 				ExternalVIPPool:   extPool,
 				ExternalInterface: extIface,
 				DNSUpstreams:      dnsUp,
-				ExvolPool:         exvolPool,
+				StorageVG:         storageVG,
+				StoragePool:       storagePool,
+				DRBDConfigDir:     drbdCfgDir,
 				Firewall:          firewall,
 				LogLevel:          cmd.Root().PersistentFlags().Lookup("log-level").Value.String(),
 			}
@@ -84,8 +88,9 @@ func newAgentCmd() *cobra.Command {
 		"physical interface to announce external VIPs on (default: auto = default route)")
 	cmd.Flags().StringVar(&dnsUp, "dns-upstreams", "",
 		"DNS forwarders (T17), comma-separated ip:port; empty = /etc/resolv.conf")
-	cmd.Flags().StringVar(&exvolPool, "exvol-pool", "",
-		"zpool for the node's exvol volume runtime (Phase 06); empty = storage disabled")
+	cmd.Flags().StringVar(&storageVG, "storage-vg", "", "LVM volume group for volume replicas; empty = volume storage disabled")
+	cmd.Flags().StringVar(&storagePool, "storage-pool", "", "thin pool inside --storage-vg; empty = thick volumes")
+	cmd.Flags().StringVar(&drbdCfgDir, "drbd-config-dir", "", "directory for DRBD resource files (default /etc/drbd.d)")
 	cmd.Flags().BoolVar(&firewall, "firewall", false,
 		"apply the §4.5 nftables ruleset (static skeleton + store-driven dynamic sets)")
 	cmd.Flags().StringVar(&raftAdv, "raft-advertise", "", "raft transport advertised addr (default: the bind host or local IP, port 7444)")

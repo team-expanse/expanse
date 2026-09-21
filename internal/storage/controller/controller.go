@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/storage/drbd"
@@ -367,40 +366,6 @@ func splitBlockKey2(k string) (ns, name string) {
 		return rest[:i], rest[i+1:]
 	}
 	return rest, ""
-}
-
-// meshedNodes lists node IDs considered alive for placement and
-// election decisions. A node publishes a mesh record that PERSISTS
-// through a hard kill (qemu quit never unpublishes anything), so the
-// record alone cannot mean "alive". Each node therefore also holds a
-// renewable liveness lease (/leases/node-<id>, §4.3 machinery); a
-// record whose lease has EXPIRED is a dead node. Nodes that publish no
-// lease at all (single-bolt clusters, tests) fall back to the record —
-// the pre-lease semantics.
-func (c *Controller) meshedNodes(ctx context.Context) (map[string]bool, error) {
-	out := map[string]bool{}
-	entries, err := c.opts.St.List(ctx, "/nodes/")
-	if err != nil {
-		return nil, err
-	}
-	lm := lease.NewManager(c.opts.St, "storage-controller")
-	now := time.Now()
-	for _, e := range entries {
-		if !strings.HasSuffix(string(e.Key), "/network.wgPublicKey") {
-			continue
-		}
-		id := strings.TrimSuffix(strings.TrimPrefix(string(e.Key), "/nodes/"), "/network.wgPublicKey")
-		alive := true
-		if l, ok, ierr := lm.Inspect(ctx, "node-"+id); ierr == nil && ok {
-			// 15s skew allowance: expiry is judged against the local
-			// clock, the grant was made on the holder's.
-			if now.After(l.ExpiresAt.Add(15 * time.Second)) {
-				alive = false
-			}
-		}
-		out[id] = alive
-	}
-	return out, nil
 }
 
 func (c *Controller) emitAlert(ev AlertEvent) {

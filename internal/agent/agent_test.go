@@ -275,3 +275,59 @@ func TestAgentDryRunReconcile(t *testing.T) {
 		return err == nil
 	})
 }
+
+func TestVolumeStorageIsWiredOnlyWhenAVolumeGroupIsConfigured(t *testing.T) {
+	newAgent := func(vg string) *Agent {
+		t.Helper()
+		dir := t.TempDir()
+		a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: filepath.Join(dir, "a.sock"), StorageVG: vg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	if a := newAgent(""); a.volnode != nil || a.volctl != nil {
+		t.Error("volume storage wired without a volume group")
+	}
+	a := newAgent("vg0")
+	if a.volnode == nil || a.volctl == nil {
+		t.Fatal("volume storage not wired")
+	}
+	if a.cfg.DRBDConfigDir != defaultDRBDConfigDir {
+		t.Errorf("config dir = %q, want the default", a.cfg.DRBDConfigDir)
+	}
+}
+
+// slowStopper is a volume node whose shutdown (demoting its volumes) takes a while.
+type slowStopper struct{ finished chan struct{} }
+
+func (s *slowStopper) Run(ctx context.Context, _ time.Duration) {
+	<-ctx.Done()
+	time.Sleep(200 * time.Millisecond)
+	close(s.finished)
+}
+
+func TestRunWaitsForTheVolumeNodeToStopBeforeReturning(t *testing.T) {
+	dir := t.TempDir()
+	a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: filepath.Join(dir, "a.sock"), StorageVG: "vg0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := &slowStopper{finished: make(chan struct{})}
+	a.volnode = node
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond) // let Run start the node
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run never returned")
+	}
+	select {
+	case <-node.finished:
+	default:
+		t.Fatal("Run returned before the volume node finished stopping: volumes would stay primary")
+	}
+}

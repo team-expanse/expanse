@@ -61,10 +61,16 @@ in
       description = "DNS forwarders (T17), comma-separated ip:port. Empty = /etc/resolv.conf.";
     };
 
-    exvolPool = lib.mkOption {
+    storageVG = lib.mkOption {
       type = lib.types.str;
       default = "";
-      description = "Zpool for the node's exvol volume runtime (Phase 06). Empty = storage disabled.";
+      description = "LVM volume group holding volume replicas. Empty = volume storage disabled.";
+    };
+
+    storagePool = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Thin pool inside storageVG. Empty = thick volumes.";
     };
 
     raftAdvertise = lib.mkOption {
@@ -133,14 +139,13 @@ in
     systemd.services.expansed = {
       description = "Expanse Node Agent";
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" "zfs-mount.service" ];
+      after = [ "network-online.target" ];
       before = [ "expanse-ui.service" ];
 
       unitConfig = { };
-      # zfs on PATH: the exvol volume runtime shells out to zfs/zpool
-      # (Phase 06 §4.5); the daemon must find them even though the
+      # The volume runtime shells out to lvm and drbdadm/drbdsetup; the
       # unit's own Environment=PATH is minimal.
-      path = with pkgs; [ zfs nbd ];
+      path = with pkgs; [ lvm2 drbd ];
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
@@ -152,12 +157,18 @@ in
           optionalString (cfg.externalVIPPool != "") " --external-vip-pool ${cfg.externalVIPPool}" +
           optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}" +
           optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}" +
-          optionalString (cfg.exvolPool != "") " --exvol-pool ${cfg.exvolPool}" +
+          optionalString (cfg.storageVG != "") " --storage-vg ${cfg.storageVG}" +
+          optionalString (cfg.storagePool != "") " --storage-pool ${cfg.storagePool}" +
           optionalString (cfg.raftAdvertise != "") " --raft-advertise ${cfg.raftAdvertise}" +
           optionalString cfg.firewall " --firewall";
+        # A killed or crashed agent leaves its volumes Primary in the kernel, which would
+        # block every other node's promotion; demote whatever is not in use. The leading
+        # "-" ignores a failure (a device still open stays Primary, by design).
+        ExecStopPost = "-${pkgs.drbd}/bin/drbdadm secondary all";
         Restart = "always";
         RestartSec = "5s";
-        TimeoutStopSec = "30s";
+        # A graceful stop demotes every volume first (up to 30 s each).
+        TimeoutStopSec = "60s";
         WatchdogSec = "60s";
 
         User = "root";

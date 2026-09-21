@@ -26,6 +26,9 @@ type Converger interface {
 // the way out; it is Promoter.Lead with the lease manager and TTL bound.
 type Leader func(ctx context.Context, res string, opt HoldOptions) error
 
+// LeaseName is the lease that makes a node the volume's primary.
+func LeaseName(res string) string { return "primary-" + res }
+
 // Node converges this machine's share of every volume in the cluster store: it
 // reconciles each placed replica, runs the promotion loop for the volumes this
 // node is elected primary of, tears down the ones it no longer holds, and

@@ -538,3 +538,12 @@ func TestConfigThatCannotBeStagedLeavesTheOldOneIntact(t *testing.T) {
 		t.Errorf("config was modified in place:\n%s", after)
 	}
 }
+
+func TestReconcileCreatesTheConfigDirectory(t *testing.T) {
+	r := newRig(t)
+	r.rt.ConfigDir = filepath.Join(r.dir, "drbd.d")
+	reconcile(t, r, desired())
+	if _, err := os.Stat(filepath.Join(r.rt.ConfigDir, "vol-a1.res")); err != nil {
+		t.Errorf("config not written into a missing directory: %v", err)
+	}
+}

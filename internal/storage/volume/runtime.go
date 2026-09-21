@@ -131,6 +131,9 @@ func (p *pass) config(context.Context) error {
 	if have, err := os.ReadFile(path); err == nil && string(have) == p.cfg {
 		return nil
 	}
+	if err := os.MkdirAll(p.ConfigDir, 0o750); err != nil {
+		return experrors.Wrap(err, experrors.KindInternal, "volume.config", "create "+p.ConfigDir)
+	}
 	if err := writeAtomic(path, p.cfg); err != nil {
 		return experrors.Wrap(err, experrors.KindInternal, "volume.config", "write "+path)
 	}

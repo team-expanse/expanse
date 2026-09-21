@@ -30,12 +30,9 @@ import (
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/proxy"
-	pbproto "google.golang.org/protobuf/proto"
 
-	networkmesh "github.com/expanse/expanse/internal/network/mesh"
 	volctlc "github.com/expanse/expanse/internal/storage/controller"
 	expmount "github.com/expanse/expanse/internal/storage/exvol/mount"
-	exvolrt "github.com/expanse/expanse/internal/storage/exvol/runtime"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -101,10 +98,13 @@ type Config struct {
 	// DNSUpstreams overrides the DNS forwarders (T17): comma-separated
 	// "ip:port" list. Empty = parsed from /etc/resolv.conf.
 	DNSUpstreams string
-	// ExvolPool is the zpool the node's exvol volume runtime (Phase 06
-	// T10) creates zvols on. Empty = storage runtime disabled on this
-	// node (e.g. witness nodes).
-	ExvolPool string
+	// StorageVG is the LVM volume group the node's volume replicas live in.
+	// Empty = volume storage disabled on this node (e.g. witnesses).
+	StorageVG string
+	// StoragePool is the thin pool inside StorageVG; empty makes thick volumes.
+	StoragePool string
+	// DRBDConfigDir receives one DRBD resource file per volume (default /etc/drbd.d).
+	DRBDConfigDir string
 	// Firewall enables the §4.5 nftables ruleset (T19/T20): static
 	// skeleton at start, store-driven dynamic sets after. Off by
 	// default — deployments that manage the host firewall themselves
@@ -124,6 +124,9 @@ func (c *Config) fill() error {
 	}
 	if c.Socket == "" {
 		c.Socket = "/run/expanse/agent.sock"
+	}
+	if c.DRBDConfigDir == "" {
+		c.DRBDConfigDir = defaultDRBDConfigDir
 	}
 	if c.NodeID == "" {
 		c.NodeID = detectNodeID(c.DataDir)
@@ -172,7 +175,7 @@ type Agent struct {
 	blockCatalog pb.CatalogServiceServer
 	blockCtl     *controller.Controller
 	nodeLease    *lease.Held
-	volrt        *exvolrt.Runtime
+	volnode      volumeRunner
 	volctl       *volctlc.Controller
 	blockBridge  *wire.Bridge
 	invMu        sync.Mutex
@@ -357,37 +360,9 @@ func New(cfg Config) (*Agent, error) {
 	r.Register(expmount.New(nil, ""))
 	a.recon = r
 
-	// Exvol volume runtime (Phase 06 T10): per-node zvol + secondary /
-	// primary + device convergence from the cluster store. Cluster
-	// nodes with a configured pool only.
-	if cfg.ExvolPool != "" {
-		a.volrt = exvolrt.New(exvolrt.Options{
-			NodeID:  cfg.NodeID,
-			St:      st,
-			Pool:    cfg.ExvolPool,
-			DataDir: filepath.Join(cfg.DataDir, "exvol"),
-			AddrOf:  a.meshAddrOf,
-			IsLeader: func() bool {
-				if a.ctl == nil || a.ctl.store == nil {
-					return false
-				}
-				return a.ctl.store.IsLeader()
-			},
-			Logger: logger,
-		})
-		// Leader-side volume controller (T13, §4.6): planning only —
-		// election, replication enforcement, rebuilds, scrubs.
-		a.volctl = volctlc.New(volctlc.Options{
-			NodeID: cfg.NodeID,
-			St:     st,
-			IsLeader: func() bool {
-				if a.ctl == nil || a.ctl.store == nil {
-					return false
-				}
-				return a.ctl.store.IsLeader()
-			},
-			Logger: logger,
-		})
+	// DRBD volume stack: cluster nodes with a configured volume group only.
+	if cfg.StorageVG != "" {
+		a.initStorage(cfg, st, logger)
 	}
 
 	// Block API (T20.5a): served on the agent socket when a block
@@ -685,9 +660,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		})
 	}
 
-	// Exvol volume runtime (Phase 06 T10).
-	if a.volrt != nil {
-		go a.volrt.Run(ctx)
+	// DRBD volume node loop. Its stop demotes every primary, so shutdown waits for
+	// it, and before the store closes: releasing a volume lease needs the store.
+	stopVolumes := func() {}
+	if a.volnode != nil {
+		stopVolumes = a.runVolumes(ctx, cancel)
 	}
 	if a.volctl != nil {
 		go a.volctl.Run(ctx)
@@ -846,10 +823,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	case err := <-serveErr:
 		if err != nil {
 			a.status.Store("error")
+			stopVolumes()
 			return fmt.Errorf("grpc serve: %w", err)
 		}
 	}
 	a.status.Store("shutting-down")
+	stopVolumes()
 	a.recon.Stop()
 	if err := a.store.Close(); err != nil {
 		a.logger.Error("store close failed", "err", err)
@@ -992,26 +971,4 @@ func (b *blockBuilder) Build(ctx context.Context, blockType string) (nix.StorePa
 			"flake", b.flakeRef, "cause", fmt.Sprint(err))
 	}
 	return p, err
-}
-
-// meshAddrOf resolves a node ID to its exp0 overlay address (the .1 in
-// the node's published overlay prefix, §4.1's 10.42.N.1 convention).
-// Used by the exvol volume runtime to reach remote replicas.
-func (a *Agent) meshAddrOf(nodeID string) (string, error) {
-	entry, err := a.store.Get(context.Background(),
-		store.Key(networkmesh.PublicKeyKey(nodeID)))
-	if err != nil {
-		return "", fmt.Errorf("no mesh record for %s: %w", nodeID, err)
-	}
-	var peer pb.WireGuardPeer
-	if err := pbproto.Unmarshal(entry.Value, &peer); err != nil {
-		return "", fmt.Errorf("mesh record for %s unreadable: %w", nodeID, err)
-	}
-	prefix, err := netip.ParsePrefix(peer.GetOverlayPrefix())
-	if err != nil {
-		return "", fmt.Errorf("bad overlay prefix for %s: %w", nodeID, err)
-	}
-	addr := prefix.Addr().As4() // node itself is .1 in its /24 (§3)
-	addr[3] = 1
-	return netip.AddrFrom4(addr).String(), nil
 }

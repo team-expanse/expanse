@@ -1,67 +1,81 @@
-# Storage test pool: provisions a scratch ZFS pool for Phase 06 vol-*.nix
-# VM tests on cluster-test nodes that have no real data disks.
+# Storage test substrate for the Phase 1 vol-*.nix VM tests: a scratch LVM volume
+# group with a thin pool on an added virtual disk, plus the DRBD kernel module and
+# tooling, wired into the agent.
 #
-# Adds a second virtual disk and creates a sparse `volumes` pool on it at
-# boot, before the agent starts. Every exvol volume in VM tests lives at
-# volumes/volumes/<vol-id> (zvol paths mirror production's
-# rpool/volumes/<vol-id> shape with a test pool name).
+# VG creation is idempotent and never wipes: a crash-restored VM keeps its disk, so
+# an existing VG is activated and left alone (recreating it would destroy every
+# volume on it).
 { config, pkgs, lib, ... }:
 let
   cfg = config.expanse.storage-test;
 in
 {
-  options = {
-    expanse.storage-test.enable = lib.mkEnableOption "scratch ZFS pool for storage VM tests";
+  options.expanse.storage-test = {
+    enable = lib.mkEnableOption "scratch LVM volume group and DRBD for storage VM tests";
 
-    expanse.storage-test.poolName = lib.mkOption {
+    vgName = lib.mkOption {
       type = lib.types.str;
-      default = "volumes";
-      description = "Name of the scratch pool created for exvol volumes in VM tests.";
+      default = "vg0";
+      description = "Name of the scratch volume group.";
     };
 
-    expanse.storage-test.poolSizeMB = lib.mkOption {
+    poolName = lib.mkOption {
+      type = lib.types.str;
+      default = "pool";
+      description = "Name of the thin pool created in the volume group.";
+    };
+
+    diskSizeMB = lib.mkOption {
       type = lib.types.int;
-      default = 8192;
-      description = "Size of the added virtual disk backing the scratch pool, in MiB.";
+      default = 2048;
+      description = "Size of the added virtual disk backing the volume group, in MiB.";
     };
   };
 
   config = lib.mkIf cfg.enable {
-    # /dev/vdb backing the scratch pool (the framework's own disk is vda).
-    virtualisation.emptyDiskImages = [ { size = cfg.poolSizeMB; } ];
+    # /dev/vdb backing the volume group (the framework's own disk is vda).
+    virtualisation.emptyDiskImages = [ cfg.diskSizeMB ];
 
-    boot.zfs.devNodes = "/dev";
+    # DRBD 9.2.16 does not build against the linuxPackages_latest (7.2) that base.nix
+    # selects, so storage nodes run the LTS kernel. A2 settles this for production.
+    boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
+    boot.extraModulePackages = [ config.boot.kernelPackages.drbd ];
+    boot.kernelModules = [ "drbd" ];
+    services.drbd.enable = true;
+    services.drbd.config = ''
+      global { usage-count no; }
+      include "/etc/drbd.d/*.res";
+    '';
+    # Resources are brought up by the agent, not by the drbd unit.
+    systemd.services.drbd.wantedBy = lib.mkForce [ ];
 
-    # Zvol device nodes (/dev/<pool>/<ds>) are udev symlinks; without
-    # the zfs rules installed the daemon would never see them.
-    services.udev.packages = [ pkgs.zfs ];
+    services.lvm.enable = true;
+    services.lvm.boot.thin.enable = true;
+    environment.systemPackages = [ pkgs.lvm2 pkgs.thin-provisioning-tools pkgs.e2fsprogs ];
 
-    systemd.services.expanse-scratch-pool = {
-      description = "Create scratch ZFS pool for exvol storage tests";
+    # DRBD replication runs over the mesh; the ports are B8's production rule.
+    networking.firewall.interfaces.exp0.allowedTCPPortRanges = [{ from = 7800; to = 8799; }];
+
+    expanse.agent.storageVG = cfg.vgName;
+    expanse.agent.storagePool = cfg.poolName;
+
+    systemd.services.expanse-scratch-vg = {
+      description = "Create the scratch LVM volume group for storage tests";
       wantedBy = [ "multi-user.target" ];
       before = [ "expansed.service" ];
       after = [ "systemd-modules-load.service" "systemd-udev-settle.service" ];
-      path = with pkgs; [ zfs ];
+      path = [ pkgs.lvm2 pkgs.thin-provisioning-tools ];
       unitConfig.DefaultDependencies = "no";
       serviceConfig.Type = "oneshot";
       serviceConfig.RemainAfterExit = true;
       script = ''
-        if zpool list ${cfg.poolName} >/dev/null 2>&1; then
-          echo "expanse-storage-test: pool ${cfg.poolName} already exists"
+        vgchange -ay ${cfg.vgName} >/dev/null 2>&1 || true
+        if vgs ${cfg.vgName} >/dev/null 2>&1; then
+          echo "storage-test: volume group ${cfg.vgName} already exists"
           exit 0
         fi
-        # A restored (crash-tested) VM's disk label survives the reboot;
-        # cachefile=none just means it is not auto-imported. Import it —
-        # `zpool create -f` here would silently WIPE the pool and
-        # destroy every volume on it (which is how a resync test's
-        # restored node came back with a fresh, empty zvol).
-        if zpool import -f ${cfg.poolName} >/dev/null 2>&1; then
-          echo "expanse-storage-test: imported existing pool ${cfg.poolName}"
-          exit 0
-        fi
-        echo "expanse-storage-test: creating pool ${cfg.poolName}"
-        zpool create -f -o cachefile=none ${cfg.poolName} /dev/vdb
-        zfs create ${cfg.poolName}/volumes
+        vgcreate ${cfg.vgName} /dev/vdb
+        lvcreate --yes --type thin-pool -l 90%FREE -n ${cfg.poolName} ${cfg.vgName}
       '';
     };
   };

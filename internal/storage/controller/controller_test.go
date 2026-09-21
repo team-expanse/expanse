@@ -388,3 +388,36 @@ func TestStatesTheControllerDoesNotDeriveAreLeftAlone(t *testing.T) {
 		t.Fatalf("state = %s, want Failed untouched", got)
 	}
 }
+
+func markNode(t *testing.T, st *boltstore.Store, id, record string) {
+	t.Helper()
+	if _, err := st.Put(context.Background(), store.Key("/nodes/"+id), []byte(record)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A cleanly stopped agent releases its liveness lease, so the lease alone cannot say
+// the node is gone; the failure monitor's record state must.
+func TestPrimaryOnAnUnreachableNodeIsReplaced(t *testing.T) {
+	for _, state := range []string{"unreachable", "failed"} {
+		st := newStore(t)
+		seedMesh(st, "n1", "n2", "n3")
+		markNode(t, st, "n1", `{"id":"n1","state":"`+state+`"}`)
+		seedVolume(t, st, "vol-a", 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+		reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+		if got := load(t, st, "vol-a").Primary; got != "n2" {
+			t.Errorf("state %q: primary = %q, want n2", state, got)
+		}
+	}
+}
+
+func TestPlacementSkipsUnreachableAndCordonedNodes(t *testing.T) {
+	c, st := newPlacer(t, "n1", "n2", "n3", "n4")
+	markNode(t, st, "n3", `{"id":"n3","state":"unreachable"}`)
+	markNode(t, st, "n4", `{"id":"n4","cordoned":true}`)
+	request(t, st, "data", 3)
+	c.processPending(context.Background(), meshed(t, c))
+	if len(placed(t, st)) != 0 {
+		t.Error("placed on an unreachable or cordoned node")
+	}
+}

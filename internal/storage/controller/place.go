@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	pbproto "google.golang.org/protobuf/proto"
 
@@ -79,29 +77,6 @@ func (c *Controller) nameTaken(ctx context.Context, name, id string) (bool, erro
 		}
 	}
 	return false, nil
-}
-
-// storageNodes are the live nodes that can hold a replica: meshed, and not witnesses.
-func (c *Controller) storageNodes(ctx context.Context, meshed map[string]bool) []storage.NodeInfo {
-	var nodes []storage.NodeInfo
-	for id, alive := range meshed {
-		if alive && !c.isWitness(ctx, id) {
-			nodes = append(nodes, storage.NodeInfo{ID: id})
-		}
-	}
-	slices.SortFunc(nodes, func(a, b storage.NodeInfo) int { return strings.Compare(a.ID, b.ID) })
-	return nodes
-}
-
-func (c *Controller) isWitness(ctx context.Context, id string) bool {
-	e, err := c.opts.St.Get(ctx, store.Key("/nodes/"+id))
-	if err != nil {
-		return false
-	}
-	var rec struct {
-		Role string `json:"role"`
-	}
-	return json.Unmarshal(e.Value, &rec) == nil && rec.Role == "witness"
 }
 
 // place allocates the DRBD identity, then writes status and finally the spec: the
