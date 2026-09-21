@@ -304,6 +304,55 @@ func TestDriftIsCorrectedByAdjustAndOnlyThen(t *testing.T) {
 	}
 }
 
+// A split-brain drops the connection, so the kernel then looks drifted; adjusting it
+// would reconnect the two diverged replicas.
+func TestDriftIsNotAdjustedWhileTheVolumeIsSplitBrained(t *testing.T) {
+	r := newRig(t)
+	reconcile(t, r, desired())
+	r.drbd.pending = true
+	r.rt.Diverged = func(name string) (bool, error) { return name == "vol-a1", nil }
+	r.j.calls = nil
+	res := reconcile(t, r, desired())
+	if res.Changed() || r.j.has("drbd.adjust") {
+		t.Errorf("adjusted a split-brained volume: actions %v, calls %v", res.Actions, r.j.calls)
+	}
+}
+
+func TestDriftIsAdjustedWhenTheVolumeIsNotSplitBrained(t *testing.T) {
+	r := newRig(t)
+	reconcile(t, r, desired())
+	r.drbd.pending = true
+	r.rt.Diverged = func(string) (bool, error) { return false, nil }
+	if res := reconcile(t, r, desired()); !reflect.DeepEqual(res.Actions, []Action{Adjust}) {
+		t.Errorf("actions %v, want [adjust]", res.Actions)
+	}
+}
+
+func TestUnreadableSplitBrainMarkStopsTheAdjust(t *testing.T) {
+	r := newRig(t)
+	reconcile(t, r, desired())
+	r.drbd.pending = true
+	r.rt.Diverged = func(string) (bool, error) { return false, errors.New("disk on fire") }
+	r.j.calls = nil
+	if _, err := r.rt.Reconcile(context.Background(), desired()); err == nil {
+		t.Error("a mark that cannot be read was ignored")
+	}
+	if r.j.has("drbd.adjust") {
+		t.Errorf("adjusted without knowing whether the volume is split-brained: %v", r.j.calls)
+	}
+}
+
+func TestSplitBrainMarkIsNotReadWhenThereIsNoDrift(t *testing.T) {
+	r := newRig(t)
+	reconcile(t, r, desired())
+	asked := false
+	r.rt.Diverged = func(string) (bool, error) { asked = true; return false, nil }
+	reconcile(t, r, desired())
+	if asked {
+		t.Error("the mark was read on a pass with nothing to adjust")
+	}
+}
+
 func TestChangedMembershipRewritesTheConfig(t *testing.T) {
 	r := newRig(t)
 	reconcile(t, r, desired())

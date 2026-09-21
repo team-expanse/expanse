@@ -56,6 +56,9 @@ type Runtime struct {
 	VG, Pool      string
 	ConfigDir     string
 	SplitBrainCmd string
+	// Diverged reports a resource the kernel dropped for split-brain, which must not be
+	// reconnected; nil means none is.
+	Diverged func(name string) (bool, error)
 	// Copy overwrites dst with the first n bytes of src; nil means copyDevice.
 	Copy func(ctx context.Context, src, dst string, n uint64) error
 	mu   sync.Mutex
@@ -188,11 +191,22 @@ func (p *pass) adjustIfDrifted(ctx context.Context) error {
 	if err != nil || !pending {
 		return err
 	}
+	// The kernel writes the mark before it drops the connection, so a drop seen here is marked.
+	if held, err := p.diverged(); err != nil || held {
+		return err
+	}
 	if err := p.DRBD.Adjust(ctx, p.d.Name); err != nil {
 		return err
 	}
 	p.did(Adjust)
 	return nil
+}
+
+func (p *pass) diverged() (bool, error) {
+	if p.Diverged == nil {
+		return false, nil
+	}
+	return p.Diverged(p.d.Name)
 }
 
 func (p *pass) start(ctx context.Context) error {

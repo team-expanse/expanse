@@ -73,9 +73,10 @@ with subtest("control: a brief cut with no write on either side is not a split-b
     old.unblock()
     wait_for(lambda: all(in_sync(m, res) for m in holders), "the replicas to be UpToDate again", 120)
     time.sleep(6)
-    assert state_of(n3) == "healthy", f"a clean reconnect changed the volume state to {state_of(n3)}"
+    assert state_of(n3) != "needsmanualrecovery", "a clean reconnect was taken for a split-brain"
     for m in holders:
         m.fail(f"test -e {MARKS}/{res}")
+    wait_for(lambda: state_of(n3) == "healthy", "the volume to be Healthy again", 60)  # the mesh view lags the unblock
 
 def diverge(res, holders, old_mib, new_mib):
     """The primary is cut off and keeps writing while its peer is promoted and writes too."""
