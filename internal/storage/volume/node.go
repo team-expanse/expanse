@@ -95,7 +95,7 @@ func (n *Node) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var errs []error
+	errs := []error{n.removeGone(ctx)}
 	for _, id := range ids {
 		if err := n.syncVolume(ctx, id); err != nil {
 			errs = append(errs, fmt.Errorf("volume %s: %w", id, err))
@@ -105,6 +105,24 @@ func (n *Node) Sync(ctx context.Context) error {
 		if !slices.Contains(ids, id) {
 			n.stopLeading(id)
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// removeGone takes off this node every replica it was marked to remove, the volumes
+// deleted while it was down, and clears each mark once the replica is gone.
+func (n *Node) removeGone(ctx context.Context) error {
+	gone, err := storage.ListGone(ctx, n.St, n.Self)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, id := range gone {
+		if err := n.release(ctx, id, false); err != nil {
+			errs = append(errs, fmt.Errorf("volume %s: %w", id, err))
+			continue
+		}
+		errs = append(errs, storage.DeleteGone(ctx, n.St, n.Self, id))
 	}
 	return errors.Join(errs...)
 }

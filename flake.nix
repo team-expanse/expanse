@@ -77,6 +77,7 @@
           # Phase 1 rewrites it on DRBD (E5); its file stays as the scenario to port.
           vol-agent = mkTest "vol-agent" ./nix/tests/vol-agent.nix;
           vol-firewall = mkTest "vol-firewall" ./nix/tests/vol-firewall.nix;
+          vol-forced = mkTest "vol-forced" ./nix/tests/vol-forced.nix;
           vol-create = mkTest "vol-create" ./nix/tests/vol-create.nix;
           vol-degraded = mkTest "vol-degraded" ./nix/tests/vol-degraded.nix;
           vol-durability = mkTest "vol-durability" ./nix/tests/vol-durability.nix;

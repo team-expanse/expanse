@@ -28,6 +28,8 @@ type fakeConverger struct {
 	forgot  []int
 	err     error
 
+	removeErr error
+
 	snapped, restored []string
 	snapErr           error
 	restoreErr        error
@@ -67,6 +69,9 @@ func (f *fakeConverger) Reconcile(_ context.Context, d Desired) (Result, error) 
 func (f *fakeConverger) Remove(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.removeErr != nil {
+		return f.removeErr
+	}
 	f.removed = append(f.removed, name)
 	delete(f.present, name)
 	return nil

@@ -102,7 +102,8 @@ func TestVolumeCommandSurface(t *testing.T) {
 	want := map[string][]string{
 		"create":       {"size", "class", "replication"},
 		"list":         {},
-		"delete":       {},
+		"delete":       {"force"},
+		"retire":       {"node"},
 		"resize":       {"size"},
 		"snapshot":     {"name"},
 		"restore":      {"snapshot"},

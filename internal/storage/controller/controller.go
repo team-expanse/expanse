@@ -128,7 +128,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err := c.reconcileBlocks(ctx, meshed); err != nil {
 		c.log.Warn("block volume reconcile failed", "err", err)
 	}
-	if err := c.processVolumeOps(ctx, ids); err != nil {
+	if err := c.processVolumeOps(ctx, ids, meshed); err != nil {
 		c.log.Warn("volume ops failed", "err", err)
 	}
 	for _, id := range ids {
@@ -168,17 +168,20 @@ func (c *Controller) reconcileVolume(ctx context.Context, id string, meshed map[
 // processVolumeOps consumes operator requests written by
 // `expanse ctl volume` (§4.8): delete and move-primary. Each op record
 // is one JSON value under /volumes/_ops/<kind>/<volID>.
-func (c *Controller) processVolumeOps(ctx context.Context, ids []string) error {
+func (c *Controller) processVolumeOps(ctx context.Context, ids []string, meshed map[string]bool) error {
 	type op struct {
 		Target    string `json:"target"`    // volume NAME (CLI-side lookup)
 		To        string `json:"to"`        // move-primary destination node
 		SizeBytes uint64 `json:"sizeBytes"` // resize target size
+		Node      string `json:"node"`      // retire: the node whose replica is lost
+		Force     bool   `json:"force"`     // delete: do not wait for nodes that are down
 	}
 	byName, err := c.volumesByName2(ctx, ids)
 	if err != nil {
 		return err
 	}
-	for _, kind := range []string{"delete", "move-primary", "resize"} {
+	defer c.sweepStaleOps(ctx, byName, ids)
+	for _, kind := range []string{"delete", "move-primary", "resize", "retire"} {
 		res, err := c.opts.St.List(ctx, store.Key("/volumes/_ops/"+kind+"/"))
 		if err != nil {
 			continue
@@ -199,6 +202,17 @@ func (c *Controller) processVolumeOps(ctx context.Context, ids []string) error {
 			case "delete":
 				if err := c.Delete(ctx, volID); err != nil {
 					c.log.Warn("delete op failed", "vol", volID, "err", err)
+					continue // retry next tick
+				}
+				if o.Force {
+					if err := c.abandonDownNodes(ctx, volID, meshed); err != nil {
+						c.log.Warn("forced delete incomplete", "vol", volID, "err", err)
+						continue
+					}
+				}
+			case "retire":
+				if err := c.retireLost(ctx, volID, o.Node, meshed); err != nil {
+					c.log.Warn("retire op failed", "vol", volID, "node", o.Node, "err", err)
 					continue // retry next tick
 				}
 			case "move-primary":

@@ -104,18 +104,25 @@ func putOp(ctx context.Context, cl pb.NodeServiceClient, kind, volID string, val
 
 func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	var toNode, sizeStr string
+	var force bool
 
 	del := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete a volume (removes every replica's logical volume)",
-		Args:  cobra.ExactArgs(1),
+		Long: "A node that is down holds the delete up until it returns. --force does not wait for such a node: it\n" +
+			"removes its replica when it comes back instead.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			return withClient(c, opts, func(ctx context.Context, cl pb.NodeServiceClient) error {
 				v, err := resolveVol(ctx, cl, args[0])
 				if err != nil {
 					return err
 				}
-				if err := putOp(ctx, cl, "delete", v.id, map[string]string{"target": args[0]}); err != nil {
+				req := map[string]any{"target": args[0]}
+				if force {
+					req["force"] = true
+				}
+				if err := putOp(ctx, cl, "delete", v.id, req); err != nil {
 					return err
 				}
 				fmt.Printf("volume %q delete requested\n", args[0])
@@ -123,6 +130,8 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 			})
 		},
 	}
+
+	del.Flags().BoolVar(&force, "force", false, "do not wait for nodes that are down")
 
 	resize := &cobra.Command{
 		Use:   "resize <name>",
@@ -257,7 +266,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	diverged.Flags().StringVar(&survivor, "choose", "", "node whose data is kept (the other replicas discard theirs)")
 	move.Flags().StringVar(&toNode, "to", "", "destination node (must hold a replica)")
 
-	return append([]*cobra.Command{del, resize, snapshot, restore, insp, move, diverged}, newVolumeCheckCmds(opts)...)
+	return append([]*cobra.Command{del, resize, snapshot, restore, insp, move, diverged}, append(newVolumeCheckCmds(opts), newVolumeLostCmds(opts)...)...)
 }
 
 func (v *volEntry) snapshot(name string) (storage.SnapshotRecord, bool) {
