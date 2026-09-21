@@ -5,7 +5,7 @@
 let
   lint = pkgs.runCommand "vol-agent-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
-    for f in ${./cluster-common.py} ${./python/vol_agent_main.py}; do
+    for f in ${./cluster-common.py} ${./python/vol_cluster.py} ${./python/vol_agent_main.py}; do
       python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
     done
     touch $out
@@ -38,6 +38,7 @@ in
   testScript = ''
     # ${lint}
     ${builtins.readFile ./cluster-common.py}
+    ${builtins.readFile ./python/vol_cluster.py}
     ${builtins.readFile ./python/vol_agent_main.py}
   '';
 }

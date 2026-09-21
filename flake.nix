@@ -73,11 +73,12 @@
           cluster-witness = mkTest "cluster-witness" ./nix/tests/cluster-witness.nix;
           cluster-generations = mkTest "cluster-generations" ./nix/tests/cluster-generations.nix;
 
-          # Phase 06 storage. The exvol/ZFS-era volume tests (vol-create, vol-durability,
+          # Phase 06 storage. The exvol/ZFS-era volume tests (vol-create,
           # vol-resync-incremental, vol-degraded, vol-full-restart, vol-resize, vol-snapshot,
           # vol-perf) are retired from the checks until Phase 1 rewrites them on DRBD
           # (C3, C5 and stream E); their files stay as the scenarios to port.
           vol-agent = mkTest "vol-agent" ./nix/tests/vol-agent.nix;
+          vol-durability = mkTest "vol-durability" ./nix/tests/vol-durability.nix;
           vol-drbd-spike = mkTest "vol-drbd-spike" ./nix/tests/vol-drbd-spike.nix;
           vol-drbd-nodeid-spike = mkTest "vol-drbd-nodeid-spike" ./nix/tests/vol-drbd-nodeid-spike.nix;
           vol-drbd-status-capture = mkTest "vol-drbd-status-capture" ./nix/tests/vol-drbd-status-capture.nix;

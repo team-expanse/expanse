@@ -42,7 +42,7 @@ over LVM thin, with btrfs as the system filesystem.
 - Update `docs/INSTALL.md`, which documents the ZFS layout and becomes wrong the moment the new
   disko layouts land.
 
-**Exit:** `vol-durability` green on DRBD (20 hard-crash iterations, **zero acked-write loss**);
+**Exit:** `vol-durability` green on DRBD (20 hard-crash iterations, **zero acked-write loss** — met, see PHASE-01-TASKS E2);
 storage budgets met; online resize and snapshot/restore working; all three replicas checksum-equal
 after every fault.
 
