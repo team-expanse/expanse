@@ -9,6 +9,10 @@ A control shows why DRBD's own advice is not enough: disconnecting and reconnect
 forgets what it found, so the replica still differs. `volume resync --node` then rebuilds it from its
 peers, all three replicas are identical again, and a last verify is clean.
 
+`volume inspect` (C4d) must show all of this without anyone reading the kernel: a replica being verified,
+the blocks a verify found against it, and that count going away once the kernel's does. The control reads
+what it shows after a reconnect from the kernel's own count rather than assuming one.
+
 Runs after cluster-common.py and vol_cluster.py.
 """
 
@@ -43,15 +47,41 @@ def out_of_sync_kib(m, res):
     return {c["name"]: sum(v["out-of-sync"] for v in c["peer_devices"]) for c in status["connections"]}
 
 
+def inspect_rows(m):
+    """`volume inspect` as {replica: {"sync": ..., "oos": ...}} (the SYNC and OUT OF SYNC columns)."""
+    rows = {}
+    for line in m.execute(f"expanse ctl volume inspect {NAME} 2>&1")[1].splitlines():
+        cols = line.split()
+        if len(cols) == 6 and cols[0] in {x.name for x in NODES}:
+            rows[cols[0]] = {"sync": cols[3], "oos": cols[4]}
+    return rows
+
+
+def shown_out_of_sync(m, node):
+    return inspect_rows(m).get(node, {}).get("oos")
+
+
+def as_inspect_shows(kib):
+    return "-" if kib == 0 else {DAMAGE_MIB * 1024: f"{DAMAGE_MIB}Mi"}[kib]
+
+
 def sums(res):
     return {m.name: checksum(m, f"/dev/vg0/{res}", SIZE_MIB) for m in NODES}
 
 
 def run_verify(asked_on, primary, res):
-    """Ask for a verify from asked_on; it is done when the primary's kernel has finished it against both peers."""
+    """Ask for a verify from asked_on; it is done when the primary's kernel has finished it against both peers.
+    Returns whether `volume inspect` showed a replica being verified along the way."""
     before = verifies_done(primary)
     asked_on.succeed(f"expanse ctl volume verify {NAME}")
-    wait_for(lambda: verifies_done(primary) >= before + 2, "the verify to finish against both peers", 180)
+    shown = []
+
+    def finished():
+        shown.append(any(r["sync"] == "verifying" for r in inspect_rows(primary).values()))
+        return verifies_done(primary) >= before + 2
+
+    wait_for(finished, "the verify to finish against both peers", 180)
+    return any(shown)
 
 
 def in_sync_and_healthy(primary, res):
@@ -81,9 +111,10 @@ with subtest("a replication-3 volume is Healthy and holds random data"):
 
 try:
     with subtest("a verify of intact replicas finds nothing"):
-        run_verify(good, primary, res)
+        assert run_verify(good, primary, res), "inspect never showed the verify running"
         assert not kernel_lines(primary, "Online verify found"), "a clean volume was reported as damaged"
         assert set(out_of_sync_kib(primary, res).values()) == {0}, out_of_sync_kib(primary, res)
+        wait_for(lambda: {r["oos"] for r in inspect_rows(n1).values()} == {"-"}, "inspect to show nothing out of sync", 30)
 
     with subtest("damage one secondary's disk behind DRBD's back"):
         bad.succeed(
@@ -101,11 +132,20 @@ try:
         assert f"{BLOCKS_4K} 4k blocks" in kernel_lines(primary, "Online verify found")[0], kernel_lines(primary, "Online verify found")
         assert out_of_sync_kib(primary, res) == {bad.name: DAMAGE_MIB * 1024, good.name: 0}, out_of_sync_kib(primary, res)
 
+    with subtest("inspect names the damaged replica and the amount, from any node"):
+        for m in NODES:
+            wait_for(lambda: shown_out_of_sync(m, bad.name) == f"{DAMAGE_MIB}Mi", f"{m.name}'s inspect to blame {bad.name}", 30)
+            assert shown_out_of_sync(m, good.name) == "-", inspect_rows(m)
+            assert shown_out_of_sync(m, primary.name) == "-", inspect_rows(m)
+
     with subtest("control: reconnecting after a verify does not repair it"):
         primary.succeed(f"drbdadm disconnect {res} && drbdadm connect {res}")
         wait_for(lambda: in_sync_and_healthy(primary, res), "the volume to reconnect", 120)
         still = sums(res)
         assert still[bad.name] != still[primary.name] == still[good.name], f"a reconnect changed the replicas: {still}"
+        kib = out_of_sync_kib(primary, res)[bad.name]
+        print(f"after the reconnect the kernel counts {kib} KiB against {bad.name} though its data still differs")
+        wait_for(lambda: shown_out_of_sync(n1, bad.name) == as_inspect_shows(kib), "inspect to follow the kernel's count", 30)
 
     with subtest("resync rebuilds the damaged replica from its peers"):
         good.succeed(f"expanse ctl volume resync {NAME} --node {bad.name}")
@@ -117,6 +157,7 @@ try:
         run_verify(good, primary, res)
         assert blamed(primary, bad) == found_before, "the repaired replica still differs"
         assert set(out_of_sync_kib(primary, res).values()) == {0}, out_of_sync_kib(primary, res)
+        wait_for(lambda: {r["oos"] for r in inspect_rows(n1).values()} == {"-"}, "inspect to show nothing out of sync", 30)
         print("VOL-VERIFY PASSED")
 except Exception:
     dump_on_failure(res)

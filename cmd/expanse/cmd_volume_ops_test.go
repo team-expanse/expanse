@@ -527,3 +527,39 @@ func TestResyncWithoutANodeSaysWhichFlagIsMissing(t *testing.T) {
 		t.Errorf("error %v, want one naming --node", err)
 	}
 }
+
+// inspectRow is the whitespace-separated fields of a replica's line in `volume inspect`.
+func inspectRow(t *testing.T, out, node string) []string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) > 0 && f[0] == node {
+			return f
+		}
+	}
+	t.Fatalf("no row for %s:\n%s", node, out)
+	return nil
+}
+
+func TestPrintInspectShowsSyncProgressVerifyStateAndWhatAVerifyFound(t *testing.T) {
+	v := fixtureVolume(t)
+	v.st.Placement = []*pb.Replica{
+		{NodeId: "n1", Role: pb.ReplicaRole_REPLICA_ROLE_PRIMARY, Healthy: true},
+		{NodeId: "n2", Role: pb.ReplicaRole_REPLICA_ROLE_SECONDARY, Healthy: true, OutOfSyncKib: 2048},
+		{NodeId: "n3", Role: pb.ReplicaRole_REPLICA_ROLE_RESYNCING, SyncPercent: 43},
+		{NodeId: "n4", Role: pb.ReplicaRole_REPLICA_ROLE_SECONDARY, Healthy: true, Verifying: true},
+		{NodeId: "n5", Role: pb.ReplicaRole_REPLICA_ROLE_RESYNCING}, // just started
+	}
+	var buf bytes.Buffer
+	printInspect(&buf, v)
+	out := buf.String()
+	for node, want := range map[string][2]string{ // node -> SYNC, OUT OF SYNC
+		"n1": {"-", "-"}, "n2": {"-", "2Mi"}, "n3": {"43%", "-"}, "n4": {"verifying", "-"}, "n5": {"0%", "-"},
+	} {
+		if f := inspectRow(t, out, node); f[3] != want[0] || f[4] != want[1] {
+			t.Errorf("%s: SYNC %q, OUT OF SYNC %q; want %q, %q\n%s", node, f[3], f[4], want[0], want[1], out)
+		}
+	}
+	if !strings.Contains(out, "SYNC") || !strings.Contains(out, "OUT OF SYNC") {
+		t.Errorf("no columns for progress:\n%s", out)
+	}
+}

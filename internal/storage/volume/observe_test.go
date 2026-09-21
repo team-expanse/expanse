@@ -208,3 +208,55 @@ func TestObserveReportsTheSlowestOfSeveralSyncs(t *testing.T) {
 		t.Errorf("progress = %v%% / %d KiB, want 20%% / 800 KiB", r.SyncPercent, r.OutOfSyncKiB)
 	}
 }
+
+func primaryWithPeers(peers ...drbd.Peer) *drbd.Status {
+	return &drbd.Status{
+		Role:    drbd.RolePrimary,
+		Volumes: []drbd.Volume{{DiskState: drbd.DiskUpToDate, Quorum: true}},
+		Peers:   peers,
+	}
+}
+
+func idlePeer(id int, conn drbd.Connection, repl drbd.Replication, oos ...uint64) drbd.Peer {
+	p := drbd.Peer{NodeID: id, Connection: conn, Role: drbd.RoleSecondary}
+	for _, k := range oos {
+		p.Volumes = append(p.Volumes, drbd.PeerVolume{Replication: repl, DiskState: drbd.DiskUpToDate, OutOfSyncKiB: k})
+	}
+	return p
+}
+
+func TestObserveReportsWhatAVerifyFoundAgainstAnIdlePeer(t *testing.T) {
+	st := primaryWithPeers(
+		idlePeer(1, drbd.ConnConnected, drbd.ReplEstablished, 2048, 1024),
+		idlePeer(2, drbd.ConnConnected, drbd.ReplEstablished, 0),
+	)
+	o := Observe(st, "n1", trio)
+	if r := replica(t, o, "n2"); r.OutOfSyncKiB != 3072 || r.SyncPercent != 0 || r.Verifying {
+		t.Errorf("n2 = %+v, want 3072 KiB out of sync and nothing running", r)
+	}
+	if r := replica(t, o, "n3"); r.OutOfSyncKiB != 0 {
+		t.Errorf("n3 = %+v, want a clean replica", r)
+	}
+	if r := replica(t, o, "n1"); r.OutOfSyncKiB != 0 {
+		t.Errorf("self = %+v: a peer's differing blocks are not this replica's", r)
+	}
+}
+
+func TestObserveMarksAReplicaBeingVerified(t *testing.T) {
+	for _, repl := range []drbd.Replication{drbd.ReplVerifyS, drbd.ReplVerifyT} {
+		o := Observe(primaryWithPeers(idlePeer(1, drbd.ConnConnected, repl, 0)), "n1", trio)
+		if r := replica(t, o, "n2"); !r.Verifying || r.Role != storage.RoleSecondary {
+			t.Errorf("%s: n2 = %+v, want a Secondary being verified", repl, r)
+		}
+	}
+	if r := replica(t, Observe(primaryWithPeers(idlePeer(1, drbd.ConnConnected, drbd.ReplEstablished, 0)), "n1", trio), "n2"); r.Verifying {
+		t.Errorf("an idle peer is not being verified: %+v", r)
+	}
+}
+
+func TestObserveDoesNotReadTheCountOfADisconnectedPeer(t *testing.T) {
+	o := Observe(primaryWithPeers(idlePeer(1, drbd.ConnConnecting, drbd.ReplOff, 4096)), "n1", trio)
+	if r := replica(t, o, "n2"); r.OutOfSyncKiB != 0 || r.Verifying {
+		t.Errorf("n2 = %+v, want nothing read from a peer that is not connected", r)
+	}
+}

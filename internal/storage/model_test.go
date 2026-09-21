@@ -31,7 +31,7 @@ func testVolume() Volume {
 		Placement: []Replica{
 			{NodeID: "n1", Role: RolePrimary, LastSeen: time.Unix(1700000000, 0).UTC(), Healthy: true},
 			{NodeID: "n2", Role: RoleSecondary, LastSeen: time.Unix(1700000000, 0).UTC(), Healthy: true},
-			{NodeID: "n3", Role: RoleSecondary, LastSeen: time.Unix(1699999999, 0).UTC(), Healthy: true},
+			{NodeID: "n3", Role: RoleSecondary, LastSeen: time.Unix(1699999999, 0).UTC(), Healthy: true, SyncPercent: 42, OutOfSyncKiB: 2048, Verifying: true},
 		},
 		Generation: 7,
 		State:      StateHealthy,

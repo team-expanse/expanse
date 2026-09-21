@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/netip"
 	"slices"
 	"time"
@@ -278,27 +279,54 @@ func (n *Node) Stop() {
 	}
 }
 
-// publish reports this node's own replica into the placement row, writing only
-// when the role or health changed.
+// publish reports what this node's kernel sees into the placement row, writing only when
+// something changed. Every node reports its own replica; the primary also reports what it
+// counts against its peers, since a verify's result is only in its kernel.
 func (n *Node) publish(ctx context.Context, d Desired) error {
 	st, err := n.DRBD.Status(ctx, d.Name)
 	if err != nil {
 		return ignoreMissing(err) // the resource is not up yet
 	}
 	obs := Observe(st, n.Self, d.Members)
-	i := slices.IndexFunc(obs.Replicas, func(r Replica) bool { return r.NodeID == n.Self })
-	if i < 0 {
-		return nil
-	}
-	mine := obs.Replicas[i]
 	return n.updateStatus(ctx, d.Name, func(s *storage.Status) bool {
-		j := slices.IndexFunc(s.Placement, func(r storage.Replica) bool { return r.NodeID == n.Self })
-		if j < 0 || (s.Placement[j].Role == mine.Role && s.Placement[j].Healthy == mine.Healthy) {
-			return false
+		changed := false
+		for _, seen := range obs.Replicas {
+			j := slices.IndexFunc(s.Placement, func(r storage.Replica) bool { return r.NodeID == seen.NodeID })
+			switch {
+			case j < 0:
+			case seen.NodeID == n.Self:
+				changed = reportSelf(&s.Placement[j], seen.Replica, s.Primary == n.Self) || changed
+			case s.Primary == n.Self && seen.Role != "":
+				changed = reportPeer(&s.Placement[j], seen.Replica) || changed
+			}
 		}
-		s.Placement[j].Role, s.Placement[j].Healthy, s.Placement[j].LastSeen = mine.Role, mine.Healthy, time.Now().UTC()
-		return true
+		return changed
 	})
+}
+
+// reportSelf records a replica's own role, health and resync progress (in whole percent, to
+// bound the writes). The primary has no verify running against itself, so it clears one
+// a predecessor left on its row.
+func reportSelf(row *storage.Replica, seen storage.Replica, primary bool) bool {
+	pct := math.Floor(seen.SyncPercent)
+	leftover := primary && (row.OutOfSyncKiB != 0 || row.Verifying)
+	if row.Role == seen.Role && row.Healthy == seen.Healthy && row.SyncPercent == pct && !leftover {
+		return false
+	}
+	row.Role, row.Healthy, row.SyncPercent, row.LastSeen = seen.Role, seen.Healthy, pct, time.Now().UTC()
+	if primary {
+		row.OutOfSyncKiB, row.Verifying = 0, false
+	}
+	return true
+}
+
+// reportPeer records what the primary's kernel counts against a connected peer.
+func reportPeer(row *storage.Replica, seen storage.Replica) bool {
+	if row.OutOfSyncKiB == seen.OutOfSyncKiB && row.Verifying == seen.Verifying {
+		return false
+	}
+	row.OutOfSyncKiB, row.Verifying = seen.OutOfSyncKiB, seen.Verifying
+	return true
 }
 
 const statusAttempts = 4

@@ -120,6 +120,12 @@ type Replica struct {
 	Role     Role
 	LastSeen time.Time
 	Healthy  bool
+	// SyncPercent is a resync's progress into this replica, zero when none runs.
+	SyncPercent float64
+	// OutOfSyncKiB is what the primary's kernel counts as differing from this replica.
+	OutOfSyncKiB uint64
+	// Verifying marks a verify comparing this replica with the primary's.
+	Verifying bool
 }
 
 // Volume is the spec + live status of one replicated volume (§4.1). Spec is
@@ -226,15 +232,21 @@ func replicaToProto(r Replica) *pb.Replica {
 		Role:             r.Role.proto(),
 		LastSeenUnixNano: r.LastSeen.UnixNano(),
 		Healthy:          r.Healthy,
+		SyncPercent:      r.SyncPercent,
+		OutOfSyncKib:     r.OutOfSyncKiB,
+		Verifying:        r.Verifying,
 	}
 }
 
 func replicaFromProto(p *pb.Replica) Replica {
 	return Replica{
-		NodeID:   p.GetNodeId(),
-		Role:     roleFromProto(p.GetRole()),
-		LastSeen: time.Unix(0, p.GetLastSeenUnixNano()).UTC(),
-		Healthy:  p.GetHealthy(),
+		NodeID:       p.GetNodeId(),
+		Role:         roleFromProto(p.GetRole()),
+		LastSeen:     time.Unix(0, p.GetLastSeenUnixNano()).UTC(),
+		Healthy:      p.GetHealthy(),
+		SyncPercent:  p.GetSyncPercent(),
+		OutOfSyncKiB: p.GetOutOfSyncKib(),
+		Verifying:    p.GetVerifying(),
 	}
 }
 

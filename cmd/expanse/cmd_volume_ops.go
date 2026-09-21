@@ -310,13 +310,13 @@ func printInspect(w io.Writer, v *volEntry) {
 	fmt.Fprintf(w, "  state:    %s\n", stateStr(v.st.GetState()))
 	fmt.Fprintf(w, "  primary:  %s\n", v.st.GetPrimary())
 	fmt.Fprintf(w, "  size:     %s\n", humanBytes(v.spec.GetSizeBytes()))
-	fmt.Fprintf(w, "  %-16s %-12s %-8s %s\n", "REPLICA", "ROLE", "HEALTHY", "LAST SEEN")
+	fmt.Fprintf(w, "  %-16s %-12s %-8s %-10s %-12s %s\n", "REPLICA", "ROLE", "HEALTHY", "SYNC", "OUT OF SYNC", "LAST SEEN")
 	for _, p := range v.st.GetPlacement() {
 		seen := "never"
 		if p.GetLastSeenUnixNano() > 0 {
 			seen = relTime(p.GetLastSeenUnixNano())
 		}
-		fmt.Fprintf(w, "  %-16s %-12s %-8t %s\n", p.GetNodeId(), roleStr(p.GetRole()), p.GetHealthy(), seen)
+		fmt.Fprintf(w, "  %-16s %-12s %-8t %-10s %-12s %s\n", p.GetNodeId(), roleStr(p.GetRole()), p.GetHealthy(), syncStr(p), outOfSyncStr(p), seen)
 	}
 	if len(v.snaps) > 0 {
 		fmt.Fprintf(w, "  snapshots:\n  %-16s %-12s %s\n", "NAME", "HELD BY", "TAKEN")
@@ -324,6 +324,25 @@ func printInspect(w io.Writer, v *volEntry) {
 			fmt.Fprintf(w, "  %-16s %-12s %s\n", s.Name, s.Node, relTime(s.CreatedAt.UnixNano()))
 		}
 	}
+}
+
+// syncStr is a resync's progress or a running verify, "-" when the replica is idle.
+func syncStr(p *pb.Replica) string {
+	switch {
+	case p.GetRole() == pb.ReplicaRole_REPLICA_ROLE_RESYNCING:
+		return fmt.Sprintf("%.0f%%", p.GetSyncPercent())
+	case p.GetVerifying():
+		return "verifying"
+	}
+	return "-"
+}
+
+// outOfSyncStr is what the primary counts as differing from the replica, "-" when nothing.
+func outOfSyncStr(p *pb.Replica) string {
+	if p.GetOutOfSyncKib() == 0 {
+		return "-"
+	}
+	return humanBytes(p.GetOutOfSyncKib() << 10)
 }
 
 // planResolve names the replicas that discard their data followed by the survivor,

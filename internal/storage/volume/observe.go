@@ -7,12 +7,9 @@ import (
 	"github.com/expanse/expanse/internal/storage/drbd"
 )
 
-// Replica is one member's storage.Replica plus sync progress for `volume inspect`.
+// Replica is one member's storage.Replica as this node's kernel reports it.
 type Replica struct {
 	storage.Replica
-	// SyncPercent and OutOfSyncKiB describe an active resync (zero otherwise).
-	SyncPercent  float64
-	OutOfSyncKiB uint64
 }
 
 // Observed is this node's view of a volume's members. A member it cannot see has
@@ -53,7 +50,7 @@ func observeSelf(st *drbd.Status, r Replica) Replica {
 	disk := worstDisk(st.Volumes, func(v drbd.Volume) drbd.DiskState { return v.DiskState })
 	var targets []drbd.PeerVolume
 	for _, p := range st.Peers {
-		targets = append(targets, syncing(p.Volumes, drbd.ReplSyncTarget, drbd.ReplPausedSyncT)...)
+		targets = append(targets, inState(p.Volumes, drbd.ReplSyncTarget, drbd.ReplPausedSyncT)...)
 	}
 	r.Role = roleOf(st.Role, disk, len(targets) > 0)
 	r.Healthy = disk == drbd.DiskUpToDate && st.HasQuorum()
@@ -61,18 +58,27 @@ func observeSelf(st *drbd.Status, r Replica) Replica {
 	return r
 }
 
-// observePeer resyncs when this node is the source; a disconnected peer's last
-// disk state is stale, so it is not read.
+// observePeer resyncs when this node is the source, and carries what a verify found; a
+// disconnected peer's last disk state and count are stale, so they are not read.
 func observePeer(p drbd.Peer, r Replica) Replica {
 	if p.Connection != drbd.ConnConnected {
 		return r
 	}
 	disk := worstDisk(p.Volumes, func(v drbd.PeerVolume) drbd.DiskState { return v.DiskState })
-	targets := syncing(p.Volumes, drbd.ReplSyncSource, drbd.ReplPausedSyncS)
+	targets := inState(p.Volumes, drbd.ReplSyncSource, drbd.ReplPausedSyncS)
 	r.Role = roleOf(p.Role, disk, len(targets) > 0)
 	r.Healthy = disk == drbd.DiskUpToDate
-	r.SyncPercent, r.OutOfSyncKiB = slowest(targets)
+	r.SyncPercent, _ = slowest(targets)
+	r.OutOfSyncKiB = outOfSync(p.Volumes)
+	r.Verifying = len(inState(p.Volumes, drbd.ReplVerifyS, drbd.ReplVerifyT)) > 0
 	return r
+}
+
+func outOfSync(vols []drbd.PeerVolume) (kib uint64) {
+	for _, v := range vols {
+		kib += v.OutOfSyncKiB
+	}
+	return kib
 }
 
 // roleOf is DRBD's role when it is Primary, else Resyncing while data flows in,
@@ -102,7 +108,8 @@ func worstDisk[V any](vols []V, disk func(V) drbd.DiskState) drbd.DiskState {
 	return drbd.DiskUpToDate
 }
 
-func syncing(vols []drbd.PeerVolume, states ...drbd.Replication) []drbd.PeerVolume {
+// inState selects the volumes whose replication is in one of the given states.
+func inState(vols []drbd.PeerVolume, states ...drbd.Replication) []drbd.PeerVolume {
 	var out []drbd.PeerVolume
 	for _, v := range vols {
 		if slices.Contains(states, v.Replication) {

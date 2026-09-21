@@ -245,8 +245,14 @@ type Replica struct {
 	// Last time this replica responded, UnixNano.
 	LastSeenUnixNano int64 `protobuf:"varint,5,opt,name=last_seen_unix_nano,json=lastSeenUnixNano,proto3" json:"last_seen_unix_nano,omitempty"`
 	Healthy          bool  `protobuf:"varint,6,opt,name=healthy,proto3" json:"healthy,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Progress of a resync filling this replica, in percent; zero when none runs.
+	SyncPercent float64 `protobuf:"fixed64,7,opt,name=sync_percent,json=syncPercent,proto3" json:"sync_percent,omitempty"`
+	// Data the primary's kernel counts as differing from this replica (what a verify found).
+	OutOfSyncKib uint64 `protobuf:"varint,8,opt,name=out_of_sync_kib,json=outOfSyncKib,proto3" json:"out_of_sync_kib,omitempty"`
+	// A verify is comparing this replica with the primary's.
+	Verifying     bool `protobuf:"varint,9,opt,name=verifying,proto3" json:"verifying,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Replica) Reset() {
@@ -303,6 +309,27 @@ func (x *Replica) GetLastSeenUnixNano() int64 {
 func (x *Replica) GetHealthy() bool {
 	if x != nil {
 		return x.Healthy
+	}
+	return false
+}
+
+func (x *Replica) GetSyncPercent() float64 {
+	if x != nil {
+		return x.SyncPercent
+	}
+	return 0
+}
+
+func (x *Replica) GetOutOfSyncKib() uint64 {
+	if x != nil {
+		return x.OutOfSyncKib
+	}
+	return 0
+}
+
+func (x *Replica) GetVerifying() bool {
+	if x != nil {
+		return x.Verifying
 	}
 	return false
 }
@@ -392,12 +419,15 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x14\n" +
 	"\x05class\x18\x05 \x01(\tR\x05class\x12 \n" +
-	"\vreplication\x18\x06 \x01(\x05R\vreplication\"\xc1\x01\n" +
+	"\vreplication\x18\x06 \x01(\x05R\vreplication\"\xa9\x02\n" +
 	"\aReplica\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x123\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.ReplicaRoleR\x04role\x12-\n" +
 	"\x13last_seen_unix_nano\x18\x05 \x01(\x03R\x10lastSeenUnixNano\x12\x18\n" +
-	"\ahealthy\x18\x06 \x01(\bR\ahealthyJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\tzvol_pathR\bsequence\"\xe2\x01\n" +
+	"\ahealthy\x18\x06 \x01(\bR\ahealthy\x12!\n" +
+	"\fsync_percent\x18\a \x01(\x01R\vsyncPercent\x12%\n" +
+	"\x0fout_of_sync_kib\x18\b \x01(\x04R\foutOfSyncKib\x12\x1c\n" +
+	"\tverifying\x18\t \x01(\bR\tverifyingJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\tzvol_pathR\bsequence\"\xe2\x01\n" +
 	"\fVolumeStatus\x12\x1e\n" +
 	"\n" +
 	"generation\x18\x01 \x01(\x04R\n" +

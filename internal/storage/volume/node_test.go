@@ -661,3 +661,143 @@ func TestASplitBrainMarkLosesToADeleteRequestedMeanwhile(t *testing.T) {
 		t.Errorf("state = %s: the mark overwrote the delete", got)
 	}
 }
+
+// peerVolume is the first volume of the peer with the given DRBD node-id.
+func peerVolume(t *testing.T, st *drbd.Status, id int) *drbd.PeerVolume {
+	t.Helper()
+	for i := range st.Peers {
+		if st.Peers[i].NodeID == id {
+			return &st.Peers[i].Volumes[0]
+		}
+	}
+	t.Fatalf("no peer %d in %+v", id, st.Peers)
+	return nil
+}
+
+func TestSyncPublishesTheResyncProgressOfThisReplica(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2", "n3")
+	r.drbd.st[vol] = fixtureStatus(t, "syncing-target.n3.json")
+	r.node.Self = "n3"
+	r.mustSync(t)
+	if row, _ := r.row(t, "n3"); row.Role != storage.RoleResyncing || row.SyncPercent != 80 {
+		t.Errorf("row = %+v, want Resyncing at 80%% (the kernel says 80.17)", row)
+	}
+}
+
+func TestSyncWritesProgressOnlyWhenAWholePercentPasses(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2", "n3")
+	r.drbd.st[vol] = fixtureStatus(t, "syncing-target.n3.json")
+	r.node.Self = "n3"
+	r.mustSync(t)
+	before := revisionOf(t, r)
+	for _, peer := range r.drbd.st[vol].Peers {
+		for i := range peer.Volumes {
+			peer.Volumes[i].PercentInSync = 80.9
+		}
+	}
+	r.mustSync(t)
+	if after := revisionOf(t, r); after != before {
+		t.Errorf("rewritten for a move inside one percent: %d -> %d", before, after)
+	}
+	for _, peer := range r.drbd.st[vol].Peers {
+		for i := range peer.Volumes {
+			peer.Volumes[i].PercentInSync = 81.2
+		}
+	}
+	r.mustSync(t)
+	if row, _ := r.row(t, "n3"); row.SyncPercent != 81 {
+		t.Errorf("row = %+v, want 81%%", row)
+	}
+}
+
+func TestThePrimaryPublishesWhatAVerifyFoundAgainstEachPeer(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2", "n3")
+	st := fixtureStatus(t, "healthy-primary.n1.json")
+	peerVolume(t, st, 1).OutOfSyncKiB = 2048
+	peerVolume(t, st, 2).Replication = drbd.ReplVerifyS
+	r.drbd.st[vol] = st
+	r.mustSync(t)
+	if row, _ := r.row(t, "n2"); row.OutOfSyncKiB != 2048 || row.Verifying {
+		t.Errorf("n2 = %+v, want 2048 KiB out of sync", row)
+	}
+	if row, _ := r.row(t, "n3"); row.OutOfSyncKiB != 0 || !row.Verifying {
+		t.Errorf("n3 = %+v, want a verify in progress", row)
+	}
+	if row, _ := r.row(t, "n1"); row.OutOfSyncKiB != 0 || row.Verifying {
+		t.Errorf("n1 = %+v: the primary is not out of sync with itself", row)
+	}
+}
+
+func TestASecondaryLeavesThePeersRowsToThePrimary(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2", "n3")
+	st := fixtureStatus(t, "healthy-secondary.n2.json")
+	peerVolume(t, st, 0).OutOfSyncKiB = 4096
+	r.drbd.st[vol] = st
+	r.node.Self = "n2"
+	r.mustSync(t)
+	if row, _ := r.row(t, "n1"); row.OutOfSyncKiB != 0 {
+		t.Errorf("n1 = %+v: only the primary counts against its peers", row)
+	}
+}
+
+func TestThePrimaryKeepsWhatItLastSawOfAPeerItCannotReach(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2", "n3")
+	st := fixtureStatus(t, "healthy-primary.n1.json")
+	peerVolume(t, st, 1).OutOfSyncKiB = 2048
+	r.drbd.st[vol] = st
+	r.mustSync(t)
+	for i := range st.Peers {
+		if st.Peers[i].NodeID == 1 {
+			st.Peers[i].Connection = drbd.ConnConnecting
+		}
+	}
+	r.mustSync(t)
+	if row, _ := r.row(t, "n2"); row.OutOfSyncKiB != 2048 {
+		t.Errorf("n2 = %+v, want the last count kept while it is unreachable", row)
+	}
+}
+
+func TestThePrimaryFollowsAPeersCountBackToZero(t *testing.T) {
+	r := newNodeRig(t)
+	r.place(t, "n1", "n1", "n2", "n3")
+	st := fixtureStatus(t, "healthy-primary.n1.json")
+	peerVolume(t, st, 1).OutOfSyncKiB = 2048
+	r.drbd.st[vol] = st
+	r.mustSync(t)
+	peerVolume(t, st, 1).OutOfSyncKiB = 0
+	r.mustSync(t)
+	if row, _ := r.row(t, "n2"); row.OutOfSyncKiB != 0 {
+		t.Errorf("n2 = %+v, want the count cleared once the kernel's is", row)
+	}
+}
+
+func TestANewPrimaryClearsWhatItsPredecessorRecordedAboutIt(t *testing.T) {
+	for name, left := range map[string]storage.Replica{
+		"a count":  {OutOfSyncKiB: 2048},
+		"a verify": {Verifying: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newNodeRig(t)
+			r.place(t, "n2", "n1", "n2", "n3")
+			if err := r.node.updateStatus(context.Background(), vol, func(s *storage.Status) bool {
+				// Only the leftover differs from what the node will report.
+				s.Placement[1].Role, s.Placement[1].OutOfSyncKiB, s.Placement[1].Verifying = storage.RolePrimary, left.OutOfSyncKiB, left.Verifying
+				return true
+			}); err != nil {
+				t.Fatal(err)
+			}
+			r.drbd.st[vol] = fixtureStatus(t, "healthy-secondary.n2.json")
+			r.drbd.st[vol].Role = drbd.RolePrimary
+			r.node.Self = "n2"
+			r.mustSync(t)
+			if row, _ := r.row(t, "n2"); row.OutOfSyncKiB != 0 || row.Verifying {
+				t.Errorf("n2 = %+v: the primary's own row cannot hold a verify against itself", row)
+			}
+		})
+	}
+}
