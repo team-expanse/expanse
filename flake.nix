@@ -87,6 +87,7 @@
           vol-drbd-nodeid-spike = mkTest "vol-drbd-nodeid-spike" ./nix/tests/vol-drbd-nodeid-spike.nix;
           vol-drbd-status-capture = mkTest "vol-drbd-status-capture" ./nix/tests/vol-drbd-status-capture.nix;
           vol-drbd-config = mkTest "vol-drbd-config" ./nix/tests/vol-drbd-config.nix;
+          vol-lvm = mkTest "vol-lvm" ./nix/tests/vol-lvm.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
