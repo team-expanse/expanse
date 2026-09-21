@@ -29,11 +29,12 @@ var commands = map[string]command{
 	"show":      show,
 	"desired":   desired,
 	"reconcile": reconcile,
+	"hold":      hold,
 }
 
 func main() {
 	if len(os.Args) < 2 || commands[os.Args[1]] == nil {
-		fmt.Fprintln(os.Stderr, "usage: volctl alloc|assign|retire|ack|show|desired|reconcile [flags]")
+		fmt.Fprintln(os.Stderr, "usage: volctl alloc|assign|retire|ack|show|desired|reconcile|hold [flags]")
 		os.Exit(2)
 	}
 	if err := commands[os.Args[1]](context.Background(), os.Args[2:], os.Stdout); err != nil {

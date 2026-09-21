@@ -348,3 +348,36 @@ func TestForgottenIDIsReusableAfterAcks(t *testing.T) {
 		t.Errorf("want recycled id %d, got %d, %v", dead, id, err)
 	}
 }
+
+func TestVolumeStartsUninitializedAndStaysInitializedOnceMarked(t *testing.T) {
+	a := newAllocator(t)
+	ctx := context.Background()
+	if mustAllocate(t, a, "vol-a").Initialized {
+		t.Fatal("a new volume must not start out initialized")
+	}
+	for range 2 { // marking is idempotent
+		if err := a.MarkInitialized(ctx, "vol-a"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	al, err := a.Get(ctx, "vol-a")
+	if err != nil || !al.Initialized {
+		t.Fatalf("got %+v, %v", al, err)
+	}
+	if again := mustAllocate(t, a, "vol-a"); !again.Initialized {
+		t.Error("Allocate on an existing volume dropped the marker")
+	}
+}
+
+func TestMarkInitializedIsPerVolumeAndNeedsTheVolume(t *testing.T) {
+	a := newAllocator(t)
+	mustAllocate(t, a, "vol-a")
+	other := mustAllocate(t, a, "vol-b")
+	if err := a.MarkInitialized(context.Background(), "vol-a"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := a.Get(context.Background(), "vol-b"); got.Initialized || other.Initialized {
+		t.Error("marking one volume marked another")
+	}
+	wantKind(t, a.MarkInitialized(context.Background(), "ghost"), experrors.KindNotFound)
+}

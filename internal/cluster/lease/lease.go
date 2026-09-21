@@ -136,6 +136,14 @@ func (m *Manager) Acquire(ctx context.Context, name string, ttl time.Duration) (
 	return m.acquire(ctx, name, ttl, false)
 }
 
+// AcquireReclaiming is Acquire that also takes back a live record naming this
+// node, for holders that must resume at once after a restart. The soundness
+// conditions are Maintain's: holder IDs are unique per node, and the caller is not
+// a deposed holder whose Abandon()ed record must stay fenced.
+func (m *Manager) AcquireReclaiming(ctx context.Context, name string, ttl time.Duration) (*Held, error) {
+	return m.acquire(ctx, name, ttl, true)
+}
+
 func (m *Manager) acquire(ctx context.Context, name string, ttl time.Duration, reclaimOwn bool) (*Held, error) {
 	for {
 		h, err := m.tryAcquire(ctx, name, ttl, reclaimOwn)
@@ -258,7 +266,8 @@ func (m *Manager) Inspect(ctx context.Context, name string) (Lease, bool, error)
 	if derr != nil {
 		return Lease{}, false, derr
 	}
-	return Lease{Holder: v.Holder, Term: v.Term,
+	return Lease{
+		Holder: v.Holder, Term: v.Term,
 		ExpiresAt: time.Unix(0, v.ExpiresAtUnix), Revision: e.Revision,
 	}, true, nil
 }

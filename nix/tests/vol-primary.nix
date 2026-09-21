@@ -1,4 +1,4 @@
-# Phase 1 B4: the volume runtime on real LVM and DRBD, four VMs.
+# Phase 1 B5: the promotion gate on real DRBD, three VMs.
 { self }:
 { pkgs, lib, ... }:
 let
@@ -11,9 +11,9 @@ let
     subPackages = [ "test/volctl" ];
     doCheck = false;
   };
-  lint = pkgs.runCommand "vol-runtime-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+  lint = pkgs.runCommand "vol-primary-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
-    for f in ${./python/vol_common.py} ${./python/vol_runtime_main.py}; do
+    for f in ${./python/vol_common.py} ${./python/vol_primary_main.py}; do
       python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
     done
     touch $out
@@ -28,25 +28,24 @@ let
     systemd.services.drbd.wantedBy = lib.mkForce [ ];
     services.lvm.enable = true;
     services.lvm.boot.thin.enable = true;
-    environment.systemPackages = [ pkgs.lvm2 pkgs.thin-provisioning-tools volctl ];
+    environment.systemPackages = [ pkgs.lvm2 pkgs.thin-provisioning-tools pkgs.e2fsprogs pkgs.iptables volctl ];
     virtualisation.emptyDiskImages = [ 1024 ];
     virtualisation.memorySize = 1024;
     networking.firewall.allowedTCPPortRanges = [{ from = 7800; to = 8799; }];
   };
 in
 {
-  name = "expanse-vol-runtime";
+  name = "expanse-vol-primary";
 
   nodes = {
     n1 = node;
     n2 = node;
     n3 = node;
-    n4 = node;
   };
 
   testScript = ''
     # ${lint}
     ${builtins.readFile ./python/vol_common.py}
-    ${builtins.readFile ./python/vol_runtime_main.py}
+    ${builtins.readFile ./python/vol_primary_main.py}
   '';
 }

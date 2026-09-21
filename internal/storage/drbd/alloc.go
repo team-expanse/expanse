@@ -47,6 +47,9 @@ type Allocation struct {
 	// Forgotten ids were dropped on every survivor and may be recycled once
 	// the never-used ids run out.
 	Forgotten []int `json:"forgotten,omitempty"`
+	// Initialized is set once the volume has served as primary; until then an
+	// all-Inconsistent resource may be force-promoted (see volume.HoldOptions).
+	Initialized bool `json:"initialized,omitempty"`
 }
 
 // Allocator hands out minors, ports and node-ids through the cluster store.
@@ -189,6 +192,11 @@ func (a *Allocator) ConfirmForgotten(ctx context.Context, name string, id int) e
 // current member has, the id becomes reusable. It is safe to repeat.
 func (a *Allocator) AckForgotten(ctx context.Context, name string, id int, host string) error {
 	return a.update(ctx, name, func(al *Allocation) error { return al.ack(id, host) })
+}
+
+// MarkInitialized records that the volume has served as primary. It is safe to repeat.
+func (a *Allocator) MarkInitialized(ctx context.Context, name string) error {
+	return a.update(ctx, name, func(al *Allocation) error { al.Initialized = true; return nil })
 }
 
 // update applies fn to the record under compare-and-swap, retrying on races.

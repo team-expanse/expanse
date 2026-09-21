@@ -760,3 +760,29 @@ func TestMaintainReclaimDoesNotAdmitAnotherNode(t *testing.T) {
 		t.Fatalf("node-b acquired node-a's live lease: %v", err)
 	}
 }
+
+// A holder whose agent restarted still owns its unexpired record; the reclaiming
+// variant takes it back at once, and never displaces another node.
+func TestAcquireReclaimingTakesBackOwnLiveRecordOnly(t *testing.T) {
+	st := newBoltStore(t)
+	ctx := context.Background()
+	a := lease.NewManager(st, "node-a")
+	h, err := a.TryAcquire(ctx, "vol", 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Abandon()
+
+	if _, err := lease.NewManager(st, "node-b").TryAcquire(ctx, "vol", 10*time.Second); !stderrors.Is(err, lease.ErrNotAcquired) {
+		t.Fatalf("node-b took node-a's live record: %v", err)
+	}
+	bctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if _, err := lease.NewManager(st, "node-b").AcquireReclaiming(bctx, "vol", 10*time.Second); err == nil {
+		t.Fatal("AcquireReclaiming displaced another node's live record")
+	}
+	again, err := a.AcquireReclaiming(ctx, "vol", 10*time.Second)
+	if err != nil || !again.Valid() {
+		t.Fatalf("own record not reclaimed: %v", err)
+	}
+}
