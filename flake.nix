@@ -107,6 +107,7 @@
           ui-vip-failover = mkTest "ui-vip-failover" ./nix/tests/ui-vip-failover.nix;
           ui-blocks = mkTest "ui-blocks" ./nix/tests/ui-blocks.nix;
           ui-cluster = mkTest "ui-cluster" ./nix/tests/ui-cluster.nix;
+          ui-volumes = mkTest "ui-volumes" ./nix/tests/ui-volumes.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;

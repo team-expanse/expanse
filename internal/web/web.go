@@ -83,6 +83,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s.mux.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
 	s.registerBlockRoutes()
 	s.registerClusterRoutes()
+	s.registerVolumeRoutes()
 	return s, nil
 }
 

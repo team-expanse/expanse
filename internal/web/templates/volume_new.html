@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expanse — Create a volume</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
+  <header>
+    <h1>Expanse</h1>
+    <button hx-post="/logout">Sign out</button>
+  </header>
+  <main>
+    <p><a href="/volumes">&larr; Volumes</a></p>
+    <h2>Create a volume</h2>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <form method="post" action="/volumes">
+      <p><label>Name <input type="text" name="name" value="{{.Name}}" required></label></p>
+      <p><label>Size (e.g. 10Gi) <input type="text" name="size" value="{{.Size}}" placeholder="10Gi" required></label></p>
+      <p><label>Replication <input type="number" name="replication" min="1" max="5" value="{{.Replication}}"></label></p>
+      <p><label>Class <input type="text" name="class" value="{{.Class}}"></label></p>
+      <button type="submit">Create</button>
+    </form>
+    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
+  </main>
+</body>
+</html>

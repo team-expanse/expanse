@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expanse — {{.Name}}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/htmx-sse.min.js"></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
+  <header>
+    <h1>Expanse</h1>
+    <button hx-post="/logout">Sign out</button>
+  </header>
+  <main>
+    <p><a href="/volumes">&larr; Volumes</a></p>
+    <div hx-ext="sse" sse-connect="/volumes/{{.Name}}/events">
+      <div id="volume-fragment" sse-swap="volume" hx-swap="innerHTML">
+        {{template "volume-fragment" .}}
+      </div>
+    </div>
+    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
+  </main>
+</body>
+</html>
+
+{{define "volume-fragment"}}
+<h2>{{.Name}}</h2>
+{{if not .Volume}}
+<p>Creating&hellip; placement has not been assigned yet.</p>
+{{else}}
+<dl>
+  <dt>ID</dt><dd>{{.Volume.ID}}</dd>
+  <dt>Size</dt><dd>{{.Volume.Size}}</dd>
+  <dt>Class</dt><dd>{{.Volume.Class}}</dd>
+  <dt>Replication</dt><dd>{{.Volume.Replication}}</dd>
+  <dt>State</dt><dd>{{.Volume.State}}</dd>
+  <dt>Primary</dt><dd>{{.Volume.Primary}}</dd>
+</dl>
+<table>
+  <thead><tr><th>Replica</th><th>Role</th><th>Healthy</th><th>Sync</th><th>Out of sync</th><th>Last seen</th></tr></thead>
+  <tbody>
+    {{range .Volume.Placement}}
+    <tr>
+      <td>{{.NodeID}}</td>
+      <td>{{.Role}}</td>
+      <td>{{if .Healthy}}yes{{else}}no{{end}}</td>
+      <td>{{if .SyncPercent}}{{.SyncPercent}}%{{else}}-{{end}}</td>
+      <td>{{if .OutOfSyncKiB}}{{.OutOfSyncKiB}} KiB{{else}}-{{end}}</td>
+      <td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05"}}{{end}}</td>
+    </tr>
+    {{else}}
+    <tr><td colspan="6">No replicas placed yet.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+
+<h3>Snapshots</h3>
+<table>
+  <thead><tr><th>Name</th><th>Held by</th><th>Taken</th></tr></thead>
+  <tbody>
+    {{range .Volume.Snapshots}}
+    <tr><td>{{.Name}}</td><td>{{.Node}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td></tr>
+    {{else}}
+    <tr><td colspan="3">No snapshots.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+<form method="post" action="/volumes/{{$.Name}}/snapshot">
+  <label>Snapshot name <input type="text" name="name" placeholder="before-upgrade" required></label>
+  <button type="submit">Snapshot</button>
+</form>
+
+<h3>Resize</h3>
+<form method="post" action="/volumes/{{$.Name}}/resize">
+  <label>New size (grow-only) <input type="text" name="size" placeholder="20Gi" required></label>
+  <button type="submit">Resize</button>
+</form>
+
+<form method="post" action="/volumes/{{$.Name}}/delete" hx-confirm="Delete this volume? Every replica's data is removed.">
+  <button type="submit">Delete</button>
+</form>
+{{end}}
+{{end}}
