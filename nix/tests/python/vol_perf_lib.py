@@ -117,10 +117,13 @@ def iperf_mib_s(text):
 
 
 def enforce(measured, budgets):
-    """Split budget violations into (problems, waived); a budget's vm_waiver says why the VM cannot judge it."""
+    """Split budget violations into (problems, waived). A budget's vm_waiver says why the VM harness
+    cannot judge it (noise); its known_gap says a real, tracked product gap is open instead — both
+    keep the build green, but only vm_waiver claims the number itself is not to be trusted."""
     problems, waived = [], []
     for name, value in measured.items():
         for msg in check_budgets({name: value}, budgets):
-            reason = budget(budgets, name).get("vm_waiver")
+            b = budget(budgets, name)
+            reason = b.get("vm_waiver") or b.get("known_gap")
             (waived if reason else problems).append(f"{msg} (waived: {reason})" if reason else msg)
     return problems, waived

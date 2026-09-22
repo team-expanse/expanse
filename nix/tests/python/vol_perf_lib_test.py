@@ -248,6 +248,12 @@ class Enforce(unittest.TestCase):
     def test_a_met_waived_budget_is_neither(self):
         self.assertEqual(lib.enforce({"vol_seqwrite_ratio": 0.9}, self.WAIVING), ([], []))
 
+    def test_a_known_gap_is_waived_like_a_vm_waiver_but_keeps_its_own_reason(self):
+        budgets = [{"name": "node_control_plane_cpu_percent", "max": 3, "known_gap": "real, not harness noise"}]
+        problems, waived = lib.enforce({"node_control_plane_cpu_percent": 27.3}, budgets)
+        self.assertEqual(problems, [])
+        self.assertIn("real, not harness noise", waived[0])
+
 
 if __name__ == "__main__":
     unittest.main()

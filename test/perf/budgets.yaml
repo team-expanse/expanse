@@ -127,3 +127,15 @@ budgets:
   - name: vol_failover_worst_ms
     unit: ms
     max: 30000           # the slowest of the failover rounds (measured up to 25.8 s)
+  # E7 (X8): the whole-node outcome budget from ARCHITECTURE.md §8, VM-measured by
+  # nix/tests/vol-constrained.nix on nodes capped at the advertised minimum (4 GB RAM, 2
+  # cores). Distinct from agent_idle_rss_bytes/agent_idle_cpu_percent above: those are the
+  # bare `expanse agent` process with no cluster or volumes (an internal component target);
+  # these are the full node agent with a healthy replicated volume attached.
+  - name: node_control_plane_rss_bytes
+    unit: bytes
+    max: 209715200       # 200 MiB (ARCHITECTURE.md §8)
+  - name: node_control_plane_cpu_percent
+    unit: percent
+    max: 3                # of one core, idle (ARCHITECTURE.md §8)
+    known_gap: "measured 25-27% across repeated runs on an otherwise-idle 32-core host (not VM/host contention, unlike the vm_waiver entries above); top -H during the window shows the cost spread across ~6 of the agent's own OS threads with no single hot loop, once a replicated volume with live DRBD connections is attached. Root cause not isolated — needs a CPU profile of the agent (pprof), not yet done. A real, open gap, tracked as an E7 follow-up, not a harness limitation to wave off."

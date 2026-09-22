@@ -19,7 +19,11 @@ type Budget struct {
 	Max  float64 `yaml:"max"`
 	Min  float64 `yaml:"min"` // floors (e.g. lb_rps ≥ 20k); 0 = none
 	// VMWaiver says why the VM test cannot judge this budget; it then reports a miss and does not fail.
-	VMWaiver string  `yaml:"vm_waiver"`
+	VMWaiver string `yaml:"vm_waiver"`
+	// KnownGap says a budget is genuinely violated (not a harness artifact) and tracked as an open
+	// follow-up; the VM test (vol_perf_lib.enforce) treats it the same as VMWaiver — reported, not failed.
+	// CheckAll never sees either field: every budget that carries one is VM-only (Measured stays -1 here).
+	KnownGap string  `yaml:"known_gap"`
 	Measured float64 `yaml:"-"`
 }
 
@@ -95,9 +99,12 @@ func CheckAll(budgets []Budget) error {
 		case "vol_seqwrite_ratio", "vol_seqread_ratio", "vol_randwrite_ratio",
 			"vol_randread_ratio", "vol_fsync_p99_us", "vol_failover_ms", "vol_resync_mbps",
 			"vol_r1_seqwrite_ratio", "vol_r1_randwrite_ratio", "vol_r3_seqwrite_of_r2_ratio",
-			"vol_r3_randwrite_of_r2_ratio", "vol_first_touch_ratio", "vol_failover_worst_ms":
+			"vol_r3_randwrite_of_r2_ratio", "vol_first_touch_ratio", "vol_failover_worst_ms",
+			"node_control_plane_rss_bytes", "node_control_plane_cpu_percent":
 			// VM-only: fio and failover need a real volume group and real
-			// primary crashes (nix/tests/vol-perf.nix).
+			// primary crashes (nix/tests/vol-perf.nix); the control-plane
+			// budgets need a node capped at 4 GB/2 cores with a volume
+			// attached (nix/tests/vol-constrained.nix).
 			b.Measured = -1
 		case "proxy_rss_bytes", "vip_failover_ms":
 			// VM-only: RSS needs the isolated expanse-agent process
