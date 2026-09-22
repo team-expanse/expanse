@@ -99,6 +99,11 @@
           vol-runtime = mkTest "vol-runtime" ./nix/tests/vol-runtime.nix;
           vol-primary = mkTest "vol-primary" ./nix/tests/vol-primary.nix;
 
+          # ROADMAP.md Phase 2 (web management interface). Named by the
+          # current roadmap, unlike the "Phase NN" labels above/below,
+          # which predate its reorder and number the old bottom-up plan.
+          ui-scaffold = mkTest "ui-scaffold" ./nix/tests/ui-scaffold.nix;
+
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
           net-vip-basic = mkTest "net-vip-basic" ./nix/tests/net-vip-basic.nix;

@@ -100,6 +100,27 @@ func InternalClientTLS(ctx context.Context, st *raftstore.Store, clusterCA *ca.C
 	return ca.PeerTLSConfig(bundle, pair, knownNodes), nil
 }
 
+// UIServerTLS builds the SERVER-side TLS config for the web UI listener
+// (config.PortUI, ROADMAP.md Phase 2 D5): the node's own cluster-CA-
+// issued certificate, but — unlike InternalTLS — no client certificate
+// is required and there is no CN-membership check, since browsers, not
+// cluster peers, are the callers.
+func UIServerTLS(dataDir string) (*tls.Config, error) {
+	certPEM, err := os.ReadFile(filepath.Join(dataDir, NodeCertFile))
+	if err != nil {
+		return nil, errors.New(errors.KindNotFound, "control.UIServerTLS", "node cert missing: "+err.Error())
+	}
+	keyPEM, err := os.ReadFile(filepath.Join(dataDir, NodeKeyFile))
+	if err != nil {
+		return nil, errors.New(errors.KindNotFound, "control.UIServerTLS", "node key missing: "+err.Error())
+	}
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, errors.New(errors.KindInternal, "control.UIServerTLS", "bad node keypair: "+err.Error())
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}, nil
+}
+
 func internalIdentity(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, dataDir string) (tls.Certificate, *ca.Bundle, error) {
 	certPEM, err := os.ReadFile(filepath.Join(dataDir, NodeCertFile))
 	if err != nil {

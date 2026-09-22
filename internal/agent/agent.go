@@ -51,6 +51,7 @@ import (
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	"github.com/expanse/expanse/internal/web"
 	"google.golang.org/grpc/credentials"
 	"gopkg.in/yaml.v3"
 )
@@ -804,6 +805,26 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		}()
 		defer func() { _ = a.ctl.fwd.Close() }()
+	}
+
+	// Web management interface (ROADMAP.md Phase 2, A1): TLS on
+	// config.PortUI signed by the cluster's own CA (D5). Every cluster
+	// node runs it; A3 gives it a dedicated VIP so the interface
+	// survives losing whichever node currently answers it. Witnesses
+	// skip it, same as VIP/LB (§4.9).
+	if a.ctl != nil && !witness {
+		if tlsCfg, err := control.UIServerTLS(a.ctl.dataDir); err != nil {
+			a.logger.Error("web UI TLS setup failed", "err", err)
+		} else if webSrv, err := web.New(a.cfg.NodeID); err != nil {
+			a.logger.Error("web UI init failed", "err", err)
+		} else {
+			go func() {
+				addr := fmt.Sprintf("0.0.0.0:%d", config.PortUI)
+				if err := webSrv.Serve(ctx, addr, tlsCfg); err != nil {
+					a.logger.Error("web UI server failed", "err", err)
+				}
+			}()
+		}
 	}
 
 	// gRPC on the unix socket (filesystem permissions are the auth).

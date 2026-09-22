@@ -1,0 +1,36 @@
+/* Minimal, dependency-free styling — no build step, no framework. */
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a1a;
+  --bg: #ffffff;
+  --accent: #2b6cb0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6e6e6;
+    --bg: #121212;
+  }
+}
+body {
+  font-family: system-ui, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+  padding: 0;
+}
+header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--accent);
+}
+main {
+  padding: 1.5rem;
+}
+.node-id {
+  color: gray;
+  font-size: 0.9rem;
+}
