@@ -1,7 +1,9 @@
 # Installing Expanse
 
 This guide takes a blank x86_64 or aarch64 machine to a running Expanse
-node. It assumes no familiarity with Nix or btrfs.
+node. It assumes no familiarity with Nix or btrfs. For the disk layout this
+produces, the thin-pool policy, and enabling replicated volumes afterward,
+see `docs/STORAGE.md`.
 
 ## What you need
 
@@ -98,6 +100,9 @@ expanse node info
 btrfs subvolume list /    # @root @nix @persist @log
 vgs expanse                # the LVM data pool DRBD volumes are backed by
 ```
+
+The VG exists but is otherwise empty: replicated volumes (the thin pool, DRBD) are an explicit
+opt-in, not part of a fresh install. See `docs/STORAGE.md` to enable and operate them.
 
 ## Re-installing / recovery
 
