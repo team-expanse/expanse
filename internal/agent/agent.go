@@ -815,6 +815,14 @@ func (a *Agent) Run(ctx context.Context) error {
 		defer func() { _ = a.ctl.fwd.Close() }()
 	}
 
+	// The gRPC server object (registered on the unix socket below) is
+	// built here, ahead of the web UI, so the UI's cluster overview
+	// (B1) can call its GetClusterStatus in-process (D1) — the same
+	// object the socket serves, not a second implementation.
+	srv := api.NewServer(a, a.store, a.logger)
+	srv.Blocks = a.blocks
+	srv.Catalog = a.blockCatalog
+
 	// Web management interface (ROADMAP.md Phase 2, A1/A2): TLS on
 	// config.PortUI signed by the cluster's own CA (D5). Every cluster
 	// node runs it; A3 gives it a dedicated VIP so the interface
@@ -834,7 +842,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		if tlsCfg, err := control.UIServerTLS(a.ctl.dataDir); err != nil {
 			a.logger.Error("web UI TLS setup failed", "err", err)
-		} else if webSrv, err := web.New(a.cfg.NodeID, a.store, a.blocks, a.blockCatalog); err != nil {
+		} else if webSrv, err := web.New(a.cfg.NodeID, a.store, a.blocks, a.blockCatalog, srv); err != nil {
 			a.logger.Error("web UI init failed", "err", err)
 		} else {
 			go func() {
@@ -847,9 +855,6 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 
 	// gRPC on the unix socket (filesystem permissions are the auth).
-	srv := api.NewServer(a, a.store, a.logger)
-	srv.Blocks = a.blocks
-	srv.Catalog = a.blockCatalog
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ctx, a.cfg.Socket) }()
 

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expanse — Cluster</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/htmx-sse.min.js"></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
+  <header>
+    <h1>Expanse</h1>
+    <button hx-post="/logout">Sign out</button>
+  </header>
+  <main>
+    <p><a href="/">&larr; Home</a></p>
+    {{if .Error}}
+    <p class="error">Cluster status unavailable: {{.Error}}</p>
+    {{else}}
+    <div hx-ext="sse" sse-connect="/cluster/events">
+      <div id="cluster-fragment" sse-swap="cluster" hx-swap="innerHTML">
+        {{template "cluster-fragment" .Report}}
+      </div>
+    </div>
+    {{end}}
+    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
+  </main>
+</body>
+</html>
+
+{{define "cluster-fragment"}}
+<h2>{{.Name}} <small>({{.ClusterID}})</small></h2>
+{{if .Degraded}}<p class="error">DEGRADED: no quorum — serving stale reads only</p>{{end}}
+<dl>
+  <dt>Leader</dt><dd>{{if .Leader}}{{.Leader}}{{else}}(none){{end}}</dd>
+  <dt>Quorum</dt><dd>{{.QuorumHave}}/{{.QuorumNeed}}</dd>
+  <dt>Generation</dt><dd>{{.Generation}}</dd>
+</dl>
+<table>
+  <thead><tr><th>Node</th><th>Role</th><th>State</th><th>Raft addr</th><th>API addr</th><th>Degraded</th></tr></thead>
+  <tbody>
+    {{range .Nodes}}
+    <tr>
+      <td>{{.ID}}</td><td>{{.Role}}</td><td>{{.State}}</td>
+      <td>{{.RaftAddr}}</td><td>{{.APIAddr}}</td>
+      <td>{{if .Degraded}}yes{{else}}no{{end}}</td>
+    </tr>
+    {{else}}
+    <tr><td colspan="6">No nodes.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

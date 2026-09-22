@@ -56,6 +56,7 @@ type Server struct {
 	store   store.Store
 	blocks  pb.BlockServiceServer
 	catalog pb.CatalogServiceServer
+	cluster pb.NodeServiceServer
 	tmpl    *template.Template
 	mux     *http.ServeMux
 }
@@ -63,16 +64,17 @@ type Server struct {
 // New parses the embedded templates and registers routes. st is the
 // (Raft-replicated in cluster mode) store backing sessions and the
 // admin credential (internal/web/auth) — callers should ensure
-// auth.EnsureAdmin has run against it before serving traffic. blocks and
-// catalog are the same in-process servers the local gRPC socket
-// registers (D1): nil on a node with the block API disabled, in which
-// case the block routes answer 503 rather than panic.
-func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb.CatalogServiceServer) (*Server, error) {
+// auth.EnsureAdmin has run against it before serving traffic. blocks,
+// catalog and cluster are the same in-process servers the local gRPC
+// socket registers (D1): nil on a node where the corresponding API is
+// disabled or this is a non-cluster agent, in which case the dependent
+// routes answer 503 rather than panic.
+func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb.CatalogServiceServer, cluster pb.NodeServiceServer) (*Server, error) {
 	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
-	s := &Server{NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, tmpl: tmpl}
+	s := &Server{NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, cluster: cluster, tmpl: tmpl}
 
 	s.mux = http.NewServeMux()
 	s.mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
@@ -80,6 +82,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s.mux.Handle("/logout", s.requireAuth(http.HandlerFunc(s.handleLogout)))
 	s.mux.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
 	s.registerBlockRoutes()
+	s.registerClusterRoutes()
 	return s, nil
 }
 

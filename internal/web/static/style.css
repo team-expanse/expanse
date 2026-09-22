@@ -34,6 +34,10 @@ main {
   color: gray;
   font-size: 0.9rem;
 }
+.error {
+  color: #c53030;
+  font-weight: 600;
+}
 .log-view {
   max-height: 32rem;
   overflow-y: auto;
