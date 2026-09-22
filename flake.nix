@@ -104,6 +104,7 @@
           # which predate its reorder and number the old bottom-up plan.
           ui-scaffold = mkTest "ui-scaffold" ./nix/tests/ui-scaffold.nix;
           ui-auth = mkTest "ui-auth" ./nix/tests/ui-auth.nix;
+          ui-vip-failover = mkTest "ui-vip-failover" ./nix/tests/ui-vip-failover.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;

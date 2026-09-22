@@ -127,17 +127,24 @@ func (c *CA) IssueCSR(csr *x509.CertificateRequest, now time.Time) (*x509.Certif
 	return cert, nil
 }
 
+// UIVIPHostname is a fixed SAN present on every node certificate,
+// regardless of which node issues it (Phase 2, D9: the UI VIP's TLS
+// identity). A client reaching the web UI's VIP by this name gets a
+// hostname match no matter which node currently holds the address --
+// unlike nodeID, which only matches the node that happens to answer.
+const UIVIPHostname = "expanse-ui"
+
 // IssueNode issues a node certificate. CN = nodeID; SANs include nodeID,
-// hostname and every IP. The certificate is valid for NodeCertValidity and
-// usable for both client and server authentication (all node↔node peers are
-// both gRPC servers and clients).
+// UIVIPHostname, hostname and every IP. The certificate is valid for
+// NodeCertValidity and usable for both client and server authentication
+// (all node↔node peers are both gRPC servers and clients).
 func (c *CA) IssueNode(nodeID, hostname string, ips []net.IP, now time.Time) (*x509.Certificate, ed25519.PrivateKey, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate node key: %w", err)
 	}
-	sans := []string{nodeID}
-	if hostname != "" && hostname != nodeID {
+	sans := []string{nodeID, UIVIPHostname}
+	if hostname != "" && hostname != nodeID && hostname != UIVIPHostname {
 		sans = append(sans, hostname)
 	}
 	tmpl := &x509.Certificate{

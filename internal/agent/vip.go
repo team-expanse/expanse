@@ -32,24 +32,29 @@ type holderRun struct {
 	done   chan struct{}
 }
 
+// initVIP is idempotent (vipInitOnce): both vipLoop and uiVIPLoop call
+// it, and whichever runs first does the actual setup.
 func (a *Agent) initVIP() error {
-	pool, err := vip.ParseExternalPool(a.cfg.ExternalVIPPool)
-	if err != nil {
-		return fmt.Errorf("external VIP pool: %w", err)
-	}
-	a.extPool = pool
-	a.holders = map[string]*holderRun{}
-	a.nodeAddr = map[string]nodeAddr{}
-	if a.lbPool == nil {
-		a.initLB()
-	}
-	a.vipLeases = lease.NewManager(a.store, a.cfg.NodeID)
-	// Pre-resolve the announce interface once ("auto" → default route
-	// device); re-resolving per pass would fight with the mesh.
-	if a.cfg.ExternalInterface != "" && a.cfg.ExternalInterface != "auto" {
-		a.extIface = a.cfg.ExternalInterface
-	}
-	return nil
+	a.vipInitOnce.Do(func() {
+		pool, err := vip.ParseExternalPool(a.cfg.ExternalVIPPool)
+		if err != nil {
+			a.vipInitErr = fmt.Errorf("external VIP pool: %w", err)
+			return
+		}
+		a.extPool = pool
+		a.holders = map[string]*holderRun{}
+		a.nodeAddr = map[string]nodeAddr{}
+		if a.lbPool == nil {
+			a.initLB()
+		}
+		a.vipLeases = lease.NewManager(a.store, a.cfg.NodeID)
+		// Pre-resolve the announce interface once ("auto" → default
+		// route device); re-resolving per pass would fight with the mesh.
+		if a.cfg.ExternalInterface != "" && a.cfg.ExternalInterface != "auto" {
+			a.extIface = a.cfg.ExternalInterface
+		}
+	})
+	return a.vipInitErr
 }
 
 func (a *Agent) vipLoop(ctx context.Context) {

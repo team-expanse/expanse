@@ -117,8 +117,14 @@ func Enroll(ctx context.Context, opts EnrollOptions) (*EnrollResult, error) {
 		_ = st.Close()
 		return nil, errors.New(errors.KindInternal, "control.Enroll", "entropy: "+err.Error())
 	}
+	// DNSNames mirror IssueNode's SAN policy (ca.go): nodeID for this
+	// node's own identity, ca.UIVIPHostname so the web UI's VIP finds a
+	// hostname match on whichever node currently holds it (D9) --
+	// IssueCSR (the join service's signer) just copies whatever SANs
+	// the CSR itself requests.
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
 		Subject:            pkix.Name{CommonName: nodeID, Organization: []string{"Expanse"}},
+		DNSNames:           []string{nodeID, ca.UIVIPHostname},
 		SignatureAlgorithm: x509.PureEd25519,
 	}, priv)
 	if err != nil {

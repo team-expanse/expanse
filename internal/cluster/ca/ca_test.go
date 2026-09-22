@@ -79,8 +79,8 @@ func TestIssueAndVerify(t *testing.T) {
 	}
 	sans := append([]string{}, cert.DNSNames...)
 	sort.Strings(sans)
-	if len(sans) != 2 || sans[0] != "host1" || sans[1] != "node-1" {
-		t.Errorf("DNS SANs = %v, want [host1 node-1]", sans)
+	if len(sans) != 3 || sans[0] != UIVIPHostname || sans[1] != "host1" || sans[2] != "node-1" {
+		t.Errorf("DNS SANs = %v, want [%s host1 node-1]", sans, UIVIPHostname)
 	}
 	if len(cert.IPAddresses) != 1 || !cert.IPAddresses[0].Equal(net.ParseIP("10.0.0.1")) {
 		t.Errorf("IP SANs = %v", cert.IPAddresses)
@@ -95,10 +95,12 @@ func TestIssueAndVerify(t *testing.T) {
 	if err := b.VerifyNode(cert, now); err != nil {
 		t.Errorf("VerifyNode: %v", err)
 	}
-	// Hostname == nodeID: no duplicate SAN.
+	// Hostname == nodeID: no duplicate SAN, but UIVIPHostname is always present.
 	c2, _, _ := c.IssueNode("node-2", "node-2", nil, now)
-	if len(c2.DNSNames) != 1 {
-		t.Errorf("DNS SANs = %v, want only node-2", c2.DNSNames)
+	sans2 := append([]string{}, c2.DNSNames...)
+	sort.Strings(sans2)
+	if len(sans2) != 2 || sans2[0] != UIVIPHostname || sans2[1] != "node-2" {
+		t.Errorf("DNS SANs = %v, want [%s node-2]", sans2, UIVIPHostname)
 	}
 }
 

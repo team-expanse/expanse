@@ -191,13 +191,17 @@ type Agent struct {
 	// passes skip kernel traffic entirely.
 	fwPolKey string
 
-	// VIP management (§4.2, internal/agent/vip.go).
-	vipMu     sync.Mutex
-	extPool   []netip.Prefix
-	extIface  string
-	vipCands  map[string][]vip.Candidate
-	holders   map[string]*holderRun
-	vipLeases *lease.Manager
+	// VIP management (§4.2, internal/agent/vip.go). initVIP is shared by
+	// vipLoop (block VIPs) and uiVIPLoop (A3, internal/agent/ui_vip.go)
+	// and must run exactly once regardless of which starts first.
+	vipInitOnce sync.Once
+	vipInitErr  error
+	vipMu       sync.Mutex
+	extPool     []netip.Prefix
+	extIface    string
+	vipCands    map[string][]vip.Candidate
+	holders     map[string]*holderRun
+	vipLeases   *lease.Manager
 
 	// LB wiring (§4.3, internal/agent/lb.go).
 	lbPool   *proxy.Pool
@@ -688,6 +692,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.initLB()
 		go a.lbPoolLoop(ctx)
 		go a.vipLoop(ctx)
+		go a.uiVIPLoop(ctx) // A3: the web UI's own VIP, independent of block VIPs
 		a.initDNS(ctx)
 	}
 	if a.ctl != nil && a.cfg.Firewall && !witness {
