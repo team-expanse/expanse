@@ -52,6 +52,7 @@ import (
 	"github.com/expanse/expanse/internal/store/boltstore"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	"github.com/expanse/expanse/internal/web"
+	webauth "github.com/expanse/expanse/internal/web/auth"
 	"google.golang.org/grpc/credentials"
 	"gopkg.in/yaml.v3"
 )
@@ -807,15 +808,26 @@ func (a *Agent) Run(ctx context.Context) error {
 		defer func() { _ = a.ctl.fwd.Close() }()
 	}
 
-	// Web management interface (ROADMAP.md Phase 2, A1): TLS on
+	// Web management interface (ROADMAP.md Phase 2, A1/A2): TLS on
 	// config.PortUI signed by the cluster's own CA (D5). Every cluster
 	// node runs it; A3 gives it a dedicated VIP so the interface
 	// survives losing whichever node currently answers it. Witnesses
-	// skip it, same as VIP/LB (§4.9).
+	// skip it, same as VIP/LB (§4.9). Sessions and the admin credential
+	// live in a.store (the Raft store in cluster mode, D2), so a
+	// cookie issued by one node still authorizes a request a different
+	// node answers after a VIP failover.
 	if a.ctl != nil && !witness {
+		if pw, err := webauth.EnsureAdmin(ctx, a.store); err != nil {
+			a.logger.Error("web UI admin bootstrap failed", "err", err)
+		} else if pw != "" {
+			// Shown exactly once (D4): only the node whose CAS write
+			// actually created the record gets a non-empty password
+			// back. Never persisted in plaintext anywhere else.
+			a.logger.Warn("generated initial web UI admin password — save it now, it will not be shown again", "username", webauth.AdminUsername, "password", pw)
+		}
 		if tlsCfg, err := control.UIServerTLS(a.ctl.dataDir); err != nil {
 			a.logger.Error("web UI TLS setup failed", "err", err)
-		} else if webSrv, err := web.New(a.cfg.NodeID); err != nil {
+		} else if webSrv, err := web.New(a.cfg.NodeID, a.store); err != nil {
 			a.logger.Error("web UI init failed", "err", err)
 		} else {
 			go func() {

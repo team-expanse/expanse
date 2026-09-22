@@ -8,9 +8,10 @@
   <script src="/static/htmx.min.js"></script>
   <script src="/static/htmx-sse.min.js"></script>
 </head>
-<body>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
   <header>
     <h1>Expanse</h1>
+    <button hx-post="/logout">Sign out</button>
   </header>
   <main>
     <p>The cluster management interface starts here.</p>

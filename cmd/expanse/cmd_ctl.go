@@ -27,6 +27,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	webauth "github.com/expanse/expanse/internal/web/auth"
 )
 
 const (
@@ -230,6 +231,46 @@ func newCtlCmd() *cobra.Command {
 	kvList.Flags().BoolVar(&kvStale, "stale", false, "serve the local FSM copy (works when degraded, §4.10.3)")
 	kv.AddCommand(kvPut, kvGet, kvDel, kvList)
 	cmd.AddCommand(kv)
+
+	// admin: the web UI's operator account (ROADMAP.md Phase 2, D4). No
+	// bespoke RPC: reset-password writes the same record shape the
+	// agent's own bootstrap writes, over the existing generic KV RPC,
+	// at the same local-socket trust level every other `ctl` command
+	// already assumes. There is deliberately no "forgot password" flow.
+	adminCmd := &cobra.Command{Use: "admin", Short: "The web UI's admin account"}
+	var resetPassword string
+	resetPW := &cobra.Command{
+		Use:   "reset-password",
+		Short: "Set the web UI admin account's password, generating one if --password is omitted",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				pw := resetPassword
+				if pw == "" {
+					generated, err := webauth.GenerateResetPassword()
+					if err != nil {
+						return fmt.Errorf("generate password: %w", err)
+					}
+					pw = generated
+				}
+				rec, err := webauth.NewAdminRecord(pw)
+				if err != nil {
+					return fmt.Errorf("hash password: %w", err)
+				}
+				if _, err := c.PutKeyValue(ctx, &pb.PutKeyValueRequest{Key: webauth.AdminKey, Value: rec}); err != nil {
+					return fmt.Errorf("PutKeyValue: %w", err)
+				}
+				if resetPassword == "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "new admin password: %s\n(shown once -- save it now)\n", pw)
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "admin password updated")
+				}
+				return nil
+			})
+		},
+	}
+	resetPW.Flags().StringVar(&resetPassword, "password", "", "set this exact password instead of generating one (scripting use)")
+	adminCmd.AddCommand(resetPW)
+	cmd.AddCommand(adminCmd)
 
 	// lease: §4.3 singleton leases. `hold` runs the holder loop
 	// server-side (renewal at TTL/3, loss detection) and streams the

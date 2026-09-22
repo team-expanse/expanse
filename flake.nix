@@ -103,6 +103,7 @@
           # current roadmap, unlike the "Phase NN" labels above/below,
           # which predate its reorder and number the old bottom-up plan.
           ui-scaffold = mkTest "ui-scaffold" ./nix/tests/ui-scaffold.nix;
+          ui-auth = mkTest "ui-auth" ./nix/tests/ui-auth.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;

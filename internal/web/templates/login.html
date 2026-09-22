@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expanse — Sign in</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="login">
+    <h1>Expanse</h1>
+    {{if .Error}}
+      <p class="error">Invalid username or password.</p>
+    {{end}}
+    <form method="post" action="/login">
+      <label>Username <input type="text" name="username" autocomplete="username" required></label>
+      <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>
