@@ -100,8 +100,9 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 			return nil, scheduler.OvercommitConfig{}, err
 		}
 		// §4.1 S3 data locality (weight 15): which nodes hold replicas
-		// of which volumes (volume NAME → replica node set).
-		volNodes, err := volumeLocality(ctx, st)
+		// of which volumes (volume NAME → replica node set), plus the
+		// healthy-only subset P12 (PHASE-03-TASKS.md D2) requires.
+		volNodes, healthyVolNodes, err := volumeLocality(ctx, st)
 		if err != nil {
 			return nil, scheduler.OvercommitConfig{}, err
 		}
@@ -111,6 +112,12 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 			for name, nodes := range volNodes {
 				if nodes[id] {
 					local = append(local, name)
+				}
+			}
+			healthyLocal := []string{}
+			for name, nodes := range healthyVolNodes {
+				if nodes[id] {
+					healthyLocal = append(healthyLocal, name)
 				}
 			}
 			ready, err := nodeReady(ctx, st, id)
@@ -134,26 +141,29 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 			}
 			u := used[id]
 			views = append(views, scheduler.NodeView{
-				ID:       id,
-				Ready:    ready,
-				Cordoned: cordoned,
-				Volumes:  local,
-				FreeCPU:  quantity.CPU{Milli: DefaultCapacity.CPU.Milli - u.cpu},
-				FreeMem:  quantity.Bytes{N: DefaultCapacity.Mem.N - u.mem},
-				FreeDisk: quantity.Bytes{N: DefaultCapacity.Disk.N - u.dsk},
+				ID:             id,
+				Ready:          ready,
+				Cordoned:       cordoned,
+				Volumes:        local,
+				HealthyVolumes: healthyLocal,
+				FreeCPU:        quantity.CPU{Milli: DefaultCapacity.CPU.Milli - u.cpu},
+				FreeMem:        quantity.Bytes{N: DefaultCapacity.Mem.N - u.mem},
+				FreeDisk:       quantity.Bytes{N: DefaultCapacity.Disk.N - u.dsk},
 			})
 		}
 		return views, cfg, nil
 	}
 }
 
-// volumeLocality maps volume NAME → set of nodes holding a replica.
+// volumeLocality maps volume NAME → set of nodes holding a replica, and
+// separately the subset of that set where the replica is healthy (P12).
 // It reads the raw volume records directly (storeReader surface).
-func volumeLocality(ctx context.Context, st storeReader) (map[string]map[string]bool, error) {
-	out := map[string]map[string]bool{}
+func volumeLocality(ctx context.Context, st storeReader) (all, healthy map[string]map[string]bool, err error) {
+	all = map[string]map[string]bool{}
+	healthy = map[string]map[string]bool{}
 	entries, err := st.List(ctx, store.Key(expstorage.VolumePrefix))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Walk unique volume IDs from /volumes/<id>/spec|status keys.
 	ids := map[string]bool{}
@@ -183,12 +193,17 @@ func volumeLocality(ctx context.Context, st storeReader) (map[string]map[string]
 		spec := expstorage.SpecFromProto(&spb)
 		status := expstorage.StatusFromProto(&tpb)
 		nodes := map[string]bool{}
+		healthyNodes := map[string]bool{}
 		for _, p := range status.Placement {
 			nodes[p.NodeID] = true
+			if p.Healthy {
+				healthyNodes[p.NodeID] = true
+			}
 		}
-		out[spec.Name] = nodes
+		all[spec.Name] = nodes
+		healthy[spec.Name] = healthyNodes
 	}
-	return out, nil
+	return all, healthy, nil
 }
 
 // requestsOf sums a block's requests: cpu/mem from resources.requests,

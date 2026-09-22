@@ -9,6 +9,8 @@ import (
 	"github.com/expanse/expanse/internal/storage/drbd"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
+	pb "github.com/expanse/expanse/proto"
+	pbproto "google.golang.org/protobuf/proto"
 )
 
 func newStore(t *testing.T) *boltstore.Store {
@@ -44,6 +46,37 @@ func seedVolume(t *testing.T, st *boltstore.Store, id string, repl int, nodes []
 func seedMesh(st *boltstore.Store, nodes ...string) {
 	for _, n := range nodes {
 		_, _ = st.Put(context.Background(), store.Key("/nodes/"+n+"/network.wgPublicKey"), []byte("k"))
+	}
+}
+
+// seedSingletonBlock writes a SINGLETON block with one storage entry bound
+// by storageName, live/placed on nodes (PHASE-03-TASKS.md D2).
+func seedSingletonBlock(t *testing.T, st *boltstore.Store, ns, name, storageName string, nodes ...string) {
+	t.Helper()
+	blk := &pb.Block{
+		Spec: &pb.BlockSpec{
+			Strategy: &pb.Strategy{Kind: pb.StrategyKind_SINGLETON},
+			Storage:  []*pb.Storage{{Name: storageName}},
+		},
+	}
+	raw, err := pbproto.Marshal(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(context.Background(), store.Key("/blocks/"+ns+"/"+name), raw); err != nil {
+		t.Fatal(err)
+	}
+	status := &pb.BlockStatus{}
+	for i, n := range nodes {
+		status.Placements = append(status.Placements,
+			&pb.PlacementStatus{ReplicaIndex: int32(i), NodeId: n, Phase: pb.Phase_RUNNING})
+	}
+	sraw, err := pbproto.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(context.Background(), store.Key("/blocks/"+ns+"/"+name+"/status"), sraw); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -438,5 +471,69 @@ func TestPlacementSkipsUnreachableAndCordonedNodes(t *testing.T) {
 	c.processPending(context.Background(), meshed(t, c))
 	if len(placed(t, st)) != 0 {
 		t.Error("placed on an unreachable or cordoned node")
+	}
+}
+
+// TestBlockBoundVolumePrimaryMovesToTheBlocksHost is the regression test for
+// PHASE-03-TASKS.md D2: a SINGLETON block's bound volume gets its primary
+// moved onto whichever node the block is actually placed on, not left
+// wherever it happened to be — this was movePrimaryForBlock's whole
+// documented purpose, but it only ever logged the decision without writing
+// it until this fix.
+func TestBlockBoundVolumePrimaryMovesToTheBlocksHost(t *testing.T) {
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	vname := storage.BlockVolumeName("default", "share", "share-data")
+	seedVolume(t, st, vname, 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	seedSingletonBlock(t, st, "default", "share", "share-data", "n2")
+
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+
+	if got := load(t, st, vname).Primary; got != "n2" {
+		t.Fatalf("primary = %q, want n2 (the block's host)", got)
+	}
+}
+
+// The primary is left alone, and no store write happens, once it is
+// already co-located with the block.
+func TestBlockBoundVolumePrimaryAlreadyCoLocatedIsLeftAlone(t *testing.T) {
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	vname := storage.BlockVolumeName("default", "share", "share-data")
+	seedVolume(t, st, vname, 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	seedSingletonBlock(t, st, "default", "share", "share-data", "n1")
+	_, before, _ := storage.LoadStatus(context.Background(), st, vname)
+
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+
+	if got := load(t, st, vname).Primary; got != "n1" {
+		t.Fatalf("primary = %q, want n1 unchanged", got)
+	}
+	if _, after, _ := storage.LoadStatus(context.Background(), st, vname); after != before {
+		t.Fatalf("revision %d -> %d: rewrote a status already co-located", before, after)
+	}
+}
+
+// A node hosting the block but whose local replica is unhealthy is not a
+// candidate — matching electPrimary's own bar (election.go's firstCandidate)
+// so a bad choice never costs correctness, only time.
+func TestBlockBoundVolumeNeverMovesPrimaryToAnUnhealthyReplica(t *testing.T) {
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	vname := storage.BlockVolumeName("default", "share", "share-data")
+	seedVolume(t, st, vname, 3, []string{"n1", "n2", "n3"}, "n1", storage.StateHealthy)
+	edit(t, st, vname, func(s *storage.Status) {
+		for i := range s.Placement {
+			if s.Placement[i].NodeID == "n2" {
+				s.Placement[i].Healthy = false
+			}
+		}
+	})
+	seedSingletonBlock(t, st, "default", "share", "share-data", "n2")
+
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+
+	if got := load(t, st, vname).Primary; got != "n1" {
+		t.Fatalf("primary = %q, want n1 unchanged (n2's replica is unhealthy)", got)
 	}
 }

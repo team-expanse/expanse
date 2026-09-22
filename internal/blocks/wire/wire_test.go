@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/expanse/expanse/internal/scheduler"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	pb "github.com/expanse/expanse/proto"
@@ -137,6 +138,72 @@ func TestOvercommitConfigFromStore(t *testing.T) {
 	if cfg.ReservedCPU.Milli != 250 || cfg.ReservedMemory.N != 512*1024*1024 {
 		t.Errorf("reserves wrong: %+v", cfg)
 	}
+}
+
+// TestNodesViewHealthyVolumes is the regression test for PHASE-03-TASKS.md
+// D2/P12: Volumes (S3, any replica) and HealthyVolumes (P12, healthy only)
+// must diverge when a node's replica is unhealthy.
+func TestNodesViewHealthyVolumes(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	for _, pair := range [][2]string{
+		{"/nodes/n1", `{"id":"n1"}`},
+		{"/nodes/n2", `{"id":"n2"}`},
+		{"/nodes/n1/status", "idle"},
+		{"/nodes/n2/status", "idle"},
+	} {
+		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
+			t.Fatalf("put %s: %v", pair[0], err)
+		}
+	}
+
+	spec, err := proto.Marshal(&pb.VolumeSpec{Id: "vol-1", Name: "share-data", SizeBytes: 1 << 30, Replication: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/volumes/vol-1/spec"), spec); err != nil {
+		t.Fatalf("put spec: %v", err)
+	}
+	// n1 holds a healthy replica; n2 holds one, but unhealthy (resyncing).
+	status, err := proto.Marshal(&pb.VolumeStatus{
+		Placement: []*pb.Replica{
+			{NodeId: "n1", Healthy: true},
+			{NodeId: "n2", Healthy: false},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/volumes/vol-1/status"), status); err != nil {
+		t.Fatalf("put status: %v", err)
+	}
+
+	views, _, err := Nodes(st)(ctx)
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	byID := map[string]scheduler.NodeView{}
+	for _, v := range views {
+		byID[v.ID] = v
+	}
+	if !contains(byID["n1"].Volumes, "share-data") || !contains(byID["n1"].HealthyVolumes, "share-data") {
+		t.Errorf("n1: Volumes=%v HealthyVolumes=%v, want both to include share-data",
+			byID["n1"].Volumes, byID["n1"].HealthyVolumes)
+	}
+	if !contains(byID["n2"].Volumes, "share-data") || contains(byID["n2"].HealthyVolumes, "share-data") {
+		t.Errorf("n2: Volumes=%v HealthyVolumes=%v, want Volumes only (replica unhealthy)",
+			byID["n2"].Volumes, byID["n2"].HealthyVolumes)
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // The adapter degrades to an empty view on an empty store.

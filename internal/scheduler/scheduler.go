@@ -1,5 +1,5 @@
 // Package scheduler implements the two-stage placement algorithm from
-// PHASE04.md §4: filter (hard predicates P1–P11) then score (S1–S6, T07).
+// PHASE04.md §4: filter (hard predicates P1–P12) then score (S1–S6, T07).
 //
 // Determinism requirement (§4.1): given identical cluster state and block
 // spec, Filter, Score and Schedule must produce identical results — no rand,
@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/expanse/expanse/internal/quantity"
+	expstorage "github.com/expanse/expanse/internal/storage"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -30,8 +31,14 @@ type NodeView struct {
 	Devices      map[string]int32 // device type -> free count
 	Taints       []string
 	Arch         string
-	// Volumes lists volume names whose data is realized locally (S3).
+	// Volumes lists volume names whose data is realized locally (S3),
+	// regardless of replica health.
 	Volumes []string
+	// HealthyVolumes lists volume names for which this node holds a
+	// *healthy* DRBD replica — the subset P12 requires for a SINGLETON
+	// block with bound storage, since a candidate that cannot actually
+	// promote is not a candidate at all (PHASE-03-TASKS.md D2).
+	HealthyVolumes []string
 	// RealizedTypes lists block type IDs ("category/name") whose nix
 	// closure is already on the node (S4).
 	RealizedTypes []string
@@ -77,6 +84,7 @@ const (
 	CodeTaintNotTolerated  = "TaintNotTolerated"
 	CodeArchMismatch       = "ArchMismatch"
 	CodeInvalidRequests    = "InvalidRequests"
+	CodeVolumeNotLocal     = "VolumeNotLocal"
 )
 
 // Filter runs stage 1: hard predicates P1–P11 in spec order. Each rejected
@@ -168,6 +176,18 @@ func Filter(nodes []NodeView, req ReplicaRequest, cfg OvercommitConfig) (candida
 			reject(reasons, n.ID, CodeArchMismatch,
 				fmt.Sprintf("arch %q not in supported arches %s", n.Arch, strings.Join(req.Arches, ", ")))
 			continue
+		}
+		// P12 — a SINGLETON block with bound storage may only place on a
+		// node that already holds a healthy replica of every bound
+		// volume: active/passive failover (PHASE-03-TASKS.md D2)
+		// promotes wherever the block runs, so a node that cannot
+		// promote is not a real candidate, not merely a lower-scored one.
+		if req.Block.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_SINGLETON {
+			if missing := missingVolumes(req.Block, n.HealthyVolumes); len(missing) > 0 {
+				reject(reasons, n.ID, CodeVolumeNotLocal,
+					fmt.Sprintf("missing a healthy replica of bound volume(s): %s", strings.Join(missing, ", ")))
+				continue
+			}
 		}
 		candidates = append(candidates, n)
 	}
@@ -272,6 +292,22 @@ func missingStrings(required, have []string) []string {
 	for _, c := range required {
 		if !contains(have, c) {
 			missing = append(missing, c)
+		}
+	}
+	return missing
+}
+
+// missingVolumes returns the bound storage entries (P12) with no matching
+// entry in have (a node's healthy-volume set) — matched by each volume's
+// auto-provisioned composite name (expstorage.BlockVolumeName), the same
+// name reconcileBlocks creates it under and bridge.go looks it up by, not
+// the storage entry's own raw name.
+func missingVolumes(blk *pb.Block, have []string) []string {
+	ns, name := blk.GetMetadata().GetNamespace(), blk.GetMetadata().GetName()
+	var missing []string
+	for _, s := range blk.GetSpec().GetStorage() {
+		if vname := expstorage.BlockVolumeName(ns, name, s.GetName()); !contains(have, vname) {
+			missing = append(missing, s.GetName())
 		}
 	}
 	return missing

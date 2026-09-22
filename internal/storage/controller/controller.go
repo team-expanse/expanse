@@ -278,18 +278,15 @@ func (c *Controller) volIDByName(m map[string]string, name string) (string, bool
 	return id, ok
 }
 
-// BlockVolumeName is the cluster volume name for a block's storage
-// entry (blocks attach to volumes by name).
-func BlockVolumeName(ns, block, storage string) string {
-	return fmt.Sprintf("blk-%s-%s-%s", ns, block, storage)
-}
-
 // reconcileBlocks drives §4.7 steps 1–2 for blocks with storage:
 //  1. every storage entry has a cluster volume (creation flows through
 //     the T10 pending-create path → T03 placement);
-//  2. the volume's PRIMARY lives on a node hosting the block (the
-//     scheduler prefers replica-holding nodes via S3; when the block
-//     lands elsewhere, the primary moves there — highest-seq rule).
+//  2. the volume's PRIMARY lives on a node hosting the block
+//     (PHASE-03-TASKS.md D2: a SINGLETON share needs its bound volume's
+//     primary on the very node it runs on, not merely a scheduler
+//     preference — the scheduler's own P12 filter guarantees a healthy
+//     replica is already there, so this only ever chooses among nodes
+//     that can actually promote).
 func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool) error {
 	entries, err := c.opts.St.List(ctx, "/blocks/")
 	if err != nil {
@@ -307,12 +304,24 @@ func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool
 		if pbproto.Unmarshal(e.Value, &blk) != nil {
 			continue
 		}
+		if len(blk.GetSpec().GetStorage()) == 0 {
+			continue
+		}
 		ns, name := splitBlockKey2(string(e.Key))
+		// Status lives at a separate key (the same split every other
+		// block-status reader — wire.go, vip.go, bridge.go — merges);
+		// blockNodes needs it for §4.7 step 2's co-location choice.
+		if se, err := c.opts.St.Get(ctx, store.Key(string(e.Key)+"/status")); err == nil {
+			var st pb.BlockStatus
+			if pbproto.Unmarshal(se.Value, &st) == nil {
+				blk.Status = &st
+			}
+		}
 		for _, s := range blk.GetSpec().GetStorage() {
-			vname := BlockVolumeName(ns, name, s.GetName())
-			if vol, ok := volByName[vname]; ok {
+			vname := storage.BlockVolumeName(ns, name, s.GetName())
+			if ve, ok := volByName[vname]; ok {
 				// §4.7 step 2: primary co-located with the block.
-				c.movePrimaryForBlock(vol, blockNodes(&blk), meshed)
+				c.movePrimaryForBlock(ctx, ve, blockNodes(&blk), meshed)
 				continue
 			}
 			// §4.7 step 1: create (idempotent pending request).
@@ -339,22 +348,34 @@ func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool
 	return nil
 }
 
-// movePrimaryForBlock names the node that should be primary among those hosting
-// the block: the lowest node ID holding a live replica.
-func (c *Controller) movePrimaryForBlock(vol storage.Status, block map[string]bool, meshed map[string]bool) {
-	if vol.Primary != "" && block[vol.Primary] {
+// movePrimaryForBlock moves a bound volume's primary to the lowest-id node
+// hosting the block, when it is not already co-located — the same
+// CompareAndSwapStatus pattern electPrimary uses, since electPrimary runs
+// immediately after this in Reconcile and would otherwise just see this
+// choice as "already usable" and leave it alone. Only healthy, meshed
+// replicas are candidates: DRBD quorum and the volume lease still gate the
+// promotion itself (A7), so a bad choice here costs time, never data.
+func (c *Controller) movePrimaryForBlock(ctx context.Context, ve volEntry, block map[string]bool, meshed map[string]bool) {
+	if ve.status.Primary != "" && block[ve.status.Primary] {
 		return // primary already co-located
 	}
 	best := ""
-	for _, p := range vol.Placement {
-		if block[p.NodeID] && meshed[p.NodeID] && (best == "" || p.NodeID < best) {
+	for _, p := range ve.status.Placement {
+		if block[p.NodeID] && meshed[p.NodeID] && p.Healthy && (best == "" || p.NodeID < best) {
 			best = p.NodeID
 		}
 	}
 	if best == "" {
-		return // the block lives nowhere we hold a replica yet
+		return // the block lives nowhere we hold a healthy replica yet
 	}
-	c.log.Info("primary moves to block host", "vol_primary", vol.Primary, "to", best)
+	was := ve.status.Primary
+	ve.status.Primary = best
+	if err := storage.CompareAndSwapStatus(ctx, c.opts.St, ve.id, ve.rev, ve.status); err != nil {
+		c.log.Warn("primary move for block co-location CAS failed; will retry next round",
+			"vol", ve.id, "primary", best, "err", err)
+		return
+	}
+	c.log.Info("primary moves to block host", "vol", ve.id, "was", was, "to", best)
 }
 
 // blockNodes maps a block's active placement node IDs.
@@ -370,9 +391,16 @@ func blockNodes(blk *pb.Block) map[string]bool {
 	return out
 }
 
+// volEntry pairs a volume's status with what a CAS write against it needs.
+type volEntry struct {
+	id     string
+	status storage.Status
+	rev    store.Revision
+}
+
 // volumesByName loads every volume's status keyed by NAME.
-func (c *Controller) volumesByName(ctx context.Context) (map[string]storage.Status, error) {
-	out := map[string]storage.Status{}
+func (c *Controller) volumesByName(ctx context.Context) (map[string]volEntry, error) {
+	out := map[string]volEntry{}
 	ids, err := storage.ListVolumeIDs(ctx, c.opts.St)
 	if err != nil {
 		return nil, err
@@ -382,11 +410,11 @@ func (c *Controller) volumesByName(ctx context.Context) (map[string]storage.Stat
 		if err != nil {
 			continue
 		}
-		status, _, err := storage.LoadStatus(ctx, c.opts.St, id)
+		status, rev, err := storage.LoadStatus(ctx, c.opts.St, id)
 		if err != nil {
 			continue
 		}
-		out[spec.Name] = status
+		out[spec.Name] = volEntry{id: id, status: status, rev: rev}
 	}
 	return out, nil
 }

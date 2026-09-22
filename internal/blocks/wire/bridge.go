@@ -95,7 +95,8 @@ func (b *Bridge) Sync(ctx context.Context) error {
 	// Wanted: resource key -> spec JSON.
 	want := map[string][]byte{}
 	// Volume view (T14 §4.7): name → {id, primary node} for every
-	// cluster volume. Block storage entries attach to volumes by name.
+	// cluster volume. Block storage entries attach to volumes by their
+	// auto-provisioned composite name (expstorage.BlockVolumeName).
 	vols, err := volumeView(ctx, b.St)
 	if err != nil {
 		return err
@@ -138,7 +139,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 			// device for this block's unit. One attach
 			// resource per (node, volume, mountPath).
 			for _, st := range blk.GetSpec().GetStorage() {
-				v, ok := vols[st.GetName()]
+				v, ok := vols[expstorage.BlockVolumeName(ns, name, st.GetName())]
 				if !ok || v.primary != p.GetNodeId() || st.GetMountPath() == "" {
 					continue
 				}
@@ -194,7 +195,10 @@ type volumeRef struct {
 	primary string
 }
 
-// volumeView maps volume NAME → {volume ID, primary node}.
+// volumeView maps volume NAME → {volume ID, primary node}. Block storage
+// entries look this up under their auto-provisioned name
+// (expstorage.BlockVolumeName), not their raw declared name — the same
+// composite name reconcileBlocks creates the volume under.
 func volumeView(ctx context.Context, st *bStore) (map[string]volumeRef, error) {
 	out := map[string]volumeRef{}
 	ids, err := expstorage.ListVolumeIDs(ctx, st)
@@ -236,7 +240,7 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 		}
 	}
 	for _, st := range blk.GetSpec().GetStorage() {
-		v, ok := vols[st.GetName()]
+		v, ok := vols[expstorage.BlockVolumeName(ns, name, st.GetName())]
 		if !ok || st.GetMountPath() == "" {
 			continue
 		}

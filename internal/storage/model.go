@@ -6,6 +6,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -192,6 +193,16 @@ const PendingPrefix = VolumePrefix + "_pending/"
 // PendingCreateKey is the store key for a named creation request. The
 // value is a marshaled pb.VolumeSpec.
 func PendingCreateKey(name string) store.Key { return store.Key(PendingPrefix + name) }
+
+// BlockVolumeName is the cluster volume name auto-provisioned for a
+// block's storage entry (blocks attach to volumes by this composite name,
+// not the storage entry's own raw name): internal/storage/controller
+// creates it, internal/blocks/wire looks it up, and the scheduler's P12
+// filter (PHASE-03-TASKS.md D2) gates placement on it — all three must
+// agree on the same name, so it lives here rather than in any one of them.
+func BlockVolumeName(ns, block, storage string) string {
+	return fmt.Sprintf("blk-%s-%s-%s", ns, block, storage)
+}
 
 // VolumePrefix is the store key namespace for volumes (§4.1).
 const VolumePrefix = "/volumes/"

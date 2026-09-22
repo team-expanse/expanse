@@ -196,7 +196,11 @@ func seedVolume(t *testing.T, ctx context.Context, st *raftstore.Store, primary 
 	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
 		t.Fatal(err)
 	}
-	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: "data", Namespace: "default"}); err != nil {
+	// The volume lives under its auto-provisioned composite name
+	// (expstorage.BlockVolumeName), the same name reconcileBlocks
+	// creates it under — not the storage entry's own raw "data" name.
+	vname := expstorage.BlockVolumeName("default", "web", "data")
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: vname, Namespace: "default"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: primary}); err != nil {
@@ -233,5 +237,47 @@ func TestBridgeMountsTheVolumeOnItsPrimaryOnly(t *testing.T) {
 	}
 	if hasKey(ctx, st, mountKey("n1")) || !hasKey(ctx, st, mountKey("n2")) {
 		t.Fatalf("the mount must follow the primary to n2 (n1=%v n2=%v)", hasKey(ctx, st, mountKey("n1")), hasKey(ctx, st, mountKey("n2")))
+	}
+}
+
+// Regression test: a volume named after the storage entry's own raw name
+// ("data") instead of its auto-provisioned composite name
+// (expstorage.BlockVolumeName) must NOT be picked up — this was the actual
+// bug PHASE-03-TASKS.md's Stream A1 found: reconcileBlocks
+// (internal/storage/controller) creates the volume under the composite
+// name, but the bridge's own lookup used the raw name, so no VM test ever
+// exercised the mount path end to end.
+func TestBridgeIgnoresAVolumeNamedAfterTheRawStorageEntry(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18081)
+	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blk pb.Block
+	if err := proto.Unmarshal(e.Value, &blk); err != nil {
+		t.Fatal(err)
+	}
+	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data"}}
+	out, err := proto.Marshal(&blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: "data", Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if hasKey(ctx, st, "/node/n1/resources/"+expmount.Type+":vol-1") {
+		t.Fatal("mounted a volume named after the raw storage entry name, not its composite name")
 	}
 }

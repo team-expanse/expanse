@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	expstorage "github.com/expanse/expanse/internal/storage"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -224,6 +225,42 @@ func TestP11Arch(t *testing.T) {
 	req.Arches = nil
 	if ok, _ := single(t, n, req); !ok {
 		t.Error("any-arch node rejected")
+	}
+}
+
+// TestP12VolumeColocation is the regression test for PHASE-03-TASKS.md D2: a
+// SINGLETON block bound to a volume may only place on a node that already
+// holds a healthy replica of it.
+func TestP12VolumeColocation(t *testing.T) {
+	req := baseReq()
+	req.Block.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_SINGLETON}
+	req.Block.Spec.Storage = []*pb.Storage{{Name: "share-data", Size: "10Gi"}}
+	// baseReq's block is default/web; matched by its auto-provisioned
+	// composite name (expstorage.BlockVolumeName), not the storage
+	// entry's own raw "share-data" name.
+	vname := expstorage.BlockVolumeName("default", "web", "share-data")
+	n := baseNode("n1")
+	n.FreeDisk = bytesOf("100Gi")
+
+	// No local replica at all: rejected.
+	if ok, r := single(t, n, req); ok || !strings.Contains(r, CodeVolumeNotLocal) || !strings.Contains(r, "share-data") {
+		t.Errorf("node with no volume replica accepted; reason=%q", r)
+	}
+	// A replica exists but is not healthy (e.g. resyncing): still rejected.
+	n.Volumes = []string{vname}
+	if ok, r := single(t, n, req); ok || !strings.Contains(r, CodeVolumeNotLocal) {
+		t.Errorf("node with only an unhealthy replica accepted; reason=%q", r)
+	}
+	// A healthy replica: accepted.
+	n.HealthyVolumes = []string{vname}
+	if ok, _ := single(t, n, req); !ok {
+		t.Error("node with a healthy replica of the bound volume rejected")
+	}
+	// Non-SINGLETON strategies are unaffected by P12 even with no replica.
+	req.Block.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_PRIMARY_REPLICA}
+	n.HealthyVolumes = nil
+	if ok, r := single(t, n, req); !ok {
+		t.Errorf("non-SINGLETON block wrongly gated by P12; reason=%q", r)
 	}
 }
 

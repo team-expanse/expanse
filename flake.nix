@@ -110,6 +110,9 @@
           ui-volumes = mkTest "ui-volumes" ./nix/tests/ui-volumes.nix;
           ui-vertical-slice = mkTest "ui-vertical-slice" ./nix/tests/ui-vertical-slice.nix;
 
+          # ROADMAP.md Phase 3 (SMB and NFS).
+          share-colocation = mkTest "share-colocation" ./nix/tests/share-colocation.nix;
+
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
           net-vip-basic = mkTest "net-vip-basic" ./nix/tests/net-vip-basic.nix;
