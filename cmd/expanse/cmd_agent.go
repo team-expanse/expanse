@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof/* on http.DefaultServeMux, served only when --pprof-addr is set
 	"os"
 
 	"github.com/spf13/cobra"
@@ -30,11 +32,19 @@ func newAgentCmd() *cobra.Command {
 		drbdCfgDir  string
 		lostAfter   string
 		firewall    bool
+		pprofAddr   string
 	)
 	cmd := &cobra.Command{
 		Use:   "agent",
 		Short: "Run the node agent (expansed)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if pprofAddr != "" {
+				go func() {
+					if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+						fmt.Fprintf(os.Stderr, "pprof listener on %s failed: %v\n", pprofAddr, err)
+					}
+				}()
+			}
 			cfg := agent.Config{
 				DataDir:           dataDir,
 				Socket:            socket,
@@ -105,5 +115,6 @@ func newAgentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&raftAdv, "raft-advertise", "", "raft transport advertised addr (default: the bind host or local IP, port 7444)")
 	cmd.Flags().StringVar(&blockCat, "blocks-catalog", "", "shipped block-type directory (nix/blocks layout); empty = block API disabled")
 	cmd.Flags().StringVar(&blockFlake, "blocks-flake-ref", "", "flake ref holding block closures (attr per type: <category>-<name>); empty = replicas not realized on this node")
+	cmd.Flags().StringVar(&pprofAddr, "pprof-addr", "", "serve net/http/pprof on this addr (e.g. 127.0.0.1:6060); empty = disabled (debug only, no auth)")
 	return cmd
 }

@@ -93,6 +93,12 @@ in
       default = false;
       description = "Apply the §4.5 nftables ruleset (static skeleton + store-driven dynamic sets).";
     };
+
+    pprofAddr = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Serve net/http/pprof on this addr (e.g. 127.0.0.1:6060) for CPU/heap profiling. Empty = disabled. Debug only, no auth — never expose beyond loopback/a test VM.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -186,7 +192,8 @@ in
           optionalString (cfg.storagePool != "") " --storage-pool ${cfg.storagePool}" +
           optionalString (cfg.storageLostAfter != "") " --storage-lost-after ${cfg.storageLostAfter}" +
           optionalString (cfg.raftAdvertise != "") " --raft-advertise ${cfg.raftAdvertise}" +
-          optionalString cfg.firewall " --firewall";
+          optionalString cfg.firewall " --firewall" +
+          optionalString (cfg.pprofAddr != "") " --pprof-addr ${cfg.pprofAddr}";
         # A killed or crashed agent leaves its volumes Primary in the kernel, which would
         # block every other node's promotion; demote whatever is not in use. The leading
         # "-" ignores a failure (a device still open stays Primary, by design).

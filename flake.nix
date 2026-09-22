@@ -76,6 +76,7 @@
           # Phase 06 storage.
           vol-perf = mkTest "vol-perf" ./nix/tests/vol-perf.nix;
           vol-constrained = mkTest "vol-constrained" ./nix/tests/vol-constrained.nix;
+          vol-constrained-profile = mkTest "vol-constrained-profile" ./nix/tests/vol-constrained-profile.nix;
           vol-agent = mkTest "vol-agent" ./nix/tests/vol-agent.nix;
           vol-firewall = mkTest "vol-firewall" ./nix/tests/vol-firewall.nix;
           vol-forced = mkTest "vol-forced" ./nix/tests/vol-forced.nix;
