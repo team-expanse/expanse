@@ -137,8 +137,8 @@ func TestSelectDisksAutoDetectUsesAllDisks(t *testing.T) {
 	if len(sel) != 3 {
 		t.Errorf("auto-detect selected %d disks, want 3", len(sel))
 	}
-	if layout != LayoutRaidz1 {
-		t.Errorf("layout = %s, want raidz1", layout)
+	if layout != LayoutMirror {
+		t.Errorf("layout = %s, want mirror", layout)
 	}
 }
 

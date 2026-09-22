@@ -54,8 +54,7 @@ in
         assert len(placement_nodes(b)) == 3, f"want 3 distinct nodes: {b}"
 
     with subtest("kill -9 the whole n3 VM"):
-        # Sync ZFS first so the crash doesn't lose recent secret/key
-        # writes (a -9 kill can drop <5 s of pool transactions).
+        # A hard crash can drop a few seconds of recent writeback.
         n3.crash()
         # The leader eventually notices (§4.8 unreachable grace) and the
         # reschedule pass evicts n3's placements.

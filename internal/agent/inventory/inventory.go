@@ -427,11 +427,6 @@ func capabilities(inv *Inventory) []string {
 			caps = append(caps, "nvidia")
 		}
 	}
-	// ZFS: userland tool presence is checked at a higher level; the kernel
-	// module shows up in /proc/modules.
-	if data, err := os.ReadFile("/proc/modules"); err == nil && strings.Contains(string(data), "zfs") {
-		caps = append(caps, "zfs")
-	}
 	return caps
 }
 

@@ -18,7 +18,7 @@
     expanse.hostId = lib.mkOption {
       type = lib.types.strMatching "[0-9a-f]{8}";
       default = "00000000";
-      description = "ZFS hostId; first 8 hex chars of the node-id. Set at install time.";
+      description = "NixOS networking.hostId; first 8 hex chars of the node-id. Set at install time.";
     };
 
     expanse.hostname = lib.mkOption {
@@ -42,7 +42,7 @@
     expanse.persistDir = lib.mkOption {
       type = lib.types.str;
       default = "/persist";
-      description = "Persistent state directory (ZFS rpool/persist).";
+      description = "Persistent state directory (the @persist btrfs subvolume).";
     };
   };
 

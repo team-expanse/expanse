@@ -98,6 +98,25 @@ in
   config = lib.mkIf cfg.enable {
     users.groups.expanse = { };
 
+    # DRBD is out-of-tree and LVM's thin activation is off by default;
+    # wire both in, but only on nodes actually configured to hold volume
+    # replicas. mkDefault throughout: storage-test.nix sets the identical
+    # values itself (a VM test's own concern, not this module's), and must
+    # keep winning without a definition conflict.
+    boot.extraModulePackages = lib.optional (cfg.storageVG != "") config.boot.kernelPackages.drbd;
+    boot.kernelModules = lib.optional (cfg.storageVG != "") "drbd";
+    services.drbd = lib.mkIf (cfg.storageVG != "") {
+      enable = lib.mkDefault true;
+      config = lib.mkDefault ''
+        global { usage-count no; }
+        include "/etc/drbd.d/*.res";
+      '';
+    };
+    # Resources are brought up by the agent's own reconcile loop, not by the drbd unit.
+    systemd.services.drbd.wantedBy = lib.mkIf (cfg.storageVG != "") (lib.mkForce [ ]);
+    services.lvm.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
+    services.lvm.boot.thin.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
+
     # Block replica runtime (Phase 04 T21): one static template unit —
     # per-replica identity arrives via %i, and the node agent writes the
     # per-replica spec JSON (type, --config args) to

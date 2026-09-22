@@ -91,8 +91,7 @@ in
     checker_node.succeed("rm -f /tmp/s.counts /tmp/s.double; systemctl start singleton-checker.service")
 
     with subtest("kill the holder's whole VM"):
-        # Sync ZFS first so the crash doesn't lose recent secret/key
-        # writes (a -9 kill can drop <5 s of pool transactions).
+        # A hard crash can drop a few seconds of recent writeback.
         all_machines[holder].crash()
 
     with subtest("exactly 1 running elsewhere within 60 s"):

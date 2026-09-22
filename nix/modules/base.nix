@@ -3,15 +3,14 @@
 { config, pkgs, lib, ... }:
 {
   config = lib.mkIf config.expanse.node.enable {
-    # Pin explicitly; do not track "latest" in releases. We need modern
-    # ZFS, KVM and WireGuard support.
-    boot.kernelPackages = pkgs.linuxPackages_latest;
+    # Pinned to the LTS series, not "latest": DRBD 9 is an out-of-tree
+    # module built against the running kernel, and does not yet compile
+    # against the latest series (C2d's finding). btrfs and LVM are
+    # in-tree, so this is the only kernel constraint left.
+    boot.kernelPackages = pkgs.linuxPackages;
 
     boot.loader.systemd-boot.enable = true;
     boot.loader.efi.canTouchEfiVariables = true;
-
-    boot.supportedFilesystems = [ "zfs" ];
-    boot.zfs.forceImportRoot = false;
 
     # networking.hostId is set by identity.nix from the node UUID.
 
@@ -51,7 +50,7 @@
     };
 
     environment.systemPackages = with pkgs; [
-      zfs
+      btrfs-progs
       smartmontools
       pciutils
       usbutils

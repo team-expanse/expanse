@@ -1,38 +1,26 @@
-# Shared test helper: create the rpool ZFS pool + datasets + blank
-# snapshot on a fresh disk on first boot, inside systemd stage 1.
+# Shared test helper: create the system btrfs filesystem (subvolumes +
+# blank snapshot) on a fresh scratch disk on first boot, inside systemd
+# stage 1, mirroring storage.nix + impermanence.nix's rollback service.
 #
 # The VM test framework mounts the VM's own root disk as / (it overrides
 # the whole fileSystems attrset; extra mounts must be declared via
-# virtualisation.fileSystems). rpool/root is therefore mounted at
-# /rpool-root and the tests assert the impermanence rollback wipes it on
-# every boot while /persist survives. All impermanence mechanisms
-# (rollback service, persist-init, bind mounts) run exactly as in
-# production.
+# virtualisation.fileSystems). @root is therefore mounted at /btrfs-root
+# and the tests assert the impermanence rollback wipes it on every boot
+# while /persist survives. All impermanence mechanisms (rollback service,
+# persist-init, bind mounts) run exactly as in production; only the
+# device the rollback service targets is overridden, since the framework
+# cannot be repointed at this scratch disk for its own "/".
 { lib, pkgs, ... }:
 let
-  zfsMount = dataset: {
-    device = dataset;
-    fsType = "zfs";
-    neededForBoot = true;
-  };
+  dev = "/dev/vdb";
 in
 {
-  # zfs looks for disks under devNodes; whole-disk /dev/vdb pools.
-  boot.zfs.devNodes = "/dev";
+  expanse.node.rootDevice = dev;
 
-  # Make zfs available in systemd stage 1 (in production this happens
-  # automatically because the root filesystem is on zfs; in the test VM
-  # the root is the framework's disk, so we force it in).
-  boot.initrd.availableKernelModules = [ "zfs" ];
-  boot.initrd.kernelModules = [ "zfs" ];
-
-  # Dataset + bind mounts, re-declared for the VM framework. Mirrors
-  # storage.nix (minus "/", which the framework provides) and the bind
-  # mounts from impermanence.nix.
   virtualisation.fileSystems = {
-    "/persist" = zfsMount "rpool/persist";
-    "/var/log" = zfsMount "rpool/var-log";
-    "/rpool-root" = zfsMount "rpool/root";
+    "/persist" = { device = dev; fsType = "btrfs"; options = [ "subvol=@persist" ]; neededForBoot = true; };
+    "/var/log" = { device = dev; fsType = "btrfs"; options = [ "subvol=@log" ]; };
+    "/btrfs-root" = { device = dev; fsType = "btrfs"; options = [ "subvol=@root" ]; neededForBoot = true; };
     "/etc/machine-id" = {
       device = "/persist/etc/machine-id";
       fsType = "none";
@@ -60,36 +48,32 @@ in
   };
 
   boot.initrd.systemd.services.expanse-test-pool-init = {
-    description = "Create test rpool on first boot";
+    description = "Create the test btrfs filesystem on first boot";
     wantedBy = [ "initrd.target" ];
     before = [
-      "zfs-import-rpool.service"
       "expanse-impermanence-rollback.service"
+      "sysroot-btrfs\\x2droot.mount"
+      "sysroot-persist.mount"
+      "sysroot-var-log.mount"
     ];
-    after = [ "systemd-modules-load.service" ];
+    # systemd-udev-settle.service isn't pulled into this minimal initrd; the
+    # scratch disk's own device unit is what actually exists to wait on.
+    after = [ "dev-vdb.device" ];
+    requires = [ "dev-vdb.device" ];
     unitConfig.DefaultDependencies = "no";
     serviceConfig.Type = "oneshot";
+    path = [ pkgs.btrfs-progs pkgs.util-linux pkgs.coreutils ];
     script = ''
-      # zfs checks the creator's hostid against /etc/hostid (binary,
-      # little-endian). It does not persist in the initrd, so write it on
-      # every boot. Must match expanse.hostId = "01234567".
-      printf '\x67\x45\x23\x01' > /etc/hostid
-      if ! zpool list -H rpool >/dev/null 2>&1; then
-        # Pool not online. Try importing it from /dev (it exists on disk
-        # from a previous boot); the zfs-import-rpool service will see it
-        # online. If import fails, the pool truly does not exist yet.
-        if ! zpool import -d /dev rpool >/dev/null 2>&1; then
-          echo "expanse-test: creating rpool on /dev/vdb"
-          zpool create -f -o ashift=12 -o autotrim=on \
-            -O compression=zstd -O xattr=sa -O acltype=posixacl -O relatime=on \
-            -O mountpoint=legacy rpool /dev/vdb
-          zfs create rpool/root
-          zfs create -o atime=off rpool/nix
-          zfs create rpool/persist
-          zfs create rpool/var-log
-          zfs create -o mountpoint=none rpool/volumes
-          zfs snapshot rpool/root@blank
-        fi
+      if ! blkid -o value -s TYPE ${dev} >/dev/null 2>&1; then
+        echo "expanse-test: creating btrfs on ${dev}"
+        mkfs.btrfs -f ${dev}
+        mkdir -p /btrfs-top
+        mount -o subvolid=5 ${dev} /btrfs-top
+        for sv in @root @nix @persist @log; do
+          btrfs subvolume create /btrfs-top/$sv
+        done
+        btrfs subvolume snapshot -r /btrfs-top/@root /btrfs-top/@root-blank
+        umount /btrfs-top
       fi
     '';
   };

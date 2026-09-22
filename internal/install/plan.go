@@ -78,8 +78,8 @@ func Stages() []Stage {
 			DryRun: "disko --mode destroy,format,mount <layout>.nix --arg disks [...]",
 		},
 		{
-			Name: "snapshot", Desc: "take rpool/root@blank snapshot (impermanence anchor)", Run: stageSnapshot,
-			DryRun: "zfs snapshot rpool/root@blank",
+			Name: "snapshot", Desc: "take the @root-blank snapshot (impermanence anchor)", Run: stageSnapshot,
+			DryRun: "mount -o subvolid=5 <system-partition> <tmp>; btrfs subvolume snapshot -r <tmp>/@root <tmp>/@root-blank",
 		},
 		{
 			Name: "identity", Desc: "generate node identity (UUID + Ed25519 keypair)", Run: stageIdentity,
@@ -94,8 +94,8 @@ func Stages() []Stage {
 			DryRun: "nixos-install --root /mnt --no-root-password",
 		},
 		{
-			Name: "verify", Desc: "verify bootloader, datasets, blank snapshot, identity", Run: stageVerify,
-			DryRun: "zfs list rpool/persist; zfs list -t snapshot rpool/root@blank",
+			Name: "verify", Desc: "verify bootloader, subvolumes, blank snapshot, identity", Run: stageVerify,
+			DryRun: "btrfs subvolume list <mount>; btrfs subvolume list <mount> | grep @root-blank",
 		},
 	}
 }
@@ -203,10 +203,37 @@ func (rc *RunContext) runDisko(disks []Disk) error {
 	return rc.run(name, args...)
 }
 
+// systemDevice returns the by-partlabel path of the layout's btrfs system
+// partition -- the side disko actually formats, which for a mirror is
+// "system-b" (see nix/installer/disko/{single,mirror}.nix).
+func systemDevice(layout DiskLayout) string {
+	disk := "system"
+	if layout == LayoutMirror {
+		disk = "system-b"
+	}
+	return "/dev/disk/by-partlabel/disk-" + disk + "-root"
+}
+
+// blankSnapshot is impermanence's rollback target: a top-level sibling of
+// @root, not nested inside it, so wiping @root never takes it down too.
+const blankSnapshot = "@root-blank"
+
 func stageSnapshot(rc *RunContext) error {
 	// Must run before anything is written to /mnt: the blank snapshot is
-	// what impermanence rolls back to.
-	return rc.run("zfs", "snapshot", "rpool/root@blank")
+	// what impermanence rolls back to. disko only mounts individual
+	// subvolumes, so reach the top-level (subvolid=5) with a throwaway
+	// mount to see @root and its future sibling at once.
+	top, err := os.MkdirTemp("", "expanse-btrfs-top")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(top)
+	dev := systemDevice(rc.Layout)
+	if err := rc.run("mount", "-o", "subvolid=5", dev, top); err != nil {
+		return err
+	}
+	defer rc.run("umount", top)
+	return rc.run("btrfs", "subvolume", "snapshot", "-r", filepath.Join(top, "@root"), filepath.Join(top, blankSnapshot))
 }
 
 func stageConfig(rc *RunContext) error {
@@ -239,8 +266,8 @@ func stageIdentity(rc *RunContext) error {
 
 func stageVerify(rc *RunContext) error {
 	checks := []struct{ name, cmd string }{
-		{"datasets", "zfs list rpool/persist"},
-		{"blank snapshot", "zfs list -t snapshot rpool/root@blank"},
+		{"subvolumes", "test -d " + rc.Mount + "/persist"},
+		{"blank snapshot", "btrfs subvolume list " + rc.Mount + " | grep -q " + blankSnapshot},
 		{"identity", "test -s " + rc.Mount + "/persist/expanse/identity/node-id"},
 	}
 	if !rc.SkipSystemInstall {

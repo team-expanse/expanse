@@ -20,8 +20,7 @@ in
   name = "expanse-install-refuses-dirty-disk";
 
   nodes.machine = { config, pkgs, ... }: {
-    environment.systemPackages = with pkgs; [ expanse disko zfs e2fsprogs ];
-    boot.supportedFilesystems = [ "zfs" ];
+    environment.systemPackages = with pkgs; [ expanse disko btrfs-progs e2fsprogs ];
     networking.hostId = "01234567";
 
     virtualisation.memorySize = 2048;

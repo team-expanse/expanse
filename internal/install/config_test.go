@@ -80,10 +80,9 @@ func TestResolvedLayout(t *testing.T) {
 	}{
 		{LayoutAuto, 1, LayoutSingle, false},
 		{LayoutAuto, 2, LayoutMirror, false},
-		{LayoutAuto, 3, LayoutRaidz1, false},
+		{LayoutAuto, 3, LayoutMirror, false},
 		{LayoutSingle, 2, "", true},
 		{LayoutMirror, 1, "", true},
-		{LayoutRaidz1, 2, "", true},
 	}
 	for _, tc := range cases {
 		c := DefaultConfig()

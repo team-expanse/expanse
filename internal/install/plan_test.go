@@ -32,7 +32,7 @@ func TestRunDryRunTouchesNothing(t *testing.T) {
 			t.Errorf("dry-run output missing stage %q", stage)
 		}
 	}
-	if !strings.Contains(text, "zfs snapshot rpool/root@blank") {
+	if !strings.Contains(text, "btrfs subvolume snapshot") {
 		t.Error("dry-run output missing the blank snapshot command")
 	}
 	if !strings.Contains(text, "disko") {

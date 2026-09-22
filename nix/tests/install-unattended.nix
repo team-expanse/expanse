@@ -27,8 +27,7 @@ in
   name = "expanse-install-unattended";
 
   nodes.machine = { config, pkgs, lib, ... }: {
-    environment.systemPackages = with pkgs; [ expanse disko zfs e2fsprogs util-linux ];
-    boot.supportedFilesystems = [ "zfs" ];
+    environment.systemPackages = with pkgs; [ expanse disko btrfs-progs lvm2 e2fsprogs util-linux ];
     networking.hostId = "01234567";
 
     # The flake source, as the ISO bakes it (see nix/installer/iso.nix).
@@ -61,7 +60,7 @@ in
         out = machine.succeed("expanse install --config /tmp/install.yaml --dry-run 2>&1")
         for stage in ("preflight", "detect", "confirm", "partition", "snapshot", "config", "install", "identity", "verify"):
             assert stage in out, f"dry-run missing stage {stage}"
-        assert "zfs snapshot rpool/root@blank" in out
+        assert "btrfs subvolume snapshot" in out
 
     with subtest("unattended install completes under 600s"):
         machine.succeed(
@@ -69,15 +68,15 @@ in
             timeout=600,
         )
 
-    with subtest("datasets exist with properties"):
-        out = machine.succeed("zfs list -o name,mountpoint -H")
-        for ds in ["rpool/root", "rpool/nix", "rpool/persist", "rpool/var-log", "rpool/volumes"]:
-            assert ds in out, f"missing dataset {ds}: {out}"
-        props = machine.succeed("zfs get -H -o value compression rpool/persist")
-        assert "zstd" in props, f"persist not zstd: {props}"
+    with subtest("subvolumes exist and the data VG is there"):
+        out = machine.succeed("btrfs subvolume list /mnt")
+        for sv in ["@root", "@nix", "@persist", "@log"]:
+            assert sv in out, f"missing subvolume {sv}: {out}"
+        machine.succeed("vgs expanse")
 
     with subtest("blank snapshot exists"):
-        machine.succeed("zfs list -t snapshot rpool/root@blank")
+        out = machine.succeed("btrfs subvolume list /mnt")
+        assert "@root-blank" in out, out
 
     with subtest("identity exists on the target and is a valid UUID"):
         nid = machine.succeed("cat /mnt/persist/expanse/identity/node-id").strip()
@@ -93,8 +92,15 @@ in
         assert "expanse.hostId" in conf, conf
 
     with subtest("footprint within 6G budget"):
-        used = int(machine.succeed("zfs list -Hpo used rpool").strip())
-        assert used < 6 * 1024**3, f"rpool used {used} bytes > 6G"
+        usage = machine.succeed("btrfs filesystem usage -b /mnt")
+        used = None
+        for line in usage.splitlines():
+            line = line.strip()
+            if line.startswith("Used:"):
+                used = int(line.split()[1])
+                break
+        assert used is not None, f"no Used: line in btrfs filesystem usage: {usage}"
+        assert used < 6 * 1024**3, f"system partition used {used} bytes > 6G"
 
     with subtest("second run is re-runnable (fresh identity by design)"):
         # A --force install destroys the pool, so identity is regenerated;
@@ -106,6 +112,7 @@ in
         )
         nid2 = machine.succeed("cat /mnt/persist/expanse/identity/node-id").strip()
         assert len(nid2) == 36, f"node-id not a UUID: {nid2}"
-        machine.succeed("zfs list -t snapshot rpool/root@blank")
+        out = machine.succeed("btrfs subvolume list /mnt")
+        assert "@root-blank" in out, out
   '';
 }

@@ -42,8 +42,9 @@ in
     # /dev/vdb backing the volume group (the framework's own disk is vda).
     virtualisation.emptyDiskImages = [ cfg.diskSizeMB ];
 
-    # DRBD 9.2.16 does not build against the linuxPackages_latest (7.2) that base.nix
-    # selects, so storage nodes run the LTS kernel. A2 settles this for production.
+    # DRBD 9.2.16 does not build against the latest kernel series; base.nix now pins
+    # every node to the LTS series for production (A2). mkForce here is belt-and-braces
+    # so this module keeps working stand-alone if that ever changes.
     boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
     boot.extraModulePackages = [ config.boot.kernelPackages.drbd ];
     boot.kernelModules = [ "drbd" ];

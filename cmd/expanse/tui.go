@@ -297,10 +297,8 @@ func drawDisks(st *tuiState) {
 	}
 	n := len(st.picked)
 	layout := "single"
-	if n == 2 {
+	if n >= 2 {
 		layout = "mirror"
-	} else if n >= 3 {
-		layout = "raidz1"
 	}
 	line("%s    layout for %d disk(s): %s", cur, n, layout)
 	if st.errmsg != "" {

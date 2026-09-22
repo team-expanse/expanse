@@ -27,11 +27,11 @@ in
   environment.systemPackages = with pkgs; [
     expanse
     disko
+    btrfs-progs
+    lvm2
   ];
 
-  # ZFS support in the live environment.
-  boot.supportedFilesystems = [ "zfs" ];
-  networking.hostId = "00000000"; # installer-only pool ops don't need a real one
+  networking.hostId = "00000000"; # installer-only, never imports a real pool
 
   hardware.enableRedistributableFirmware = true;
 

@@ -1,6 +1,10 @@
-# Impermanence: the defining property of Expanse. The root filesystem is
-# rolled back to rpool/root@blank on every boot. Anything that survives a
-# reboot must live in /persist (bind-mounted here) or in the Nix config.
+# Impermanence: the defining property of Expanse. The @root subvolume is
+# deleted and recreated from the @root-blank snapshot on every boot,
+# including the first (the installer takes that snapshot before
+# nixos-install writes anything, so "blank" really is empty -- everything
+# the running system needs comes from the untouched @nix subvolume and
+# the current generation's activation script). Anything that must survive
+# a reboot lives in /persist (bind-mounted here) or in the Nix config.
 { config, pkgs, lib, ... }:
 let
   cfg = config.expanse.node;
@@ -28,24 +32,42 @@ let
   bindMountUnits = map (p: "sysroot-" + escapePath p) bindPaths;
 in
 {
+  options.expanse.node.rootDevice = lib.mkOption {
+    type = lib.types.str;
+    default = config.fileSystems."/".device;
+    description = ''
+      Block device holding the btrfs system partition, where @root and
+      @root-blank live as top-level siblings. Defaults to whatever disko
+      put "/" on; VM tests override it, since the test framework provides
+      its own "/" and cannot be repointed at the scratch disk the test
+      builds its btrfs filesystem on instead.
+    '';
+  };
+
   config = lib.mkIf cfg.enable {
-    # Roll back the root dataset before it is mounted. The systemd-initrd
-    # variant is preferred: explicit ordering before local-fs.
+    # Recreate @root from @root-blank before it is mounted. The
+    # systemd-initrd variant is preferred: explicit ordering before
+    # local-fs.
     boot.initrd.systemd.enable = lib.mkDefault true;
     boot.initrd.systemd.services.expanse-impermanence-rollback = {
-      description = "Roll back rpool/root to the blank snapshot";
+      description = "Recreate @root from the @root-blank snapshot";
       wantedBy = [ "initrd.target" ];
-      after = [ "zfs-import-rpool.service" ];
+      after = [ "systemd-udev-settle.service" ];
       before = [ "sysroot.mount" ];
       unitConfig.DefaultDependencies = "no";
       serviceConfig.Type = "oneshot";
+      path = [ pkgs.btrfs-progs pkgs.util-linux pkgs.coreutils ];
       script = ''
-        if zfs list -t snapshot rpool/root@blank >/dev/null 2>&1; then
-          echo "expanse: rolling back rpool/root@blank (impermanence)"
-          zfs rollback -r rpool/root@blank
+        mkdir -p /btrfs-top
+        mount -o subvolid=5 "${config.expanse.node.rootDevice}" /btrfs-top
+        if [ -d /btrfs-top/@root-blank ]; then
+          echo "expanse: recreating @root from @root-blank (impermanence)"
+          btrfs subvolume delete -R /btrfs-top/@root
+          btrfs subvolume snapshot /btrfs-top/@root-blank /btrfs-top/@root
         else
-          echo "expanse: WARNING rpool/root@blank missing, root will NOT be wiped" >&2
+          echo "expanse: WARNING @root-blank missing, root will NOT be wiped" >&2
         fi
+        umount /btrfs-top
       '';
     };
 

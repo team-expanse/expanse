@@ -1,7 +1,7 @@
 # Installing Expanse
 
 This guide takes a blank x86_64 or aarch64 machine to a running Expanse
-node. It assumes no familiarity with Nix or ZFS.
+node. It assumes no familiarity with Nix or btrfs.
 
 ## What you need
 
@@ -37,9 +37,12 @@ SSH (`ssh root@<ip>`, the installer advertises itself over mDNS as
 ## 3. Walk through the installer
 
 1. **Welcome** — a hardware summary.
-2. **Disks** — select target disks with space. 1 disk = single, 2 = mirror,
-   3+ = raidz1. Disks holding data are marked `CONTAINS DATA` and require
-   explicit confirmation.
+2. **Disks** — select target disks with space. 1 disk = single (a btrfs
+   system partition + the remainder as LVM); 2+ = mirror (the first two
+   disks carry a btrfs RAID1 system partition, every disk's remainder —
+   including theirs — joins the LVM data pool as a plain, unmirrored PV).
+   Disks holding data are marked `CONTAINS DATA` and require explicit
+   confirmation.
 3. **Network** — DHCP (recommended) or static.
 4. **SSH key** — paste a key, or `gh:<username>` to fetch from GitHub.
 5. **Review** — the full plan. Type `INSTALL` to proceed.
@@ -56,7 +59,7 @@ Write a config file and run:
 # expanse-install.yaml
 version: 1
 disks:
-  layout: auto          # auto | single | mirror | raidz1
+  layout: auto          # auto | single | mirror
   devices: [/dev/sda]   # empty = use every disk
 network:
   mode: dhcp
@@ -92,14 +95,15 @@ Verify:
 ```sh
 expanse version
 expanse node info
-zfs list            # rpool with root/nix/persist/var-log/volumes
+btrfs subvolume list /    # @root @nix @persist @log
+vgs expanse                # the LVM data pool DRBD volumes are backed by
 ```
 
 ## Re-installing / recovery
 
 Boot the installer USB again and re-run. The installer is idempotent:
 same config → same system. Node identity survives (it lives in
-`/persist`), unless you destroy the pool yourself.
+`/persist`), unless you destroy the system partition yourself.
 
 ## Troubleshooting
 
@@ -107,6 +111,6 @@ same config → same system. Node identity survives (it lives in
 |---|---|
 | "refusing to wipe non-empty disk" | That is intentional. Add `--force` only if you mean it. |
 | Install fails at `partition` | Check `lsblk`; the target may be the USB stick itself. |
-| ZFS import fails after reboot | `hostId` mismatch — re-run the installer; never hand-edit. |
+| Root not wiped on reboot | The `@root-blank` snapshot is missing — `expanse doctor storage` flags it; re-install to restore it, never hand-edit the subvolume layout. |
 | Clock warnings in logs | Old CMOS battery; chrony fixes time after 3 steps. |
 | Want to see what changed on reboot | `journalctl -u expanse-impermanence-check` |

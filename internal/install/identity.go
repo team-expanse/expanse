@@ -130,7 +130,7 @@ func LoadIdentity(dir string) (*Identity, error) {
 	return &Identity{NodeID: id, PublicKey: ed25519.PublicKey(pub), Created: created}, nil
 }
 
-// HostID returns the ZFS networking.hostId derived from the node ID:
+// HostID returns the NixOS networking.hostId derived from the node ID:
 // the first 8 hex characters.
 func (i *Identity) HostID() string {
 	return i.NodeID.String()[:8]

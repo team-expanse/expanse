@@ -9,7 +9,7 @@ in
     # file is authoritative and `expanse node init` is idempotent.
     systemd.services.expanse-identity = {
       description = "Ensure Expanse node identity";
-      after = [ "zfs-mount.service" ];
+      after = [ "persist.mount" ];
       before = [ "expanse-firstboot.service" ];
       wantedBy = [ "multi-user.target" ];
       unitConfig.ConditionPathIsMountPoint = config.expanse.persistDir;
@@ -30,7 +30,7 @@ in
     # if the marker exists, exit 0 immediately.
     systemd.services.expanse-firstboot = {
       description = "Expanse first-boot initialization";
-      after = [ "zfs-mount.service" "network-online.target" "expanse-identity.service" ];
+      after = [ "persist.mount" "network-online.target" "expanse-identity.service" ];
       before = [ "expansed.service" ];
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];

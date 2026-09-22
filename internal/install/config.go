@@ -14,17 +14,18 @@ import (
 // CurrentConfigVersion is the only supported install config version.
 const CurrentConfigVersion = 1
 
-// DiskLayout selects the ZFS topology.
+// DiskLayout selects the disk topology: a btrfs system partition plus an
+// LVM data pool, single-disk or mirrored (see nix/installer/disko).
 type DiskLayout string
 
 const (
 	LayoutAuto   DiskLayout = "auto"
 	LayoutSingle DiskLayout = "single"
 	LayoutMirror DiskLayout = "mirror"
-	LayoutRaidz1 DiskLayout = "raidz1"
 )
 
-// EncryptionConfig configures ZFS native encryption.
+// EncryptionConfig is reserved for a future LUKS layer under btrfs; not
+// wired up yet.
 type EncryptionConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
@@ -112,7 +113,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unknown version %d (supported: %d)", c.Version, CurrentConfigVersion)
 	}
 	switch c.Disks.Layout {
-	case LayoutAuto, LayoutSingle, LayoutMirror, LayoutRaidz1:
+	case LayoutAuto, LayoutSingle, LayoutMirror:
 	default:
 		return fmt.Errorf("disks.layout: unknown layout %q", c.Disks.Layout)
 	}
@@ -161,10 +162,10 @@ func (c *Config) ResolvedLayout(nDisks int) (DiskLayout, error) {
 		switch {
 		case nDisks == 1:
 			return LayoutSingle, nil
-		case nDisks == 2:
+		case nDisks >= 2:
+			// mirror.nix takes any disk beyond the first two as an extra
+			// JBOD data PV, so it covers every multi-disk count.
 			return LayoutMirror, nil
-		case nDisks >= 3:
-			return LayoutRaidz1, nil
 		default:
 			return "", fmt.Errorf("no disks selected")
 		}
@@ -178,11 +179,6 @@ func (c *Config) ResolvedLayout(nDisks int) (DiskLayout, error) {
 			return "", fmt.Errorf("layout mirror requires at least 2 disks, got %d", nDisks)
 		}
 		return LayoutMirror, nil
-	case LayoutRaidz1:
-		if nDisks < 3 {
-			return "", fmt.Errorf("layout raidz1 requires at least 3 disks, got %d", nDisks)
-		}
-		return LayoutRaidz1, nil
 	}
 	return "", fmt.Errorf("unknown layout %q", c.Disks.Layout)
 }

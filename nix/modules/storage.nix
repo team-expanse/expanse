@@ -1,30 +1,14 @@
-# ZFS dataset filesystem declarations for an installed Expanse node.
-# Datasets are created by disko at install time with mountpoint=legacy,
-# so they are mounted via the standard fileSystems mechanism, ordered
-# correctly against the impermanence rollback.
-{ config, pkgs, lib, ... }:
+# btrfs subvolume mounts for an installed Expanse node. Device, fsType and
+# mount options for each subvolume are declared by disko's layout file
+# (nix/installer/disko/{single,mirror}.nix), which writeConfiguration
+# imports alongside this module; this only adds what disko's declaration
+# does not -- which of them must be mounted before switch_root, which the
+# initrd services in impermanence.nix depend on.
+{ config, lib, ... }:
 {
   config = lib.mkIf config.expanse.node.enable {
-    fileSystems = {
-      "/" = {
-        device = "rpool/root";
-        fsType = "zfs";
-        neededForBoot = true;
-      };
-      "/nix" = {
-        device = "rpool/nix";
-        fsType = "zfs";
-        neededForBoot = true;
-      };
-      "/persist" = {
-        device = "rpool/persist";
-        fsType = "zfs";
-        neededForBoot = true;
-      };
-      "/var/log" = {
-        device = "rpool/var-log";
-        fsType = "zfs";
-      };
-    };
+    fileSystems."/".neededForBoot = true;
+    fileSystems."/nix".neededForBoot = true;
+    fileSystems."/persist".neededForBoot = true;
   };
 }
