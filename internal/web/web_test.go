@@ -11,8 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/expanse/expanse/internal/blocks/catalog"
+	"github.com/expanse/expanse/internal/blocks/service"
+	"github.com/expanse/expanse/internal/blocks/validate"
+	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 	"github.com/expanse/expanse/internal/web/auth"
+	pb "github.com/expanse/expanse/proto"
 )
 
 // newTestServer returns a running httptest.Server backed by a real
@@ -31,13 +36,30 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 		t.Fatalf("EnsureAdmin: %v", err)
 	}
 
-	s, err := New("node-1", st)
+	blocks, cat := testBlocksServer(t, st)
+	s, err := New("node-1", st, blocks, cat)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
 	return srv, pw
+}
+
+// testBlocksServer builds a real (not mocked) BlockService/CatalogService
+// pair over st, loaded from the project's own shipped catalog — the same
+// one production loads, so a deploy form built against it (block_test.go)
+// exercises real admission, not a stand-in.
+func testBlocksServer(t *testing.T, st store.Store) (pb.BlockServiceServer, pb.CatalogServiceServer) {
+	t.Helper()
+	cat, err := catalog.Load("../../nix/blocks")
+	if err != nil {
+		t.Fatalf("catalog.Load: %v", err)
+	}
+	blk := service.New(st, func() validate.Context {
+		return validate.Context{Catalog: cat, NodeCount: 1}
+	})
+	return blk, service.NewCatalogServer(cat)
 }
 
 // loggedInClient returns an http.Client with a cookie jar already holding

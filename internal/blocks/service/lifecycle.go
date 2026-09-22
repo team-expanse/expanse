@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/expanse/expanse/internal/blocks/catalog"
@@ -135,11 +136,12 @@ func (s *Server) Watch(r *pb.WatchBlocksRequest, srv pb.BlockService_WatchServer
 		return errors.Wrap(err, errors.KindInternal, "blocks.service.Watch", "start watch")
 	}
 	for ev := range events {
-		if r.GetName() != "" {
-			k := key(r.GetNamespace(), r.GetName())
-			if string(ev.Entry.Key) != string(k) {
-				continue
-			}
+		if ev.Entry == nil {
+			continue
+		}
+		ns, name, ok := blockNameFromKey(ev.Entry.Key)
+		if !ok || (r.GetName() != "" && name != r.GetName()) {
+			continue
 		}
 		out := &pb.BlockEvent{Type: pb.EventType_EVENT_TYPE_UNSPECIFIED}
 		switch {
@@ -150,10 +152,15 @@ func (s *Server) Watch(r *pb.WatchBlocksRequest, srv pb.BlockService_WatchServer
 		default:
 			out.Type = pb.EventType_EVENT_MODIFIED
 		}
-		if ev.Entry != nil {
-			var b pb.Block
-			if err := proto.Unmarshal(ev.Entry.Value, &b); err == nil {
-				out.Block = &b
+		// Re-read the merged view (bare spec + observed-status overlay,
+		// same as Get/List) rather than decoding ev.Entry.Value directly:
+		// a controller promotion (e.g. to RUNNING) writes only the
+		// "/status" sub-key, whose bytes are a BlockStatus, not a Block,
+		// and even a bare-key write's stored value lacks the live-
+		// observed overlay Get/List apply on read.
+		if out.Type != pb.EventType_EVENT_DELETED {
+			if b, err := s.get(ctx, ns, name); err == nil {
+				out.Block = b
 			}
 		}
 		if err := srv.Send(out); err != nil {
@@ -161,6 +168,20 @@ func (s *Server) Watch(r *pb.WatchBlocksRequest, srv pb.BlockService_WatchServer
 		}
 	}
 	return nil
+}
+
+// blockNameFromKey extracts (namespace, name) from a store key under
+// BlockPrefix, whether it names the block itself or its observed-status
+// sub-key ("<key>/status", written by the placement controller) — Watch
+// must match both, since a phase promotion touches only the sub-key.
+func blockNameFromKey(k store.Key) (ns, name string, ok bool) {
+	rest := strings.TrimPrefix(string(k), BlockPrefix)
+	rest = strings.TrimSuffix(rest, "/status")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 // ---- CatalogService ----

@@ -37,6 +37,7 @@ import (
 	"github.com/expanse/expanse/internal/api"
 	"github.com/expanse/expanse/internal/blocks/catalog"
 	"github.com/expanse/expanse/internal/blocks/controller"
+	"github.com/expanse/expanse/internal/blocks/logs"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/service"
 	"github.com/expanse/expanse/internal/blocks/validate"
@@ -384,6 +385,7 @@ func New(cfg Config) (*Agent, error) {
 				return validate.Context{Catalog: cat, NodeCount: a.nodeCount()}
 			})
 			blk.Nodes = wire.Nodes(st)
+			blk.Logs = logs.JournaldReader{}
 			a.blocks = blk
 			a.blockCatalog = service.NewCatalogServer(cat)
 			logger.Info("block API enabled", "types", len(cat.Types()))
@@ -832,7 +834,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		if tlsCfg, err := control.UIServerTLS(a.ctl.dataDir); err != nil {
 			a.logger.Error("web UI TLS setup failed", "err", err)
-		} else if webSrv, err := web.New(a.cfg.NodeID, a.store); err != nil {
+		} else if webSrv, err := web.New(a.cfg.NodeID, a.store, a.blocks, a.blockCatalog); err != nil {
 			a.logger.Error("web UI init failed", "err", err)
 		} else {
 			go func() {

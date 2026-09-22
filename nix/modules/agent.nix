@@ -139,6 +139,11 @@ in
 
         [Service]
         Slice=expanse-blocks.slice
+        # Tags every log line so StreamLogs's journalctl --identifier
+        # query (internal/blocks/logs) matches it: without this,
+        # journald's default SYSLOG_IDENTIFIER is the started binary's
+        # own name, not the unit's.
+        SyslogIdentifier=expanse-block-%i
         Restart=on-failure
         RestartSec=5s
         DynamicUser=yes

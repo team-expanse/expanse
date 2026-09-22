@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expanse — Blocks</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/htmx-sse.min.js"></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
+  <header>
+    <h1>Expanse</h1>
+    <button hx-post="/logout">Sign out</button>
+  </header>
+  <main>
+    <p><a href="/">&larr; Home</a></p>
+    <h2>Blocks</h2>
+    <p><a href="/blocks/new">Deploy a block</a></p>
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Type</th><th>Replicas</th><th>Phase</th></tr>
+      </thead>
+      <tbody>
+        {{range .Blocks}}
+        <tr>
+          <td><a href="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}">{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}</a></td>
+          <td>{{.Spec.GetType}}</td>
+          <td>{{.Spec.GetReplicas}}</td>
+          <td>{{.Status.GetPhase}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4">No blocks deployed yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
+  </main>
+</body>
+</html>

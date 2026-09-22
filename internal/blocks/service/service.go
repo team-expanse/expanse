@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/expanse/expanse/internal/blocks/logs"
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/scheduler"
@@ -51,6 +52,20 @@ type Server struct {
 	// Nodes supplies the current cluster view for Explain (T18).
 	// Production wiring arrives with the Phase 05 node adapter.
 	Nodes func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error)
+	// Logs reads local journald for StreamLogs; nil defaults to
+	// logs.JournaldReader{}. Local-only (§5.5's cross-node proxy is a
+	// separate, not-yet-wired component, logs.Proxy): matches the CLI's
+	// own current behavior of talking to whichever node it dials.
+	Logs logs.Reader
+}
+
+// StreamLogs implements the agent side of BlockService.StreamLogs.
+func (s *Server) StreamLogs(req *pb.LogsRequest, srv pb.BlockService_StreamLogsServer) error {
+	reader := s.Logs
+	if reader == nil {
+		reader = logs.JournaldReader{}
+	}
+	return logs.AgentServer{Reader: reader}.StreamLogs(req, srv)
 }
 
 // New builds a Server.

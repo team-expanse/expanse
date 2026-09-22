@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse</title>
+  <title>Expanse — {{.Name}} logs</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>
   <script src="/static/htmx-sse.min.js"></script>
@@ -14,8 +14,11 @@
     <button hx-post="/logout">Sign out</button>
   </header>
   <main>
-    <p>The cluster management interface starts here.</p>
-    <p><a href="/blocks">Blocks</a></p>
+    <p><a href="/blocks/{{.Namespace}}/{{.Name}}">&larr; {{.Namespace}}/{{.Name}}</a></p>
+    <h2>Logs — replica {{.Replica}}</h2>
+    <div hx-ext="sse" sse-connect="/blocks/{{.Namespace}}/{{.Name}}/logs/stream?replica={{.Replica}}">
+      <pre id="log-lines" class="log-view" sse-swap="line" hx-swap="beforeend"></pre>
+    </div>
     <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
   </main>
 </body>

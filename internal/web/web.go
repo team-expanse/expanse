@@ -25,6 +25,7 @@ import (
 
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/web/auth"
+	pb "github.com/expanse/expanse/proto"
 )
 
 //go:embed static
@@ -52,27 +53,33 @@ type Server struct {
 	// answered.
 	NodeID string
 
-	store store.Store
-	tmpl  *template.Template
-	mux   *http.ServeMux
+	store   store.Store
+	blocks  pb.BlockServiceServer
+	catalog pb.CatalogServiceServer
+	tmpl    *template.Template
+	mux     *http.ServeMux
 }
 
 // New parses the embedded templates and registers routes. st is the
 // (Raft-replicated in cluster mode) store backing sessions and the
 // admin credential (internal/web/auth) — callers should ensure
-// auth.EnsureAdmin has run against it before serving traffic.
-func New(nodeID string, st store.Store) (*Server, error) {
+// auth.EnsureAdmin has run against it before serving traffic. blocks and
+// catalog are the same in-process servers the local gRPC socket
+// registers (D1): nil on a node with the block API disabled, in which
+// case the block routes answer 503 rather than panic.
+func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb.CatalogServiceServer) (*Server, error) {
 	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
-	s := &Server{NodeID: nodeID, store: st, tmpl: tmpl}
+	s := &Server{NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, tmpl: tmpl}
 
 	s.mux = http.NewServeMux()
 	s.mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	s.mux.HandleFunc("/login", s.handleLogin)
 	s.mux.Handle("/logout", s.requireAuth(http.HandlerFunc(s.handleLogout)))
 	s.mux.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
+	s.registerBlockRoutes()
 	return s, nil
 }
 
@@ -88,8 +95,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := sessionFromContext(r.Context())
+	s.render(w, http.StatusOK, "index.html", indexData{NodeID: s.NodeID, CSRFToken: sess.CSRFToken})
+}
+
+// render executes a named template with the given status and data,
+// shared by every page handler (index/login handle their own bodies
+// pre-dating this helper; C1's block pages use it directly).
+func (s *Server) render(w http.ResponseWriter, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "index.html", indexData{NodeID: s.NodeID, CSRFToken: sess.CSRFToken}); err != nil {
+	w.WriteHeader(status)
+	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }

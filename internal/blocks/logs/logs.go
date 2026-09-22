@@ -95,7 +95,7 @@ func (q Query) Identifiers(maxReplica int32) []string {
 // Args renders the journalctl invocation for one identifier (pure — the
 // unit-tested surface; no journald needed to verify query construction).
 func (q Query) Args(identifier string) []string {
-	args := []string{"journalctl", "-q", "-o", "json", "--syslog-identifier=" + identifier}
+	args := []string{"journalctl", "-q", "-o", "json", "--identifier=" + identifier}
 	if q.Tail > 0 && !q.Follow {
 		args = append(args, "-n", strconv.Itoa(q.Tail))
 	}

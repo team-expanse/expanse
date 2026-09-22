@@ -89,6 +89,11 @@ func UnitFile(s Spec) string {
 	fmt.Fprintf(&b, "StartLimitBurst=3\n")
 	fmt.Fprintf(&b, "\n[Service]\n")
 	fmt.Fprintf(&b, "Slice=%s\n", Slice)
+	// Tags every log line with JournaldIdentifier's exact format (§5.5):
+	// without this, journald's default SYSLOG_IDENTIFIER is the started
+	// binary's own name, not the unit's, and StreamLogs's
+	// --syslog-identifier query would match nothing.
+	fmt.Fprintf(&b, "SyslogIdentifier=%s-%%i\n", UnitPrefix)
 	// Restart policy (§5.3).
 	fmt.Fprintf(&b, "Restart=on-failure\n")
 	fmt.Fprintf(&b, "RestartSec=5s\n")

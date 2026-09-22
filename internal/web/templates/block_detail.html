@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expanse — {{.Block.Metadata.GetName}}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/htmx-sse.min.js"></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
+  <header>
+    <h1>Expanse</h1>
+    <button hx-post="/logout">Sign out</button>
+  </header>
+  <main>
+    <p><a href="/blocks">&larr; Blocks</a></p>
+    <div hx-ext="sse" sse-connect="/blocks/{{.Block.Metadata.GetNamespace}}/{{.Block.Metadata.GetName}}/events">
+      <div id="block-fragment" sse-swap="block" hx-swap="innerHTML">
+        {{template "block-fragment" .Block}}
+      </div>
+    </div>
+    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
+  </main>
+</body>
+</html>
+
+{{define "block-fragment"}}
+<h2>{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}</h2>
+<dl>
+  <dt>Type</dt><dd>{{.Spec.GetType}}</dd>
+  <dt>Replicas (ready/desired)</dt><dd>{{.Status.GetReplicas.GetReady}}/{{.Spec.GetReplicas}}</dd>
+  <dt>Phase</dt><dd>{{.Status.GetPhase}}</dd>
+</dl>
+<table>
+  <thead><tr><th>Replica</th><th>Node</th><th>Phase</th></tr></thead>
+  <tbody>
+    {{range .Status.GetPlacements}}
+    <tr><td>{{.GetReplicaIndex}}</td><td>{{.GetNodeId}}</td><td>{{.GetPhase}}</td></tr>
+    {{else}}
+    <tr><td colspan="3">No replicas placed yet.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+<form hx-post="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}/scale"
+      hx-target="#block-fragment" hx-swap="innerHTML">
+  <label>Replicas <input type="number" name="replicas" min="0" value="{{.Spec.GetReplicas}}"></label>
+  <button type="submit">Scale</button>
+</form>
+<form hx-post="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}/delete" hx-confirm="Delete this block?">
+  <button type="submit">Delete</button>
+</form>
+<p><a href="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}/logs">View logs</a></p>
+{{end}}

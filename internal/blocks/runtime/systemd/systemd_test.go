@@ -40,6 +40,7 @@ func TestUnitFileProperties(t *testing.T) {
 	u := UnitFile(sampleSpec())
 	for _, want := range []string{
 		"Slice=expanse-blocks.slice",
+		"SyslogIdentifier=expanse-block-%i",        // §5.5: matches JournaldIdentifier
 		"CPUQuota=200%",                            // cpu: "2" (§5.3)
 		fmt.Sprintf("MemoryMax=%d", 1<<30),         // 1Gi exact
 		fmt.Sprintf("MemoryHigh=%d", (1<<30)*9/10), // soft before hard kill

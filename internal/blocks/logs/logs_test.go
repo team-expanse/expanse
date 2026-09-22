@@ -18,7 +18,7 @@ import (
 func TestQueryArgs(t *testing.T) {
 	q := Query{Namespace: "default", Name: "web", Replica: 2}
 	got := strings.Join(q.Args(Identifier("default", "web", 2)), " ")
-	want := "journalctl -q -o json --syslog-identifier=expanse-block-default-web-2"
+	want := "journalctl -q -o json --identifier=expanse-block-default-web-2"
 	if got != want {
 		t.Errorf("args = %q, want %q", got, want)
 	}
@@ -27,7 +27,7 @@ func TestQueryArgs(t *testing.T) {
 func TestQueryArgsFollowTailSince(t *testing.T) {
 	q := Query{Namespace: "prod", Name: "db", Replica: 0, Follow: true, Tail: 100, Since: "1h"}
 	got := strings.Join(q.Args(Identifier("prod", "db", 0)), " ")
-	want := "journalctl -q -o json --syslog-identifier=expanse-block-prod-db-0 -n 100 --since 1h -f"
+	want := "journalctl -q -o json --identifier=expanse-block-prod-db-0 -n 100 --since 1h -f"
 	if got != want {
 		t.Errorf("args = %q, want %q", got, want)
 	}
