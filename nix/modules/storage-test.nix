@@ -19,6 +19,12 @@ in
       description = "Name of the scratch volume group.";
     };
 
+    poolPercent = lib.mkOption {
+      type = lib.types.ints.between 10 100;
+      default = 90;
+      description = "Share of the volume group's free space the thin pool takes; the rest stays for thick LVs.";
+    };
+
     poolName = lib.mkOption {
       type = lib.types.str;
       default = "pool";
@@ -75,7 +81,7 @@ in
           exit 0
         fi
         vgcreate ${cfg.vgName} /dev/vdb
-        lvcreate --yes --type thin-pool -l 90%FREE -n ${cfg.poolName} ${cfg.vgName}
+        lvcreate --yes --type thin-pool -l ${toString cfg.poolPercent}%FREE -n ${cfg.poolName} ${cfg.vgName}
       '';
     };
   };

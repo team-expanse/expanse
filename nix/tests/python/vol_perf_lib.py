@@ -81,3 +81,46 @@ def check_budgets(measured, budgets):
         if b.get("min") and value < b["min"]:
             msgs.append(f"{name} = {value:g} is below floor {b['min']:g}")
     return msgs
+
+
+def pass_metric(kind, result):
+    """What a first-touch pass is judged by: bandwidth for a sequential pass, IOPS for a random one."""
+    return {"seq": result.bw_bytes, "rand": result.iops}[kind]
+
+
+def thin_axis(cells):
+    """The thin-vs-thick comparisons D2 turns on, from one metric measured in five cells."""
+    return {
+        "local_first_touch": ratio(cells["local-thin-cold"], cells["local-thin-warm"]),
+        "local_thin_vs_thick": ratio(cells["local-thin-warm"], cells["local-thick"]),
+        "vol_first_touch": ratio(cells["vol-cold"], cells["vol-warm"]),
+        "vol_cold_vs_local_thick": ratio(cells["vol-cold"], cells["local-thick"]),
+    }
+
+
+def vmstat_mean(text):
+    """Mean CPU percentages of `vmstat` output, without its first line of samples (the average since boot)."""
+    lines = [line.split() for line in text.splitlines() if line.strip()]
+    header = next((cols for cols in lines if "us" in cols), None)
+    rows = [cols for cols in lines if cols[0].isdigit()][1:]
+    if header is None or not rows:
+        raise ValueError(f"no vmstat samples in: {text[:200]!r}")
+    return {c: sum(float(r[header.index(c)]) for r in rows) / len(rows) for c in ("us", "sy", "id", "wa", "st")}
+
+
+def iperf_mib_s(text):
+    """Received MiB/s of an `iperf3 --json` run."""
+    report = json.loads(text)
+    if "error" in report:
+        raise ValueError(f"iperf3 failed: {report['error']}")
+    return report["end"]["sum_received"]["bits_per_second"] / 8 / (1024 * 1024)
+
+
+def enforce(measured, budgets):
+    """Split budget violations into (problems, waived); a budget's vm_waiver says why the VM cannot judge it."""
+    problems, waived = [], []
+    for name, value in measured.items():
+        for msg in check_budgets({name: value}, budgets):
+            reason = budget(budgets, name).get("vm_waiver")
+            (waived if reason else problems).append(f"{msg} (waived: {reason})" if reason else msg)
+    return problems, waived

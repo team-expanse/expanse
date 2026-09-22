@@ -73,8 +73,8 @@
           cluster-witness = mkTest "cluster-witness" ./nix/tests/cluster-witness.nix;
           cluster-generations = mkTest "cluster-generations" ./nix/tests/cluster-generations.nix;
 
-          # Phase 06 storage. The exvol/ZFS-era vol-perf is retired from the checks until
-          # Phase 1 rewrites it on DRBD (E5); its file stays as the scenario to port.
+          # Phase 06 storage.
+          vol-perf = mkTest "vol-perf" ./nix/tests/vol-perf.nix;
           vol-agent = mkTest "vol-agent" ./nix/tests/vol-agent.nix;
           vol-firewall = mkTest "vol-firewall" ./nix/tests/vol-firewall.nix;
           vol-forced = mkTest "vol-forced" ./nix/tests/vol-forced.nix;
@@ -87,7 +87,6 @@
           vol-split-brain = mkTest "vol-split-brain" ./nix/tests/vol-split-brain.nix;
           vol-resize = mkTest "vol-resize" ./nix/tests/vol-resize.nix;
           vol-snapshot = mkTest "vol-snapshot" ./nix/tests/vol-snapshot.nix;
-          vol-drbd-spike = mkTest "vol-drbd-spike" ./nix/tests/vol-drbd-spike.nix;
           vol-drbd-nodeid-spike = mkTest "vol-drbd-nodeid-spike" ./nix/tests/vol-drbd-nodeid-spike.nix;
           vol-drbd-status-capture = mkTest "vol-drbd-status-capture" ./nix/tests/vol-drbd-status-capture.nix;
           vol-drbd-config = mkTest "vol-drbd-config" ./nix/tests/vol-drbd-config.nix;

@@ -152,5 +152,102 @@ class RttParse(unittest.TestCase):
             lib.ping_max_rtt_us("ping: connect: Network is unreachable")
 
 
+class PassMetric(unittest.TestCase):
+    RESULT = lib.FioResult(iops=1000, bw_bytes=4096000, sync_p99_us=None)
+
+    def test_sequential_pass_is_judged_by_bandwidth(self):
+        self.assertEqual(lib.pass_metric("seq", self.RESULT), 4096000)
+
+    def test_random_pass_is_judged_by_iops(self):
+        self.assertEqual(lib.pass_metric("rand", self.RESULT), 1000)
+
+    def test_unknown_kind_is_an_error(self):
+        with self.assertRaises(KeyError):
+            lib.pass_metric("zigzag", self.RESULT)
+
+
+class ThinAxis(unittest.TestCase):
+    CELLS = {"local-thin-cold": 40.0, "local-thin-warm": 80.0, "local-thick": 100.0, "vol-cold": 30.0, "vol-warm": 60.0}
+
+    def test_each_ratio_names_what_it_compares(self):
+        self.assertEqual(
+            lib.thin_axis(self.CELLS),
+            {
+                "local_first_touch": 0.5,
+                "local_thin_vs_thick": 0.8,
+                "vol_first_touch": 0.5,
+                "vol_cold_vs_local_thick": 0.3,
+            },
+        )
+
+    def test_a_missing_cell_is_an_error(self):
+        with self.assertRaises(KeyError):
+            lib.thin_axis({"local-thin-cold": 1.0})
+
+    def test_a_zero_baseline_is_an_error(self):
+        with self.assertRaises(ValueError):
+            lib.thin_axis(dict(self.CELLS, **{"local-thick": 0.0}))
+
+
+class VmstatMean(unittest.TestCase):
+    TEXT = (
+        "procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----\n"
+        " r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st\n"
+        " 9  0      0 100000  1000  50000    0    0     1     2  100  200  1  1 98  0  0\n"
+        " 1  0      0 100000  1000  50000    0    0     0    10  100  200 20 30 40 10  0\n"
+        " 1  0      0 100000  1000  50000    0    0     0    10  100  200 40 50 10  0  0\n"
+    )
+
+    def test_the_first_sample_since_boot_is_dropped_and_the_rest_averaged(self):
+        self.assertEqual(lib.vmstat_mean(self.TEXT), {"us": 30.0, "sy": 40.0, "id": 25.0, "wa": 5.0, "st": 0.0})
+
+
+    def test_columns_are_found_by_name_so_a_trailing_guest_column_does_not_shift_them(self):
+        text = (
+            "procs -----------memory---------- ---swap-- -----io---- -system-- -------cpu-------\n"
+            " r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu\n"
+            " 9  0      0 100000  1000  50000    0    0     1     2  100  200  1  1 98  0  0  0\n"
+            " 1  0      0 100000  1000  50000    0    0     0    10  100  200 20 30 40 10  0  0\n"
+        )
+        self.assertEqual(lib.vmstat_mean(text), {"us": 20.0, "sy": 30.0, "id": 40.0, "wa": 10.0, "st": 0.0})
+
+    def test_output_without_samples_is_an_error(self):
+        with self.assertRaises(ValueError):
+            lib.vmstat_mean("procs -----memory-----\n r  b us sy id wa st\n")
+
+
+class Fanout(unittest.TestCase):
+    IPERF = json.dumps({"end": {"sum_received": {"bits_per_second": 419430400.0}}})
+
+    def test_received_rate_in_mib_per_second(self):
+        self.assertAlmostEqual(lib.iperf_mib_s(self.IPERF), 50.0)
+
+    def test_a_failed_run_is_an_error(self):
+        with self.assertRaises(ValueError):
+            lib.iperf_mib_s(json.dumps({"error": "unable to connect to server"}))
+
+
+class Enforce(unittest.TestCase):
+    WAIVING = [
+        {"name": "vol_seqwrite_ratio", "min": 0.75, "vm_waiver": "the harness is CPU-bound"},
+        {"name": "vol_seqread_ratio", "min": 0.95},
+    ]
+
+    def test_a_violated_budget_without_a_waiver_is_a_problem(self):
+        problems, waived = lib.enforce({"vol_seqread_ratio": 0.5}, self.WAIVING)
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(waived, [])
+
+    def test_a_violated_budget_with_a_waiver_is_reported_with_its_reason_and_is_not_a_problem(self):
+        problems, waived = lib.enforce({"vol_seqwrite_ratio": 0.04}, self.WAIVING)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(waived), 1)
+        self.assertIn("vol_seqwrite_ratio", waived[0])
+        self.assertIn("the harness is CPU-bound", waived[0])
+
+    def test_a_met_waived_budget_is_neither(self):
+        self.assertEqual(lib.enforce({"vol_seqwrite_ratio": 0.9}, self.WAIVING), ([], []))
+
+
 if __name__ == "__main__":
     unittest.main()
