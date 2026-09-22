@@ -1,6 +1,7 @@
 package drbd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 
@@ -102,11 +103,20 @@ func (r Replication) resyncing() bool {
 	return false
 }
 
-// ParseStatus decodes `drbdsetup status --json` output for one resource.
-func ParseStatus(res string, out []byte) (*Status, error) {
+// ParseStatusAll decodes `drbdsetup status --json` output covering any number of resources.
+func ParseStatusAll(out []byte) ([]Status, error) {
 	var all []Status
 	if err := json.Unmarshal(out, &all); err != nil {
-		return nil, experrors.Wrap(err, experrors.KindInternal, "drbd.status", "resource "+res+": malformed status JSON")
+		return nil, experrors.Wrap(err, experrors.KindInternal, "drbd.status", "malformed status JSON")
+	}
+	return all, nil
+}
+
+// ParseStatus decodes `drbdsetup status --json` output for one resource.
+func ParseStatus(res string, out []byte) (*Status, error) {
+	all, err := ParseStatusAll(out)
+	if err != nil {
+		return nil, experrors.Wrap(err, experrors.KindOf(err), "drbd.status", "resource "+res+": malformed status JSON")
 	}
 	if len(all) == 0 {
 		return nil, experrors.New(experrors.KindNotFound, "drbd.status", "resource "+res+": not configured")
@@ -121,4 +131,19 @@ func (e *Exec) Status(ctx context.Context, res string) (*Status, error) {
 		return nil, err
 	}
 	return ParseStatus(res, out)
+}
+
+// StatusAll returns every configured resource's live state. A node with no
+// resources configured returns an empty slice, not an error.
+func (e *Exec) StatusAll(ctx context.Context) ([]Status, error) {
+	cmd := e.cmd(ctx, e.DrbdsetupPath, "status", "--json", "--verbose", "--statistics")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		if stdout.Len() == 0 {
+			return nil, nil // no resources configured: drbdsetup exits nonzero with empty stdout
+		}
+		return nil, execErr(ctx, "drbd.status-all", "*", err, stderr.String()+stdout.String())
+	}
+	return ParseStatusAll(stdout.Bytes())
 }

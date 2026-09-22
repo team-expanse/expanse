@@ -110,6 +110,7 @@
           net-dns = mkTest "net-dns" ./nix/tests/net-dns.nix;
           net-firewall = mkTest "net-firewall" ./nix/tests/net-firewall.nix;
           doctor-network = mkTest "doctor-network" ./nix/tests/doctor-network.nix;
+          doctor-storage = mkTest "doctor-storage" ./nix/tests/doctor-storage.nix;
           m3-demo = mkTest "m3-demo" ./nix/tests/m3-demo.nix;
 
           # Phase 04 blocks (§8).

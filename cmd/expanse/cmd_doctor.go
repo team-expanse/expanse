@@ -77,5 +77,31 @@ func newDoctorCmd() *cobra.Command {
 	network.Flags().StringSliceVar(&vipsFl, "vip", nil, "VIP address to check (repeatable)")
 	network.Flags().StringSliceVar(&blocksFl, "block", nil, "block DNS name to resolve (repeatable)")
 	cmd.AddCommand(network)
+	cmd.AddCommand(newDoctorStorageCmd())
+	return cmd
+}
+
+// newDoctorStorageCmd provides `expanse doctor storage` (A5): the DRBD
+// module and version, the volume group's headroom, thin pool exhaustion,
+// the system volume's mirror state, and every configured DRBD resource.
+func newDoctorStorageCmd() *cobra.Command {
+	var vg, systemMount string
+	cmd := &cobra.Command{
+		Use:   "storage",
+		Short: "Check DRBD, LVM and the system volume",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			in := doctor.CollectStorageLive(cmd.Context(), vg, systemMount)
+			rs := doctor.RunStorage(in)
+			fmt.Fprint(cmd.OutOrStdout(), doctor.Format(rs))
+			for _, r := range rs {
+				if r.Status == doctor.Fail {
+					os.Exit(1)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&vg, "vg", "", "LVM volume group to check (matches expansed's --storage-vg); empty skips VG/pool checks")
+	cmd.Flags().StringVar(&systemMount, "system-mount", "/", "mountpoint of the system btrfs volume")
 	return cmd
 }
