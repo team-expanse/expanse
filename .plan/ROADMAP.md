@@ -61,7 +61,7 @@ write path — re-opened only with evidence, never by default.
 - Authentication and an initial admin credential established at install.
 
 **Exit:** deploy nginx from the UI, then kill the node holding the UI VIP — the interface stays
-reachable and the deployment completes.
+reachable and the deployment completes — met, see PHASE-02-TASKS E1.
 
 ## Phase 3 — SMB and NFS
 
