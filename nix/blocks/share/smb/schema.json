@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port smbd listens on. When exposing this block with network.ports[].expose: EXPOSE_VIP, this must differ from the exposed port (445, the one clients connect to) and match target_port instead — the VIP holder's own listen check collides with smbd on whichever node the VIP moves to (always this block's own node, by SINGLETON's design) if the two share a port"
+    },
+    "shareName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The share's network name, as seen in \\\\host\\<shareName>"
+    },
+    "path": {
+      "type": "string",
+      "description": "Share content directory, relative to the block's mountPath"
+    },
+    "readOnly": {
+      "type": "boolean",
+      "description": "Deny writes to the share"
+    },
+    "guestOk": {
+      "type": "boolean",
+      "description": "Allow unauthenticated (guest) access; mutually exclusive in practice with validUsers"
+    },
+    "validUsers": {
+      "type": "string",
+      "description": "Space-separated list of the only users allowed to connect (requires those accounts to already have a Samba password set — no user-provisioning story in this phase)"
+    },
+    "browseable": {
+      "type": "boolean",
+      "description": "List the share in network browsing"
+    }
+  }
+}

@@ -12,6 +12,8 @@
 //   - web/nginx, db/redis, monitor/node-exporter, ai/ollama: upstream
 //     binaries from PATH (config → flags/generated conf)
 //   - web/static-site: native Go file server from the config index
+//   - share/smb: upstream smbd, config generated from spec.config plus
+//     the bound volume's mountPath (via mountPaths/firstMount)
 //   - anything else: idle placeholder (unknown catalog types have no
 //     runtime contract yet; they come up healthy but idle)
 //
@@ -92,6 +94,11 @@ func main() {
 		}
 	case "web/static-site":
 		if err := runStaticSite(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "share/smb":
+		if err := runSMB(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

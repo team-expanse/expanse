@@ -1,0 +1,5 @@
+name: smb
+version: 1.0.0
+description: Samba (SMB3) file share — active/passive over a DRBD-backed volume
+icon: smb
+capabilities: []

@@ -19,5 +19,6 @@
     packages.x86_64-linux.monitor-node-exporter = ./stubs/monitor-node-exporter;
     packages.x86_64-linux.web-static-site = ./stubs/web-static-site;
     packages.x86_64-linux.ai-ollama = ./stubs/ai-ollama;
+    packages.x86_64-linux.share-smb = ./stubs/share-smb;
   };
 }

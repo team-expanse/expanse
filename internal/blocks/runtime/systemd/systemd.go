@@ -25,6 +25,15 @@ import (
 // UnitPrefix is the identifier prefix for generated units.
 const UnitPrefix = "expanse-block"
 
+// RootUnitPrefix is the identifier prefix for RunAsRoot replicas
+// (nix/modules/agent.nix's expanse-block-root@.service). The real
+// running unit is a fixed, static template baked in at image-build
+// time — it cannot vary DynamicUser per replica the way Spec's own
+// RunAsRoot field would suggest — so a workload that must run
+// unsandboxed by uid (share/smb, share/nfs: PHASE-03-TASKS.md D1/D3)
+// gets routed to a second, dedicated static template instead.
+const RootUnitPrefix = "expanse-block-root"
+
 // Slice is the cgroup slice all block units live in.
 const Slice = "expanse-blocks.slice"
 
@@ -36,6 +45,16 @@ func Instance(namespace, name string, index int) string {
 // UnitName is the templated systemd unit for one replica.
 func UnitName(namespace, name string, index int) string {
 	return UnitPrefix + "@" + Instance(namespace, name, index) + ".service"
+}
+
+// UnitNameForSpec is UnitName, routed to RootUnitPrefix's template when
+// s.RunAsRoot asks for it.
+func UnitNameForSpec(s Spec) string {
+	prefix := UnitPrefix
+	if s.RunAsRoot {
+		prefix = RootUnitPrefix
+	}
+	return prefix + "@" + Instance(s.Namespace, s.Name, s.Index) + ".service"
 }
 
 // JournaldIdentifier is the SYSLOG_IDENTIFIER for a replica's logs (§5.5).
@@ -72,8 +91,14 @@ type Spec struct {
 	IOWeight int `json:"ioWeight,omitempty"`
 	// TasksMax caps tasks in the cgroup; 0 emits 512.
 	TasksMax int `json:"tasksMax,omitempty"`
-	// StaticUID, when > 0, pins the user; otherwise DynamicUser=yes.
+	// StaticUID, when > 0, pins the unit to that uid; otherwise
+	// DynamicUser=yes.
 	StaticUID int `json:"staticUid,omitempty"`
+	// RunAsRoot disables DynamicUser without pinning a uid (root is
+	// systemd's own default when User= is unset). For workloads that
+	// must setuid()/setgid() at runtime (share/smb, share/nfs) — a
+	// capability DynamicUser's unprivileged random uid can never hold.
+	RunAsRoot bool `json:"runAsRoot,omitempty"`
 }
 
 // UnitFile renders the systemd TEMPLATE unit (expanse-block@.service):
@@ -114,10 +139,15 @@ func UnitFile(s Spec) string {
 	}
 	fmt.Fprintf(&b, "IOWeight=%d\n", ioWeightOr(s.IOWeight))
 	fmt.Fprintf(&b, "TasksMax=%d\n", tasksMaxOr(s.TasksMax))
-	// Identity: DynamicUser by default, static uid when pinned.
-	if s.StaticUID > 0 {
+	// Identity: DynamicUser by default, static uid when pinned, root
+	// when RunAsRoot asks for systemd's own unset-User= default.
+	switch {
+	case s.RunAsRoot:
 		fmt.Fprintf(&b, "DynamicUser=no\n")
-	} else {
+	case s.StaticUID > 0:
+		fmt.Fprintf(&b, "DynamicUser=no\n")
+		fmt.Fprintf(&b, "User=%d\n", s.StaticUID)
+	default:
 		fmt.Fprintf(&b, "DynamicUser=yes\n")
 	}
 	// Sandboxing — ALWAYS present, every block type (§5.3).

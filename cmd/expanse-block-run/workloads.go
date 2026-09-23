@@ -20,6 +20,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -49,6 +52,85 @@ func cfgPort(m map[string]any) string {
 		return fmt.Sprintf("%d", int(v))
 	}
 	return "0" // ephemeral: replicas may share a node
+}
+
+// cfgBool reads a boolean config key, defaulting to def when absent.
+func cfgBool(m map[string]any, k string, def bool) bool {
+	if v, ok := m[k].(bool); ok {
+		return v
+	}
+	return def
+}
+
+// mountPaths decodes the bridge's "--mount name=path" args (bridge.go
+// replicaSpec) into storage name → host mount path. It is the only
+// channel a storage-bound workload has for its own mountPath: --config
+// carries just the user's schema-validated spec.config.
+func mountPaths(args []string) map[string]string {
+	out := map[string]string{}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "--mount" {
+			continue
+		}
+		if name, path, ok := strings.Cut(args[i+1], "="); ok {
+			out[name] = path
+		}
+	}
+	return out
+}
+
+// firstMount returns the lowest-sorted-name mount path, or "" when none
+// exist. Share blocks bind exactly one storage entry (D4), so which one
+// never matters in practice — sorting only makes the choice deterministic
+// when there happens to be more than one.
+func firstMount(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(m))
+	for k := range m {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return m[names[0]]
+}
+
+// statter abstracts syscall.Stat for waitForMount's tests.
+type statter func(path string, st *syscall.Stat_t) error
+
+func realStat(path string, st *syscall.Stat_t) error { return syscall.Stat(path, st) }
+
+// waitForMount blocks until path is a real, distinct mounted filesystem
+// (a different st_dev than its parent directory), or returns an error
+// once timeout elapses. The volume-mount reconcile resource
+// (internal/storage/mount) converges independently of — and can lag
+// behind — the block-replica spec that names this path
+// (internal/blocks/wire/bridge.go): a storage-bound workload that
+// writes to mountPath before the real filesystem lands there writes to
+// the plain pre-mount directory instead, which the mount then shadows,
+// hiding everything just written. Reproduced directly: smbd's own
+// state directory went missing exactly this way.
+func waitForMount(path string, timeout, interval time.Duration, stat statter) error {
+	deadline := time.Now().Add(timeout)
+	parent := filepath.Dir(path)
+	var lastErr error
+	for {
+		var pst, cst syscall.Stat_t
+		switch {
+		case stat(parent, &pst) != nil:
+			lastErr = fmt.Errorf("stat %s: not yet available", parent)
+		case stat(path, &cst) != nil:
+			lastErr = fmt.Errorf("stat %s: not yet available", path)
+		case cst.Dev != pst.Dev:
+			return nil
+		default:
+			lastErr = fmt.Errorf("%s is not yet a distinct mount from %s", path, parent)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("waitForMount %s: %w", path, lastErr)
+		}
+		time.Sleep(interval)
+	}
 }
 
 // execWorkload runs a binary-backed workload. SIGTERM via ctx is the
@@ -232,6 +314,150 @@ func runStaticSite(ctx context.Context, instance string, args []string) error {
 		_ = srv.Shutdown(shutdown)
 		return nil
 	}
+}
+
+// runSMB serves share/smb (PHASE-03-TASKS.md Stream B1): generate a
+// per-instance smb.conf and exec the upstream smbd. All of smbd's own
+// session state (D3: locking.tdb, brlock.tdb, connections.tdb and
+// friends) is relocated onto the bound volume so it fails over with the
+// data instead of resetting on every promotion — the same state
+// directory layout the share/smb module.nix contract documents.
+// mountPath here is the volume's real HOST path (bridge.go), the one
+// path the block's sandbox actually exposes — not the user's declared
+// spec.storage[].mountPath (that governs the separate host-level bind
+// mount §4.7 performs; see bridge.go's replicaSpec for why the two
+// differ). The unit runs RunAsRoot (bridge.go): smbd setuid()s to the
+// connecting or guest user per session, a capability no unprivileged
+// uid can hold.
+func runSMB(ctx context.Context, instance string, args []string) error {
+	cfg, err := cfgMap(args)
+	if err != nil {
+		return err
+	}
+	mountPath := firstMount(mountPaths(args))
+	if mountPath == "" {
+		return fmt.Errorf("share/smb: no bound storage mount yet")
+	}
+	// The bridge names this path as soon as the volume record exists,
+	// not once the host-level mount actually completes (waitForMount's
+	// doc comment) — never create smbd's state here before that lands.
+	if err := waitForMount(mountPath, 30*time.Second, 500*time.Millisecond, realStat); err != nil {
+		return fmt.Errorf("share/smb: %w", err)
+	}
+	shareName := cfgStr(cfg, "shareName")
+	if shareName == "" {
+		shareName = "share"
+	}
+	relPath := cfgStr(cfg, "path")
+	if relPath == "" {
+		relPath = "."
+	}
+	sharePath := filepath.Join(mountPath, relPath)
+	stateDir := filepath.Join(mountPath, ".smb-state")
+	lockDir := filepath.Join(stateDir, "lock")
+	dbDir := filepath.Join(stateDir, "state")
+	cacheDir := filepath.Join(stateDir, "cache")
+	privateDir := filepath.Join(stateDir, "private")
+	pidDir := filepath.Join(stateDir, "run")
+	logDir := filepath.Join(stateDir, "log")
+	// smbd's internal RPC named-pipe directory — a separate smb.conf
+	// parameter from all the ones above, defaulting to the hardcoded
+	// /var/run/samba/ncalrpc if left unset, which does not exist (and
+	// cannot: ProtectSystem=strict) here.
+	rpcDir := filepath.Join(stateDir, "ncalrpc")
+	for _, d := range []string{lockDir, dbDir, cacheDir, privateDir, pidDir, logDir, rpcDir} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			return err
+		}
+	}
+	// Share content is a different trust boundary from smbd's own state:
+	// a guest session runs as "nobody" (map to guest, below), which is
+	// in neither root's user nor group and so cannot write under a
+	// root-owned 0750 directory at all.
+	sharePerm := os.FileMode(0o750)
+	guestOk := cfgBool(cfg, "guestOk", true)
+	if guestOk {
+		sharePerm = 0o777
+	}
+	if err := os.MkdirAll(sharePath, sharePerm); err != nil {
+		return err
+	}
+	if err := os.Chmod(sharePath, sharePerm); err != nil {
+		return err
+	}
+
+	port := cfgPort(cfg)
+	if port == "0" {
+		port = "445"
+	}
+	guestLines := "guest ok = no\n"
+	if guestOk {
+		guestLines = "guest ok = yes\nmap to guest = Bad User\nguest account = nobody\n"
+	}
+	validUsersLine := ""
+	if u := cfgStr(cfg, "validUsers"); u != "" {
+		validUsersLine = "valid users = " + u + "\n"
+	}
+	netbios := instance
+	if len(netbios) > 15 {
+		netbios = netbios[:15]
+	}
+	readOnly := "no"
+	if cfgBool(cfg, "readOnly", false) {
+		readOnly = "yes"
+	}
+	browseable := "yes"
+	if !cfgBool(cfg, "browseable", true) {
+		browseable = "no"
+	}
+
+	conf := filepath.Join(stateDir, "smb.conf")
+	body := fmt.Sprintf(`[global]
+  netbios name = %s
+  workgroup = WORKGROUP
+  security = user
+  server min protocol = SMB3
+  smb ports = %s
+  # The sandbox's RestrictAddressFamilies (AF_UNIX/AF_INET/AF_INET6 only,
+  # nix/modules/agent.nix) has no AF_NETLINK, which smbd otherwise needs
+  # to auto-enumerate interfaces — it refuses to start at all without
+  # this line ("Could not determine network interfaces"). "0.0.0.0/0"
+  # covers every address without asking the kernel to list any.
+  interfaces = 0.0.0.0/0
+  bind interfaces only = no
+  disable spoolss = yes
+  load printers = no
+  printing = bsd
+  printcap name = /dev/null
+  lock directory = %s
+  state directory = %s
+  cache directory = %s
+  private dir = %s
+  pid directory = %s
+  ncalrpc dir = %s
+  log file = %s/log.%%m
+  log level = 1
+
+[%s]
+  path = %s
+  read only = %s
+  browseable = %s
+  %s%s`,
+		netbios, port, lockDir, dbDir, cacheDir, privateDir, pidDir, rpcDir, logDir,
+		shareName, sharePath, readOnly, browseable, guestLines, validUsersLine)
+	if err := os.WriteFile(conf, []byte(body), 0o640); err != nil {
+		return err
+	}
+	fmt.Printf("expanse-block-run: smb serving %q on :%s\n", shareName, port)
+	// -l: smbd's own startup logging (before smb.conf is even parsed)
+	// uses this, not the "log file" directive above — without it, the
+	// very first log line falls back to the compiled-in /var/log/samba,
+	// which does not exist (and cannot: ProtectSystem=strict) here.
+	// -S: send smbd's own debug/log output to stdout, the journald
+	// convention every other block follows — without it, a startup
+	// failure after config parsing is silent (samba logs to the log
+	// file, never stderr, once past the bootstrap stage -l covers).
+	return execWorkload(ctx, "smbd", []string{"--foreground", "--no-process-group", "--debug-stdout", "-l", logDir, "-s", conf})
 }
 
 // runWhoami serves web/whoami: an in-process HTTP server that reports

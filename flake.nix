@@ -112,6 +112,7 @@
 
           # ROADMAP.md Phase 3 (SMB and NFS).
           share-colocation = mkTest "share-colocation" ./nix/tests/share-colocation.nix;
+          share-smb = mkTest "share-smb" ./nix/tests/share-smb.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;

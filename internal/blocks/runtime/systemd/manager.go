@@ -140,7 +140,7 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 	if !ok {
 		return reconcile.Observed{}, errors.New(errors.KindInvalid, "systemd.Observe", "wrong resource type")
 	}
-	unit := UnitName(res.spec.Namespace, res.spec.Name, res.spec.Index)
+	unit := UnitNameForSpec(res.spec)
 	load, active, sub, err := m.API.UnitState(ctx, unit)
 	if err != nil {
 		return reconcile.Observed{}, errors.Wrap(err, errors.KindInternal, "systemd.Observe", "unit state")
@@ -173,7 +173,7 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 	if !ok {
 		return nil, errors.New(errors.KindInvalid, "systemd.Plan", "wrong resource type")
 	}
-	unit := UnitName(res.spec.Namespace, res.spec.Name, res.spec.Index)
+	unit := UnitNameForSpec(res.spec)
 	spec := res.spec
 	var acts []reconcile.Action
 	acts = append(acts, reconcile.Action{
@@ -225,7 +225,7 @@ func (m *Manager) Delete(ctx context.Context, r reconcile.Resource) error {
 	// removed before the first converge). A stale unit that keeps
 	// running on a failed stop is caught by the next pass; the spec
 	// file removal is strict — it decides expanse-block-run's behavior.
-	_ = m.API.Stop(ctx, UnitName(res.spec.Namespace, res.spec.Name, res.spec.Index))
+	_ = m.API.Stop(ctx, UnitNameForSpec(res.spec))
 	return m.removeSpec(res.spec)
 }
 

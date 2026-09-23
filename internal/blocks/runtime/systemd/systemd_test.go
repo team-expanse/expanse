@@ -103,6 +103,32 @@ func TestSandboxingAlwaysPresent(t *testing.T) {
 	}
 }
 
+// StaticUID must actually pin the unit's identity, not just disable
+// DynamicUser: a previously dormant bug (nothing set StaticUID before
+// share/smb) left it computed but never emitted, so a pinned uid was
+// silently ignored and the unit ran as whatever User= defaults to.
+func TestStaticUIDEmitsUser(t *testing.T) {
+	u := UnitFile(Spec{Namespace: "d", Name: "z", StaticUID: 990})
+	if !strings.Contains(u, "User=990\n") {
+		t.Errorf("StaticUID=990 did not emit User=990:\n%s", u)
+	}
+}
+
+// RunAsRoot disables DynamicUser without pinning a uid (root is
+// systemd's own default when User= is left unset) — the escape hatch
+// share/smb and share/nfs need: smbd/nfsd must setuid()/setgid() to the
+// connecting or exported user, which requires the capability, not a
+// directory permission.
+func TestRunAsRootDisablesDynamicUser(t *testing.T) {
+	u := UnitFile(Spec{Namespace: "d", Name: "z", RunAsRoot: true})
+	if !strings.Contains(u, "DynamicUser=no\n") {
+		t.Errorf("RunAsRoot missing DynamicUser=no:\n%s", u)
+	}
+	if strings.Contains(u, "\nUser=") {
+		t.Errorf("RunAsRoot must not pin a uid (root is the unset default):\n%s", u)
+	}
+}
+
 // Unit naming (§5.3).
 func TestUnitNaming(t *testing.T) {
 	if got := UnitName("default", "web", 2); got != "expanse-block@default-web-2.service" {
@@ -110,6 +136,21 @@ func TestUnitNaming(t *testing.T) {
 	}
 	if got := JournaldIdentifier("default", "web", 2); got != "expanse-block-default-web-2" {
 		t.Errorf("JournaldIdentifier = %q", got)
+	}
+}
+
+// UnitNameForSpec routes RunAsRoot replicas to the dedicated static
+// template (nix/modules/agent.nix's expanse-block-root@.service) and
+// everything else to the ordinary one, unchanged.
+func TestUnitNameForSpecRoutesRunAsRoot(t *testing.T) {
+	ordinary := Spec{Namespace: "default", Name: "web", Index: 2}
+	if got := UnitNameForSpec(ordinary); got != UnitName("default", "web", 2) {
+		t.Errorf("UnitNameForSpec(ordinary) = %q, want %q", got, UnitName("default", "web", 2))
+	}
+	root := Spec{Namespace: "default", Name: "share", Index: 0, RunAsRoot: true}
+	want := "expanse-block-root@default-share-0.service"
+	if got := UnitNameForSpec(root); got != want {
+		t.Errorf("UnitNameForSpec(root) = %q, want %q", got, want)
 	}
 }
 

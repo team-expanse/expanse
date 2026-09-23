@@ -123,6 +123,16 @@ in
     services.lvm.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
     services.lvm.boot.thin.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
 
+    # Both block unit templates' ReadWritePaths=/var/lib/expanse/volumes
+    # (below) must already exist on the host or systemd's own namespace
+    # setup fails outright ("Failed at step NAMESPACE") before the unit
+    # ever execs — unlike BindPaths, ReadWritePaths does not create a
+    # missing target. The mount manager itself only creates this
+    # directory once a volume actually lands on this node, so a node
+    # hosting no replica yet would otherwise never be able to start any
+    # block replica at all.
+    systemd.tmpfiles.rules = [ "d /var/lib/expanse/volumes 0755 root root -" ];
+
     # Block replica runtime (Phase 04 T21): one static template unit —
     # per-replica identity arrives via %i, and the node agent writes the
     # per-replica spec JSON (type, --config args) to
@@ -151,6 +161,13 @@ in
         PrivateTmp=yes
         ProtectSystem=strict
         ProtectHome=yes
+        # A storage-bound block's own process needs to see its volume's
+        # host mount (§4.7) to actually read/write it, not just have it
+        # exist on the host — internal/blocks/wire/bridge.go passes the
+        # real path via --mount. One fixed root for every replica of
+        # every type: this unit is static (shared, never rebuilt per
+        # replica), so a per-block exception isn't possible here.
+        ReadWritePaths=/var/lib/expanse/volumes
         RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
         # No SystemCallFilter: some binary-backed workloads (e.g.
         # node_exporter) use syscall families outside @system-service
@@ -159,6 +176,46 @@ in
         IOWeight=100
         # Binary-backed blocks exec upstream binaries (nginx, redis,
         # …) from the system profile (T24 workloads).
+        Environment=PATH=/run/current-system/sw/bin
+        ExecStart=${pkgs.expanse}/bin/expanse-block-run %i
+      '';
+    };
+
+    # A second static template, identical except DynamicUser: a handful
+    # of workloads (share/smb, share/nfs — PHASE-03-TASKS.md D1/D3) must
+    # setuid()/setgid() to the connecting or exported user at runtime, a
+    # capability DynamicUser's random unprivileged uid can never hold.
+    # Both units are static (systemd.units."<name>@.service" cannot vary
+    # DynamicUser per replica from the outside), so
+    # internal/blocks/runtime/systemd.UnitNameForSpec routes a
+    # RunAsRoot spec here instead of trying to flip this one setting on
+    # the shared template.
+    systemd.units."expanse-block-root@.service" = {
+      enable = true;
+      text = ''
+        [Unit]
+        Description=expanse block %i (root)
+        After=network-online.target
+        StartLimitIntervalSec=60
+        StartLimitBurst=3
+
+        [Service]
+        Slice=expanse-blocks.slice
+        SyslogIdentifier=expanse-block-%i
+        Restart=on-failure
+        RestartSec=5s
+        NoNewPrivileges=yes
+        PrivateTmp=yes
+        ProtectSystem=strict
+        ProtectHome=yes
+        # A storage-bound block's own process needs to see its volume's
+        # host mount (§4.7) to actually read/write it — the shared,
+        # static ReadWritePaths grant BOTH block unit templates rely on
+        # (see the ordinary template's own copy of this comment).
+        ReadWritePaths=/var/lib/expanse/volumes
+        RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+        TasksMax=512
+        IOWeight=100
         Environment=PATH=/run/current-system/sw/bin
         ExecStart=${pkgs.expanse}/bin/expanse-block-run %i
       '';

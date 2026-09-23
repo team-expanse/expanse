@@ -242,8 +242,15 @@ func (l *L4) handle(client net.Conn) {
 			backend, chosen = c, b
 			break
 		}
+		// Delete-at-index idiom: copy already shrinks remaining by one
+		// (its return value is len(remaining)-idx-1), so this single
+		// line is the whole removal. A second, redundant
+		// remaining[:len(remaining)-1] used to follow here, silently
+		// dropping one extra valid candidate on every retry — and
+		// panicking outright ([:-1]) once exactly one candidate was
+		// left, killing the whole agent on any single-replica block
+		// whose backend was briefly unreachable when a client connected.
 		remaining = remaining[:idx+copy(remaining[idx:], remaining[idx+1:])]
-		remaining = remaining[:len(remaining)-1]
 	}
 	if backend == nil {
 		return

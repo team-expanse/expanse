@@ -1,0 +1,10 @@
+# Not 445: a share is almost always deployed with network.ports[].expose:
+# EXPOSE_VIP, and 445 is the port clients connect to on the VIP itself —
+# smbd must listen on a different port internally (matching target_port)
+# or the VIP holder's own listen check collides with it. See schema.json.
+port: 44445
+shareName: share
+path: "."
+readOnly: false
+guestOk: true
+browseable: true

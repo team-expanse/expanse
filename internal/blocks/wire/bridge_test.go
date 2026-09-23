@@ -208,6 +208,84 @@ func seedVolume(t *testing.T, ctx context.Context, st *raftstore.Store, primary 
 	}
 }
 
+// The bound volume's real HOST path reaches the workload as a "--mount
+// name=path" arg (the only channel expanse-block-run has for it — the
+// config JSON is the user's own schema-validated spec.config). It is the
+// host path (expmount.HostPath), not the user's declared
+// spec.storage[].mountPath: the shared static block unit
+// (nix/modules/agent.nix) grants a single fixed ReadWritePaths for every
+// replica of every type, so the host path is the only one a block's own
+// sandboxed process can actually see — the declared mountPath only
+// governs the separate host-level bind mount §4.7 performs. Gated on the
+// same volume-readiness check as BindPaths itself, so a workload never
+// starts believing a mount exists before the bind actually does.
+func TestBridgeSpecCarriesTheVolumesRealHostPathAsAnArg(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080)
+	seedVolume(t, ctx, st, "n1")
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e, err := st.Get(ctx, store.Key("/node/n1/resources/block-replica:default/web/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := bytes.CutPrefix(e.Value, []byte("type: "+systemd.TypeBlockReplica+"\n"))
+	var spec systemd.Spec
+	if err := json.Unmarshal(payload, &spec); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--mount", "data=" + expmount.HostPath("", "vol-1")}
+	found := false
+	for i := 0; i+1 < len(spec.Args); i++ {
+		if spec.Args[i] == want[0] && spec.Args[i+1] == want[1] {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("spec.Args = %v, want a %v pair", spec.Args, want)
+	}
+}
+
+// No volume yet (unhealthy or not yet provisioned): the mount arg must
+// not appear, matching BindPaths' own gate — a workload started with a
+// mount path that isn't actually bound would write into a throwaway
+// sandbox directory instead of the replicated volume.
+func TestBridgeOmitsTheMountArgUntilTheVolumeExists(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080)
+	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blk pb.Block
+	if err := proto.Unmarshal(e.Value, &blk); err != nil {
+		t.Fatal(err)
+	}
+	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data"}}
+	out, err := proto.Marshal(&blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e2, err := st.Get(ctx, store.Key("/node/n1/resources/block-replica:default/web/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(e2.Value, []byte("--mount")) {
+		t.Errorf("mount arg present before the volume exists: %s", e2.Value)
+	}
+}
+
 func hasKey(ctx context.Context, st *raftstore.Store, key string) bool {
 	_, err := st.Get(ctx, store.Key(key))
 	return err == nil

@@ -201,6 +201,50 @@ func TestConnectionLimit(t *testing.T) {
 	}
 }
 
+// Regression: a single healthy backend that fails to dial used to crash
+// the whole agent (handle's retry loop shrank `remaining` by 2 instead
+// of 1 each attempt, then indexed remaining[:-1] once it emptied — see
+// l4.go's comment). Any single-replica block (SINGLETON, or plain
+// replicas=1) briefly unreachable when a client connected would take
+// the whole node's proxy down with it; nothing before share/smb ever
+// exercised a VIP-exposed block with exactly one backend under this
+// exact race. A dead listener stands in for "briefly unreachable".
+func TestHandleOneUnreachableBackendDoesNotPanic(t *testing.T) {
+	tbl := &fakeTable{}
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddr := dead.Addr().String()
+	dead.Close() // nothing listens here now; dialing it fails
+	tbl.setOne(Backend{ReplicaIndex: 0, NodeID: "only", Healthy: true})
+	l4 := &L4{
+		Pool: tbl, Key: "default/web", DialTimeout: 200 * time.Millisecond,
+		Resolve: func(Backend, int32) string { return deadAddr },
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = l4.Serve(ctx, ln) }()
+
+	c, err := net.DialTimeout("tcp", ln.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer c.Close()
+	// No backend could be reached: handle must close the connection
+	// cleanly, not panic (which would crash this whole test binary).
+	buf := make([]byte, 1)
+	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if n, err := c.Read(buf); n != 0 || err != io.EOF {
+		t.Fatalf("read = %d, %v; want a clean EOF", n, err)
+	}
+}
+
 func TestDrainRemovedBackend(t *testing.T) {
 	tbl := &fakeTable{}
 	b1 := newFakeBackend(t, "n1")

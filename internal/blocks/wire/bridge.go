@@ -224,9 +224,19 @@ type bStore = raftstore.Store
 
 // replicaSpec builds the JSON block-replica spec for one placement.
 // The config travels as a single --config argument (JSON); the runtime
-// helper (expanse-block-run) owns the interpretation. Volume storage
-// entries bind the volume's host mount into the unit (§4.7 step 6:
-// BindPaths=host:declared-mount-path + ReadWritePaths).
+// helper (expanse-block-run) owns the interpretation.
+//
+// Volume storage: spec.BindPaths/VolumeMounts record the intended
+// per-replica sandbox exception (§4.7 step 6), but nothing in the
+// production pipeline currently turns a Spec into a rebuilt systemd
+// unit — the real, shared expanse-block@.service template
+// (nix/modules/agent.nix) is static and grants a single fixed
+// ReadWritePaths=expmount.DefaultBase for every replica of every type.
+// So the mount arg below carries the actual HOST path
+// (expmount.HostPath), not the user's declared mountPath: that raw
+// value is real for the host-level bind mount §4.7 already performs
+// (proven by share-colocation.nix), but is not a path any block's own
+// sandboxed process can see.
 func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volumeRef) ([]byte, error) {
 	spec := systemd.Spec{
 		Namespace: ns,
@@ -239,6 +249,9 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 			spec.Args = []string{"--config", string(raw)}
 		}
 	}
+	if rootBlockTypes[blk.GetSpec().GetType()] {
+		spec.RunAsRoot = true
+	}
 	for _, st := range blk.GetSpec().GetStorage() {
 		v, ok := vols[expstorage.BlockVolumeName(ns, name, st.GetName())]
 		if !ok || st.GetMountPath() == "" {
@@ -247,8 +260,25 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 		host := expmount.HostPath("", v.id)
 		spec.BindPaths = append(spec.BindPaths, host+":"+st.GetMountPath())
 		spec.VolumeMounts = append(spec.VolumeMounts, host)
+		// The only channel the workload has for its own bound storage:
+		// --config carries just the user's schema-validated spec.config.
+		// The value is the real HOST path (see the func comment) — the
+		// one path the shared static unit's fixed ReadWritePaths
+		// actually exposes — not the user's declared mountPath. Gated
+		// on the same volume-readiness check as BindPaths itself.
+		spec.Args = append(spec.Args, "--mount", st.GetName()+"="+host)
 	}
 	return json.Marshal(spec)
+}
+
+// rootBlockTypes lists catalog types whose daemon must run unsandboxed
+// by uid (PHASE-03-TASKS.md D1/D3): smbd setuid()s to the connecting or
+// guest user per session, and nfsd's kernel export/recovery management
+// needs root — neither is a capability DynamicUser's random unprivileged
+// uid can ever hold, no matter the directory permissions.
+var rootBlockTypes = map[string]bool{
+	"share/smb": true,
+	"share/nfs": true,
 }
 
 func splitBlockKey(k string) (ns, name string) {
