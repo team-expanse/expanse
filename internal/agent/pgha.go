@@ -82,7 +82,7 @@ func (a *Agent) scanPostgresInstances(ctx context.Context) map[string]pgha.Insta
 		if err := proto.Unmarshal(e.Value, &b); err != nil {
 			continue
 		}
-		if b.GetSpec().GetType() != "db/postgres" {
+		if b.GetSpec().GetType() != pgha.BlockType {
 			continue
 		}
 		if se, err := a.store.Get(ctx, store.Key(k+"/status")); err == nil {

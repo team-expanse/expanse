@@ -18,6 +18,14 @@ const (
 	RoundRobin BalancerMode = "round-robin" // default
 	LeastConn  BalancerMode = "least-connections"
 	SourceHash BalancerMode = "source-hash" // sticky per client IP
+	// PrimaryOnly restricts candidates to Service.Primary() instead of
+	// picking among every healthy backend (D2): the right mode for a
+	// block whose replicas are not interchangeable, e.g. db/postgres,
+	// where a write landing on a standby fails or misroutes. Not a
+	// selection algorithm over many backends — the candidate set it
+	// narrows to is at most one, so which algorithm picks within it
+	// (pickAt's default case) does not matter.
+	PrimaryOnly BalancerMode = "primary-only"
 )
 
 // Defaults per §4.3.
@@ -222,10 +230,19 @@ func (l *L4) handle(client net.Conn) {
 	}
 	tab := l.Pool.Table()
 	svc := tab.Service(l.Key)
-	if svc == nil || len(svc.Healthy()) == 0 {
+	if svc == nil {
 		return
 	}
 	healthy := svc.Healthy()
+	if l.mode() == PrimaryOnly {
+		healthy = nil
+		if b, ok := svc.Primary(); ok {
+			healthy = []Backend{b}
+		}
+	}
+	if len(healthy) == 0 {
+		return
+	}
 
 	var backend net.Conn
 	var chosen Backend

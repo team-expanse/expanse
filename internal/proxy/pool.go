@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/expanse/expanse/internal/store"
@@ -27,6 +28,13 @@ import (
 // <block>/status/replicas/<i>). Literal-prefix semantics: watch with
 // the trailing slash.
 const BlockPrefix = store.Key("/blocks/")
+
+// primaryLeasePrefix is the store subtree of PostgreSQL primary-election
+// lease records (internal/blocks/pgha.LeaseName's "pg-primary:<ref>"
+// format under lease.Prefix). Local copy of the naming convention, not
+// an import of internal/blocks/pgha or internal/cluster/lease — same
+// decoupling healthRecord below already uses for internal/blocks/health.
+const primaryLeasePrefix = store.Key("/leases/pg-primary:")
 
 // statusSuffix marks the observed-state key of a block.
 const statusSuffix = "/status"
@@ -58,14 +66,36 @@ type Service struct {
 	Key        string // "<namespace>/<name>"
 	Namespace  string
 	Name       string
-	Port       int32 // the port the VIP listens on
-	TargetPort int32 // the replica port the VIP forwards to
+	Type       string // spec.type, e.g. "db/postgres" — lets LB wiring pick a routing mode per block kind
+	Port       int32  // the port the VIP listens on
+	TargetPort int32  // the replica port the VIP forwards to
 	// Backends sorted by ReplicaIndex; never mutated after publish.
 	Backends []Backend
 	// HTTPRoutes are the L7 route declarations of the service's VIP
 	// port (§4.3). Empty = L4 only (the default host route the L7
 	// builder derives is never used for this service).
 	HTTPRoutes []HTTPRouteDecl
+	// PrimaryNodeID is the node the pg-primary election lease (D2, if
+	// any) currently names, or "" if no election has decided yet. Only
+	// meaningful for block types that run such an election.
+	PrimaryNodeID string
+}
+
+// Primary returns the backend PrimaryNodeID names, if it is currently a
+// healthy backend of this service. False when no election has decided,
+// or the elected node's replica is not (or no longer) healthy — callers
+// must not guess a fallback, the same "do not misroute a write" rule D2
+// exists for.
+func (s *Service) Primary() (Backend, bool) {
+	if s.PrimaryNodeID == "" {
+		return Backend{}, false
+	}
+	for _, b := range s.Healthy() {
+		if b.NodeID == s.PrimaryNodeID {
+			return b, true
+		}
+	}
+	return Backend{}, false
 }
 
 // HTTPRouteDecl is one store-declared L7 route: Host + PathPrefix
@@ -103,18 +133,20 @@ func (s *Service) Healthy() []Backend {
 	return out
 }
 
-// Pool watches /blocks/ and rebuilds the routing table on every
-// relevant event. Run drives the watch loop; Table is safe for
-// concurrent readers at all times.
+// Pool watches /blocks/ and the pg-primary election leases, and
+// rebuilds the routing table on every relevant event. Run drives the
+// watch loops; Table is safe for concurrent readers at all times.
 type Pool struct {
 	src   Source
 	table atomic.Pointer[Table]
 
-	// Ingest state keyed by raw store key. Guarded implicitly by the
-	// watch loop's single goroutine; reads happen only in rebuild.
-	blocks map[string]*pb.Block
-	status map[string]*pb.BlockStatus
-	health map[string]*healthRecord // raw key → parsed record
+	// Ingest state keyed by raw store key, guarded by mu: two watch
+	// loops (blocks, primary leases) ingest and publish concurrently.
+	mu      sync.Mutex
+	blocks  map[string]*pb.Block
+	status  map[string]*pb.BlockStatus
+	health  map[string]*healthRecord // raw key → parsed record
+	primary map[string]string        // block ref ("ns/name") → pg-primary lease holder
 }
 
 // healthRecord mirrors internal/blocks/health.Record. Local copy (not
@@ -125,37 +157,64 @@ type healthRecord struct {
 	Detail string `json:"detail"`
 }
 
+// leaseRecord mirrors internal/cluster/lease's private wire format for
+// /leases/<name> keys. Local copy, not an import of
+// internal/cluster/lease: the pool only needs the holder, not the
+// exported lease.Manager API (same rationale as healthRecord above).
+type leaseRecord struct {
+	Holder string `json:"h"`
+}
+
 // NewPool returns a pool over src. Run must be called before Table
 // reflects store contents.
 func NewPool(src Source) *Pool {
 	return &Pool{
-		src:    src,
-		blocks: map[string]*pb.Block{},
-		status: map[string]*pb.BlockStatus{},
-		health: map[string]*healthRecord{},
+		src:     src,
+		blocks:  map[string]*pb.Block{},
+		status:  map[string]*pb.BlockStatus{},
+		health:  map[string]*healthRecord{},
+		primary: map[string]string{},
 	}
 }
 
 // Run seeds from a List snapshot, then applies watch events until ctx
-// is done or the watch channel closes (overflow/close semantics: the
+// is done or either watch channel closes (overflow/close semantics: the
 // caller re-lists, matching internal/store's re-list contract).
 func (p *Pool) Run(ctx context.Context) error {
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errCh := make(chan error, 2)
+	go func() { errCh <- p.watch(cctx, BlockPrefix, p.ingestBlock, p.removeBlock) }()
+	go func() { errCh <- p.watch(cctx, primaryLeasePrefix, p.ingestPrimary, p.removePrimary) }()
+	err := <-errCh
+	cancel() // one loop ending must stop the other too, not leak it
+	<-errCh
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
+// watch runs one prefix's seed-then-apply loop, calling ingest/remove
+// per entry and publish after each batch. Shared by the block watch and
+// the primary-lease watch; both feed the same Table via publish's lock.
+func (p *Pool) watch(ctx context.Context, prefix store.Key, ingest func(string, []byte), remove func(string)) error {
 	cur, err := p.src.Revision(ctx)
 	if err != nil {
 		return err
 	}
-	ch, err := p.src.Watch(ctx, BlockPrefix, cur)
+	ch, err := p.src.Watch(ctx, prefix, cur)
 	if err != nil {
 		return err
 	}
 	// Seed: everything at or below cur is already covered by the watch
 	// window (events AFTER cur only).
-	ents, err := p.src.List(ctx, BlockPrefix)
+	ents, err := p.src.List(ctx, prefix)
 	if err != nil {
 		return err
 	}
 	for _, e := range ents {
-		p.ingest(string(e.Key), e.Value)
+		ingest(string(e.Key), e.Value)
 	}
 	p.publish()
 
@@ -169,9 +228,9 @@ func (p *Pool) Run(ctx context.Context) error {
 			}
 			if ev.Entry != nil {
 				if ev.Type == store.EventDelete {
-					p.remove(string(ev.Entry.Key))
+					remove(string(ev.Entry.Key))
 				} else {
-					p.ingest(string(ev.Entry.Key), ev.Entry.Value)
+					ingest(string(ev.Entry.Key), ev.Entry.Value)
 				}
 				p.publish()
 			}
@@ -179,8 +238,11 @@ func (p *Pool) Run(ctx context.Context) error {
 	}
 }
 
-// ingest parses one entry into the right bucket by key shape.
-func (p *Pool) ingest(key string, val []byte) {
+// ingestBlock parses one /blocks/ entry into the right bucket by key
+// shape.
+func (p *Pool) ingestBlock(key string, val []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	switch {
 	case strings.HasSuffix(key, statusSuffix):
 		var st pb.BlockStatus
@@ -200,8 +262,10 @@ func (p *Pool) ingest(key string, val []byte) {
 	}
 }
 
-// remove drops a key from every bucket it might occupy.
-func (p *Pool) remove(key string) {
+// removeBlock drops a /blocks/ key from every bucket it might occupy.
+func (p *Pool) removeBlock(key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	delete(p.blocks, key)
 	delete(p.status, key)
 	for k := range p.health {
@@ -211,10 +275,34 @@ func (p *Pool) remove(key string) {
 	}
 }
 
+// ingestPrimary records a pg-primary lease's current holder, keyed by
+// the block ref the lease name encodes.
+func (p *Pool) ingestPrimary(key string, val []byte) {
+	ref := strings.TrimPrefix(key, string(primaryLeasePrefix))
+	var rec leaseRecord
+	if json.Unmarshal(val, &rec) != nil || rec.Holder == "" {
+		return
+	}
+	p.mu.Lock()
+	p.primary[ref] = rec.Holder
+	p.mu.Unlock()
+}
+
+// removePrimary drops a pg-primary lease record (released or expired
+// and deleted by its owner).
+func (p *Pool) removePrimary(key string) {
+	ref := strings.TrimPrefix(key, string(primaryLeasePrefix))
+	p.mu.Lock()
+	delete(p.primary, ref)
+	p.mu.Unlock()
+}
+
 // publish rebuilds the whole table from ingest state and swaps it in
 // atomically. The old table stays valid for any reader that already
 // holds its pointer.
 func (p *Pool) publish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	t := &Table{Services: map[string]*Service{}}
 	for key, b := range p.blocks {
 		ref := strings.TrimPrefix(key, "/blocks/")
@@ -232,11 +320,13 @@ func (p *Pool) publish() {
 		}
 		st := p.status[key+"/status"]
 		svc := &Service{
-			Key:        ref,
-			Namespace:  ref[:slash],
-			Name:       ref[slash+1:],
-			Port:       port.GetPort(),
-			TargetPort: target,
+			Key:           ref,
+			Namespace:     ref[:slash],
+			Name:          ref[slash+1:],
+			Type:          b.GetSpec().GetType(),
+			Port:          port.GetPort(),
+			TargetPort:    target,
+			PrimaryNodeID: p.primary[ref],
 		}
 		for _, decl := range port.GetHttpRoutes() {
 			svc.HTTPRoutes = append(svc.HTTPRoutes, HTTPRouteDecl{

@@ -27,6 +27,12 @@ import (
 	"github.com/expanse/expanse/internal/errors"
 )
 
+// BlockType is the db/postgres block's spec.type value. Both the
+// agent's placement scan (internal/agent/pgha.go) and the LB's
+// primary-only routing mode (D2, internal/agent/lb.go) key off this
+// constant rather than repeating the literal.
+const BlockType = "db/postgres"
+
 // RoleFile is the path, relative to a replica's mount point, that
 // module.nix's bootstrap script reads on first start.
 const RoleFile = ".expanse-postgres/role"

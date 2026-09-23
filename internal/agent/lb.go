@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/proxy"
 	"github.com/expanse/expanse/internal/store"
 )
@@ -131,10 +132,18 @@ func (a *Agent) lbListen(p netip.Prefix, exposedPort int32, svcKey string) (io.C
 	if svc != nil && len(svc.HTTPRoutes) > 0 {
 		return a.listenL7(ln, svcKey)
 	}
+	// D2: db/postgres's replicas are not interchangeable the way a
+	// stateless block's are — route only to whichever one the pg-primary
+	// election lease currently names, instead of §4.3's default
+	// round-robin-across-all-healthy algorithm.
+	mode := proxy.RoundRobin
+	if svc != nil && svc.Type == pgha.BlockType {
+		mode = proxy.PrimaryOnly
+	}
 	l4 := &proxy.L4{
 		Pool: a.lbPool,
 		Key:  svcKey,
-		Mode: proxy.RoundRobin, // §4.3 default algorithm
+		Mode: mode,
 		Resolve: func(b proxy.Backend, port int32) string {
 			return a.lbResolve(b, port)
 		},

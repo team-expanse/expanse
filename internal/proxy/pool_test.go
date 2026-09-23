@@ -3,25 +3,35 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
 )
 
-// fakeSource is a minimal in-memory Source feeding the watch loop.
+// fakeSource is a minimal in-memory Source feeding the watch loop. Like
+// boltstore's real Watch, each call registers its own prefix-filtered
+// channel — the pool now runs two concurrent watches (blocks, primary
+// leases) that must not steal each other's events off one shared chan.
 type fakeSource struct {
-	mu      sync.Mutex
-	entries map[string][]byte
-	rev     store.Revision
-	ch      chan store.Event
+	mu       sync.Mutex
+	entries  map[string][]byte
+	rev      store.Revision
+	watchers []*fakeWatcher
+}
+
+type fakeWatcher struct {
+	prefix string
+	ch     chan store.Event
 }
 
 func newFakeSource() *fakeSource {
-	return &fakeSource{entries: map[string][]byte{}, ch: make(chan store.Event, 64)}
+	return &fakeSource{entries: map[string][]byte{}}
 }
 
 func (f *fakeSource) Get(ctx context.Context, k store.Key) (*store.Entry, error) {
@@ -47,7 +57,11 @@ func (f *fakeSource) List(ctx context.Context, prefix store.Key) ([]*store.Entry
 }
 
 func (f *fakeSource) Watch(ctx context.Context, prefix store.Key, from store.Revision) (<-chan store.Event, error) {
-	return f.ch, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	w := &fakeWatcher{prefix: string(prefix), ch: make(chan store.Event, 64)}
+	f.watchers = append(f.watchers, w)
+	return w.ch, nil
 }
 
 func (f *fakeSource) Revision(ctx context.Context) (store.Revision, error) {
@@ -56,26 +70,37 @@ func (f *fakeSource) Revision(ctx context.Context) (store.Revision, error) {
 	return f.rev, nil
 }
 
+// broadcast delivers ev to every watcher whose prefix matches, mirroring
+// boltstore.Store.broadcast. Must be called with f.mu held.
+func (f *fakeSource) broadcast(ev store.Event) {
+	key := string(ev.Entry.Key)
+	for _, w := range f.watchers {
+		if strings.HasPrefix(key, w.prefix) {
+			w.ch <- ev
+		}
+	}
+}
+
 // put stores a value and emits a Put event (after a small yield so the
 // pool's seed pass has run).
 func (f *fakeSource) put(t *testing.T, key string, val []byte) {
 	t.Helper()
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.rev++
 	rev := f.rev
 	f.entries[key] = val
-	f.mu.Unlock()
-	f.ch <- store.Event{Type: store.EventPut, Entry: &store.Entry{Key: store.Key(key), Value: val, Revision: rev}}
+	f.broadcast(store.Event{Type: store.EventPut, Entry: &store.Entry{Key: store.Key(key), Value: val, Revision: rev}})
 }
 
 func (f *fakeSource) del(t *testing.T, key string) {
 	t.Helper()
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.rev++
 	rev := f.rev
 	delete(f.entries, key)
-	f.mu.Unlock()
-	f.ch <- store.Event{Type: store.EventDelete, Entry: &store.Entry{Key: store.Key(key), Revision: rev}}
+	f.broadcast(store.Event{Type: store.EventDelete, Entry: &store.Entry{Key: store.Key(key), Revision: rev}})
 }
 
 func blockSpec(t *testing.T, port, target int32) []byte {
@@ -236,6 +261,98 @@ func TestPoolConcurrentReadersDuringRebuild(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// pgBlockSpec is blockSpec plus spec.type, the signal LB wiring (D2)
+// uses to pick a primary-only routing mode.
+func pgBlockSpec(t *testing.T, typ string, port, target int32) []byte {
+	t.Helper()
+	b := &pb.Block{
+		Spec: &pb.BlockSpec{
+			Type: typ,
+			Network: &pb.Network{
+				Ports: []*pb.Port{{
+					Name: "pg", Port: port, TargetPort: target,
+					Protocol: "tcp", Expose: pb.Expose_EXPOSE_VIP,
+				}},
+			},
+		},
+	}
+	out, err := proto.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// leaseJSON encodes a pg-primary lease record exactly as
+// internal/cluster/lease's Manager would store it.
+func leaseJSON(t *testing.T, holder string) []byte {
+	t.Helper()
+	out, err := lease.EncodeForTest(lease.Lease{
+		Holder: holder, ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestPoolTracksPrimaryLease(t *testing.T) {
+	fs := newFakeSource()
+	p := NewPool(fs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = p.Run(ctx) }()
+
+	fs.put(t, "/blocks/default/pg", pgBlockSpec(t, "db/postgres", 5432, 5432))
+	fs.put(t, "/blocks/default/pg/status", statusWith(t, running(0, "n1"), running(1, "n2")))
+
+	deadline := time.Now().Add(5 * time.Second)
+	var svc *Service
+	for time.Now().Before(deadline) {
+		if s := p.Table().Service("default/pg"); s != nil && len(s.Backends) == 2 {
+			svc = s
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if svc == nil {
+		t.Fatalf("service never reached 2 backends: %+v", p.Table().Services)
+	}
+	if svc.Type != "db/postgres" {
+		t.Fatalf("Type = %q, want db/postgres", svc.Type)
+	}
+	if _, ok := svc.Primary(); ok {
+		t.Fatal("Primary() true before any election lease exists")
+	}
+
+	// The election lease names n2 primary: Service.Primary() must follow
+	// it without waiting on any /blocks/ event.
+	fs.put(t, "/leases/pg-primary:default/pg", leaseJSON(t, "n2"))
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, ok := p.Table().Service("default/pg").Primary(); ok && b.NodeID == "n2" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	b, ok := p.Table().Service("default/pg").Primary()
+	if !ok || b.NodeID != "n2" {
+		t.Fatalf("Primary() = %+v, %v; want n2, true", b, ok)
+	}
+
+	// Lease released (owner shut down, or instance disappeared): Primary
+	// must go back to false, not stick to the last known holder.
+	fs.del(t, "/leases/pg-primary:default/pg")
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := p.Table().Service("default/pg").Primary(); !ok {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("Primary() still true after the lease was deleted")
 }
 
 func TestPoolNoVIPPortNoService(t *testing.T) {

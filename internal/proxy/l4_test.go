@@ -26,6 +26,15 @@ func (f *fakeTable) setOne(backends ...Backend) {
 	f.set(&Table{Services: map[string]*Service{"default/web": svc}})
 }
 
+// setOnePrimary is setOne plus a PrimaryNodeID, for PrimaryOnly mode tests.
+func (f *fakeTable) setOnePrimary(primary string, backends ...Backend) {
+	svc := &Service{Key: "default/web", Namespace: "default", Name: "web", Port: 80, TargetPort: 8080, Backends: backends, PrimaryNodeID: primary}
+	for i := range svc.Backends {
+		svc.Backends[i].Healthy = true
+	}
+	f.set(&Table{Services: map[string]*Service{"default/web": svc}})
+}
+
 // fakeBackend is a tiny echo server standing in for a replica.
 type fakeBackend struct {
 	ln net.Listener
@@ -128,6 +137,43 @@ func TestRoundRobinDistribution(t *testing.T) {
 	}
 	if len(seen) != 3 {
 		t.Fatalf("round-robin did not cycle all backends: %v", seen)
+	}
+}
+
+// TestPrimaryOnlyRoutesOnlyToElectedBackend is D2: every request must
+// land on the backend the election lease names, never round-robin
+// across the block's other, non-interchangeable replicas.
+func TestPrimaryOnlyRoutesOnlyToElectedBackend(t *testing.T) {
+	tbl := &fakeTable{}
+	b1 := newFakeBackend(t, "n1")
+	b2 := newFakeBackend(t, "n2")
+	backends := map[string]*fakeBackend{"n1": b1, "n2": b2}
+	tbl.setOnePrimary("n2", backendFor(b1, 0), backendFor(b2, 1))
+	addr := startProxy(t, tbl, backends, PrimaryOnly, 0, DefaultDrainTimeout)
+
+	for i := 0; i < 5; i++ {
+		r, _ := dialProxy(t, addr.String())
+		if got := readReply(t, r); got != "backend-n2" {
+			t.Fatalf("request %d: got %q, want backend-n2 (the elected primary)", i, got)
+		}
+	}
+}
+
+// TestPrimaryOnlyRefusesBeforeElection: no election decided yet (D2's
+// "do not guess" rule) must refuse the connection, not fall back to
+// round-robin across an arbitrary replica.
+func TestPrimaryOnlyRefusesBeforeElection(t *testing.T) {
+	tbl := &fakeTable{}
+	b1 := newFakeBackend(t, "n1")
+	backends := map[string]*fakeBackend{"n1": b1}
+	tbl.setOnePrimary("", backendFor(b1, 0))
+	addr := startProxy(t, tbl, backends, PrimaryOnly, 0, DefaultDrainTimeout)
+
+	r, c := dialProxy(t, addr.String())
+	_ = r
+	c.SetReadDeadline(time.Now().Add(1 * time.Second))
+	if n, _ := c.Read(make([]byte, 32)); n != 0 {
+		t.Fatalf("request reached a backend before any election decided")
 	}
 }
 
