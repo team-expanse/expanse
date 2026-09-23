@@ -67,6 +67,15 @@ func cfgBool(m map[string]any, k string, def bool) bool {
 	return def
 }
 
+// cfgInt reads an integer config key, defaulting to def when absent or
+// not positive.
+func cfgInt(m map[string]any, k string, def int) int {
+	if v, ok := m[k].(float64); ok && v > 0 {
+		return int(v)
+	}
+	return def
+}
+
 // mountPaths decodes the bridge's "--mount name=path" args (bridge.go
 // replicaSpec) into storage name → host mount path. It is the only
 // channel a storage-bound workload has for its own mountPath: --config
@@ -823,5 +832,221 @@ func runWhoami(ctx context.Context, index int, args []string) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 		return nil
+	}
+}
+
+// pgBootstrapTimeout bounds how long a first-ever start waits for the
+// election controller's (internal/blocks/pgha) role decision before
+// giving up — mirrors the same budget nix/blocks/db/postgres/module.nix
+// documents as the production deployment contract's own bootstrap
+// script. That script is not actually exercised by any code path today
+// (module.nix is nix-build-only — every other shipped block type routes
+// through this same expanse-block-run dispatch instead, per main.go's
+// switch); this is that port, kept in step with module.nix by hand.
+const pgBootstrapTimeout = 120 * time.Second
+
+// runPostgres serves db/postgres (PHASE-05-TASKS.md Stream A, X1). On a
+// first-ever start (no PGDATA yet) it waits for the lease-gated
+// election controller's role file and either initdb's a fresh primary
+// or pg_basebackups from the elected one; a restart with PGDATA already
+// initialized skips straight to exec — postgres remembers its own role
+// via standby.signal's presence, and promotion afterward is pg_promote()
+// (D4), not a restart.
+//
+// Runs under DynamicUser (no capability in block.yaml routes it through
+// rootBlockTypes, and postgres refuses outright to run as uid 0 anyway):
+// pgdata's ownership must survive a Restart=on-failure cycle for this to
+// work at all, which depends on systemd reusing the same dynamically
+// allocated uid across that restart rather than minting a fresh one —
+// documented systemd behavior (the allocation is released only when the
+// unit fully stops, not on an in-place auto-restart), not re-verified
+// here; the VM test is what actually exercises a restart against it.
+func runPostgres(ctx context.Context, instance string, args []string) error {
+	cfg, err := cfgMap(args)
+	if err != nil {
+		return err
+	}
+	mountPath := firstMount(mountPaths(args))
+	if mountPath == "" {
+		return fmt.Errorf("db/postgres: no bound storage mount yet")
+	}
+	if err := waitForMount(mountPath, 30*time.Second, 500*time.Millisecond, realStat); err != nil {
+		return fmt.Errorf("db/postgres: %w", err)
+	}
+
+	port := cfgPort(cfg)
+	if port == "0" {
+		port = "5432"
+	}
+	database := cfgStr(cfg, "database")
+	if database == "" {
+		database = "app"
+	}
+	sharedBuffers := cfgStr(cfg, "sharedBuffers")
+	if sharedBuffers == "" {
+		sharedBuffers = "256MB"
+	}
+	maxWalSenders := cfgInt(cfg, "maxWalSenders", 10)
+	maxReplicationSlots := cfgInt(cfg, "maxReplicationSlots", 10)
+	replPassword := cfgStr(cfg, "replicationPassword")
+	superPassword := cfgStr(cfg, "superuserPassword")
+	if replPassword == "" || superPassword == "" {
+		return fmt.Errorf("db/postgres: replicationPassword and superuserPassword are required")
+	}
+
+	stateDir := filepath.Join(mountPath, ".expanse-postgres")
+	sockDir := filepath.Join(stateDir, "sock")
+	pgdata := filepath.Join(mountPath, "pgdata")
+	if err := os.MkdirAll(sockDir, 0o770); err != nil {
+		return fmt.Errorf("db/postgres: %w", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(pgdata, "PG_VERSION")); err != nil {
+		slot := "expanse_" + sanitizeID(instance)
+		if err := bootstrapPostgres(ctx, pgdata, filepath.Join(stateDir, "role"), sockDir,
+			port, database, replPassword, superPassword, slot,
+			sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
+			return fmt.Errorf("db/postgres: %w", err)
+		}
+	}
+
+	fmt.Printf("expanse-block-run: postgres serving on :%s (pgdata=%s)\n", port, pgdata)
+	return execWorkload(ctx, "postgres", []string{"-D", pgdata})
+}
+
+// waitForPGRole polls roleFile until pgha's election controller has
+// written a decision, or timeout elapses. kind is "primary" or
+// "replica"; host/peerport are set only for "replica" (pgha.go's
+// "replica <host> <port>\n" format — the same "read -r kind host
+// peerport" split module.nix's bootstrap script does on whitespace).
+func waitForPGRole(ctx context.Context, roleFile string, timeout, interval time.Duration) (kind, host, peerport string, err error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if data, rerr := os.ReadFile(roleFile); rerr == nil {
+			if fields := strings.Fields(string(data)); len(fields) > 0 {
+				kind = fields[0]
+				if len(fields) >= 3 {
+					host, peerport = fields[1], fields[2]
+				}
+				return kind, host, peerport, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return "", "", "", fmt.Errorf("no role at %s after %s", roleFile, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return "", "", "", ctx.Err()
+		case <-time.After(interval):
+		}
+	}
+}
+
+// pgHBAConf is pg_hba.conf's content for every db/postgres replica:
+// local admin access (the controller, over the unix socket) is trust,
+// everything else must present a password and arrive over the
+// WireGuard overlay (10.42.0.0/16, internal/network/addrplan) — the
+// only network this block's replication/admin traffic ever crosses.
+const pgHBAConf = `local   all             all                                     trust
+host    replication     replicator      10.42.0.0/16            scram-sha-256
+host    all             all             10.42.0.0/16            scram-sha-256
+`
+
+// writePGConf (re)writes pgdata's postgresql.conf and pg_hba.conf.
+// Unconditional on every bootstrap, primary or replica: pg_basebackup's
+// plain-format copy carries the PRIMARY's postgresql.conf into a fresh
+// replica's pgdata too, so this replica's own port/socket-dir/hba
+// settings must overwrite it, not just supply it once.
+func writePGConf(pgdata, sockDir, port, sharedBuffers string, maxWalSenders, maxReplicationSlots int) error {
+	if err := os.WriteFile(filepath.Join(pgdata, "pg_hba.conf"), []byte(pgHBAConf), 0o600); err != nil {
+		return err
+	}
+	conf := fmt.Sprintf(`listen_addresses = '0.0.0.0'
+port = %s
+unix_socket_directories = '%s'
+shared_buffers = %s
+wal_level = replica
+hot_standby = on
+max_wal_senders = %d
+max_replication_slots = %d
+# Required for pg_rewind (PHASE-05-TASKS.md X4) -- a postmaster-context
+# GUC, cheaper to set once at bootstrap than rediscover the need for it
+# in Stream C.
+wal_log_hints = on
+`, port, sockDir, sharedBuffers, maxWalSenders, maxReplicationSlots)
+	return os.WriteFile(filepath.Join(pgdata, "postgresql.conf"), []byte(conf), 0o600)
+}
+
+// pgCmd runs one short postgres-toolchain command to completion,
+// wrapping its combined output into any error for diagnosability — the
+// same shape targetcli() already uses for iscsi/target's one-shot setup
+// commands.
+func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string) error {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// bootstrapPostgres runs the once-ever init sequence module.nix
+// documents: wait for the controller's role decision, then either
+// initdb a fresh primary (and create the replicator role + initial
+// database) or pg_basebackup from the elected primary as a standby.
+func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, database, replPassword, superPassword, slot,
+	sharedBuffers string, maxWalSenders, maxReplicationSlots int) error {
+	kind, host, peerport, err := waitForPGRole(ctx, roleFile, pgBootstrapTimeout, time.Second)
+	if err != nil {
+		return err
+	}
+
+	switch kind {
+	case "primary":
+		pwFile, err := os.CreateTemp("", "expblk-pg-pwfile-*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(pwFile.Name())
+		_, werr := pwFile.WriteString(superPassword)
+		cerr := pwFile.Close()
+		if werr != nil {
+			return werr
+		}
+		if cerr != nil {
+			return cerr
+		}
+		if err := pgCmd(ctx, nil, "", "initdb", "-D", pgdata, "--username=postgres", "--pwfile="+pwFile.Name()); err != nil {
+			return err
+		}
+		if err := writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
+			return err
+		}
+		if err := pgCmd(ctx, nil, "", "pg_ctl", "-D", pgdata, "-w", "start"); err != nil {
+			return err
+		}
+		sql := "CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD :'pass';\nCREATE DATABASE :\"dbname\";\n"
+		createErr := pgCmd(ctx, nil, sql, "psql", "-h", sockDir, "-p", port, "-U", "postgres",
+			"-v", "ON_ERROR_STOP=1", "-v", "pass="+replPassword, "-v", "dbname="+database)
+		if stopErr := pgCmd(ctx, nil, "", "pg_ctl", "-D", pgdata, "-w", "stop"); stopErr != nil && createErr == nil {
+			return stopErr
+		}
+		return createErr
+	case "replica":
+		env := []string{"PGPASSWORD=" + replPassword}
+		if err := pgCmd(ctx, env, "", "pg_basebackup",
+			"-h", host, "-p", peerport, "-U", "replicator",
+			"-D", pgdata, "-Fp", "-Xs", "-R", "-C", "-S", slot); err != nil {
+			return err
+		}
+		return writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots)
+	default:
+		return fmt.Errorf("unrecognised role kind %q in %s", kind, roleFile)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -272,5 +273,130 @@ func TestSanitizeIDReplacesUnsafeCharacters(t *testing.T) {
 	got := sanitizeID("Default/LUN_0")
 	if got != "default-lun-0" {
 		t.Errorf("sanitizeID = %q, want default-lun-0", got)
+	}
+}
+
+// waitForPGRole parses pgha.go's exact role-file formats: "primary\n"
+// (no host/port) and "replica <host> <port>\n".
+func TestWaitForPGRoleParsesPrimary(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "role")
+	if err := os.WriteFile(f, []byte("primary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kind, host, port, err := waitForPGRole(context.Background(), f, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatalf("waitForPGRole: %v", err)
+	}
+	if kind != "primary" || host != "" || port != "" {
+		t.Errorf("got kind=%q host=%q port=%q, want primary/\"\"/\"\"", kind, host, port)
+	}
+}
+
+func TestWaitForPGRoleParsesReplica(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "role")
+	if err := os.WriteFile(f, []byte("replica 10.42.0.5 5432\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kind, host, port, err := waitForPGRole(context.Background(), f, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatalf("waitForPGRole: %v", err)
+	}
+	if kind != "replica" || host != "10.42.0.5" || port != "5432" {
+		t.Errorf("got kind=%q host=%q port=%q, want replica/10.42.0.5/5432", kind, host, port)
+	}
+}
+
+// A role decision that lands after the poll has already started (the
+// election controller races the bootstrap script exactly this way in
+// production) must still be picked up, not just a role file present
+// from the very first check.
+func TestWaitForPGRoleWaitsForTheFileToAppear(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "role")
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = os.WriteFile(f, []byte("primary\n"), 0o600)
+	}()
+	kind, _, _, err := waitForPGRole(context.Background(), f, time.Second, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("waitForPGRole: %v", err)
+	}
+	if kind != "primary" {
+		t.Errorf("kind = %q, want primary", kind)
+	}
+}
+
+func TestWaitForPGRoleTimesOutWhenNoRoleAppears(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "role")
+	_, _, _, err := waitForPGRole(context.Background(), f, 20*time.Millisecond, time.Millisecond)
+	if err == nil {
+		t.Fatal("want a timeout error, got nil")
+	}
+}
+
+func TestWaitForPGRoleReturnsOnContextCancel(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "role")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, _, err := waitForPGRole(ctx, f, time.Second, time.Millisecond)
+	if err == nil {
+		t.Fatal("want an error on an already-canceled context, got nil")
+	}
+}
+
+// writePGConf must be safe to call unconditionally on every bootstrap
+// (primary or replica): a replica's pg_basebackup copies the PRIMARY's
+// postgresql.conf into its own pgdata first, so this must overwrite it
+// with the replica's own port/socket-dir settings, not just supply a
+// file that happens not to exist yet.
+func TestWritePGConfOverwritesAnExistingConf(t *testing.T) {
+	pgdata := t.TempDir()
+	stale := "listen_addresses = '127.0.0.1'\nport = 9999\n"
+	if err := os.WriteFile(filepath.Join(pgdata, "postgresql.conf"), []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePGConf(pgdata, "/mnt/pg/.expanse-postgres/sock", "5432", "256MB", 10, 10); err != nil {
+		t.Fatalf("writePGConf: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(pgdata, "postgresql.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "9999") {
+		t.Errorf("stale port survived overwrite: %s", got)
+	}
+	for _, want := range []string{"port = 5432", "shared_buffers = 256MB", "max_wal_senders = 10",
+		"unix_socket_directories = '/mnt/pg/.expanse-postgres/sock'"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("postgresql.conf missing %q:\n%s", want, got)
+		}
+	}
+	hba, err := os.ReadFile(filepath.Join(pgdata, "pg_hba.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hba), "10.42.0.0/16") {
+		t.Errorf("pg_hba.conf missing the overlay CIDR: %s", hba)
+	}
+}
+
+// pgCmd folds a failing command's combined output into the returned
+// error — the only way a bootstrap failure (a bad initdb flag, an
+// unreachable primary) is diagnosable from the unit's own journal.
+func TestPgCmdWrapsCombinedOutputOnFailure(t *testing.T) {
+	err := pgCmd(context.Background(), nil, "", "sh", "-c", "echo boom >&2; exit 1")
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("error missing command output: %v", err)
+	}
+}
+
+func TestPgCmdPassesStdinAndEnv(t *testing.T) {
+	err := pgCmd(context.Background(), []string{"FOO=bar"}, "hello\n", "sh", "-c",
+		`read -r line; [ "$line" = hello ] && [ "$FOO" = bar ]`)
+	if err != nil {
+		t.Fatalf("pgCmd: %v", err)
 	}
 }

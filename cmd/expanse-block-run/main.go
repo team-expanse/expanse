@@ -17,11 +17,13 @@
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
+//   - db/postgres: upstream postgres, bootstrapped per the lease-gated
+//     election controller's role file (internal/blocks/pgha) — initdb a
+//     fresh primary, or pg_basebackup from the elected one
 //   - anything else: idle placeholder (unknown catalog types have no
 //     runtime contract yet; they come up healthy but idle)
 //
-// Pipeline (deploy → placed → unit running → Running) observable;
-// module.nix remains the production deployment contract.
+// Pipeline (deploy → placed → unit running → Running) observable.
 package main
 
 import (
@@ -107,6 +109,11 @@ func main() {
 		}
 	case "iscsi/target":
 		if err := runISCSITarget(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "db/postgres":
+		if err := runPostgres(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
