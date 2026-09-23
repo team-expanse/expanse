@@ -82,9 +82,13 @@ continue and the data verifies.
 
 **Goal:** premise feature 4, third of three.
 
-- LIO target over a raw DRBD volume, ALUA multipath, persistent reservations.
+- LIO target over a raw DRBD volume, `SINGLETON` + VIP failover (not ALUA multipath — a DRBD
+  Secondary refuses to open a backstore at all, ruling it out; see `PHASE-04-TASKS.md` D1),
+  persistent reservations.
 
-**Exit:** an initiator sustains I/O through a node kill with no corruption.
+**Exit:** an initiator sustains I/O through a node kill with no corruption — met, see
+`PHASE-04-TASKS.md` Stream D. (Persistent reservations do not currently survive that failover,
+measured directly, non-blocking per the phase's own exit criteria — see Stream C/D and D4.)
 
 ## Phase 5 — Database and service blocks
 

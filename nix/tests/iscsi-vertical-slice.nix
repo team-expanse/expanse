@@ -1,17 +1,16 @@
-# PHASE-04-TASKS.md Stream C (X2, the phase's decider; X4): a SINGLETON
-# iscsi/target block survives a hard kill of the node serving it -- the
-# VIP moves, DRBD promotes on the survivor, and the initiator's own
-# open-iscsi session recovery resumes writes without a manual re-login
-# (the same "slow path" share-smb-failover.nix already proved for
-# SINGLETON, PHASE-03-TASKS.md Stream B2). A second sub-test measures
-# whether a SCSI-3 persistent reservation survives the same failover
-# (X4, not a release gate -- see D4).
+# PHASE-04-TASKS.md Stream D (D1): the phase-closing vertical slice --
+# X1, X2, X4 and X5 all proven in one combined scenario, the way
+# ui-vertical-slice.nix closed Phase 2 and Phase 3's (paused) D1 would
+# have closed Phase 3 per-protocol. Unlike Stream C's
+# iscsi-target-failover.nix, the kill lands the instant the write loop
+# is confirmed flowing, with no internal placement/DRBD/VIP-settle
+# checks assumed beforehand -- "kill mid-deploy, not after".
 { self }:
 { pkgs, lib, ... }:
 let
-  lint = pkgs.runCommand "iscsi-target-failover-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+  lint = pkgs.runCommand "iscsi-vertical-slice-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
-    for f in ${./cluster-common.py} ${./block-common.py} ${./client-common.py} ${./python/vol_cluster.py} ${./python/iscsi_common.py} ${./python/iscsi_target_failover.py}; do
+    for f in ${./cluster-common.py} ${./block-common.py} ${./client-common.py} ${./python/vol_cluster.py} ${./python/iscsi_common.py} ${./python/iscsi_vertical_slice.py}; do
       python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
     done
     touch $out
@@ -47,26 +46,22 @@ let
   };
 in
 {
-  name = "expanse-iscsi-target-failover";
+  name = "expanse-iscsi-vertical-slice";
 
   nodes = {
     n1 = { ... }: nodeCommon 1;
     n2 = { ... }: nodeCommon 2;
     n3 = { ... }: nodeCommon 3;
-    # The external initiator: a plain machine on the same LAN, no
-    # expanse. Named "n9" so the driver's name-sorted eth1 assignment
-    # leaves 192.168.1.1-.3 for the cluster nodes (iscsi-target.nix
-    # convention). sg3_utils: sg_persist, the standard initiator-side
-    # tool for issuing SCSI-3 PERSISTENT RESERVE commands (X4) -- a test
-    # dependency only, not a production one (D1's revision dropped
-    # multipath-tools/sg3_utils from the production posture; this is the
-    # unrelated, initiator-side PR tool, not multipath tooling).
+    # The external initiator (iscsi-target-failover.nix convention: n9,
+    # so the driver's name-sorted eth1 assignment leaves 192.168.1.1-.3
+    # for the cluster nodes). sg3_utils: sg_persist, test-only (D1's
+    # revision dropped multipath tooling, not PR tooling).
     n9 = { ... }: {
       virtualisation.memorySize = 1024;
       networking.firewall.enable = false;
       services.openiscsi = {
         enable = true;
-        name = "iqn.2020-08.org.linux-iscsi.initiator:failover";
+        name = "iqn.2020-08.org.linux-iscsi.initiator:vslice";
       };
       environment.systemPackages = [ pkgs.curl pkgs.sg3_utils ];
     };
@@ -81,6 +76,6 @@ in
     ${builtins.readFile ./python/vol_cluster.py}
     ${builtins.readFile ./python/iscsi_common.py}
     VIP_POOL = ${builtins.toJSON vipPool}
-    ${builtins.readFile ./python/iscsi_target_failover.py}
+    ${builtins.readFile ./python/iscsi_vertical_slice.py}
   '';
 }
