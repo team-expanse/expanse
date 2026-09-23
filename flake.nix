@@ -123,6 +123,10 @@
           # ROADMAP.md Phase 4 (iSCSI) Stream A prerequisite.
           daemonset-raw-colocation = mkTest "daemonset-raw-colocation" ./nix/tests/daemonset-raw-colocation.nix;
 
+          # Probe (Phase 4 D1): not a gate.
+          iscsi-lio-drbd-secondary-probe =
+            mkTest "iscsi-lio-drbd-secondary-probe" ./nix/tests/iscsi-lio-drbd-secondary-probe.nix;
+
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
           net-vip-basic = mkTest "net-vip-basic" ./nix/tests/net-vip-basic.nix;
