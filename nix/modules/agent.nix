@@ -136,6 +136,12 @@ in
       # rtslib-fb's dbroot (iscsi/target, PHASE-04-TASKS.md Stream B) —
       # see expanse-block-root@.service's ReadWritePaths comment.
       "d /etc/target 0700 root root -"
+      # LIO's PR subsystem opens /etc/target/pr/aptpl_<wwn> on any
+      # persistent-reservation registration, not only when APTPL is
+      # explicitly requested (PHASE-04-TASKS.md Stream C, X4) --
+      # missing this directory surfaces to the initiator as a generic
+      # "Device not ready" on PERSISTENT RESERVE OUT.
+      "d /etc/target/pr 0700 root root -"
     ];
 
     # Block replica runtime (Phase 04 T21): one static template unit —

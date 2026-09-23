@@ -129,6 +129,9 @@
 
           # Phase 4 (iSCSI) Stream B (X1).
           iscsi-target = mkTest "iscsi-target" ./nix/tests/iscsi-target.nix;
+          # Phase 4 (iSCSI) Stream C (X2, the decider; X4).
+          iscsi-target-failover =
+            mkTest "iscsi-target-failover" ./nix/tests/iscsi-target-failover.nix;
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
