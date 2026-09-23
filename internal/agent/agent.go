@@ -38,6 +38,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/catalog"
 	"github.com/expanse/expanse/internal/blocks/controller"
 	"github.com/expanse/expanse/internal/blocks/logs"
+	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/service"
 	"github.com/expanse/expanse/internal/blocks/validate"
@@ -208,6 +209,9 @@ type Agent struct {
 	lbPool   *proxy.Pool
 	nodeMu   sync.Mutex
 	nodeAddr map[string]nodeAddr
+
+	// PostgreSQL primary election (PHASE-05-TASKS.md D1, internal/agent/pgha.go).
+	pgCtl *pgha.Controller
 
 	status   atomic.Value // string
 	shutdown atomic.Value // chan struct{}
@@ -696,6 +700,13 @@ func (a *Agent) Run(ctx context.Context) error {
 		go a.vipLoop(ctx)
 		go a.uiVIPLoop(ctx) // A3: the web UI's own VIP, independent of block VIPs
 		a.initDNS(ctx)
+	}
+
+	// PostgreSQL primary election (D1). Cluster nodes only, same as
+	// VIP holders: a single-node agent has no lease manager worth
+	// electing against, and witnesses never host replicas.
+	if a.ctl != nil && !witness {
+		go a.pgLoop(ctx)
 	}
 	if a.ctl != nil && a.cfg.Firewall && !witness {
 		a.initFirewall(ctx)
