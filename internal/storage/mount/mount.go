@@ -162,14 +162,27 @@ func (m *Manager) mountedFrom(ctx context.Context, host string) (string, error) 
 	return "", fmt.Errorf("findmnt %s: %w", host, err)
 }
 
-// Observe implements reconcile.Manager: in sync when the device is mounted at the
-// host path and the filesystem fills it.
+// isRaw reports whether fs means "bare device, no filesystem" (PHASE-04-TASKS.md
+// D3) — empty is bundled with "none" since it is never a real caller's intent to
+// mount an unlabeled device without knowing its type, only to leave it alone.
+func isRaw(fs string) bool {
+	return fs == "" || fs == "none"
+}
+
+// Observe implements reconcile.Manager: a filesystem-backed volume is in sync
+// once mounted at the host path and the filesystem fills it; a raw volume
+// (D3) is in sync as soon as it resolves under this node's Primary role,
+// since nothing is ever mounted for it to check.
 func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.Observed, error) {
 	spec := r.(*mountRes).spec
 	o := reconcile.Observed{Exists: true, Health: reconcile.HealthDegraded, Details: map[string]string{}}
 	dev, err := m.device(ctx, spec.VolID)
 	if err != nil {
 		o.Details["reason"] = err.Error()
+		return o, nil
+	}
+	if isRaw(spec.Filesystem) {
+		o.Health, o.InSync = reconcile.HealthHealthy, true
 		return o, nil
 	}
 	src, err := m.mountedFrom(ctx, HostPath(m.Base, spec.VolID))
@@ -247,6 +260,12 @@ func (m *Manager) attach(ctx context.Context, spec Resource) error {
 	if err != nil {
 		return err
 	}
+	// A raw consumer (D3) gets the bare device, never a directory mount:
+	// `mount` without a filesystem type to autodetect would just fail
+	// against a genuinely raw device, and there is nothing to format.
+	if isRaw(spec.Filesystem) {
+		return nil
+	}
 	if err := m.ensureFilesystem(ctx, dev, spec.Filesystem); err != nil {
 		return err
 	}
@@ -276,7 +295,7 @@ func (m *Manager) ensureFilesystem(ctx context.Context, dev, fs string) error {
 	if err != nil && exitCode(err) != 2 {
 		return fmt.Errorf("blkid %s: %w", dev, err)
 	}
-	if fs == "" || fs == "none" {
+	if isRaw(fs) {
 		return nil
 	}
 	if _, err := m.Run.Run(ctx, "cmp", "-n", strconv.Itoa(blankProbeBytes), "/dev/zero", dev); err != nil {

@@ -256,11 +256,32 @@ func TestP12VolumeColocation(t *testing.T) {
 	if ok, _ := single(t, n, req); !ok {
 		t.Error("node with a healthy replica of the bound volume rejected")
 	}
-	// Non-SINGLETON strategies are unaffected by P12 even with no replica.
+	// PRIMARY_REPLICA is unaffected by P12 even with no replica.
 	req.Block.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_PRIMARY_REPLICA}
 	n.HealthyVolumes = nil
 	if ok, r := single(t, n, req); !ok {
 		t.Errorf("non-SINGLETON block wrongly gated by P12; reason=%q", r)
+	}
+}
+
+// TestP12VolumeColocationAppliesToDaemonset is the regression test for
+// PHASE-04-TASKS.md D2: a DAEMONSET block needs the same colocation guarantee
+// SINGLETON already has, since a DAEMONSET replica with no local replica has
+// nothing to export (e.g. an iSCSI target with no local backstore device).
+func TestP12VolumeColocationAppliesToDaemonset(t *testing.T) {
+	req := baseReq()
+	req.Block.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_DAEMONSET}
+	req.Block.Spec.Storage = []*pb.Storage{{Name: "lun", Size: "10Gi"}}
+	vname := expstorage.BlockVolumeName("default", "web", "lun")
+	n := baseNode("n1")
+	n.FreeDisk = bytesOf("100Gi")
+
+	if ok, r := single(t, n, req); ok || !strings.Contains(r, CodeVolumeNotLocal) {
+		t.Errorf("DAEMONSET node with no volume replica accepted; reason=%q", r)
+	}
+	n.HealthyVolumes = []string{vname}
+	if ok, _ := single(t, n, req); !ok {
+		t.Error("DAEMONSET node with a healthy replica of the bound volume rejected")
 	}
 }
 

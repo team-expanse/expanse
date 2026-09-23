@@ -147,7 +147,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 					VolID:      v.id,
 					Name:       st.GetName(),
 					MountPath:  st.GetMountPath(),
-					Filesystem: "ext4",
+					Filesystem: storageFilesystem(st),
 				})
 				akey := resourcePrefix + p.GetNodeId() + "/resources/" + expmount.Type + ":" + v.id
 				want[akey] = append([]byte("type: "+expmount.Type+"\n"), ares...)
@@ -254,7 +254,13 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 	}
 	for _, st := range blk.GetSpec().GetStorage() {
 		v, ok := vols[expstorage.BlockVolumeName(ns, name, st.GetName())]
-		if !ok || st.GetMountPath() == "" {
+		if !ok || st.GetMountPath() == "" || st.GetFilesystem() == "none" {
+			// A raw (D3) entry is never mounted at its host path (see
+			// mount.Manager.attach), so that directory is always empty —
+			// bind-mounting it into the sandbox would hand the workload
+			// nothing useful. Raw storage needs device-level access, not
+			// a directory bind; that plumbing is Stream B's, not this
+			// generic bridge path's (PHASE-04-TASKS.md D3).
 			continue
 		}
 		host := expmount.HostPath("", v.id)
@@ -279,6 +285,17 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 var rootBlockTypes = map[string]bool{
 	"share/smb": true,
 	"share/nfs": true,
+}
+
+// storageFilesystem is the mount.Resource filesystem for a storage entry:
+// the block's own declared value, or "ext4" if unset (PHASE-04-TASKS.md D3
+// — the pre-D3 hardcoded default, preserved so every existing block keeps
+// its current behavior unchanged).
+func storageFilesystem(st *pb.Storage) string {
+	if fs := st.GetFilesystem(); fs != "" {
+		return fs
+	}
+	return "ext4"
 }
 
 func splitBlockKey(k string) (ns, name string) {

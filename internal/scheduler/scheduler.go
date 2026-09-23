@@ -177,13 +177,16 @@ func Filter(nodes []NodeView, req ReplicaRequest, cfg OvercommitConfig) (candida
 				fmt.Sprintf("arch %q not in supported arches %s", n.Arch, strings.Join(req.Arches, ", ")))
 			continue
 		}
-		// P12 — a SINGLETON block with bound storage may only place on a
-		// node that already holds a healthy replica of every bound
-		// volume: active/passive failover (PHASE-03-TASKS.md D2)
-		// promotes wherever the block runs, so a node that cannot
-		// promote is not a real candidate, not merely a lower-scored one.
-		if req.Block.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_SINGLETON {
-			if missing := missingVolumes(req.Block, n.HealthyVolumes); len(missing) > 0 {
+		// P12 — a SINGLETON or DAEMONSET block with bound storage may
+		// only place on a node that already holds a healthy replica of
+		// every bound volume: SINGLETON's active/passive failover
+		// (PHASE-03-TASKS.md D2) promotes wherever the block runs, and
+		// DAEMONSET (PHASE-04-TASKS.md D2) runs one replica per candidate
+		// node, so either way a node that cannot host a local replica has
+		// nothing to serve, not merely a lower score.
+		kind := req.Block.GetSpec().GetStrategy().GetKind()
+		if kind == pb.StrategyKind_SINGLETON || kind == pb.StrategyKind_DAEMONSET {
+			if missing := MissingVolumes(req.Block, n.HealthyVolumes); len(missing) > 0 {
 				reject(reasons, n.ID, CodeVolumeNotLocal,
 					fmt.Sprintf("missing a healthy replica of bound volume(s): %s", strings.Join(missing, ", ")))
 				continue
@@ -297,12 +300,15 @@ func missingStrings(required, have []string) []string {
 	return missing
 }
 
-// missingVolumes returns the bound storage entries (P12) with no matching
-// entry in have (a node's healthy-volume set) — matched by each volume's
+// MissingVolumes returns the bound storage entries (P12, and
+// PHASE-04-TASKS.md D2's DAEMONSET generalization) with no matching entry
+// in have (a node's healthy-volume set) — matched by each volume's
 // auto-provisioned composite name (expstorage.BlockVolumeName), the same
 // name reconcileBlocks creates it under and bridge.go looks it up by, not
-// the storage entry's own raw name.
-func missingVolumes(blk *pb.Block, have []string) []string {
+// the storage entry's own raw name. Exported so the DAEMONSET placement
+// path (internal/blocks/controller) can apply the identical rule without
+// a second, potentially-diverging implementation.
+func MissingVolumes(blk *pb.Block, have []string) []string {
 	ns, name := blk.GetMetadata().GetNamespace(), blk.GetMetadata().GetName()
 	var missing []string
 	for _, s := range blk.GetSpec().GetStorage() {

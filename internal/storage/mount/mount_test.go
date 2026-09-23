@@ -171,6 +171,46 @@ func TestAttachLeavesARawDeviceAlone(t *testing.T) {
 	}
 }
 
+// TestAttachNeverMountsARawDevice is the regression test for
+// PHASE-04-TASKS.md D3: a raw consumer (e.g. an iSCSI LUN backstore) is
+// handed the bare device, never a directory mount — attempting `mount` on a
+// device with no filesystem signature to autodetect would just fail in
+// reality, a bug the fake host in this suite otherwise masks.
+func TestAttachNeverMountsARawDevice(t *testing.T) {
+	for _, fs := range []string{"", "none"} {
+		h := newHost()
+		if err := manager(h, drbd.RolePrimary).attach(context.Background(), spec(fs)); err != nil {
+			t.Fatal(err)
+		}
+		if h.ran("mount") {
+			t.Errorf("filesystem %q must never be mounted as a directory: %v", fs, h.calls)
+		}
+	}
+}
+
+// TestObserveIsInSyncForARawDeviceOnceItIsPrimary is the counterpart to
+// TestObserveIsInSyncOnlyOnceMountedAtFullSize for a raw consumer: since
+// nothing is ever mounted, "in sync" means the device resolves under this
+// node's Primary role, not that findmnt shows a mount.
+func TestObserveIsInSyncForARawDeviceOnceItIsPrimary(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	r, err := m.Load("volume-mount:"+volID, []byte(`{"volId":"vol-a","mountPath":"/x","filesystem":"none"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := m.Observe(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.InSync || o.Health != reconcile.HealthHealthy {
+		t.Fatalf("want a raw device on the Primary node in sync, got %+v", o)
+	}
+	if h.ran("mount") || h.ran("findmnt") {
+		t.Fatalf("observing a raw device must never attempt a mount check: %v", h.calls)
+	}
+}
+
 // Opening a DRBD device on a Secondary would promote it behind the lease's back.
 func TestAttachTouchesNothingUnlessThisNodeIsPrimary(t *testing.T) {
 	for _, role := range []drbd.Role{drbd.RoleSecondary, drbd.RoleUnknown} {

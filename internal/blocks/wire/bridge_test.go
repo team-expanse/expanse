@@ -318,6 +318,127 @@ func TestBridgeMountsTheVolumeOnItsPrimaryOnly(t *testing.T) {
 	}
 }
 
+// TestBridgeAttachResourceUsesTheStorageEntrysDeclaredFilesystem is the
+// regression test for PHASE-04-TASKS.md D3: the §4.7 host-level attach
+// resource must carry the block's own declared filesystem, not a hardcoded
+// "ext4" that silently ignores it (the bug that made mount.Resource's
+// "none" raw path dead code — nothing ever called it).
+func TestBridgeAttachResourceUsesTheStorageEntrysDeclaredFilesystem(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080)
+	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blk pb.Block
+	if err := proto.Unmarshal(e.Value, &blk); err != nil {
+		t.Fatal(err)
+	}
+	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data", Filesystem: "none"}}
+	out, err := proto.Marshal(&blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
+		t.Fatal(err)
+	}
+	vname := expstorage.BlockVolumeName("default", "web", "data")
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: vname, Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e2, err := st.Get(ctx, store.Key("/node/n1/resources/"+expmount.Type+":vol-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, _ := bytes.Cut(e2.Value, []byte("\n"))
+	var res expmount.Resource
+	if err := json.Unmarshal(payload, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Filesystem != "none" {
+		t.Errorf("Filesystem = %q, want the block's own declared %q", res.Filesystem, "none")
+	}
+}
+
+// TestBridgeAttachResourceDefaultsToExt4 confirms the pre-D3 hardcoded
+// behavior is preserved for a block that declares no filesystem at all.
+func TestBridgeAttachResourceDefaultsToExt4(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080)
+	seedVolume(t, ctx, st, "n1")
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e, err := st.Get(ctx, store.Key("/node/n1/resources/"+expmount.Type+":vol-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, _ := bytes.Cut(e.Value, []byte("\n"))
+	var res expmount.Resource
+	if err := json.Unmarshal(payload, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Filesystem != "ext4" {
+		t.Errorf("Filesystem = %q, want the default %q", res.Filesystem, "ext4")
+	}
+}
+
+// TestBridgeOmitsTheDirectoryBindForARawStorageEntry is the regression test
+// for PHASE-04-TASKS.md D3's other half: a raw entry's host path is never
+// mounted (mount.Manager.attach skips it), so bind-mounting that always-
+// empty directory into the workload's sandbox would be actively misleading,
+// not merely incomplete — the workload needs the device itself (Stream B),
+// not a directory bind this phase does not yet provide.
+func TestBridgeOmitsTheDirectoryBindForARawStorageEntry(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080)
+	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blk pb.Block
+	if err := proto.Unmarshal(e.Value, &blk); err != nil {
+		t.Fatal(err)
+	}
+	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data", Filesystem: "none"}}
+	out, err := proto.Marshal(&blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
+		t.Fatal(err)
+	}
+	vname := expstorage.BlockVolumeName("default", "web", "data")
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: vname, Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e2, err := st.Get(ctx, store.Key("/node/n1/resources/block-replica:default/web/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(e2.Value, []byte("--mount")) {
+		t.Errorf("--mount arg present for a raw storage entry: %s", e2.Value)
+	}
+}
+
 // Regression test: a volume named after the storage entry's own raw name
 // ("data") instead of its auto-provisioned composite name
 // (expstorage.BlockVolumeName) must NOT be picked up — this was the actual

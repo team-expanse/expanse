@@ -170,6 +170,11 @@ message Storage {
   string mount_path = 5;
   // rwx requires a shared-capable class (V13).
   AccessMode access_mode = 6;
+  // "ext4" | "xfs" | "none" (PHASE-04-TASKS.md D3). Empty defaults to
+  // "ext4". "none" is a raw block device: no filesystem is created or
+  // mounted, and mount_path is ignored — the workload is handed the bare
+  // device path instead (e.g. an iSCSI target's LUN backstore).
+  string filesystem = 7;
 }
 
 // Placement constrains scheduling.

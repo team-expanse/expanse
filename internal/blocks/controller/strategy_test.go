@@ -9,6 +9,7 @@ import (
 
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/scheduler"
+	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
@@ -204,6 +205,45 @@ func TestDaemonsetSkipsWitness(t *testing.T) {
 	}
 	if placementOn(s, "n3") != nil {
 		t.Error("witness node got a placement")
+	}
+}
+
+// TestDaemonsetRespectsVolumeColocation is the regression test for
+// PHASE-04-TASKS.md D2: a DAEMONSET block bound to storage must not place
+// on a node lacking a healthy replica of it. placeDaemonset never called
+// the scheduler at all — only an inline Ready/Cordoned/Witness check — so
+// scheduler.go's own P12 generalization to DAEMONSET (already unit-tested
+// in the scheduler package) was unreachable from the real control path
+// until this wiring. Found the same way Phase 3's A1 found its three
+// defects: the first real exerciser of a combination nothing had driven
+// before (DAEMONSET plus bound storage).
+func TestDaemonsetRespectsVolumeColocation(t *testing.T) {
+	ctx := context.Background()
+	b := daemonsetBlock("dsv")
+	b.Spec.Storage = []*pb.Storage{{Name: "lun", Size: "1Gi"}}
+	st := newStore(t)
+	mustCreate(t, ctx, st, b)
+
+	vname := storage.BlockVolumeName("default", "dsv", "lun")
+	nodes := nodeViews(3)
+	nodes[0].HealthyVolumes = []string{vname} // n1
+	nodes[1].HealthyVolumes = []string{vname} // n2
+	// n3 has no healthy replica at all.
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodes, testCfg(), nil
+	})
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := loadStatus(t, ctx, st, "default", "dsv")
+	if got := len(s.GetPlacements()); got != 2 {
+		t.Fatalf("placements = %d, want 2 (n3 has no healthy replica): %v", got, s.GetPlacements())
+	}
+	if placementOn(s, "n3") != nil {
+		t.Error("n3 (no healthy replica) got a placement")
+	}
+	if placementOn(s, "n1") == nil || placementOn(s, "n2") == nil {
+		t.Error("n1/n2 (healthy replica) did not get a placement")
 	}
 }
 

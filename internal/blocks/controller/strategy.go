@@ -132,16 +132,24 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 // placeDaemonset keeps exactly one placement per eligible node: Ready,
 // non-witness (G4.11 daemonset clause). Cordon is ignored by default
 // (spec §4.4: daemonsets place regardless of drain state unless the
-// caller drains via Phase 05). New nodes auto-extend on the next pass;
-// removed nodes are culled, with the runtime stop hook fired per cull
-// (Phase 05 wires the real stop; the hook defaults to a no-op).
+// caller drains via Phase 05) — this is why placement does not simply
+// delegate to scheduler.Filter's own P1, which rejects a cordoned node
+// unconditionally. New nodes auto-extend on the next pass; removed nodes
+// are culled, with the runtime stop hook fired per cull (Phase 05 wires
+// the real stop; the hook defaults to a no-op).
 func (c *Controller) placeDaemonset(ctx context.Context, b *pb.Block, e store.Entry, status *pb.BlockStatus, nodes []scheduler.NodeView) (int, error) {
 	desired := map[string]bool{}
 	for _, n := range nodes {
 		// §4.4: daemonsets ignore cordon by default — a cordoned but
 		// healthy node still hosts its per-node replica (the wire
 		// marks Ready=false for cordoned nodes, so check Cordoned).
-		if (n.Ready || n.Cordoned) && !n.Witness {
+		//
+		// P12 (PHASE-04-TASKS.md D2): a node lacking a healthy replica
+		// of every bound volume has nothing to serve, so it is not
+		// eligible regardless of readiness — the same rule Filter
+		// applies for SINGLETON, reused via scheduler.MissingVolumes
+		// rather than duplicated here.
+		if (n.Ready || n.Cordoned) && !n.Witness && len(scheduler.MissingVolumes(b, n.HealthyVolumes)) == 0 {
 			desired[n.ID] = true
 		}
 	}
