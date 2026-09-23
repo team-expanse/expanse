@@ -1,0 +1,5 @@
+name: postgres
+version: 1.0.0
+description: PostgreSQL — active-active replicas, streaming replication, lease-gated primary election
+icon: postgres
+capabilities: []

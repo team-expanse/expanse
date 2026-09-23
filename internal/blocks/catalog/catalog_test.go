@@ -487,3 +487,38 @@ func TestLoadShippedBlocksBatch2(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadShippedBlocksBatch3 covers db/postgres (PHASE-05-TASKS.md Stream
+// A): a plain active-active, stateful block whose two secret fields are
+// required, not defaulted.
+func TestLoadShippedBlocksBatch3(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	if !c.HasType("db/postgres") {
+		t.Errorf("shipped catalog missing db/postgres; got %v", c.Types())
+	}
+
+	t.Run("postgres", func(t *testing.T) {
+		good := mustStruct(t, map[string]any{
+			"port":                5432,
+			"database":            "app",
+			"replicationPassword": "s3cret",
+			"superuserPassword":   "als0-s3cret",
+		})
+		if errs := c.ValidateConfig("db/postgres", good); len(errs) != 0 {
+			t.Fatalf("realistic postgres config rejected: %v", errs)
+		}
+		if errs := c.ValidateConfig("db/postgres", mustStruct(t, map[string]any{"port": 5432})); len(errs) == 0 {
+			t.Errorf("missing required replicationPassword/superuserPassword not rejected")
+		}
+		d := c.Defaults("db/postgres")
+		if d["port"] != int(5432) || d["database"] != "app" {
+			t.Errorf("unexpected postgres defaults: %v", d)
+		}
+		if _, ok := d["replicationPassword"]; ok {
+			t.Errorf("replicationPassword must not have a default (it's a secret): %v", d)
+		}
+	})
+}

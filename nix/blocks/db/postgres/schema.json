@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["replicationPassword", "superuserPassword"],
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port postgres listens on, for both client and replication connections"
+    },
+    "database": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the database created on the initial primary at bootstrap"
+    },
+    "replicationPassword": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Password for the internal 'replicator' role standbys use to stream from the primary. Required: pg_hba.conf trusts only the WireGuard overlay CIDR, but a shared secret is still needed since every node is on that overlay"
+    },
+    "superuserPassword": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Password for the postgres superuser over TCP (local Unix-socket admin access, used by the failover controller, is trust and needs no password)"
+    },
+    "sharedBuffers": {
+      "type": "string",
+      "description": "shared_buffers setting, e.g. 256MB"
+    },
+    "maxWalSenders": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "max_wal_senders — must exceed the replica count plus headroom for pg_basebackup"
+    },
+    "maxReplicationSlots": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "max_replication_slots — the controller creates one physical slot per standby"
+    }
+  }
+}
