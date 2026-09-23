@@ -84,7 +84,22 @@ type vipBlock struct {
 }
 
 func (a *Agent) vipPass(ctx context.Context) {
-	desired, cands := a.scanBlocks(ctx)
+	desired, cands, err := a.scanBlocks(ctx)
+	if err != nil {
+		// A failed list (e.g. "raftstore.ForwardRead:linear read rpc
+		// failed" during a leadership change) is NOT "no blocks have a
+		// VIP" -- treating it that way tore down every live holder on
+		// this node on every blip, and a torn-down holder recreated
+		// fresh has no memory of who it was, racing the ACTUAL preferred
+		// candidate for the lease on pure recreate timing. Reproduced
+		// directly in share-smb-failover.nix: repeated read failures
+		// after a node crash (exactly when raft is least settled) kept
+		// flapping the VIP for minutes. Skip this tick entirely instead;
+		// existing holders keep running on their last-known candidate
+		// view and the next successful scan corrects it.
+		a.logger.Warn("vip scan skipped: keeping previous holder state", "err", err)
+		return
+	}
 
 	a.vipMu.Lock()
 	defer a.vipMu.Unlock()
@@ -111,15 +126,17 @@ func (a *Agent) vipPass(ctx context.Context) {
 }
 
 // scanBlocks lists /blocks/, extracts VIP-exposed ports, allocates
-// their addresses, and collects per-VIP ready-replica candidates.
-func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string][]vip.Candidate) {
+// their addresses, and collects per-VIP ready-replica candidates. A
+// non-nil error means the list itself failed -- the caller must not
+// confuse that with "no blocks have a VIP" (see vipPass).
+func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string][]vip.Candidate, error) {
 	desired := map[string]vipBlock{}
 	cands := map[string][]vip.Candidate{}
 
 	ents, err := a.store.List(ctx, store.Key("/blocks/"))
 	if err != nil {
 		a.logger.Error("vip scan: list blocks", "err", err)
-		return desired, cands
+		return nil, nil, err
 	}
 	for _, e := range ents {
 		k := string(e.Key)
@@ -166,7 +183,7 @@ func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string
 		}
 		cands[key] = readyCandidates(&b)
 	}
-	return desired, cands
+	return desired, cands, nil
 }
 
 func firstVIPPort(b *pb.Block) *pb.Port {

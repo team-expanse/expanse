@@ -65,6 +65,10 @@ reachable and the deployment completes — met, see PHASE-02-TASKS E1.
 
 ## Phase 3 — SMB and NFS
 
+**Status: paused partway** (Samba deploy/colocation done; kill-mid-write failover blocked on an
+unresolved bug — see `PHASE-03-TASKS.md` Stream B2). Independent of Phases 4–11 per this roadmap's
+own Parallelism section below; resume when it's worth another look, no earlier phase depends on it.
+
 **Goal:** premise feature 4, two of three.
 
 - Samba block on a DRBD-backed volume; NFSv4.1 export block.

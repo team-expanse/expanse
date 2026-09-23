@@ -133,6 +133,32 @@ func waitForMount(path string, timeout, interval time.Duration, stat statter) er
 	}
 }
 
+// resetSMBEphemeralState wipes and recreates smbd's session/lock/
+// liveness directories (locking.tdb, brlock.tdb, connections.tdb,
+// serverid.tdb and friends) before every start. Those key their records
+// by PID, meaningful only on the host that owns it — left in place
+// across a failover to a different node (D3 puts them on the replicated
+// volume so genuinely durable state, like the identity in privateDir,
+// survives), a stale record is architecturally unsound to keep, since
+// nothing on the new host can ever recognize the old PID as dead. This
+// is what non-ctdb Samba HA setups do for exactly this reason.
+// Investigated but not confirmed as the cause of a separate, still-open
+// failover write bug (PHASE-03-TASKS.md Stream B2) -- kept regardless,
+// since carrying node-local PID state across a failover is wrong on its
+// own terms. privateDir is deliberately not passed here — the caller
+// creates it separately.
+func resetSMBEphemeralState(dirs ...string) error {
+	for _, d := range dirs {
+		if err := os.RemoveAll(d); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // execWorkload runs a binary-backed workload. SIGTERM via ctx is the
 // reconciler's deliberate stop, so a ctx-cancelled exit is not an
 // error.
@@ -365,10 +391,11 @@ func runSMB(ctx context.Context, instance string, args []string) error {
 	// /var/run/samba/ncalrpc if left unset, which does not exist (and
 	// cannot: ProtectSystem=strict) here.
 	rpcDir := filepath.Join(stateDir, "ncalrpc")
-	for _, d := range []string{lockDir, dbDir, cacheDir, privateDir, pidDir, logDir, rpcDir} {
-		if err := os.MkdirAll(d, 0o750); err != nil {
-			return err
-		}
+	if err := resetSMBEphemeralState(lockDir, dbDir, cacheDir, pidDir, logDir, rpcDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(privateDir, 0o750); err != nil {
+		return err
 	}
 	// Share content is a different trust boundary from smbd's own state:
 	// a guest session runs as "nobody" (map to guest, below), which is
@@ -392,7 +419,14 @@ func runSMB(ctx context.Context, instance string, args []string) error {
 	}
 	guestLines := "guest ok = no\n"
 	if guestOk {
-		guestLines = "guest ok = yes\nmap to guest = Bad User\nguest account = nobody\n"
+		// force user/force group: pins every guest connection to one
+		// fixed identity rather than letting Samba resolve it fresh per
+		// session (nixos.wiki's own canonical guest-share example sets
+		// both). Investigated but not confirmed as the cause of a
+		// separate, still-open failover write bug (PHASE-03-TASKS.md
+		// Stream B2) -- kept because it's correct practice regardless.
+		guestLines = "guest ok = yes\nmap to guest = Bad User\nguest account = nobody\n" +
+			"force user = nobody\nforce group = nogroup\n"
 	}
 	validUsersLine := ""
 	if u := cfgStr(cfg, "validUsers"); u != "" {
@@ -425,6 +459,16 @@ func runSMB(ctx context.Context, instance string, args []string) error {
   # covers every address without asking the kernel to list any.
   interfaces = 0.0.0.0/0
   bind interfaces only = no
+  # This block's whole state directory (below) lives on the replicated
+  # volume, by design (D3): a write samba hasn't actually fsynced to the
+  # underlying block device never reaches DRBD, so a hard crash can lose
+  # it outright, not just delay it -- including smbd's OWN identity/
+  # session state (passdb.tdb, secrets.tdb), not only share content.
+  # strict sync + sync always make every write durable before it's
+  # acked, matching this project's durability bar everywhere else
+  # (vol_durability's fsync ledger, fill_paced's conv=fsync).
+  strict sync = yes
+  sync always = yes
   disable spoolss = yes
   load printers = no
   printing = bsd
@@ -436,7 +480,7 @@ func runSMB(ctx context.Context, instance string, args []string) error {
   pid directory = %s
   ncalrpc dir = %s
   log file = %s/log.%%m
-  log level = 1
+  log level = 3
 
 [%s]
   path = %s

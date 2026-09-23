@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -199,6 +200,152 @@ func TestHolderReacquiresAfterLeaseLoss(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// TestHolderReleasesAfterCandidacyLost is the share-smb-failover.nix
+// finding: a SINGLETON block reschedule (not just a VIP handover atop
+// an already-running backend) can move the last ready replica off this
+// node entirely. Without a voluntary release, the lease package's
+// unconditional renewal would let this node keep the VIP forever, since
+// TryAcquire never preempts a still-live lease by preference alone.
+func TestHolderReleasesAfterCandidacyLost(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	var ready atomic.Bool
+	ready.Store(true)
+	h := NewHolder(HolderConfig{
+		Leases: mustLeases(t),
+		Self:   "n1",
+		VIP:    vipAddr,
+		Cands: func() []Candidate {
+			if ready.Load() {
+				return []Candidate{{NodeID: "n1", ReadyReplicas: 1}}
+			}
+			return nil // the block rescheduled off n1
+		},
+		Seams: rec.seams(&tracker{rec: rec}),
+		Retry: 20 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx) }()
+
+	waitFor(t, 2*time.Second, func() bool {
+		calls := rec.snapshot()
+		return len(calls) >= 1 && calls[0] == "AddrAdd "+vipAddr.String()
+	}, "initial acquisition")
+
+	ready.Store(false)
+	waitFor(t, 2*time.Second, func() bool {
+		// onLeaseLost appends AddrDel/ListenerClose/ConnCloseAll as one
+		// synchronous batch, so AddrDel is never the LAST call by the
+		// time this is observed -- check membership, not position.
+		for _, c := range rec.snapshot() {
+			if c == "AddrDel "+vipAddr.String() {
+				return true
+			}
+		}
+		return false
+	}, "voluntary release once candidacy is lost")
+
+	cancel()
+	<-done
+}
+
+// TestHolderToleratesOneMissedCandidateTick guards the debounce: a
+// single transient empty Cands() reading (a raft read blip -- scanBlocks
+// logs exactly this as "vip scan: list blocks ... unavailable") must not
+// flap an otherwise-healthy VIP.
+func TestHolderToleratesOneMissedCandidateTick(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	var miss atomic.Bool
+	h := NewHolder(HolderConfig{
+		Leases: mustLeases(t),
+		Self:   "n1",
+		VIP:    vipAddr,
+		Cands: func() []Candidate {
+			if miss.Load() {
+				miss.Store(false) // exactly one miss, then healthy again
+				return nil
+			}
+			return []Candidate{{NodeID: "n1", ReadyReplicas: 1}}
+		},
+		Seams: rec.seams(&tracker{rec: rec}),
+		Retry: 20 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx) }()
+
+	waitFor(t, 2*time.Second, func() bool {
+		calls := rec.snapshot()
+		return len(calls) >= 1 && calls[0] == "AddrAdd "+vipAddr.String()
+	}, "initial acquisition")
+
+	miss.Store(true)
+	time.Sleep(200 * time.Millisecond) // several retry ticks, one of them a miss
+
+	// Checked BEFORE cancel(): Run's own shutdown also calls onLeaseLost
+	// (a legitimate final AddrDel), which would otherwise mask the bug.
+	for _, c := range rec.snapshot() {
+		if c == "AddrDel "+vipAddr.String() {
+			t.Fatalf("released on a single missed tick: %v", rec.snapshot())
+		}
+	}
+
+	cancel()
+	<-done
+}
+
+// TestExpiredLeaseOverrideRequiresRealCandidacy is the second half of
+// the share-smb-failover.nix finding: the "expired lease overrides
+// preference" fallback used to fire for ANY node once the recorded
+// lease expired, without checking that the challenger itself had a
+// ready replica. A node that never ran the block at all could -- and
+// in the VM test repeatedly did -- win the takeover race against the
+// node that actually hosted it, purely on retry timing.
+func TestExpiredLeaseOverrideRequiresRealCandidacy(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	ttl := 200 * time.Millisecond
+	st, m1 := newLeaseStore(t)
+	held, err := m1.TryAcquire(context.Background(), LeaseName(vipAddr.Addr()), ttl)
+	if err != nil {
+		t.Fatalf("TryAcquire: %v", err)
+	}
+	held.Abandon() // dead holder: the record expires and is never renewed
+
+	h := NewHolder(HolderConfig{
+		Leases: lease.NewManager(st, "n3"),
+		Self:   "n3",
+		VIP:    vipAddr,
+		// n2 (not self) is the block's real, ready candidate -- n3 has
+		// none. A nil Cands() would trip the OUTER "cands != nil" guard
+		// before ever reaching the override, which is a different,
+		// already-covered case (TestHolderNoReadyReplicaNeverAcquires);
+		// this is the actual VM shape: candidates exist, just not self.
+		Cands: func() []Candidate { return []Candidate{{NodeID: "n2", ReadyReplicas: 1}} },
+		Seams: rec.seams(nil),
+		Retry: 20 * time.Millisecond,
+		TTL:   ttl,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx) }()
+
+	time.Sleep(ttl + 500*time.Millisecond) // well past the lease's expiry
+	cancel()
+	<-done
+
+	if calls := rec.snapshot(); len(calls) != 0 {
+		t.Fatalf("a holder with zero ready replicas took over an expired lease: %v", calls)
+	}
 }
 
 func TestPickPreferred(t *testing.T) {

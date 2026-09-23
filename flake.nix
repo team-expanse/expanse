@@ -113,6 +113,12 @@
           # ROADMAP.md Phase 3 (SMB and NFS).
           share-colocation = mkTest "share-colocation" ./nix/tests/share-colocation.nix;
           share-smb = mkTest "share-smb" ./nix/tests/share-smb.nix;
+          # share-smb-failover (Stream B2, X2) is deliberately not wired
+          # in here: it fails on a still-unresolved post-failover
+          # ACCESS_DENIED bug (PHASE-03-TASKS.md Stream B2, paused).
+          # The test file (nix/tests/share-smb-failover.nix) stays in
+          # the tree for whoever resumes Phase 3 -- re-add this line to
+          # run it as a check again.
 
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;

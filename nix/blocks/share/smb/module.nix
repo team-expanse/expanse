@@ -41,6 +41,13 @@ let
       # this line ("Could not determine network interfaces").
       interfaces = 0.0.0.0/0
       bind interfaces only = no
+      # This whole state directory lives on the replicated volume (D3):
+      # a write samba hasn't fsynced to the block device never reaches
+      # DRBD, so a hard crash can lose it outright, not just delay it --
+      # including smbd's OWN identity/session state, not only share
+      # content. Matches this project's durability bar everywhere else.
+      strict sync = yes
+      sync always = yes
       disable spoolss = yes
       load printers = no
       printing = bsd
@@ -62,6 +69,10 @@ let
       read only = ${if readOnly then "yes" else "no"}
       guest ok = ${if guestOk then "yes" else "no"}
       browseable = ${if browseable then "yes" else "no"}
+      # Pins every guest connection to one fixed identity rather than
+      # letting Samba resolve it fresh per session (nixos.wiki's own
+      # canonical guest-share example sets both).
+      ${if guestOk then "force user = nobody\nforce group = nogroup" else ""}
       ${if validUsers != null then "valid users = ${validUsers}" else ""}
   '';
 in

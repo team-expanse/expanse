@@ -28,6 +28,15 @@ const (
 	// AnnounceCount is the number of gratuitous ARP (IPv4) / unsolicited
 	// NA (IPv6) packets sent on acquisition.
 	AnnounceCount = 3
+	// releaseAfterMisses is how many consecutive ticks of "no ready
+	// replica here" a holder tolerates before voluntarily releasing (see
+	// Run's state != nil branch). One miss is not enough: a transient
+	// raft read failure (scanBlocks: "list blocks" unavailable) makes
+	// Cands report empty too, and releasing on that alone would flap a
+	// perfectly healthy VIP. releaseAfterMisses * Retry (default ~6 s)
+	// stays well inside LeaseTTL, so a confirmed loss is still much
+	// faster than waiting out a full renewal-expiry cycle.
+	releaseAfterMisses = 3
 )
 
 // LeaseName is the lease key for a VIP address.
@@ -91,6 +100,17 @@ func ShouldAttempt(self string, holderLease lease.Lease, cands []Candidate) bool
 		}
 	}
 	return selfReady > holderReady
+}
+
+// selfHasReadyReplica reports whether self appears in cands with at
+// least one ready replica.
+func selfHasReadyReplica(self string, cands []Candidate) bool {
+	for _, c := range cands {
+		if c.NodeID == self && c.ReadyReplicas > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ConnTracker drops in-flight connections on demotion. The LB
@@ -181,6 +201,7 @@ func (h *Holder) Run(ctx context.Context) error {
 	waitC := timer.C
 
 	var state *holderState
+	missedTicks := 0
 	defer func() {
 		if state != nil {
 			h.release(ctx, state)
@@ -200,12 +221,22 @@ func (h *Holder) Run(ctx context.Context) error {
 			// detection is needed.
 			l, _, gerr := h.cfg.Leases.Inspect(ctx, LeaseName(h.cfg.VIP.Addr()))
 			should := gerr == nil && ShouldAttempt(h.cfg.Self, l, cands)
-			if !should && gerr == nil && l.Holder != "" && !l.ExpiresAt.IsZero() {
+			if !should && gerr == nil && l.Holder != "" && !l.ExpiresAt.IsZero() &&
+				selfHasReadyReplica(h.cfg.Self, cands) {
 				// Expired lease overrides preference: a holder that has
 				// failed to renew for a full TTL is dead by definition
-				// (renewal runs at TTL/3). Any live candidate may race
+				// (renewal runs at TTL/3). Any live CANDIDATE may race
 				// for it via the takeover CAS — the fence still prevents
 				// split brain, and the winner is whoever commits first.
+				// The selfHasReadyReplica guard is load-bearing, not
+				// redundant with ShouldAttempt's own check: without it, a
+				// node with NO ready replica at all could still win this
+				// takeover on pure timing whenever ShouldAttempt's first
+				// check fails for the OTHER reason (self simply isn't a
+				// candidate, not just "not preferred") -- reproduced
+				// directly in share-smb-failover.nix, where the node
+				// that never ran the block kept winning every takeover
+				// race against the node that actually did, indefinitely.
 				should = time.Now().After(l.ExpiresAt)
 			}
 			if should {
@@ -242,9 +273,28 @@ func (h *Holder) Run(ctx context.Context) error {
 				h.log(h.cfg.Logger.Warn, "lost VIP lease")
 				h.onLeaseLost(state)
 				state = nil
+				missedTicks = 0
 				// Immediately eligible for re-acquisition on the next
 				// tick (e.g. we remain the preferred candidate).
 			default:
+				// The lease package renews unconditionally until
+				// Abandon()ed, with no notion of candidacy -- a block
+				// reschedule (not just a VIP handover atop an
+				// already-running backend) can move the last ready
+				// replica off this node entirely, and without this
+				// check a stale holder would renew forever, since
+				// TryAcquire only ever succeeds against a free or
+				// expired lease (never by preference alone). Debounced
+				// over releaseAfterMisses ticks so one transient scan
+				// failure doesn't flap a healthy VIP.
+				if selfHasReadyReplica(h.cfg.Self, cands) {
+					missedTicks = 0
+				} else if missedTicks++; missedTicks >= releaseAfterMisses {
+					h.log(h.cfg.Logger.Info, "releasing VIP lease: no ready replica remains here")
+					h.onLeaseLost(state)
+					state = nil
+					missedTicks = 0
+				}
 			}
 		}
 

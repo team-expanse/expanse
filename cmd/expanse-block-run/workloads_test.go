@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -95,5 +97,42 @@ func TestWaitForMountRetriesThroughStatErrors(t *testing.T) {
 	}
 	if err := waitForMount("/parent/mnt", time.Second, time.Millisecond, stat); err != nil {
 		t.Fatalf("waitForMount: %v", err)
+	}
+}
+
+// resetSMBEphemeralState must actually discard prior contents (a stale
+// PID-keyed lock/session record from a crashed node's smbd, replicated
+// onto this one via the shared volume, must not survive) while leaving
+// the directory itself present and writable for the new smbd to use.
+func TestResetSMBEphemeralStateDiscardsPriorContents(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "lock")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+	stale := filepath.Join(dir, "locking.tdb")
+	if err := os.WriteFile(stale, []byte("stale pid-keyed record"), 0o640); err != nil {
+		t.Fatalf("setup write: %v", err)
+	}
+
+	if err := resetSMBEphemeralState(dir); err != nil {
+		t.Fatalf("resetSMBEphemeralState: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("locking.tdb: want removed, stat err = %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("dir: want a fresh, present directory, got info=%v err=%v", info, err)
+	}
+}
+
+func TestResetSMBEphemeralStateCreatesMissingDirs(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does", "not", "exist", "yet")
+	if err := resetSMBEphemeralState(dir); err != nil {
+		t.Fatalf("resetSMBEphemeralState: %v", err)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Fatalf("dir: want created, got info=%v err=%v", info, err)
 	}
 }
