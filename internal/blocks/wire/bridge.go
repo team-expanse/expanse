@@ -254,13 +254,20 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 	}
 	for _, st := range blk.GetSpec().GetStorage() {
 		v, ok := vols[expstorage.BlockVolumeName(ns, name, st.GetName())]
-		if !ok || st.GetMountPath() == "" || st.GetFilesystem() == "none" {
+		if !ok || st.GetMountPath() == "" {
+			continue
+		}
+		if st.GetFilesystem() == "none" {
 			// A raw (D3) entry is never mounted at its host path (see
 			// mount.Manager.attach), so that directory is always empty —
 			// bind-mounting it into the sandbox would hand the workload
-			// nothing useful. Raw storage needs device-level access, not
-			// a directory bind; that plumbing is Stream B's, not this
-			// generic bridge path's (PHASE-04-TASKS.md D3).
+			// nothing useful. There is no host-local device path to hand
+			// it either: only the node that ends up running the replica
+			// can resolve /dev/drbdN, once it actually holds DRBD
+			// Primary, so the workload resolves that itself (D3,
+			// PHASE-04-TASKS.md Stream B) — the only thing this
+			// leader-side pass can hand it is the volume's stable ID.
+			spec.Args = append(spec.Args, "--voldev", st.GetName()+"="+v.id)
 			continue
 		}
 		host := expmount.HostPath("", v.id)
@@ -281,10 +288,13 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 // by uid (PHASE-03-TASKS.md D1/D3): smbd setuid()s to the connecting or
 // guest user per session, and nfsd's kernel export/recovery management
 // needs root — neither is a capability DynamicUser's random unprivileged
-// uid can ever hold, no matter the directory permissions.
+// uid can ever hold, no matter the directory permissions. LIO's configfs
+// tree (iscsi/target, PHASE-04-TASKS.md Stream B) is root-only the same
+// way.
 var rootBlockTypes = map[string]bool{
-	"share/smb": true,
-	"share/nfs": true,
+	"share/smb":    true,
+	"share/nfs":    true,
+	"iscsi/target": true,
 }
 
 // storageFilesystem is the mount.Resource filesystem for a storage entry:

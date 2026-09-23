@@ -1,0 +1,5 @@
+# Not 3260: a target is almost always deployed with network.ports[].expose:
+# EXPOSE_VIP, and 3260 is the port initiators connect to on the VIP itself —
+# LIO must listen on a different port internally (matching target_port) or
+# the VIP holder's own listen check collides with it. See schema.json.
+port: 33260

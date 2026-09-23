@@ -1,0 +1,5 @@
+name: target
+version: 1.0.0
+description: iSCSI target (LIO) — a raw DRBD-backed volume exported as a block LUN, active/passive
+icon: iscsi
+capabilities: []

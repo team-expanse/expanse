@@ -127,6 +127,9 @@
           iscsi-lio-drbd-secondary-probe =
             mkTest "iscsi-lio-drbd-secondary-probe" ./nix/tests/iscsi-lio-drbd-secondary-probe.nix;
 
+          # Phase 4 (iSCSI) Stream B (X1).
+          iscsi-target = mkTest "iscsi-target" ./nix/tests/iscsi-target.nix;
+
           # Phase 05 (network).
           net-mesh = mkTest "net-mesh" ./nix/tests/net-mesh.nix;
           net-vip-basic = mkTest "net-vip-basic" ./nix/tests/net-vip-basic.nix;

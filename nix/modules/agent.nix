@@ -131,7 +131,12 @@ in
     # directory once a volume actually lands on this node, so a node
     # hosting no replica yet would otherwise never be able to start any
     # block replica at all.
-    systemd.tmpfiles.rules = [ "d /var/lib/expanse/volumes 0755 root root -" ];
+    systemd.tmpfiles.rules = [
+      "d /var/lib/expanse/volumes 0755 root root -"
+      # rtslib-fb's dbroot (iscsi/target, PHASE-04-TASKS.md Stream B) —
+      # see expanse-block-root@.service's ReadWritePaths comment.
+      "d /etc/target 0700 root root -"
+    ];
 
     # Block replica runtime (Phase 04 T21): one static template unit —
     # per-replica identity arrives via %i, and the node agent writes the
@@ -212,8 +217,41 @@ in
         # host mount (§4.7) to actually read/write it — the shared,
         # static ReadWritePaths grant BOTH block unit templates rely on
         # (see the ordinary template's own copy of this comment).
-        ReadWritePaths=/var/lib/expanse/volumes
-        RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+        # /etc/target: rtslib-fb (iscsi/target, PHASE-04-TASKS.md Stream
+        # B) refuses to run at all against a missing dbroot directory
+        # ("Cannot set dbroot to /etc/target") — this project never uses
+        # it to persist config (every targetcli command here is one-shot
+        # against live configfs state, not restore/save), but the
+        # directory itself must still exist and be writable for rtslib's
+        # own RTSRoot() startup check to pass. Only this template grants
+        # it: DynamicUser's random uid could never use LIO's root-only
+        # configfs tree regardless.
+        # /run (== /var/run): targetcli-fb also serializes concurrent
+        # invocations through a hardcoded, non-configurable lock file at
+        # /var/run/targetcli.lock (unlike its dbroot/prefs paths above,
+        # there is no env var to relocate this one) — this project only
+        # ever runs one targetcli-driven block type per node in practice
+        # (D5: one LUN per instance), so granting the real /run here is
+        # a lock-file accommodation, not a meaningfully wider surface for
+        # a unit that already runs fully privileged.
+        ReadWritePaths=/var/lib/expanse/volumes /etc/target /run
+        # targetcli-fb's own shell layer (configshell-fb) separately
+        # wants a writable preferences directory, ~/.targetcli by
+        # default — root's $HOME is /root, made inaccessible by
+        # ProtectHome=yes above, so it fails the same way rtslib's
+        # dbroot does without this. Redirected into the one directory
+        # this unit already grants, rather than carving out an
+        # exception to ProtectHome for /root itself.
+        Environment=TARGETCLI_HOME=/etc/target/.targetcli
+        # AF_NETLINK: iscsi/target (Stream B) resolves its bound raw
+        # volume's device path itself (waitForPrimaryDevice,
+        # cmd/expanse-block-run), which queries live DRBD state the same
+        # way the agent's own volume engine does (internal/storage/
+        # drbd), over a netlink genl socket to the kernel — refused
+        # outright without this, the same class of restriction smbd's
+        # own AF_NETLINK note (share/smb's module.nix) already covers
+        # for interface auto-detection.
+        RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
         TasksMax=512
         IOWeight=100
         Environment=PATH=/run/current-system/sw/bin

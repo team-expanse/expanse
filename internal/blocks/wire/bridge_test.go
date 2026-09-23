@@ -439,6 +439,52 @@ func TestBridgeOmitsTheDirectoryBindForARawStorageEntry(t *testing.T) {
 	}
 }
 
+// TestBridgeVoldevArgForARawStorageEntry confirms the other half of D3's
+// raw-entry handling (PHASE-04-TASKS.md Stream B): since there is no host
+// mount to bind, the leader-side bridge instead hands the workload the
+// bound volume's stable ID via --voldev, for it to resolve its own
+// device path locally (waitForPrimaryDevice, cmd/expanse-block-run) once
+// it actually holds DRBD Primary.
+func TestBridgeVoldevArgForARawStorageEntry(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18082)
+	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blk pb.Block
+	if err := proto.Unmarshal(e.Value, &blk); err != nil {
+		t.Fatal(err)
+	}
+	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data", Filesystem: "none"}}
+	out, err := proto.Marshal(&blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
+		t.Fatal(err)
+	}
+	vname := expstorage.BlockVolumeName("default", "web", "data")
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: vname, Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e2, err := st.Get(ctx, store.Key("/node/n1/resources/block-replica:default/web/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(e2.Value, []byte("--voldev\",\"data=vol-1\"")) {
+		t.Errorf("--voldev data=vol-1 arg missing for a raw storage entry: %s", e2.Value)
+	}
+}
+
 // Regression test: a volume named after the storage entry's own raw name
 // ("data") instead of its auto-provisioned composite name
 // (expstorage.BlockVolumeName) must NOT be picked up — this was the actual

@@ -56,7 +56,7 @@ Named here so the adoption decision is made in advance, not rediscovered mid-pha
 |---|---|---|
 | SMB shares | **Samba**, clustered via ctdb or active/passive on DRBD | Approach chosen at phase task breakout |
 | NFS exports | **nfs-kernel-server** (NFSv4.1) | Grace-period handling on failover is the hard part |
-| iSCSI targets | **LIO / targetcli** | ALUA + persistent reservations over a DRBD-backed device |
+| iSCSI targets | **LIO / targetcli** | Active/passive over a DRBD-backed device via `SINGLETON`+VIP, not ALUA (`PHASE-04-TASKS.md` D1, revised — a DRBD Secondary node cannot host a real backstore at all); persistent reservation survival across failover is Stream C's own measurement, not assumed |
 | Virtualized workloads | **QEMU/KVM**, via microvm.nix or cloud-hypervisor | Block-backed disks on DRBD volumes |
 | Databases | **PostgreSQL**, HA via streaming replication | Application-level replication beats block-level here |
 | On-prem LLMs | **Ollama** / llama.cpp, OpenAI-compatible surface | Already present as a block definition |

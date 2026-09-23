@@ -14,6 +14,9 @@
 //   - web/static-site: native Go file server from the config index
 //   - share/smb: upstream smbd, config generated from spec.config plus
 //     the bound volume's mountPath (via mountPaths/firstMount)
+//   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
+//     against the bound raw volume's DRBD device (via voldevs/
+//     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
 //   - anything else: idle placeholder (unknown catalog types have no
 //     runtime contract yet; they come up healthy but idle)
 //
@@ -99,6 +102,11 @@ func main() {
 		}
 	case "share/smb":
 		if err := runSMB(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "iscsi/target":
+		if err := runISCSITarget(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

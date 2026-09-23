@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port LIO's iSCSI portal listens on internally. When exposing this block with network.ports[].expose: EXPOSE_VIP, this must differ from the exposed portal port (3260, the one initiators connect to) and match target_port instead — the VIP holder's own listen check collides with LIO's portal on whichever node the VIP moves to (always this block's own node, by SINGLETON's design) if the two share a port"
+    },
+    "iqn": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Explicit target IQN override. Left unset, a stable IQN is derived once from the block instance's own name (PHASE-04-TASKS.md D4) — identical across every failover, never regenerated or tied to a node"
+    },
+    "wwn": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Explicit backstore NAA WWN override — the identifier initiators see as the LUN's own device identity across every failover. Left unset, derived the same deterministic way as iqn"
+    },
+    "chapUser": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CHAP username required at login. Unset means no authentication (demo mode) — mirrors share/smb's guestOk posture"
+    },
+    "chapPassword": {
+      "type": "string",
+      "minLength": 12,
+      "description": "CHAP secret (the iSCSI spec requires at least 12 bytes). Required when chapUser is set"
+    }
+  }
+}
