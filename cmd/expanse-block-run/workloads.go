@@ -1057,6 +1057,16 @@ func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string)
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	out, err := cmd.CombinedOutput()
+	// TEMPORARY diagnostic (PHASE-05-TASKS.md Stream A X1 VM test):
+	// pgCmd previously only surfaced output on failure, but a run
+	// showed a primary's CREATE ROLE/CREATE DATABASE step neither
+	// crash the unit (no error) nor leave a usable database/role
+	// behind -- printing on success too until that's understood. psql's
+	// own output here is command tags ("CREATE ROLE") or error text,
+	// never the SQL/password themselves.
+	if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
+		fmt.Printf("expanse-block-run: %s output: %s\n", bin, trimmed)
+	}
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
