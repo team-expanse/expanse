@@ -105,10 +105,14 @@ reports zero corruption — met, see `PHASE-05-TASKS.md` Streams A-D.
 
 **Goal:** premise feature 6.
 
-- VM block runtime (QEMU/KVM via microvm.nix or cloud-hypervisor) alongside the systemd runtime.
-- VM disks on replicated volumes; cold migration first, live migration deferred.
+- VM block runtime — **plain QEMU/KVM, exec'd directly** (not microvm.nix, not cloud-hypervisor,
+  which failed a real boot-compatibility test; see `PHASE-06-TASKS.md` D1) — alongside the systemd
+  runtime, with no new runtime kind actually needed.
+- VM disks on replicated volumes; cold migration first, live migration deferred (documented scope
+  note, `docs/VMS.md` §6).
 
-**Exit:** a running VM survives node loss by restarting on another node with its disk intact.
+**Exit:** a running VM survives node loss by restarting on another node with its disk intact — met,
+see `PHASE-06-TASKS.md` Streams A-D.
 
 ## Phase 7 — On-prem LLM subsystem
 
