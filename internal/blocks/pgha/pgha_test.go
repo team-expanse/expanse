@@ -30,6 +30,21 @@ func readRole(t *testing.T, mount string) string {
 	return string(b)
 }
 
+// seedBootstrapped marks mount as a replica that has already finished
+// its own first-ever bootstrap (hasBootstrapped's own check), for tests
+// exercising the Reconfigure path rather than the still-bootstrapping
+// skip-path (TestReplicaRetargetsBeforeItsOwnFirstBootstrapWithoutReconfigure).
+func seedBootstrapped(t *testing.T, mount string) {
+	t.Helper()
+	dir := filepath.Join(mount, pgdataSubdir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("seed pgdata dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "PG_VERSION"), []byte("18\n"), 0o644); err != nil {
+		t.Fatalf("seed PG_VERSION: %v", err)
+	}
+}
+
 func TestElectSinglePrimary(t *testing.T) {
 	st := newTestStore(t)
 	c := New(Config{
@@ -238,6 +253,7 @@ func TestReplicaRetargetsWhenThePrimaryMoves(t *testing.T) {
 	st := newTestStore(t)
 	ref := "default/pg"
 	mount := t.TempDir()
+	seedBootstrapped(t, mount)
 	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
 		t.Fatalf("seed role file: %v", err)
 	}
@@ -332,6 +348,7 @@ func TestReplicaRetargetRetriesNextPassWhenReconfigureFails(t *testing.T) {
 	st := newTestStore(t)
 	ref := "default/pg"
 	mount := t.TempDir()
+	seedBootstrapped(t, mount)
 	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
 		t.Fatalf("seed role file: %v", err)
 	}
@@ -352,6 +369,89 @@ func TestReplicaRetargetRetriesNextPassWhenReconfigureFails(t *testing.T) {
 
 	if got := readRole(t, mount); got != "replica 10.42.0.5 5432\n" {
 		t.Errorf("role file changed despite a failed Reconfigure: %q", got)
+	}
+}
+
+// TestReplicaRetargetsBeforeItsOwnFirstBootstrapWithoutReconfigure is the
+// regression test for the gap found running Stream C's X3/X4 VM test: a
+// replica still mid-way through its OWN first-ever bootstrap (no
+// PG_VERSION under its mount's pgdata yet) has no local postgres for
+// Reconfigure to retarget -- calling it would just fail forever on a
+// missing local socket, permanently stranding the role file pointed at
+// the dead primary. mount here has no "pgdata" subdirectory at all,
+// matching a replica that has never bootstrapped.
+func TestReplicaRetargetsBeforeItsOwnFirstBootstrapWithoutReconfigure(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	held, err := lease.NewManager(st, "n3").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	calls := 0
+	c := New(Config{
+		Leases: lease.NewManager(st, "n2"),
+		Self:   "n2",
+		ResolveAddr: func(node string) string {
+			if node == "n3" {
+				return "10.42.0.9"
+			}
+			return ""
+		},
+		Reconfigure: func(Instance, string) error { calls++; return fmt.Errorf("no local postgres to retarget") },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if calls != 0 {
+		t.Errorf("Reconfigure called %d times, want 0 (never bootstrapped, nothing to retarget)", calls)
+	}
+	want := "replica 10.42.0.9 5432\n"
+	if got := readRole(t, mount); got != want {
+		t.Errorf("role file = %q, want %q", got, want)
+	}
+}
+
+// TestReplicaWithAFinishedBootstrapStillCallsReconfigure is the
+// steady-state counterpart: once PG_VERSION exists (this replica DID
+// finish bootstrapping), a moved primary must still go through the full
+// Reconfigure path, unchanged from Stream B's own behavior.
+func TestReplicaWithAFinishedBootstrapStillCallsReconfigure(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	seedBootstrapped(t, mount)
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	held, err := lease.NewManager(st, "n3").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	calls := 0
+	c := New(Config{
+		Leases: lease.NewManager(st, "n2"),
+		Self:   "n2",
+		ResolveAddr: func(node string) string {
+			if node == "n3" {
+				return "10.42.0.9"
+			}
+			return ""
+		},
+		Reconfigure: func(Instance, string) error { calls++; return nil },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if calls != 1 {
+		t.Errorf("Reconfigure called %d times, want 1 (already bootstrapped)", calls)
 	}
 }
 

@@ -393,6 +393,24 @@ func (c *Controller) retargetIfPrimaryMoved(ctx context.Context, ref string, ins
 	if curHost, _ := parseReplicaRole(content); curHost == host {
 		return // already tracking the current primary
 	}
+	// A replica that has never finished its OWN first-ever bootstrap has
+	// no local postgres for cfg.Reconfigure to retarget at all -- calling
+	// it would just fail forever on a missing local socket (found running
+	// the X3/X4 VM test: a third replica still mid-bootstrap when the
+	// primary died stayed permanently wedged retrying against the dead
+	// node, since Reconfigure's own failure is exactly what gates the
+	// role-file rewrite below). Skip straight to it instead: nothing has
+	// bootstrapped yet, so nothing needs retargeting -- the workload's
+	// own next bootstrap attempt reads this fresh and clones directly
+	// from the new primary.
+	if !hasBootstrapped(inst.MountPath) {
+		if werr := writeRoleFile(RolePath(inst.MountPath), fmt.Sprintf("replica %s %d\n", host, inst.Port)); werr != nil {
+			c.log(c.cfg.Logger.Error, "pgha: primary moved before this replica ever bootstrapped, but role file write failed, retrying next pass", "block", ref, "err", werr)
+			return
+		}
+		c.log(c.cfg.Logger.Warn, "pgha: primary moved before this replica ever bootstrapped, retargeting its still-pending first clone", "block", ref, "primary", l.Holder, "host", host)
+		return
+	}
 	if c.cfg.Reconfigure == nil {
 		c.log(c.cfg.Logger.Error, "pgha: primary moved but no Reconfigure seam configured", "block", ref, "primary", l.Holder)
 		return
@@ -406,6 +424,21 @@ func (c *Controller) retargetIfPrimaryMoved(ctx context.Context, ref string, ins
 		return
 	}
 	c.log(c.cfg.Logger.Info, "pgha: retargeted streaming replication to new primary", "block", ref, "primary", l.Holder, "host", host)
+}
+
+// pgdataSubdir is cmd/expanse-block-run's own fixed pgdata subdirectory
+// name under a replica's mount point (workloads.go's runPostgres), kept
+// in sync here by duplication -- the same "not imported, main vs
+// library" boundary SlotName's own doc comment explains.
+const pgdataSubdir = "pgdata"
+
+// hasBootstrapped reports whether a replica's own PGDATA has ever been
+// initialized (PG_VERSION present), the same check runPostgres itself
+// uses to decide whether to bootstrap. A pure filesystem read, not a
+// network or lease call, so it costs nothing extra on the common path.
+func hasBootstrapped(mountPath string) bool {
+	_, err := os.Stat(filepath.Join(mountPath, pgdataSubdir, "PG_VERSION"))
+	return err == nil
 }
 
 // maintainActive keeps the on-disk role file in step with a lease this
