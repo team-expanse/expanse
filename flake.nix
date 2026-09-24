@@ -173,6 +173,9 @@
           # Probe (Phase 6 D1): not a gate.
           vm-nested-kvm-probe =
             mkTest "vm-nested-kvm-probe" ./nix/tests/vm-nested-kvm-probe.nix;
+
+          # Probe (Phase 6 D2): not a gate.
+          vm-macvtap-probe = mkTest "vm-macvtap-probe" ./nix/tests/vm-macvtap-probe.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
