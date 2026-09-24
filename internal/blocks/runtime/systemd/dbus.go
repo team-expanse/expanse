@@ -40,7 +40,19 @@ func (d *DBUSAPI) UnitState(ctx context.Context, unit string) (load, active, sub
 }
 
 // Start starts (or restarts, via replace) the unit and waits for the job.
+//
+// Clears a tripped StartLimitBurst first (PHASE-05-TASKS.md Stream A,
+// X1: found via db/postgres, whose replicas race ahead of their own
+// per-replica volume with no P12-style placement gate the way SINGLETON/
+// DAEMONSET get — a few sub-second "not ready yet" failures exhaust the
+// unit's own StartLimitBurst=3/60s (systemd.go's UnitFile) long before a
+// multi-volume DRBD/LVM chain converges). Once tripped, systemd refuses
+// EVERY further start, including this reconciler's own explicit ones, so
+// the "keep retrying until the dependency is ready" behavior every block
+// type's Restart=on-failure is meant to provide silently stops working.
+// Best-effort and harmless when the unit isn't in that state at all.
 func (d *DBUSAPI) Start(ctx context.Context, unit string) error {
+	_ = d.conn.ResetFailedUnitContext(ctx, unit)
 	ch := make(chan string)
 	if _, err := d.conn.RestartUnitContext(ctx, unit, "replace", ch); err != nil {
 		return errors.Wrap(err, errors.KindUnavailable, "systemd.Start", unit)

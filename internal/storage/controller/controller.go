@@ -350,13 +350,21 @@ func (c *Controller) reconcileSharedVolume(ctx context.Context, blk *pb.Block, n
 		c.movePrimaryForBlock(ctx, ve, blockNodes(blk), meshed)
 		return nil
 	}
-	return c.requestVolume(ctx, ns, name, vname, s)
+	return c.requestVolume(ctx, ns, name, vname, s, "")
 }
 
 // reconcileReplicaVolumes is reconcileBlocks's active-active/primary-
 // replica case (D3): one independent volume per replica index, each
 // one's primary co-located with that specific replica's own placement,
 // never with any other replica's node.
+//
+// A not-yet-placed replica index is skipped entirely, not requested
+// without a preference: SelectNodes' capacity ranking has no idea a
+// block replica exists at all, so a replication:1 volume placed before
+// its replica's own node is known can easily land on the wrong node —
+// and unlike a shared volume, a lone replication:1 placement can never
+// co-locate after the fact (movePrimaryForBlock only ever flips
+// status.Primary among nodes the volume ALREADY has a placement on).
 func (c *Controller) reconcileReplicaVolumes(ctx context.Context, blk *pb.Block, ns, name string, s *pb.Storage, volByName map[string]volEntry, meshed map[string]bool) error {
 	for idx := 0; idx < int(blk.GetSpec().GetReplicas()); idx++ {
 		vname := storage.BlockReplicaVolumeName(ns, name, s.GetName(), idx)
@@ -364,27 +372,43 @@ func (c *Controller) reconcileReplicaVolumes(ctx context.Context, blk *pb.Block,
 			c.movePrimaryForBlock(ctx, ve, replicaNode(blk, idx), meshed)
 			continue
 		}
-		if err := c.requestVolume(ctx, ns, name, vname, s); err != nil {
+		node := soleNode(replicaNode(blk, idx))
+		if node == "" {
+			continue // replica not placed yet; nothing to pin this volume to
+		}
+		if err := c.requestVolume(ctx, ns, name, vname, s, node); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// soleNode returns the one node in a single-entry eligibility set (as
+// replicaNode always produces for a live, non-LOST placement), or "".
+func soleNode(nodes map[string]bool) string {
+	for n := range nodes {
+		return n
+	}
+	return ""
+}
+
 // requestVolume queues an idempotent pending-create request for a
 // not-yet-provisioned volume name. A spec that fails to parse/marshal is
 // skipped, not fatal — admission (V12) already rejects that before it
 // reaches here; only the store write itself is a real failure to report.
-func (c *Controller) requestVolume(ctx context.Context, ns, name, vname string, s *pb.Storage) error {
+// preferredNode is "" for a shared (SINGLETON/DAEMONSET) volume; set for
+// a per-replica (D3) one, steering initial placement (place.go).
+func (c *Controller) requestVolume(ctx context.Context, ns, name, vname string, s *pb.Storage, preferredNode string) error {
 	size, err := quantity.ParseBytes(s.GetSize())
 	if err != nil {
 		return nil
 	}
 	vspec := &pb.VolumeSpec{
-		Name:        vname,
-		SizeBytes:   uint64(size.N),
-		Class:       s.GetClass(),
-		Replication: s.GetReplication(),
+		Name:          vname,
+		SizeBytes:     uint64(size.N),
+		Class:         s.GetClass(),
+		Replication:   s.GetReplication(),
+		PreferredNode: preferredNode,
 	}
 	raw, err := pbproto.Marshal(vspec)
 	if err != nil {

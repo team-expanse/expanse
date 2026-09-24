@@ -8,10 +8,15 @@ package agent
 // acquire/inspect) rather than needing platform seams.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/blocks/controller"
 	"github.com/expanse/expanse/internal/blocks/pgha"
+	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -91,29 +96,78 @@ func (a *Agent) scanPostgresInstances(ctx context.Context) map[string]pgha.Insta
 				b.Status = &st
 			}
 		}
-		hosted := false
+		// Any live placement counts, not just RUNNING: RUNNING itself
+		// requires the workload to already be up, but db/postgres's own
+		// workload can only ever start once pgha has written a role
+		// decision -- gating the scan on RUNNING is a real chicken-and-
+		// egg deadlock (found running the X1 VM test: the only reason
+		// election ever succeeded at all was systemd transiently
+		// reporting a crash-looping unit "active" long enough for an
+		// unrelated reconcile tick to catch it, not a real readiness
+		// signal a losing replica could rely on).
+		idx := int32(-1)
 		for _, pl := range b.GetStatus().GetPlacements() {
-			if pl.GetNodeId() == a.cfg.NodeID && pl.GetPhase() == pb.Phase_RUNNING {
-				hosted = true
+			if pl.GetNodeId() == a.cfg.NodeID && pl.GetReplicaIndex() >= 0 && pl.GetPhase() != pb.Phase_LOST {
+				idx = pl.GetReplicaIndex()
 				break
 			}
 		}
-		if !hosted {
+		if idx < 0 {
 			continue
 		}
-		mount := ""
-		if storages := b.GetSpec().GetStorage(); len(storages) > 0 {
-			mount = storages[0].GetMountPath()
-		}
+		ref := k[len("/blocks/"):]
+		mount := a.pgReplicaMountPath(ctx, ref, int(idx))
 		if mount == "" {
-			continue // nothing to write a role file into yet
+			a.logger.Warn("pgha: replica's real mount path not wired yet, retrying next pass",
+				"block", ref, "node", a.cfg.NodeID, "index", idx)
+			continue
 		}
 		port := int32(pgDefaultPort)
 		if v, ok := b.GetSpec().GetConfig().GetFields()["port"]; ok {
 			port = int32(v.GetNumberValue())
 		}
-		ref := k[len("/blocks/"):]
 		out[ref] = pgha.Instance{BlockRef: ref, MountPath: mount, Port: port}
 	}
 	return out
+}
+
+// pgReplicaMountPath resolves a replica's REAL host mount path: the same
+// one bridge.go's replicaSpec hands the workload via "--mount", not the
+// block's own declared spec.storage[].mountPath (a sandbox-only virtual
+// path meaningless to this unsandboxed agent process — a bug found
+// running the X1 VM test: pgha was writing its role file under the
+// declared path, a plain, unrelated directory on the node's root
+// filesystem, while the workload read it from the real per-replica
+// volume, so the two never actually met). Reads the desired-state
+// record bridge.go already wrote for this node+replica rather than
+// re-deriving the volume name/id chain independently, so there is only
+// one place that computation can drift.
+func (a *Agent) pgReplicaMountPath(ctx context.Context, blockRef string, idx int) string {
+	slash := strings.Index(blockRef, "/")
+	if slash < 0 {
+		return ""
+	}
+	ns, name := blockRef[:slash], blockRef[slash+1:]
+	key := a.recon.DesiredPrefix() + store.Key(controller.ReplicaResourceID(ns, name, idx))
+	e, err := a.store.Get(ctx, key)
+	if err != nil {
+		return ""
+	}
+	_, payload, ok := bytes.Cut(e.Value, []byte("\n"))
+	if !ok {
+		return ""
+	}
+	var spec systemd.Spec
+	if err := json.Unmarshal(payload, &spec); err != nil {
+		return ""
+	}
+	for i := 0; i+1 < len(spec.Args); i++ {
+		if spec.Args[i] != "--mount" {
+			continue
+		}
+		if _, path, ok := strings.Cut(spec.Args[i+1], "="); ok {
+			return path
+		}
+	}
+	return ""
 }

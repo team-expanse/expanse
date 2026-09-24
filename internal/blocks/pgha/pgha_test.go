@@ -50,6 +50,40 @@ func TestElectSinglePrimary(t *testing.T) {
 	}
 }
 
+// TestWriteRoleFileIsReadableAndWritableByADifferentUid is the
+// regression test for PHASE-05-TASKS.md Stream A X1: this controller
+// runs as root, but the db/postgres workload reading the role file (and
+// creating its own subdirectories next to it) runs under a fixed,
+// different, non-root uid. The VM test found the previous 0700/0600
+// modes locked the workload out entirely once the controller created
+// the directory first.
+func TestWriteRoleFileIsReadableAndWritableByADifferentUid(t *testing.T) {
+	st := newTestStore(t)
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n1"),
+		Self:        "n1",
+		ResolveAddr: func(string) string { return "" },
+	})
+	mount := t.TempDir()
+	inst := Instance{BlockRef: "default/pg", MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{inst.BlockRef: inst})
+
+	dirInfo, err := os.Stat(filepath.Dir(RolePath(mount)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirInfo.Mode().Perm(); perm&0o022 == 0 {
+		t.Errorf("state dir mode = %v, want group/other write so a different uid can create its own files there", perm)
+	}
+	fileInfo, err := os.Stat(RolePath(mount))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fileInfo.Mode().Perm(); perm&0o044 == 0 {
+		t.Errorf("role file mode = %v, want group/other read so a different uid can read the decision", perm)
+	}
+}
+
 func TestElectReplicaFollowsExistingPrimary(t *testing.T) {
 	st := newTestStore(t)
 	ref := "default/pg"

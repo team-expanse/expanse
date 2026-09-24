@@ -595,6 +595,65 @@ func TestActiveActiveBlockRequestsOneVolumePerReplica(t *testing.T) {
 	}
 }
 
+// TestActiveActiveVolumeRequestPinsThePreferredNode is the regression
+// test for the gap found running the X1 VM test after
+// TestActiveActiveBlockRequestsOneVolumePerReplica already passed:
+// requesting one volume per replica index is not enough on its own --
+// SelectNodes' capacity-based ranking has no idea a block replica
+// exists at all, so with identical-capacity nodes it deterministically
+// picked the SAME (lowest-id) node for every replica's volume, and
+// movePrimaryForBlock can never fix that after the fact for a
+// replication:1 volume (it only ever flips status.Primary among nodes
+// the volume ALREADY has a placement on). Each request must carry the
+// replica's own node as PreferredNode.
+func TestActiveActiveVolumeRequestPinsThePreferredNode(t *testing.T) {
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedActiveActiveBlock(t, st, "default", "pg", "pgdata", 3, "n1", "n2", "n3")
+
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+
+	want := map[int]string{0: "n1", 1: "n2", 2: "n3"}
+	for idx, node := range want {
+		vname := storage.BlockReplicaVolumeName("default", "pg", "pgdata", idx)
+		e, err := st.Get(context.Background(), storage.PendingCreateKey(vname))
+		if err != nil {
+			t.Fatalf("replica %d: no pending create for %q: %v", idx, vname, err)
+		}
+		var spec pb.VolumeSpec
+		if err := pbproto.Unmarshal(e.Value, &spec); err != nil {
+			t.Fatal(err)
+		}
+		if spec.GetPreferredNode() != node {
+			t.Errorf("replica %d: PreferredNode = %q, want %q (its own placement)", idx, spec.GetPreferredNode(), node)
+		}
+	}
+}
+
+// TestActiveActiveSkipsVolumeRequestForAnUnplacedReplica: a replica
+// index with no placement yet must not get a volume requested at all
+// (with no node to pin it to, it would fall back to SelectNodes'
+// block-unaware ranking and risk landing on the wrong node).
+func TestActiveActiveSkipsVolumeRequestForAnUnplacedReplica(t *testing.T) {
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	// 3 replicas declared, but only replica 0 is actually placed so far.
+	seedActiveActiveBlock(t, st, "default", "pg", "pgdata", 3, "n1")
+
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+
+	v0 := storage.BlockReplicaVolumeName("default", "pg", "pgdata", 0)
+	if _, err := st.Get(context.Background(), storage.PendingCreateKey(v0)); err != nil {
+		t.Fatalf("placed replica 0 got no pending create: %v", err)
+	}
+	for idx := 1; idx < 3; idx++ {
+		vname := storage.BlockReplicaVolumeName("default", "pg", "pgdata", idx)
+		if _, err := st.Get(context.Background(), storage.PendingCreateKey(vname)); err == nil {
+			t.Fatalf("unplaced replica %d got a volume requested with nothing to pin it to", idx)
+		}
+	}
+}
+
 // Each replica's own volume must co-locate with THAT replica's node only —
 // never with a sibling replica's node, which would defeat D3's whole point
 // (independent, non-contending per-replica storage).

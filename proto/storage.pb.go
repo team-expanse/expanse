@@ -160,7 +160,19 @@ type VolumeSpec struct {
 	// Storage class name: "default", "fast", "local", "ceph" (§4.2).
 	Class string `protobuf:"bytes,5,opt,name=class,proto3" json:"class,omitempty"`
 	// 1..5.
-	Replication   int32 `protobuf:"varint,6,opt,name=replication,proto3" json:"replication,omitempty"`
+	Replication int32 `protobuf:"varint,6,opt,name=replication,proto3" json:"replication,omitempty"`
+	// preferred_node steers initial placement onto a specific node ID,
+	// when set (PHASE-05-TASKS.md Stream A D3): a per-replica volume
+	// (internal/storage/controller's reconcileReplicaVolumes) must land
+	// on the SAME node as the block replica it serves, not wherever
+	// SelectNodes' capacity-based, block-unaware ranking happens to pick
+	// — movePrimaryForBlock only ever flips status.Primary among nodes
+	// the volume already has a placement on, so a replication:1 volume
+	// placed on the wrong node in the first place can never actually
+	// co-locate after the fact. Empty (the common SINGLETON/DAEMONSET
+	// case, and any active-active replica not yet placed) falls back to
+	// SelectNodes' own ranking unchanged.
+	PreferredNode string `protobuf:"bytes,7,opt,name=preferred_node,json=preferredNode,proto3" json:"preferred_node,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -235,6 +247,13 @@ func (x *VolumeSpec) GetReplication() int32 {
 		return x.Replication
 	}
 	return 0
+}
+
+func (x *VolumeSpec) GetPreferredNode() string {
+	if x != nil {
+		return x.PreferredNode
+	}
+	return ""
 }
 
 // Replica is one placement's live state (§4.1).
@@ -410,7 +429,7 @@ var File_proto_storage_proto protoreflect.FileDescriptor
 
 const file_proto_storage_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/storage.proto\x12\x12expanse.storage.v1\"\xa5\x01\n" +
+	"\x13proto/storage.proto\x12\x12expanse.storage.v1\"\xcc\x01\n" +
 	"\n" +
 	"VolumeSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -419,7 +438,8 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x14\n" +
 	"\x05class\x18\x05 \x01(\tR\x05class\x12 \n" +
-	"\vreplication\x18\x06 \x01(\x05R\vreplication\"\xa9\x02\n" +
+	"\vreplication\x18\x06 \x01(\x05R\vreplication\x12%\n" +
+	"\x0epreferred_node\x18\a \x01(\tR\rpreferredNode\"\xa9\x02\n" +
 	"\aReplica\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x123\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.ReplicaRoleR\x04role\x12-\n" +

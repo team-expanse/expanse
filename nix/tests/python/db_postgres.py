@@ -87,19 +87,23 @@ def wait_single_holder(vip_addr, timeout, want_nodes=None):
     raise AssertionError(f"{vip_addr}: never settled on exactly 1 holder in {want_nodes} (last: {holders})")
 
 
-def psql_client(host, port, sql, timeout=10):
-    """Run one SQL statement from the external client, over the VIP."""
+def psql_client(host, port, sql, timeout=90):
+    """Run one SQL statement from the external client, over the VIP.
+    Retries: the VIP can still be settling (or briefly re-homing while a
+    replica finishes its own bootstrap, see the module docstring's own
+    note) even after wait_single_holder first sees it land -- a single
+    one-shot attempt right after that catches exactly that window and
+    times out, not a real failure."""
     cmd = (f"PGPASSWORD={SUPER_PASSWORD} psql -h {host} -p {port} -U postgres -d {DATABASE} "
            f"-v ON_ERROR_STOP=1 -tA -c {shlex.quote(sql)}")
-    return client.succeed(cmd).strip()
-
-
-def psql_local(m, sockdir, sql):
-    """Run one SQL statement locally on a cluster node, over its unix
-    socket (pg_hba trust -- the election controller's own admin
-    channel, no password needed)."""
-    cmd = f"psql -h {sockdir} -p {PG_PORT} -U postgres -d {DATABASE} -v ON_ERROR_STOP=1 -tA -c {shlex.quote(sql)}"
-    return m.succeed(cmd).strip()
+    deadline = time.time() + timeout
+    rc, out = 1, ""
+    while time.time() < deadline:
+        rc, out = client.execute(cmd)
+        if rc == 0:
+            return out.strip()
+        time.sleep(2)
+    raise AssertionError(f"psql via VIP never succeeded within {timeout}s (last rc={rc}): {out}")
 
 
 def wait_row_replicates(m, sockdir, sql, want, timeout=60):

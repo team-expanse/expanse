@@ -33,6 +33,24 @@ import (
 // constant rather than repeating the literal.
 const BlockType = "db/postgres"
 
+// StaticUID is the fixed, non-root uid every db/postgres replica runs
+// under (internal/blocks/wire/bridge.go wires it via Spec.StaticUID,
+// PHASE-05-TASKS.md Stream A X1). Postgres refuses to run as root
+// outright, ruling out RunAsRoot the way share/smb's setuid() needs
+// rule out DynamicUser: DynamicUser mints a fresh, unpredictable uid on
+// every unit start, not just once per replica — this unit fully exits
+// and restarts on any bootstrap hiccup (Restart=on-failure), so a
+// directory the workload creates under one restart's uid becomes
+// permanently inaccessible to the next restart's different uid,
+// confirmed by the X1 VM test: initdb/pg_basebackup's own state
+// directory (.expanse-postgres/) hit exactly this, wedged in a
+// permission-denied crash loop no amount of waiting ever resolved. A
+// single shared uid across every db/postgres replica on a node is
+// safe despite not being per-block: each replica's data lives in its
+// own dedicated volume, invisible outside that one unit's own bind
+// mount regardless of which uid owns it.
+const StaticUID = 8332
+
 // RoleFile is the path, relative to a replica's mount point, that
 // module.nix's bootstrap script reads on first start.
 const RoleFile = ".expanse-postgres/role"
@@ -212,6 +230,13 @@ func (c *Controller) elect(ctx context.Context, ref string, inst Instance) {
 	// guess.
 	l, ok, ierr := c.cfg.Leases.Inspect(ctx, name)
 	if ierr != nil || !ok || l.Holder == "" || l.Holder == c.cfg.Self {
+		// TEMPORARY diagnostic (PHASE-05-TASKS.md Stream A X1 VM test):
+		// this branch is silent by design when the winner's record
+		// simply hasn't landed yet, but a losing replica in this VM
+		// test never got a role file within its own 120s budget at
+		// all -- narrowing down which of these four silent cases it
+		// actually hits.
+		c.log(c.cfg.Logger.Warn, "pgha: lost election, no usable winner record yet", "block", ref, "ierr", ierr, "ok", ok, "holder", l.Holder, "self", c.cfg.Self)
 		return
 	}
 	host := c.cfg.ResolveAddr(l.Holder)
@@ -221,18 +246,46 @@ func (c *Controller) elect(ctx context.Context, ref string, inst Instance) {
 	}
 	if werr := writeRoleFile(RolePath(inst.MountPath), fmt.Sprintf("replica %s %d\n", host, inst.Port)); werr != nil {
 		c.log(c.cfg.Logger.Error, "pgha: role file write failed", "block", ref, "err", werr)
+		return
 	}
+	c.log(c.cfg.Logger.Info, "pgha: wrote replica role", "block", ref, "primary", l.Holder, "host", host)
 }
 
 // writeRoleFile creates the state directory and writes the role file
 // atomically (temp file + rename) so a crash mid-write can never leave
 // module.nix's bootstrap script reading a truncated decision.
+//
+// This controller runs as root (the agent process), but the
+// db/postgres workload reading this same file — and, when it wins,
+// creating its own subdirectories (.expanse-postgres/sock) right next
+// to it — runs under a fixed non-root uid (pgha.StaticUID,
+// PHASE-05-TASKS.md Stream A X1). World-readable/writable is the
+// pragmatic fix, not a real exposure: the role content itself is never
+// sensitive (just "primary" or "replica <host> <port>"), the only
+// writer is ever this controller, and the only process that can even
+// see this host path at all is the one replica unit whose own bind
+// mount names it. Found via the X1 VM test: whichever of this
+// controller or the workload created the directory first left the
+// other permanently locked out at the previous 0700/0600 modes.
 func writeRoleFile(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return err
+	}
+	// MkdirAll's own requested mode is masked by this process's umask
+	// (typically 0022, stripping exactly the group/other write bits the
+	// workload's differing uid needs) — Chmod sets the exact bits,
+	// bypassing that, and is safe to run unconditionally whether this
+	// call just created the directory or it already existed (e.g. the
+	// workload itself created it first).
+	if err := os.Chmod(dir, 0o777); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

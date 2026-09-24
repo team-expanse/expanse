@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/blocks/controller"
+	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/errors"
 	expstorage "github.com/expanse/expanse/internal/storage"
@@ -266,6 +267,9 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 	}
 	if rootBlockTypes[blk.GetSpec().GetType()] {
 		spec.RunAsRoot = true
+	}
+	if blk.GetSpec().GetType() == pgha.BlockType {
+		spec.StaticUID = pgha.StaticUID
 	}
 	for _, st := range blk.GetSpec().GetStorage() {
 		v, ok := vols[blockStorageVolumeName(blk, ns, name, st, idx)]

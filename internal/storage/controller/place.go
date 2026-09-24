@@ -123,6 +123,19 @@ func replicaHosts(assigned map[string]int, req *pb.VolumeSpec, nodes []storage.N
 	if n := int(req.GetReplication()); n > 0 {
 		class.Replication = n
 	}
+	// A per-replica volume (D3) must land on its owning block replica's
+	// own node, not wherever SelectNodes' capacity ranking would
+	// otherwise pick — that ranking has no idea a block replica exists
+	// at all, let alone which node it's on.
+	if pin := req.GetPreferredNode(); pin != "" && class.Replication == 1 {
+		for _, n := range nodes {
+			if n.ID == pin {
+				return []string{pin}, nil
+			}
+		}
+		return nil, experrors.New(experrors.KindResourceExhausted, "controller.place",
+			"preferred node "+pin+" is not a current placement candidate")
+	}
 	chosen, err := storage.SelectNodes(class, nodes, nil)
 	if err != nil {
 		return nil, experrors.Wrap(err, experrors.KindOf(err), "controller.place", "select replica nodes")

@@ -115,6 +115,84 @@ func TestPendingCreateNeedsEnoughLiveNodesAndIsKept(t *testing.T) {
 	}
 }
 
+// requestPinned seeds a pending-create request with PreferredNode set,
+// the D3 per-replica-volume placement hint.
+func requestPinned(t *testing.T, st store.Store, name string, replication int32, preferredNode string) {
+	t.Helper()
+	raw, err := pbproto.Marshal(&pb.VolumeSpec{Name: name, SizeBytes: 64 << 20, Replication: replication, PreferredNode: preferredNode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(context.Background(), storage.PendingCreateKey(name), raw); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPendingCreateHonorsPreferredNodeForAReplicationOneVolume is the
+// regression test for the D3 placement gap found running the X1 VM
+// test: a replication:1 volume with PreferredNode set must land
+// exactly there, not wherever SelectNodes' capacity ranking (which has
+// no idea a block replica exists at all) would otherwise pick.
+func TestPendingCreateHonorsPreferredNodeForAReplicationOneVolume(t *testing.T) {
+	ctx := context.Background()
+	c, st := newPlacer(t, "n1", "n2", "n3")
+	requestPinned(t, st, "pgdata-1", 1, "n2")
+	c.processPending(ctx, meshed(t, c))
+
+	ids := placed(t, st)
+	if len(ids) != 1 {
+		t.Fatalf("placed %v", ids)
+	}
+	status, _, err := storage.LoadStatus(ctx, st, ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Placement) != 1 || status.Placement[0].NodeID != "n2" {
+		t.Errorf("placement = %+v, want exactly n2 (the pinned node), not SelectNodes' own ranking", status.Placement)
+	}
+}
+
+// TestPendingCreateIgnoresPreferredNodeAboveReplicationOne: the D3 hint
+// only makes sense for a single-member volume; a multi-replica request
+// falls back to SelectNodes' normal spread unchanged.
+func TestPendingCreateIgnoresPreferredNodeAboveReplicationOne(t *testing.T) {
+	ctx := context.Background()
+	c, st := newPlacer(t, "n1", "n2", "n3")
+	requestPinned(t, st, "shared", 3, "n2")
+	c.processPending(ctx, meshed(t, c))
+
+	ids := placed(t, st)
+	if len(ids) != 1 {
+		t.Fatalf("placed %v", ids)
+	}
+	status, _, err := storage.LoadStatus(ctx, st, ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Placement) != 3 {
+		t.Errorf("placement = %+v, want all 3 nodes (PreferredNode ignored above replication 1)", status.Placement)
+	}
+}
+
+// TestPendingCreateRejectsAnUnavailablePreferredNode: a pinned node that
+// is not a live candidate (gone, cordoned, or simply unknown) must keep
+// the request queued for a retry, never silently fall back to a
+// different node -- that would be exactly the misplacement D3's fix
+// exists to prevent.
+func TestPendingCreateRejectsAnUnavailablePreferredNode(t *testing.T) {
+	ctx := context.Background()
+	c, st := newPlacer(t, "n1", "n2") // n3 never joined
+	requestPinned(t, st, "pgdata-2", 1, "n3")
+	c.processPending(ctx, meshed(t, c))
+
+	if len(placed(t, st)) != 0 {
+		t.Error("placed onto a node that was never a candidate")
+	}
+	if pendingLeft(t, st) != 1 {
+		t.Error("an unplaceable pinned request must stay queued for retry")
+	}
+}
+
 func TestPendingCreateSkipsWitnesses(t *testing.T) {
 	ctx := context.Background()
 	c, st := newPlacer(t, "n1", "n2", "w1")

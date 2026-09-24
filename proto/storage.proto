@@ -46,6 +46,18 @@ message VolumeSpec {
   string class = 5;
   // 1..5.
   int32 replication = 6;
+  // preferred_node steers initial placement onto a specific node ID,
+  // when set (PHASE-05-TASKS.md Stream A D3): a per-replica volume
+  // (internal/storage/controller's reconcileReplicaVolumes) must land
+  // on the SAME node as the block replica it serves, not wherever
+  // SelectNodes' capacity-based, block-unaware ranking happens to pick
+  // — movePrimaryForBlock only ever flips status.Primary among nodes
+  // the volume already has a placement on, so a replication:1 volume
+  // placed on the wrong node in the first place can never actually
+  // co-locate after the fact. Empty (the common SINGLETON/DAEMONSET
+  // case, and any active-active replica not yet placed) falls back to
+  // SelectNodes' own ranking unchanged.
+  string preferred_node = 7;
 }
 
 // Replica is one placement's live state (§4.1).

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	expstorage "github.com/expanse/expanse/internal/storage"
 	expmount "github.com/expanse/expanse/internal/storage/mount"
@@ -604,5 +605,57 @@ func TestBridgeActiveActiveReplicasMountTheirOwnIndependentVolumes(t *testing.T)
 	}
 	if hasKey(ctx, st, "/node/n2/resources/"+expmount.Type+":vol-0") {
 		t.Error("replica 1 (n2) was wired to replica 0's volume")
+	}
+}
+
+// TestBridgeDbPostgresGetsAStaticUID is the regression test for
+// PHASE-05-TASKS.md Stream A X1: db/postgres refuses RunAsRoot (postgres
+// itself refuses uid 0) and DynamicUser mints a fresh uid every unit
+// start, not once per replica -- a directory the workload creates under
+// one restart's uid becomes permanently inaccessible on the next
+// restart's different one, wedging bootstrap in a permission-denied
+// crash loop the VM test caught directly. A fixed Spec.StaticUID is
+// stable across restarts the way DynamicUser's random uid is not.
+func TestBridgeDbPostgresGetsAStaticUID(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	r1 := int32(1)
+	blk, err := proto.Marshal(&pb.Block{
+		Metadata: &pb.Metadata{Name: "pg", Namespace: "default"},
+		Spec:     &pb.BlockSpec{Type: "db/postgres", Replicas: &r1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/pg"), blk); err != nil {
+		t.Fatal(err)
+	}
+	status, err := proto.Marshal(&pb.BlockStatus{
+		Placements: []*pb.PlacementStatus{{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_RUNNING}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/pg/status"), status); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e, err := st.Get(ctx, store.Key("/node/n1/resources/block-replica:default/pg/0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := bytes.CutPrefix(e.Value, []byte("type: "+systemd.TypeBlockReplica+"\n"))
+	var spec systemd.Spec
+	if err := json.Unmarshal(payload, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.RunAsRoot {
+		t.Error("db/postgres must never run as root: postgres itself refuses uid 0")
+	}
+	if spec.StaticUID != pgha.StaticUID {
+		t.Errorf("StaticUID = %d, want pgha.StaticUID (%d)", spec.StaticUID, pgha.StaticUID)
 	}
 }
