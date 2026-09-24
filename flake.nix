@@ -152,9 +152,10 @@
           doctor-storage = mkTest "doctor-storage" ./nix/tests/doctor-storage.nix;
           m3-demo = mkTest "m3-demo" ./nix/tests/m3-demo.nix;
 
-          # Phase 05 (database) Stream A (X1) and Stream B (X2).
+          # Phase 05 (database) Stream A (X1), Stream B (X2) and Stream C (X3/X4).
           db-postgres = mkTest "db-postgres" ./nix/tests/db-postgres.nix;
           db-postgres-failover = mkTest "db-postgres-failover" ./nix/tests/db-postgres-failover.nix;
+          db-postgres-recovery = mkTest "db-postgres-recovery" ./nix/tests/db-postgres-recovery.nix;
 
           # Phase 04 blocks (§8).
           block-deploy = mkTest "block-deploy" ./nix/tests/block-deploy.nix;

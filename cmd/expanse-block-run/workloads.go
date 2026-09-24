@@ -893,6 +893,12 @@ func runWhoami(ctx context.Context, index int, args []string) error {
 // switch); this is that port, kept in step with module.nix by hand.
 const pgBootstrapTimeout = 120 * time.Second
 
+// pgBasebackupTimeout bounds one pg_basebackup attempt within
+// bootstrapPostgres's replica case. Comfortably inside pgBootstrapTimeout
+// itself only bounds waitForPGRole, not this step, so a stuck backup
+// previously had no ceiling at all.
+const pgBasebackupTimeout = 60 * time.Second
+
 // runPostgres serves db/postgres (PHASE-05-TASKS.md Stream A, X1). On a
 // first-ever start (no PGDATA yet) it waits for the lease-gated
 // election controller's role file and either initdb's a fresh primary
@@ -1265,9 +1271,27 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 			"-v", "ON_ERROR_STOP=1", "-v", "slot="+slot); err != nil {
 			return err
 		}
-		if err := pgCmd(ctx, env, "", "pg_basebackup",
+		// --no-verify-checksums: --data-checksums (above) is what X3
+		// actually needs -- a later, EXPLICIT pg_checksums/amcheck pass,
+		// not pg_basebackup's own opportunistic page-by-page
+		// verification during the copy, which buys nothing X3 doesn't
+		// already check independently while adding real CPU/IO cost to
+		// every bootstrap and rejoin re-clone (X4) for no benefit here.
+		//
+		// Bounded, unlike every other step here: pg_basebackup is the one
+		// call in this function that blocks on a full network data
+		// transfer rather than a single fast statement, so it is the one
+		// place an unbounded hang (a stuck TCP connection, e.g.) would
+		// otherwise wedge this whole unit forever with no error to retry
+		// from -- Restart=on-failure and the retry-next-pass idiom every
+		// other step here relies on both need an actual failure to act
+		// on, not silence.
+		bbCtx, bbCancel := context.WithTimeout(ctx, pgBasebackupTimeout)
+		err = pgCmd(bbCtx, env, "", "pg_basebackup",
 			"-h", host, "-p", peerport, "-U", "replicator",
-			"-D", pgdata, "-Fp", "-Xs", "-R", "-S", slot); err != nil {
+			"-D", pgdata, "-Fp", "-Xs", "-R", "-S", slot, "--no-verify-checksums")
+		bbCancel()
+		if err != nil {
 			return err
 		}
 		// sync=true: a fresh standby authenticates as the replicator role
