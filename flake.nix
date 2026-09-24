@@ -191,6 +191,11 @@
 
           # Stream D: vertical slice -- X3/X4 proven together, one kill, black-box (no internal-state waits).
           vm-instance-vertical-slice = mkTest "vm-instance-vertical-slice" ./nix/tests/vm-instance-vertical-slice.nix;
+
+          # ROADMAP.md Phase 08 (backup and restore) Stream A (X1): restic
+          # adopted (D1), basic backup/restore round-trip against a real
+          # in-VM S3-compatible target (garage, not minio -- no insecure flag).
+          backup-basic = mkTest "backup-basic" ./nix/tests/backup-basic.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
