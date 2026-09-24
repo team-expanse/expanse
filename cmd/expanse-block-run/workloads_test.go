@@ -393,6 +393,35 @@ func TestPgCmdWrapsCombinedOutputOnFailure(t *testing.T) {
 	}
 }
 
+// TestResolveBinFollowsSymlinksToTheRealPath is the regression test for
+// the second half of the X1 VM test's initdb bug: LookPath alone stops
+// at the first PATH match, which on NixOS is itself a symlink (the
+// merged system profile's own bin/ entry) into the real package in the
+// store — some upstream binaries derive their own install prefix
+// straight from that path string with no readlink of their own, so a
+// profile symlink resolves to the profile's layout, not the package's.
+func TestResolveBinFollowsSymlinksToTheRealPath(t *testing.T) {
+	storeDir := t.TempDir()
+	real := filepath.Join(storeDir, "realbin")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profileDir := t.TempDir()
+	link := filepath.Join(profileDir, "mybin")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", profileDir)
+
+	got, err := resolveBin("mybin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != real {
+		t.Errorf("resolveBin = %q, want the real target %q, not the profile symlink", got, real)
+	}
+}
+
 // TestPgCmdResolvesArgv0ToAFullPath is the regression test for the bug
 // found running the X1 VM test: initdb's nixpkgs wrapper re-execs the
 // real binary with --inherit-argv0, so whatever argv[0] this process

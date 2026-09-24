@@ -245,11 +245,32 @@ func resetSMBEphemeralState(dirs ...string) error {
 	return nil
 }
 
+// resolveBin finds bin's real, symlink-followed location. NixOS's
+// merged system profile (/run/current-system/sw/bin/<name>) is itself
+// a symlink into the store; LookPath alone stops there; EvalSymlinks
+// follows it the rest of the way. Some upstream binaries (postgres's
+// find_my_exec, PHASE-05-TASKS.md Stream A X1) derive their own
+// install prefix (here, where to find share/postgresql/postgres.bki)
+// straight from argv[0] by stripping its last path components, with
+// no readlink of their own — a profile-symlink path resolves to the
+// profile's own layout, not the package's, unless this already handed
+// them the real store path.
+func resolveBin(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", err
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real, nil
+	}
+	return path, nil
+}
+
 // execWorkload runs a binary-backed workload. SIGTERM via ctx is the
 // reconciler's deliberate stop, so a ctx-cancelled exit is not an
 // error.
 func execWorkload(ctx context.Context, bin string, argv []string, extraEnv ...string) error {
-	path, err := exec.LookPath(bin)
+	path, err := resolveBin(bin)
 	if err != nil {
 		return fmt.Errorf("block runtime: %s not found in PATH (ship the package): %w", bin, err)
 	}
@@ -982,20 +1003,21 @@ wal_log_hints = on
 // same shape targetcli() already uses for iscsi/target's one-shot setup
 // commands.
 //
-// Resolves bin via LookPath first (matching execWorkload's own
+// Resolves bin via resolveBin first (matching execWorkload's own
 // pattern) rather than handing the bare name straight to
 // exec.CommandContext: found via the X1 VM test, initdb's nixpkgs
 // wrapper re-execs the real binary with --inherit-argv0, so whatever
-// argv[0] this process set is what the real initdb sees too. A bare
-// "initdb" (no path separators — what CommandContext leaves argv[0] as
-// when given a bare name; only cmd.Path gets the resolved location)
-// gives postgres's own find_my_exec() nothing to derive its install
-// prefix from, so it fell back to a $PATH search that landed on the
-// merged system profile instead of the real package, unable to find
-// share/postgresql/postgres.bki there. A resolved path with real
-// components lets find_my_exec follow the symlink chain correctly.
+// argv[0] this process set is what the real initdb sees too, and
+// postgres's own find_my_exec() derives its install prefix from
+// argv[0] by stripping path components — with no readlink of its own,
+// so a bare name (CommandContext leaves argv[0] bare when only handed
+// one; only cmd.Path gets resolved) or even a resolved-but-still-a-
+// symlink path (LookPath alone stops at /run/current-system/sw/bin/
+// initdb, the merged profile's own symlink) both derive the profile's
+// layout instead of the real package's, missing
+// share/postgresql/postgres.bki either way.
 func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string) error {
-	path, err := exec.LookPath(bin)
+	path, err := resolveBin(bin)
 	if err != nil {
 		return fmt.Errorf("block runtime: %s not found in PATH (ship the package): %w", bin, err)
 	}
