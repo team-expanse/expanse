@@ -1125,9 +1125,22 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 		return createErr
 	case "replica":
 		env := []string{"PGPASSWORD=" + replPassword}
+		// Create the slot as its own idempotent step rather than via
+		// pg_basebackup's own -C: found via the X1 VM test, a transient
+		// backup failure (once, a WAL segment recycled out from under a
+		// slow copy under VM CPU contention) can leave the slot behind
+		// after -C already created it, and every retry of a -C backup
+		// then fails permanently with "slot already exists" -- pg_ctl
+		// has no "if not exists" form. A slot that already exists here
+		// is exactly the retry case, not an error.
+		ensureSlot := "SELECT pg_create_physical_replication_slot(:'slot') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = :'slot');\n"
+		if err := pgCmd(ctx, env, ensureSlot, "psql", "-h", host, "-p", peerport, "-U", "replicator", "-d", "postgres",
+			"-v", "ON_ERROR_STOP=1", "-v", "slot="+slot); err != nil {
+			return err
+		}
 		if err := pgCmd(ctx, env, "", "pg_basebackup",
 			"-h", host, "-p", peerport, "-U", "replicator",
-			"-D", pgdata, "-Fp", "-Xs", "-R", "-C", "-S", slot); err != nil {
+			"-D", pgdata, "-Fp", "-Xs", "-R", "-S", slot); err != nil {
 			return err
 		}
 		return writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots)
