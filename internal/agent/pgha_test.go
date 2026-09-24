@@ -13,6 +13,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -219,5 +220,59 @@ func TestScanPostgresInstancesIgnoresALostPlacement(t *testing.T) {
 	got := a.scanPostgresInstances(context.Background())
 	if _, ok := got["default/pg"]; ok {
 		t.Fatal("scanned a retired (LOST) placement")
+	}
+}
+
+// fakeRunPromoteSQL stubs the psql exec seam for one test, standing in
+// for a real postgres connection.
+func fakeRunPromoteSQL(t *testing.T, fn func(ctx context.Context, sockDir string, port int32) ([]byte, error)) {
+	t.Helper()
+	orig := runPromoteSQL
+	runPromoteSQL = fn
+	t.Cleanup(func() { runPromoteSQL = orig })
+}
+
+func TestPgPromoteSucceedsOnAtResponse(t *testing.T) {
+	var gotSock string
+	var gotPort int32
+	fakeRunPromoteSQL(t, func(_ context.Context, sockDir string, port int32) ([]byte, error) {
+		gotSock, gotPort = sockDir, port
+		return []byte("t\n"), nil
+	})
+	a := &Agent{}
+	inst := pgha.Instance{BlockRef: "default/pg", MountPath: "/var/lib/expanse/volumes/vol-a/mnt", Port: 5432}
+	if err := a.pgPromote(inst); err != nil {
+		t.Fatalf("pgPromote: %v", err)
+	}
+	if want := "/var/lib/expanse/volumes/vol-a/mnt/.expanse-postgres/sock"; gotSock != want {
+		t.Errorf("sockDir = %q, want %q", gotSock, want)
+	}
+	if gotPort != 5432 {
+		t.Errorf("port = %d, want 5432", gotPort)
+	}
+}
+
+func TestPgPromoteFailsWhenPsqlErrors(t *testing.T) {
+	fakeRunPromoteSQL(t, func(context.Context, string, int32) ([]byte, error) {
+		return []byte("psql: error: connection refused"), fmt.Errorf("exit status 2")
+	})
+	a := &Agent{}
+	inst := pgha.Instance{BlockRef: "default/pg", MountPath: "/mnt", Port: 5432}
+	if err := a.pgPromote(inst); err == nil {
+		t.Fatal("pgPromote returned nil despite a psql error")
+	}
+}
+
+func TestPgPromoteFailsWhenServerReportsFalse(t *testing.T) {
+	// pg_promote() itself succeeds (no SQL error) but returns false --
+	// e.g. the server was not actually in recovery, so nothing was
+	// promoted despite a zero exit status.
+	fakeRunPromoteSQL(t, func(context.Context, string, int32) ([]byte, error) {
+		return []byte("f\n"), nil
+	})
+	a := &Agent{}
+	inst := pgha.Instance{BlockRef: "default/pg", MountPath: "/mnt", Port: 5432}
+	if err := a.pgPromote(inst); err == nil {
+		t.Fatal("pgPromote returned nil despite pg_promote() reporting false")
 	}
 }

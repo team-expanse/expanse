@@ -11,7 +11,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -49,6 +52,7 @@ func (a *Agent) initPG() {
 		Leases:      lease.NewManager(a.store, a.cfg.NodeID),
 		Self:        a.cfg.NodeID,
 		ResolveAddr: a.lookupNodeIP,
+		Promote:     a.pgPromote,
 		Logger:      a.logger.With("component", "pgha"),
 	})
 }
@@ -204,4 +208,47 @@ var checkDistinctMount = func(path string) bool {
 		return false
 	}
 	return cst.Dev != pst.Dev
+}
+
+// pgPromoteTimeout bounds one pg_promote() attempt (Stream B, X2). Well
+// under pgha.LeaseTTL's own renewal budget: a promotion stuck longer
+// than this should give up and let the lease expire for another
+// replica to try, not sit there holding a lease with nothing actually
+// promoted behind it.
+const pgPromoteTimeout = 20 * time.Second
+
+// runPromoteSQL execs one SQL command against a replica's own local
+// unix socket and returns its trimmed stdout. A package var, not a
+// plain func, so tests can fake it without a real postgres instance —
+// the same seam pattern checkDistinctMount already uses.
+var runPromoteSQL = func(ctx context.Context, sockDir string, port int32) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "psql",
+		"-h", sockDir, "-p", strconv.Itoa(int(port)),
+		"-U", "postgres", "-d", "postgres",
+		"-tAc", "SELECT pg_promote(true, 15);")
+	return cmd.CombinedOutput()
+}
+
+// pgPromote is pgha.Config's Promote seam (Stream B, X2): pg_promote()
+// over a plain SQL connection to the replica's own local unix socket,
+// not a network address — reachable unauthenticated under pg_hba.conf's
+// "local all all trust" rule (pgHBAConf's own comment in
+// cmd/expanse-block-run/workloads.go already anticipates this exact
+// use). wait=true (the first pg_promote() argument) blocks until
+// postgres has actually finished switching timelines and is accepting
+// writes, so a nil return here means this node genuinely is primary
+// now, not just that the request was sent.
+func (a *Agent) pgPromote(inst pgha.Instance) error {
+	sockDir := filepath.Join(inst.MountPath, ".expanse-postgres", "sock")
+	ctx, cancel := context.WithTimeout(context.Background(), pgPromoteTimeout)
+	defer cancel()
+	out, err := runPromoteSQL(ctx, sockDir, inst.Port)
+	trimmed := bytes.TrimSpace(out)
+	if err != nil {
+		return fmt.Errorf("pg_promote: %w: %s", err, trimmed)
+	}
+	if !bytes.Equal(trimmed, []byte("t")) {
+		return fmt.Errorf("pg_promote: server reported %q, want \"t\"", trimmed)
+	}
+	return nil
 }
