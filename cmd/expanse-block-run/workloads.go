@@ -1031,6 +1031,21 @@ max_replication_slots = %d
 # GUC, cheaper to set once at bootstrap than rediscover the need for it
 # in Stream C.
 wal_log_hints = on
+# X2's "no acknowledged transaction is lost": a commit does not return
+# to the client until at least one standby has confirmed receipt, so
+# whichever replica pgha promotes after the primary dies already has
+# every write the client believes succeeded. A no-op setting on a
+# server currently running as a standby -- written unconditionally into
+# every replica's own conf from its very first bootstrap, primary or
+# not, so promotion needs no config reload to take effect. "*" matches
+# any connected standby by application_name, not just a specific one:
+# with two standbys, ANY 1 tolerates either being briefly unreachable
+# (bootstrapping, restarting) without blocking every write, at the cost
+# of not guaranteeing the OTHER standby also has every acked write --
+# tracked as a known gap, not a byzantine-safe guarantee, per
+# PHASE-05-TASKS.md D1's R1 (measure, don't assume, against the actual
+# failover VM test).
+synchronous_standby_names = 'ANY 1 (*)'
 `, port, sockDir, sharedBuffers, maxWalSenders, maxReplicationSlots)
 	return os.WriteFile(filepath.Join(pgdata, "postgresql.conf"), []byte(conf), 0o600)
 }
