@@ -393,6 +393,23 @@ func TestPgCmdWrapsCombinedOutputOnFailure(t *testing.T) {
 	}
 }
 
+// TestPgCmdResolvesArgv0ToAFullPath is the regression test for the bug
+// found running the X1 VM test: initdb's nixpkgs wrapper re-execs the
+// real binary with --inherit-argv0, so whatever argv[0] this process
+// set is what postgres's own find_my_exec() sees too. exec.CommandContext
+// given a bare name leaves argv[0] bare (only cmd.Path gets resolved),
+// which gave find_my_exec nothing to derive its install prefix from,
+// so initdb could never find its own share/postgresql/postgres.bki.
+func TestPgCmdResolvesArgv0ToAFullPath(t *testing.T) {
+	err := pgCmd(context.Background(), nil, "", "sh", "-c", `echo "argv0=$0" >&2; exit 1`)
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "argv0=/") {
+		t.Errorf("argv[0] was not resolved to a full path: %v", err)
+	}
+}
+
 func TestPgCmdPassesStdinAndEnv(t *testing.T) {
 	err := pgCmd(context.Background(), []string{"FOO=bar"}, "hello\n", "sh", "-c",
 		`read -r line; [ "$line" = hello ] && [ "$FOO" = bar ]`)

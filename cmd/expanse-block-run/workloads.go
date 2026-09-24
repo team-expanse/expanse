@@ -981,8 +981,25 @@ wal_log_hints = on
 // wrapping its combined output into any error for diagnosability — the
 // same shape targetcli() already uses for iscsi/target's one-shot setup
 // commands.
+//
+// Resolves bin via LookPath first (matching execWorkload's own
+// pattern) rather than handing the bare name straight to
+// exec.CommandContext: found via the X1 VM test, initdb's nixpkgs
+// wrapper re-execs the real binary with --inherit-argv0, so whatever
+// argv[0] this process set is what the real initdb sees too. A bare
+// "initdb" (no path separators — what CommandContext leaves argv[0] as
+// when given a bare name; only cmd.Path gets the resolved location)
+// gives postgres's own find_my_exec() nothing to derive its install
+// prefix from, so it fell back to a $PATH search that landed on the
+// merged system profile instead of the real package, unable to find
+// share/postgresql/postgres.bki there. A resolved path with real
+// components lets find_my_exec follow the symlink chain correctly.
 func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string) error {
-	cmd := exec.CommandContext(ctx, bin, args...)
+	path, err := exec.LookPath(bin)
+	if err != nil {
+		return fmt.Errorf("block runtime: %s not found in PATH (ship the package): %w", bin, err)
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
 	}
