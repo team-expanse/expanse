@@ -169,6 +169,10 @@
           block-daemonset = mkTest "block-daemonset" ./nix/tests/block-daemonset.nix;
           block-delete = mkTest "block-delete" ./nix/tests/block-delete.nix;
           block-catalog = mkTest "block-catalog" ./nix/tests/block-catalog.nix;
+
+          # Probe (Phase 6 D1): not a gate.
+          vm-nested-kvm-probe =
+            mkTest "vm-nested-kvm-probe" ./nix/tests/vm-nested-kvm-probe.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
