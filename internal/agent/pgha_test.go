@@ -88,12 +88,25 @@ func putReplicaResource(t *testing.T, st store.Store, node, ns, name string, idx
 	}
 }
 
+// fakeMounted stubs checkDistinctMount for one test, standing in for
+// whether the mount-attach reconcile resource (internal/storage/mount)
+// has actually landed the real filesystem on top of the pre-mount host
+// directory yet -- a fact a bare "--mount" arg's presence in the
+// desired-state record does not, by itself, guarantee.
+func fakeMounted(t *testing.T, mounted bool) {
+	t.Helper()
+	orig := checkDistinctMount
+	checkDistinctMount = func(string) bool { return mounted }
+	t.Cleanup(func() { checkDistinctMount = orig })
+}
+
 func TestScanPostgresInstancesCountsAnyLivePlacementNotJustRunning(t *testing.T) {
 	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	fakeMounted(t, true)
 	// SCHEDULING, not RUNNING: db/postgres can never itself reach RUNNING
 	// before pgha has acted, so requiring RUNNING here would deadlock.
 	putPGBlock(t, st, "default", "pg", "n1", 0, pb.Phase_SCHEDULING)
@@ -116,6 +129,7 @@ func TestScanPostgresInstancesResolvesTheRealMountPathNotTheDeclaredOne(t *testi
 		t.Fatal(err)
 	}
 	defer st.Close()
+	fakeMounted(t, true)
 	putPGBlock(t, st, "default", "pg", "n1", 0, pb.Phase_RUNNING)
 	putReplicaResource(t, st, "n1", "default", "pg", 0, "/var/lib/expanse/volumes/vol-a/mnt")
 
@@ -147,6 +161,33 @@ func TestScanPostgresInstancesSkipsUntilTheBridgeWiresTheRealMount(t *testing.T)
 	got := a.scanPostgresInstances(context.Background())
 	if _, ok := got["default/pg"]; ok {
 		t.Fatal("scanned an instance with no real mount path resolved yet")
+	}
+}
+
+// TestScanPostgresInstancesSkipsAPreMountShadowPath is the regression
+// test for the bug found running the X1 VM test past the earlier fixes:
+// the mount-attach resource converges independently of the desired-
+// state record naming its path, so a "--mount" arg's mere presence does
+// not mean the real filesystem has landed there yet. Writing a role
+// file to the pre-mount host directory writes somewhere the real mount
+// then silently shadows the moment it lands, exactly like
+// cmd/expanse-block-run's own waitForMount already guards the workload
+// side against (its doc comment: "reproduced directly: smbd's own
+// state directory went missing exactly this way").
+func TestScanPostgresInstancesSkipsAPreMountShadowPath(t *testing.T) {
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	fakeMounted(t, false)
+	putPGBlock(t, st, "default", "pg", "n1", 0, pb.Phase_SCHEDULING)
+	putReplicaResource(t, st, "n1", "default", "pg", 0, "/var/lib/expanse/volumes/vol-a/mnt")
+
+	a := pgTestAgent(t, st, "n1")
+	got := a.scanPostgresInstances(context.Background())
+	if _, ok := got["default/pg"]; ok {
+		t.Fatal("scanned an instance whose mount had not actually landed yet")
 	}
 }
 

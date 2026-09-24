@@ -11,7 +11,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/expanse/expanse/internal/blocks/controller"
@@ -166,8 +168,40 @@ func (a *Agent) pgReplicaMountPath(ctx context.Context, blockRef string, idx int
 			continue
 		}
 		if _, path, ok := strings.Cut(spec.Args[i+1], "="); ok {
+			if !checkDistinctMount(path) {
+				// The mount-attach resource (internal/storage/mount)
+				// converges independently of — and can lag behind —
+				// the desired-state record naming this path
+				// (cmd/expanse-block-run's waitForMount documents the
+				// same race in full): writing a role file here before
+				// the real filesystem actually lands writes into the
+				// plain pre-mount host directory instead, which the
+				// mount then shadows, silently hiding it forever. Wait
+				// for the same "distinct st_dev" signal the workload's
+				// own waitForMount blocks on, not just "the record
+				// names a path."
+				return ""
+			}
 			return path
 		}
 	}
 	return ""
+}
+
+// checkDistinctMount reports whether path is a real, distinct mounted
+// filesystem (a different st_dev than its parent directory) — the same
+// check cmd/expanse-block-run's waitForMount blocks on, duplicated here
+// rather than imported (that package is main, not a library) since this
+// agent-side check only needs one snapshot, not a polling wait. A
+// package var, not a plain func, so tests can substitute a fake without
+// needing a real mount on disk.
+var checkDistinctMount = func(path string) bool {
+	var pst, cst syscall.Stat_t
+	if syscall.Stat(filepath.Dir(path), &pst) != nil {
+		return false
+	}
+	if syscall.Stat(path, &cst) != nil {
+		return false
+	}
+	return cst.Dev != pst.Dev
 }
