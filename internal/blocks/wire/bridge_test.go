@@ -659,3 +659,54 @@ func TestBridgeDbPostgresGetsAStaticUID(t *testing.T) {
 		t.Errorf("StaticUID = %d, want pgha.StaticUID (%d)", spec.StaticUID, pgha.StaticUID)
 	}
 }
+
+// TestReplicaSpecCarriesResourceRequestsAsCPUMemArgs is the regression
+// test for PHASE-06-TASKS.md D6: vm/instance's runVM needs the guest's
+// vCPU/memory ceiling as real numbers (qemu's own -smp/-m), not just
+// the cgroup Limits path every other block type already gets — the
+// only channel a workload has for anything outside --config (mirrors
+// --mount/--voldev).
+func TestReplicaSpecCarriesResourceRequestsAsCPUMemArgs(t *testing.T) {
+	blk := &pb.Block{
+		Spec: &pb.BlockSpec{
+			Type: "vm/instance",
+			Resources: &pb.Resources{
+				Requests: &pb.ResourcePair{Cpu: "2", Memory: "1Gi"},
+			},
+		},
+	}
+	raw, err := replicaSpec(blk, "default", "vm1", 0, map[string]volumeRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec systemd.Spec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(spec.Args, " ")
+	if !strings.Contains(args, "--cpu 2") {
+		t.Errorf("Args = %v, want --cpu 2", spec.Args)
+	}
+	if !strings.Contains(args, "--mem 1Gi") {
+		t.Errorf("Args = %v, want --mem 1Gi", spec.Args)
+	}
+}
+
+// TestReplicaSpecVMInstanceRunsAsRoot is the regression test for
+// PHASE-06-TASKS.md D2: vm/instance needs CAP_NET_ADMIN (its macvtap
+// network identity) and /dev/kvm access, neither a capability
+// DynamicUser's random unprivileged uid can ever hold.
+func TestReplicaSpecVMInstanceRunsAsRoot(t *testing.T) {
+	blk := &pb.Block{Spec: &pb.BlockSpec{Type: "vm/instance"}}
+	raw, err := replicaSpec(blk, "default", "vm1", 0, map[string]volumeRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec systemd.Spec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if !spec.RunAsRoot {
+		t.Error("vm/instance must run as root: macvtap creation and /dev/kvm both need it")
+	}
+}

@@ -144,6 +144,7 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 				ID:             id,
 				Ready:          ready,
 				Cordoned:       cordoned,
+				Capabilities:   nodeCapabilities(ctx, st, id),
 				Volumes:        local,
 				HealthyVolumes: healthyLocal,
 				FreeCPU:        quantity.CPU{Milli: DefaultCapacity.CPU.Milli - u.cpu},
@@ -273,6 +274,26 @@ func nodeReady(ctx context.Context, st storeReader, id string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// nodeCapabilities reads the node's self-published capability list
+// (internal/agent.Agent.refreshInventory), e.g. ["kvm", "aes-ni"] — the
+// only channel this leader-side view has for another node's real
+// hardware, since capacity itself still comes from DefaultCapacity, not
+// live inventory. A missing key (a node that hasn't published yet, or
+// never will — witnesses skip inventory collection entirely) means no
+// known capabilities, the same as before this was wired at all: P6
+// simply finds every declared requirement missing, not a hard error.
+func nodeCapabilities(ctx context.Context, st storeReader, id string) []string {
+	e, err := st.Get(ctx, store.Key("/nodes/"+id+"/capabilities"))
+	if err != nil {
+		return nil
+	}
+	v := strings.TrimSpace(string(e.Value))
+	if v == "" {
+		return nil
+	}
+	return strings.Split(v, ",")
 }
 
 // nodePlaceable reads the node record's §4.8 detector state (written by

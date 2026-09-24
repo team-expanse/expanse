@@ -271,6 +271,18 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 	if blk.GetSpec().GetType() == pgha.BlockType {
 		spec.StaticUID = pgha.StaticUID
 	}
+	// vm/instance's own guest-visible vCPU/memory ceiling (PHASE-06-TASKS.md
+	// D6) — a second, inward-facing limit no prior block type needed,
+	// distinct from Limits' cgroup enforcement. Harmless to hand to every
+	// other type too: only runVM's workload ever reads these flags.
+	if req := blk.GetSpec().GetResources().GetRequests(); req != nil {
+		if req.GetCpu() != "" {
+			spec.Args = append(spec.Args, "--cpu", req.GetCpu())
+		}
+		if req.GetMemory() != "" {
+			spec.Args = append(spec.Args, "--mem", req.GetMemory())
+		}
+	}
 	for _, st := range blk.GetSpec().GetStorage() {
 		v, ok := vols[blockStorageVolumeName(blk, ns, name, st, idx)]
 		if !ok || st.GetMountPath() == "" {
@@ -310,10 +322,15 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 // uid can ever hold, no matter the directory permissions. LIO's configfs
 // tree (iscsi/target, PHASE-04-TASKS.md Stream B) is root-only the same
 // way.
+// vm/instance needs the same class of privilege: CAP_NET_ADMIN to
+// create its macvtap network identity (PHASE-06-TASKS.md D2) and
+// /dev/kvm access, neither a capability DynamicUser's random
+// unprivileged uid can ever hold.
 var rootBlockTypes = map[string]bool{
 	"share/smb":    true,
 	"share/nfs":    true,
 	"iscsi/target": true,
+	"vm/instance":  true,
 }
 
 // storageFilesystem is the mount.Resource filesystem for a storage entry:

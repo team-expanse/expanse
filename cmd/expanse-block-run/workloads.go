@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,7 +30,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/expanse/expanse/internal/network/vip"
+	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage/drbd"
+	"github.com/vishvananda/netlink"
 )
 
 // cfgMap decodes the --config JSON argument into a generic map.
@@ -1190,6 +1194,313 @@ wal_log_hints = on
 // initdb, the merged profile's own symlink) both derive the profile's
 // layout instead of the real package's, missing
 // share/postgresql/postgres.bki either way.
+// runVM serves vm/instance (PHASE-06-TASKS.md Stream A, X1): exec
+// qemu-kvm directly against the bound raw volume as its disk (D3, the
+// same --voldev/waitForPrimaryDevice channel runISCSITarget already
+// uses) and a macvtap child of the node's own uplink as its network
+// identity (D2, ARCHITECTURE.md A34), MAC pinned once from the instance
+// name the same deterministic way defaultIQN/defaultWWN pin
+// iscsi/target's identity — no libvirt (D1, A33 revised), the same
+// "exec upstream tooling, drive its lifecycle over its own control
+// socket" shape every other binary-backed workload here uses.
+//
+// A stop/demotion is a hard kill of the qemu-kvm child (ctx cancel ->
+// exec's default SIGKILL): live migration and graceful guest quiesce
+// are explicitly out of scope this phase (X5), and process death always
+// closes qemu's own fd on the raw device, so — unlike LIO's kernel-held
+// configfs backstore (lioTarget.teardown) — no separate release step is
+// needed for DRBD to demote cleanly afterward.
+func runVM(ctx context.Context, instance string, args []string) error {
+	cfg, err := cfgMap(args)
+	if err != nil {
+		return err
+	}
+
+	volID := firstVoldev(voldevs(args))
+	if volID == "" {
+		return fmt.Errorf("vm/instance: no bound storage volume yet")
+	}
+	dev, err := waitForPrimaryDevice(ctx, drbd.New(), volID, 30*time.Second, 500*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("vm/instance: %w", err)
+	}
+
+	mac := cfgStr(cfg, "mac")
+	if mac == "" {
+		mac = defaultMAC(instance)
+	}
+	cpus := vmCPUs(args)
+	memMiB := vmMemMiB(args)
+
+	// EXPANSE_EXTERNAL_INTERFACE (nix/modules/agent.nix, from the agent's
+	// own --external-interface): the same physical NIC the VIP holder
+	// already announces on. Empty falls back to "auto" (the default
+	// route's device) -- the right answer for a real deployment with a
+	// gateway, but not for this project's own nixosTest harness, whose
+	// flat-LAN test nodes carry no default route at all (only directly-
+	// connected subnet routes), confirmed the hard way: vip.ResolveIface
+	// returned "no default route interface for auto detection" until the
+	// test explicitly set externalInterface, exactly as every VIP-using
+	// block test already must.
+	_, uplink, err := vip.ResolveIface(uplinkIfaceFromEnv(os.Getenv("EXPANSE_EXTERNAL_INTERFACE")))
+	if err != nil {
+		return fmt.Errorf("vm/instance: resolve uplink interface: %w", err)
+	}
+	tapName := macvtapIfaceName(instance)
+	tap, err := createMacvtap(uplink, tapName, mac)
+	if err != nil {
+		return fmt.Errorf("vm/instance: %w", err)
+	}
+
+	// Removed up front, matching createMacvtap's own idempotent "wipe
+	// and recreate before every start" convention: a restart on the same
+	// node (Restart=on-failure) finds its own prior socket file still on
+	// disk even though the process behind it is long gone (PrivateTmp
+	// keeps this unit's /tmp only for itself, but qemu's own bind() is
+	// not guaranteed to unlink a stale path first).
+	qmpSock := "/tmp/expblk-" + instance + "-qmp.sock"
+	_ = os.Remove(qmpSock)
+
+	qemuArgv := []string{
+		"-enable-kvm", "-nodefaults", "-display", "none", "-no-reboot",
+		"-m", strconv.Itoa(memMiB), "-smp", strconv.Itoa(cpus),
+		"-drive", "file=" + dev + ",if=virtio,format=raw",
+		// fd=3: the first (and only) entry in cmd.ExtraFiles below --
+		// qemu itself never needs CAP_NET_ADMIN or any netlink access of
+		// its own, since this already-root process did the one-time
+		// privileged macvtap setup and hands the already-open fd down.
+		"-netdev", "tap,id=net0,fd=3",
+		"-device", "virtio-net-pci,netdev=net0,mac=" + mac,
+		"-serial", "stdio",
+		"-qmp", "unix:" + qmpSock + ",server,nowait",
+	}
+	// D4: getting a first bootable guest OS onto an empty raw volume is
+	// documented, not built, this phase. Left unset (the production
+	// default), the VMM boots from the attached disk the ordinary BIOS
+	// way; bootKernel opts into direct-kernel-boot instead, the same
+	// mechanism nix/tests/vm-d1-boot-probe.nix already measured working.
+	if k := cfgStr(cfg, "bootKernel"); k != "" {
+		qemuArgv = append(qemuArgv, "-kernel", k)
+		if i := cfgStr(cfg, "bootInitrd"); i != "" {
+			qemuArgv = append(qemuArgv, "-initrd", i)
+		}
+		if c := cfgStr(cfg, "bootCmdline"); c != "" {
+			qemuArgv = append(qemuArgv, "-append", c)
+		}
+	}
+
+	path, err := resolveBin("qemu-kvm")
+	if err != nil {
+		tap.Close()
+		_ = deleteLink(tapName)
+		return fmt.Errorf("vm/instance: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, path, qemuArgv...)
+	cmd.ExtraFiles = []*os.File{tap}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		tap.Close()
+		_ = deleteLink(tapName)
+		return fmt.Errorf("vm/instance: start qemu-kvm: %w", err)
+	}
+	// qemu has its own inherited copy of the fd (via fork/exec) as soon
+	// as Start returns; closing our own copy here does not affect it.
+	tap.Close()
+	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d memMiB=%d)\n", instance, dev, mac, cpus, memMiB)
+	err = cmd.Wait()
+	_ = deleteLink(tapName)
+	if ctx.Err() != nil {
+		return nil // deliberate stop
+	}
+	return err
+}
+
+// createMacvtap creates a bridge-mode macvtap child of uplink (D2,
+// ARCHITECTURE.md A34), pins mac, brings it up, and opens its kernel
+// tap character device — the fd qemu's own "-netdev tap,fd=N" takes
+// directly. Idempotent, matching lioTarget's own "wipe and recreate
+// before every start" convention: a restart on the same node finds its
+// own prior macvtap child still present.
+// createMacvtap creates a bridge-mode macvtap child of uplink by
+// exec'ing iproute2's `ip link` directly — not vishvananda/netlink's
+// own LinkAdd, despite that being this project's usual preference (VIP
+// address management, internal/network/vip) for exactly this class of
+// operation. Measured, not guessed: netlink.LinkAdd for a Macvtap link
+// reproducibly failed with ERANGE ("numerical result out of range")
+// against this project's own X1 VM test — persistently, not a boot-time
+// race (30+ retries over 140s all failed identically) — while the exact
+// same operation via `ip link add ... type macvtap mode bridge`,
+// exactly nix/tests/vm-macvtap-probe.py's own already-proven sequence,
+// is the one actually measured working. Same class of finding as D1's
+// own cloud-hypervisor rejection: a real, reproducible incompatibility,
+// not a config mistake — adopt the proven path instead of chasing it.
+// macvtapIfaceName derives a stable, deterministic macvtap child
+// interface name from the block instance's own name — identical on
+// every failover, the same pattern defaultMAC/defaultIQN/defaultWWN
+// already use. Linux kernel interface names are capped at IFNAMSIZ-1
+// (15 bytes); a straightforward "mvtap-<instance>" prefix routinely
+// blows past that for any realistic namespace/name/index combination
+// (confirmed the hard way against the X1 VM test: "mvtap-default-
+// vm1-0" is 19 characters, rejected outright — deterministically, not
+// flaky, the length check fires on every single attempt). Hashing
+// keeps the result fixed-width and short regardless of instance name
+// length.
+func macvtapIfaceName(instance string) string {
+	sum := sha256.Sum256([]byte("expanse-vm-tap:" + instance))
+	return "mv" + hex.EncodeToString(sum[:6]) // 2 + 12 = 14 chars, under the 15-byte cap
+}
+
+func createMacvtap(uplink, name, mac string) (*os.File, error) {
+	if _, err := net.ParseMAC(mac); err != nil {
+		return nil, fmt.Errorf("mac %q: %w", mac, err)
+	}
+	ip, err := resolveBin("ip")
+	if err != nil {
+		return nil, err
+	}
+	// Idempotent: a restart on the same node finds its own prior child
+	// still present, the same "wipe and recreate before every start"
+	// convention lioTarget.teardown/resetSMBEphemeralState both use.
+	_ = exec.Command(ip, "link", "delete", name).Run()
+	if err := ipLink(ip, "add", "link", uplink, "name", name, "type", "macvtap", "mode", "bridge"); err != nil {
+		return nil, fmt.Errorf("create macvtap %s on %s: %w", name, uplink, err)
+	}
+	// address and up in one call: unlike netlink's own NEWLINK path,
+	// `ip link set` combining both is exactly vm-macvtap-probe.py's own
+	// measured sequence.
+	if err := ipLink(ip, "set", name, "address", mac, "up"); err != nil {
+		_ = exec.Command(ip, "link", "delete", name).Run()
+		return nil, fmt.Errorf("set macvtap %s address/up: %w", name, err)
+	}
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		_ = exec.Command(ip, "link", "delete", name).Run()
+		return nil, fmt.Errorf("look up macvtap %s after creation: %w", name, err)
+	}
+	// The kernel's macvtap driver exposes each child as a character
+	// device whose minor number is the link's own ifindex — the
+	// well-known /dev/tap<ifindex> convention libvirt's own macvtap
+	// integration relies on.
+	idx := link.Attrs().Index
+	f, err := os.OpenFile(fmt.Sprintf("/dev/tap%d", idx), os.O_RDWR, 0)
+	if err != nil {
+		_ = exec.Command(ip, "link", "delete", name).Run()
+		return nil, fmt.Errorf("open /dev/tap%d: %w", idx, err)
+	}
+	return f, nil
+}
+
+// ipLink runs one `ip link ...` command, folding its own error text
+// into the returned error for diagnosability — the same shape
+// targetcli() already uses for iscsi/target's one-shot setup commands.
+func ipLink(ip string, args ...string) error {
+	out, err := exec.Command(ip, append([]string{"link"}, args...)...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ip link %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// deleteLink removes a link by name, if it exists. Errors are
+// deliberately discarded, the same best-effort convention
+// lioTarget.teardown uses: called both defensively before creating (a
+// node that never ran this instance before has nothing to remove) and
+// on shutdown.
+func deleteLink(name string) error {
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil
+	}
+	return netlink.LinkDel(link)
+}
+
+// defaultMAC derives a stable, locally-administered guest MAC from the
+// block instance's own name — mirrors defaultIQN/defaultWWN, the same
+// "pin an identity once, never derive it from anything node-specific"
+// pattern D2 uses for a VM's network identity, so ordinary switch
+// MAC-learning and the guest's own gratuitous ARP on boot handle
+// failover with no new cluster-level mechanism.
+func defaultMAC(instance string) string {
+	sum := sha256.Sum256([]byte("expanse-vm-mac:" + instance))
+	b := make([]byte, 6)
+	copy(b, sum[:6])
+	// Locally-administered, unicast: clear the multicast bit, set the
+	// locally-administered bit — the same OUI class QEMU/libvirt's own
+	// default MAC scheme ("52:54:00:...") already uses.
+	b[0] = (b[0] &^ 0x01) | 0x02
+	return net.HardwareAddr(b).String()
+}
+
+// uplinkIfaceFromEnv resolves the EXPANSE_EXTERNAL_INTERFACE env var
+// (nix/modules/agent.nix, set from the agent's own --external-interface)
+// into the value vip.ResolveIface expects, defaulting to "auto" (the
+// default route's device) when unset — the same "empty = auto-detect"
+// convention the agent's own VIP holder already uses for the identical
+// question.
+func uplinkIfaceFromEnv(v string) string {
+	if v == "" {
+		return "auto"
+	}
+	return v
+}
+
+// vmArg returns the value of a bare "--name value" flag from args, or
+// "" when absent — the same shape mountPaths/voldevs already parse,
+// specialized for a single scalar.
+func vmArg(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// vmCPUs resolves the guest's vCPU count from the --cpu arg
+// (bridge.go's replicaSpec, sourced from spec.resources.requests.cpu) —
+// D6's "guest-visible ceiling", not just the cgroup limit every other
+// block type already gets for free. qemu's -smp wants a whole number;
+// a fractional request rounds up, since a guest cannot usefully see
+// half a vCPU.
+func vmCPUs(args []string) int {
+	raw := vmArg(args, "--cpu")
+	if raw == "" {
+		return 1
+	}
+	q, err := quantity.ParseCPU(raw)
+	if err != nil {
+		return 1
+	}
+	cores := int((q.Milli + 999) / 1000)
+	if cores < 1 {
+		return 1
+	}
+	return cores
+}
+
+// vmMemMiB resolves the guest's RAM ceiling in MiB from the --mem arg
+// (D6, sourced from spec.resources.requests.memory). qemu's -m wants
+// whole MiB; an unset or too-small request falls back to a floor small
+// enough to still boot a minimal guest but large enough not to starve
+// it outright (nix/tests/vm-d1-boot-probe.nix's own measured OOM-panic
+// finding against an undersized guest).
+func vmMemMiB(args []string) int {
+	raw := vmArg(args, "--mem")
+	if raw == "" {
+		return 512
+	}
+	q, err := quantity.ParseBytes(raw)
+	if err != nil {
+		return 512
+	}
+	mib := int(q.N / (1 << 20))
+	if mib < 128 {
+		return 128
+	}
+	return mib
+}
+
 func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string) error {
 	path, err := resolveBin(bin)
 	if err != nil {

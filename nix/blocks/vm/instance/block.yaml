@@ -1,0 +1,5 @@
+name: instance
+version: 1.0.0
+description: A general-purpose VM instance — qemu-kvm exec'd directly (no libvirt), disk on a replicated raw volume, network identity via macvtap
+icon: vm
+capabilities: [kvm]

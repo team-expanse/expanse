@@ -120,6 +120,45 @@ func TestNodesView(t *testing.T) {
 	}
 }
 
+// TestNodesViewCapabilities is the regression test for PHASE-06-TASKS.md
+// Stream A's own X1 test finding: a node's real hardware capabilities
+// (internal/agent.Agent.refreshInventory's own publish) must reach the
+// scheduler's NodeView, or placement.requiredCapabilities can never be
+// satisfied by any node — P6 always rejects with "missing capability"
+// regardless of actual hardware, since NodeView.Capabilities previously
+// came from nowhere in production (only the scheduler's own unit tests
+// ever set it directly).
+func TestNodesViewCapabilities(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	for _, pair := range [][2]string{
+		{"/nodes/n1", `{"id":"n1"}`},
+		{"/nodes/n1/status", "idle"},
+		{"/nodes/n1/capabilities", "kvm,aes-ni"},
+		{"/nodes/n2", `{"id":"n2"}`},
+		{"/nodes/n2/status", "idle"},
+	} {
+		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
+			t.Fatalf("put %s: %v", pair[0], err)
+		}
+	}
+	views, _, err := Nodes(st)(ctx)
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	byID := map[string][]string{}
+	for _, v := range views {
+		byID[v.ID] = v.Capabilities
+	}
+	got := byID["n1"]
+	if len(got) != 2 || got[0] != "kvm" || got[1] != "aes-ni" {
+		t.Errorf("n1 Capabilities = %v, want [kvm aes-ni]", got)
+	}
+	if len(byID["n2"]) != 0 {
+		t.Errorf("n2 Capabilities = %v, want empty (never published)", byID["n2"])
+	}
+}
+
 // /config/scheduler overrides the defaults.
 func TestOvercommitConfigFromStore(t *testing.T) {
 	st := newStore(t)

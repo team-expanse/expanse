@@ -20,6 +20,9 @@
 //   - db/postgres: upstream postgres, bootstrapped per the lease-gated
 //     election controller's role file (internal/blocks/pgha) — initdb a
 //     fresh primary, or pg_basebackup from the elected one
+//   - vm/instance: upstream qemu-kvm, exec'd directly (no libvirt)
+//     against the bound raw volume as its disk and a macvtap child of
+//     the node's uplink as its network identity (PHASE-06-TASKS.md D1/D2)
 //   - anything else: idle placeholder (unknown catalog types have no
 //     runtime contract yet; they come up healthy but idle)
 //
@@ -114,6 +117,11 @@ func main() {
 		}
 	case "db/postgres":
 		if err := runPostgres(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "vm/instance":
+		if err := runVM(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mac": {
+      "type": "string",
+      "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$",
+      "description": "Explicit guest NIC MAC override. Left unset, a stable, locally-administered MAC is derived once from the block instance's own name (PHASE-06-TASKS.md D2/D4 pattern) — identical across every failover, never regenerated or tied to a node or its macvtap parent interface"
+    },
+    "bootKernel": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nix store path to a kernel for direct-kernel-boot, bypassing whatever bootloader (if any) the raw volume's own disk holds. PHASE-06-TASKS.md D4 leaves getting a first bootable guest OS onto an empty volume out of this phase's own scope (document, don't build); this is the escape hatch that lets a guest boot at all before that exists — bootInitrd/bootCmdline go with it. Left unset (the production default), the VMM boots from the attached disk the ordinary BIOS way, exactly like a physical machine"
+    },
+    "bootInitrd": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nix store path to the initramfs paired with bootKernel. Ignored unless bootKernel is set"
+    },
+    "bootCmdline": {
+      "type": "string",
+      "description": "Kernel command line, only used with bootKernel"
+    }
+  }
+}

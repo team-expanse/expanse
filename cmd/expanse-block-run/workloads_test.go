@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -305,6 +306,134 @@ func TestDefaultWWNIsDeterministicAndWellFormed(t *testing.T) {
 	const prefix = "naa.5"
 	if len(a) != len(prefix)+15 || a[:len(prefix)] != prefix {
 		t.Errorf("defaultWWN = %q, want %s<15 hex digits>", a, prefix)
+	}
+}
+
+// defaultMAC must be stable across every failover (D2), the same
+// pattern defaultIQN/defaultWWN already use, and produce a
+// locally-administered unicast address (the standard "52:54:00"-class
+// QEMU/libvirt's own default MAC scheme uses, not a random or
+// multicast one a switch/guest would treat specially).
+// macvtapIfaceName must stay under Linux's IFNAMSIZ-1 (15 bytes) for
+// every realistic instance name — the regression test for the X1 VM
+// test's own deterministic (not flaky) failure: a straightforward
+// "mvtap-<instance>" prefix produced a 19-character name, rejected by
+// both netlink and `ip link add` on every single attempt.
+func TestMacvtapIfaceNameFitsInterfaceNameLimit(t *testing.T) {
+	for _, instance := range []string{
+		"default-vm1-0",
+		"a-much-longer-namespace-and-block-name-than-any-prior-test-used-42",
+	} {
+		got := macvtapIfaceName(instance)
+		if len(got) > 15 {
+			t.Errorf("macvtapIfaceName(%q) = %q (%d chars), want <= 15", instance, got, len(got))
+		}
+	}
+}
+
+func TestMacvtapIfaceNameIsDeterministic(t *testing.T) {
+	a := macvtapIfaceName("default-vm1-0")
+	b := macvtapIfaceName("default-vm1-0")
+	if a != b {
+		t.Errorf("macvtapIfaceName not deterministic: %q vs %q", a, b)
+	}
+	if macvtapIfaceName("default-vm2-0") == a {
+		t.Error("macvtapIfaceName identical for two different instances")
+	}
+}
+
+func TestDefaultMACIsDeterministic(t *testing.T) {
+	a := defaultMAC("default-vm1-0")
+	b := defaultMAC("default-vm1-0")
+	if a != b {
+		t.Errorf("defaultMAC not deterministic: %q vs %q", a, b)
+	}
+	if defaultMAC("default-other-0") == a {
+		t.Error("defaultMAC identical for two different instances")
+	}
+}
+
+func TestDefaultMACIsLocallyAdministeredUnicast(t *testing.T) {
+	mac, err := net.ParseMAC(defaultMAC("default-vm1-0"))
+	if err != nil {
+		t.Fatalf("defaultMAC produced an unparseable address: %v", err)
+	}
+	first := mac[0]
+	if first&0x01 != 0 {
+		t.Errorf("defaultMAC = %v, want the multicast bit clear", mac)
+	}
+	if first&0x02 == 0 {
+		t.Errorf("defaultMAC = %v, want the locally-administered bit set", mac)
+	}
+}
+
+// uplinkIfaceFromEnv is the regression test for the X1 VM test's own
+// first real failure: vip.ResolveIface("auto") found no default route
+// at all on this harness's flat-LAN test nodes, so an unset env var
+// must still resolve to "auto" (correct for a real deployment with a
+// gateway) while a set one passes through unchanged (this harness's own
+// externalInterface="eth1" workaround, matching every VIP-using block
+// test's identical need).
+func TestUplinkIfaceFromEnvDefaultsToAuto(t *testing.T) {
+	if got := uplinkIfaceFromEnv(""); got != "auto" {
+		t.Errorf("uplinkIfaceFromEnv(\"\") = %q, want auto", got)
+	}
+}
+
+func TestUplinkIfaceFromEnvPassesThroughExplicitValue(t *testing.T) {
+	if got := uplinkIfaceFromEnv("eth1"); got != "eth1" {
+		t.Errorf("uplinkIfaceFromEnv(eth1) = %q, want eth1", got)
+	}
+}
+
+func TestVMArgFindsFlagValue(t *testing.T) {
+	args := []string{"--config", "{}", "--cpu", "2", "--mem", "1Gi"}
+	if got := vmArg(args, "--cpu"); got != "2" {
+		t.Errorf("vmArg(--cpu) = %q, want 2", got)
+	}
+	if got := vmArg(args, "--mem"); got != "1Gi" {
+		t.Errorf("vmArg(--mem) = %q, want 1Gi", got)
+	}
+	if got := vmArg(args, "--missing"); got != "" {
+		t.Errorf("vmArg(--missing) = %q, want empty", got)
+	}
+}
+
+func TestVMCPUsParsesAndRoundsUp(t *testing.T) {
+	cases := map[string]int{
+		"":      1, // unset: one vCPU floor
+		"2":     2,
+		"500m":  1, // fractional core rounds up, never down to zero
+		"1500m": 2,
+		"bogus": 1, // unparseable: same floor as unset
+	}
+	for raw, want := range cases {
+		var args []string
+		if raw != "" {
+			args = []string{"--cpu", raw}
+		}
+		if got := vmCPUs(args); got != want {
+			t.Errorf("vmCPUs(--cpu=%q) = %d, want %d", raw, got, want)
+		}
+	}
+}
+
+func TestVMMemMiBParsesAndFloors(t *testing.T) {
+	cases := map[string]int{
+		"":      512, // unset default
+		"1Gi":   1024,
+		"256Mi": 256,
+		"1Ki":   128, // below the floor
+		"bogus": 512, // unparseable: same default as unset
+	}
+	for raw, want := range cases {
+		var args []string
+		if raw != "" {
+			args = []string{"--mem", raw}
+		}
+		if got := vmMemMiB(args); got != want {
+			t.Errorf("vmMemMiB(--mem=%q) = %d, want %d", raw, got, want)
+		}
 	}
 }
 

@@ -261,6 +261,13 @@ in
         TasksMax=512
         IOWeight=100
         Environment=PATH=/run/current-system/sw/bin
+        # vm/instance's own macvtap uplink (D2, ARCHITECTURE.md A34):
+        # the same physical interface the agent's own VIP holder already
+        # announces on (empty = auto-detect the default route's device,
+        # internal/network/vip.ResolveIface) — reused rather than a
+        # second, block-author-declared interface knob, since it answers
+        # the identical "which physical NIC is the real one" question.
+        Environment=EXPANSE_EXTERNAL_INTERFACE=${cfg.externalInterface}
         ExecStart=${pkgs.expanse}/bin/expanse-block-run %i
       '';
     };

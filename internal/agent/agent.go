@@ -738,8 +738,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Inventory: immediately, then every 5 minutes (witnesses skip —
 	// §4.9 minimal footprint).
 	if !witness {
-		a.refreshInventory()
-		go a.loop(ctx, 5*time.Minute, "inventory", a.refreshInventory)
+		a.refreshInventory(ctx)
+		go a.loop(ctx, 5*time.Minute, "inventory", func() { a.refreshInventory(ctx) })
 	}
 
 	// Health + node status: every 10 s. The status value advertises the
@@ -942,7 +942,19 @@ func (a *Agent) Stop() {
 	}
 }
 
-func (a *Agent) refreshInventory() {
+// refreshInventory collects this node's local hardware inventory and
+// publishes its derived capabilities (e.g. "kvm", "aes-ni", "gpu") to
+// the store under /nodes/<id>/capabilities — the only channel the
+// leader-side scheduler view (internal/blocks/wire.Nodes) has for
+// another node's capabilities, mirroring the health loop's own
+// /nodes/<id>/status publication. Without this, a block's
+// placement.requiredCapabilities can never be satisfied by any node in
+// production regardless of its real hardware (PHASE-06-TASKS.md Stream
+// A's own X1 test found this the hard way: real inventory collection
+// worked, but the scheduler's capability filter (P6) always rejected
+// every node with "missingcapability", since NodeView.Capabilities was
+// never populated from anything beyond the scheduler's own unit tests).
+func (a *Agent) refreshInventory(ctx context.Context) {
 	inv, err := a.invCollector.Collect(a.cfg.NodeID)
 	if err != nil {
 		a.logger.Error("inventory collection failed", "err", err)
@@ -954,6 +966,10 @@ func (a *Agent) refreshInventory() {
 	a.logger.Info("inventory collected",
 		"cores", inv.CPU.Cores, "mem_gb", inv.Memory.Total/1e9,
 		"disks", len(inv.Disks), "nics", len(inv.Network), "virt", inv.Virtualization)
+	key := store.Key(fmt.Sprintf("/nodes/%s/capabilities", a.cfg.NodeID))
+	if _, err := a.store.Put(ctx, key, []byte(strings.Join(inv.Capabilities, ","))); err != nil {
+		a.logger.Error("write node capabilities failed", "err", err)
+	}
 }
 
 func (a *Agent) loop(ctx context.Context, every time.Duration, name string, fn func()) {
