@@ -218,7 +218,7 @@ func (c *Controller) elect(ctx context.Context, ref string, inst Instance) {
 		c.mu.Lock()
 		c.active[ref] = held
 		c.mu.Unlock()
-		c.log(c.cfg.Logger.Info, "pgha: elected primary", "block", ref, "node", c.cfg.Self)
+		c.log(c.cfg.Logger.Info, "pgha: elected primary", "block", ref, "node", c.cfg.Self, "roleFile", RolePath(inst.MountPath))
 		return
 	}
 	if !errors.Is(err, errors.KindConflict) {
@@ -248,7 +248,7 @@ func (c *Controller) elect(ctx context.Context, ref string, inst Instance) {
 		c.log(c.cfg.Logger.Error, "pgha: role file write failed", "block", ref, "err", werr)
 		return
 	}
-	c.log(c.cfg.Logger.Info, "pgha: wrote replica role", "block", ref, "primary", l.Holder, "host", host)
+	c.log(c.cfg.Logger.Info, "pgha: wrote replica role", "block", ref, "primary", l.Holder, "host", host, "roleFile", RolePath(inst.MountPath))
 }
 
 // writeRoleFile creates the state directory and writes the role file
