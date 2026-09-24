@@ -185,6 +185,9 @@
 
           # Stream B, X2 (the phase's decider)/X3: survives a hard node kill.
           vm-instance-failover = mkTest "vm-instance-failover" ./nix/tests/vm-instance-failover.nix;
+
+          # Stream C, X4: guest filesystem survives a hard kill mid-write.
+          vm-instance-fs-integrity = mkTest "vm-instance-fs-integrity" ./nix/tests/vm-instance-fs-integrity.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
