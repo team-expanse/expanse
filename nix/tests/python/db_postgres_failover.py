@@ -187,8 +187,11 @@ def start_pgbench_load(vip):
         "#!/bin/sh\n"
         "export PATH=/run/current-system/sw/bin:$PATH\n"
         "while true; do\n"
+        # No --exit-on-abort (the default): a client whose connection
+        # dies mid-failover just aborts that one client, pgbench itself
+        # keeps running the others and returns normally.
         f"  PGPASSWORD={SUPER_PASSWORD} pgbench -h {vip} -p {PORT} -U postgres -d {DATABASE} "
-        "-c 4 -j 2 -T 20 --continue-on-error >>/root/pgbench.log 2>&1\n"
+        "-c 4 -j 2 -T 20 >>/root/pgbench.log 2>&1\n"
         "done\n"
         "EOF\n"
     )
