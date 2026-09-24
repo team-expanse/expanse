@@ -260,16 +260,26 @@ func (a *Agent) pgPromote(inst pgha.Instance) error {
 	return nil
 }
 
-// runReconfigureSQL execs one SQL command over psql against host:port,
-// as user (authenticated by password if non-empty, otherwise the local
-// "trust" rule pgHBAConf documents), and returns its trimmed combined
-// output. A package var, not a plain func, for the same fakeability
+// runReconfigureSQL execs one or more ;-separated SQL statements over
+// psql against host:port, as user (authenticated by password if
+// non-empty, otherwise the local "trust" rule pgHBAConf documents), and
+// returns its trimmed combined output. sql travels over stdin, not -c:
+// found running the X2 VM test, psql's simple-query protocol sends a
+// -c string with multiple statements as ONE message, which postgres
+// implicitly wraps in a transaction server-side -- fatal for ALTER
+// SYSTEM, which (like CREATE DATABASE, VACUUM, ...) refuses to run
+// inside one. Reading a script from stdin instead sends each statement
+// as its own separate message, client-side, avoiding that wrap
+// entirely -- the same delivery cmd/expanse-block-run's own CREATE
+// ROLE/CREATE DATABASE bootstrap step already relies on, proven there
+// first. A package var, not a plain func, for the same fakeability
 // runPromoteSQL and checkDistinctMount already provide.
 var runReconfigureSQL = func(ctx context.Context, host string, port int32, user, password, dbname, sql string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "psql",
 		"-h", host, "-p", strconv.Itoa(int(port)),
 		"-U", user, "-d", dbname,
-		"-v", "ON_ERROR_STOP=1", "-c", sql)
+		"-v", "ON_ERROR_STOP=1")
+	cmd.Stdin = strings.NewReader(sql)
 	if password != "" {
 		cmd.Env = append(cmd.Environ(), "PGPASSWORD="+password)
 	}
