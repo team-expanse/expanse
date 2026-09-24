@@ -188,6 +188,9 @@
 
           # Stream C, X4: guest filesystem survives a hard kill mid-write.
           vm-instance-fs-integrity = mkTest "vm-instance-fs-integrity" ./nix/tests/vm-instance-fs-integrity.nix;
+
+          # Stream D: vertical slice -- X3/X4 proven together, one kill, black-box (no internal-state waits).
+          vm-instance-vertical-slice = mkTest "vm-instance-vertical-slice" ./nix/tests/vm-instance-vertical-slice.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
