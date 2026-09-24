@@ -99,7 +99,7 @@ measured directly, non-blocking per the phase's own exit criteria — see Stream
 - Backup integration hooks for Phase 8.
 
 **Exit:** `pgbench` runs through a primary kill; the new primary serves; `amcheck`/`pg_checksums`
-reports zero corruption.
+reports zero corruption — met, see `PHASE-05-TASKS.md` Streams A-D.
 
 ## Phase 6 — Virtualized workloads
 
