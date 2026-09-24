@@ -409,7 +409,7 @@ func TestWritePGConfOverwritesAnExistingConf(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(pgdata, "postgresql.conf"), []byte(stale), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writePGConf(pgdata, "/mnt/pg/.expanse-postgres/sock", "5432", "256MB", 10, 10); err != nil {
+	if err := writePGConf(pgdata, "/mnt/pg/.expanse-postgres/sock", "5432", "256MB", 10, 10, true); err != nil {
 		t.Fatalf("writePGConf: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(pgdata, "postgresql.conf"))
@@ -439,6 +439,25 @@ func TestWritePGConfOverwritesAnExistingConf(t *testing.T) {
 	}
 	if strings.Contains(string(hba), "trust") && strings.Count(string(hba), "trust") != 1 {
 		t.Errorf("pg_hba.conf must only trust the local unix socket: %s", hba)
+	}
+}
+
+// TestWritePGConfOmitsSynchronousReplicationWhenNotSynced is the
+// regression test for the deadlock bootstrapPostgres's primary case
+// must avoid: its first, temporary start (used only to run CREATE ROLE
+// replicator) cannot require a synchronous standby, since none can
+// authenticate as that role before this very statement creates it.
+func TestWritePGConfOmitsSynchronousReplicationWhenNotSynced(t *testing.T) {
+	pgdata := t.TempDir()
+	if err := writePGConf(pgdata, "/mnt/pg/.expanse-postgres/sock", "5432", "256MB", 10, 10, false); err != nil {
+		t.Fatalf("writePGConf: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(pgdata, "postgresql.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "synchronous_standby_names") {
+		t.Errorf("sync=false must omit synchronous_standby_names entirely:\n%s", got)
 	}
 }
 

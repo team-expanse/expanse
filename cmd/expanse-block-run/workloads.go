@@ -1015,7 +1015,21 @@ host    all             all             0.0.0.0/0               scram-sha-256
 // plain-format copy carries the PRIMARY's postgresql.conf into a fresh
 // replica's pgdata too, so this replica's own port/socket-dir/hba
 // settings must overwrite it, not just supply it once.
-func writePGConf(pgdata, sockDir, port, sharedBuffers string, maxWalSenders, maxReplicationSlots int) error {
+//
+// sync gates synchronous_standby_names (X2's "no acknowledged
+// transaction is lost": a commit does not return to the client until at
+// least one standby has confirmed receipt, so whichever replica pgha
+// promotes after the primary dies already has every write the client
+// believes succeeded) -- it must be false for a brand new primary's
+// very first start, the one bootstrapPostgres uses only to run CREATE
+// ROLE replicator/CREATE DATABASE over a still-empty cluster: no
+// standby can possibly be connected yet (none can even authenticate
+// before that CREATE ROLE commits), so turning this on that early
+// makes the CREATE ROLE statement itself wait forever for a standby
+// that can never arrive -- a genuine deadlock, not just a slow start.
+// Every other start (the primary's real, long-running one, and every
+// replica's) passes true.
+func writePGConf(pgdata, sockDir, port, sharedBuffers string, maxWalSenders, maxReplicationSlots int, sync bool) error {
 	if err := os.WriteFile(filepath.Join(pgdata, "pg_hba.conf"), []byte(pgHBAConf), 0o600); err != nil {
 		return err
 	}
@@ -1031,22 +1045,18 @@ max_replication_slots = %d
 # GUC, cheaper to set once at bootstrap than rediscover the need for it
 # in Stream C.
 wal_log_hints = on
-# X2's "no acknowledged transaction is lost": a commit does not return
-# to the client until at least one standby has confirmed receipt, so
-# whichever replica pgha promotes after the primary dies already has
-# every write the client believes succeeded. A no-op setting on a
-# server currently running as a standby -- written unconditionally into
-# every replica's own conf from its very first bootstrap, primary or
-# not, so promotion needs no config reload to take effect. "*" matches
-# any connected standby by application_name, not just a specific one:
-# with two standbys, ANY 1 tolerates either being briefly unreachable
-# (bootstrapping, restarting) without blocking every write, at the cost
-# of not guaranteeing the OTHER standby also has every acked write --
-# tracked as a known gap, not a byzantine-safe guarantee, per
-# PHASE-05-TASKS.md D1's R1 (measure, don't assume, against the actual
-# failover VM test).
-synchronous_standby_names = 'ANY 1 (*)'
 `, port, sockDir, sharedBuffers, maxWalSenders, maxReplicationSlots)
+	if sync {
+		// "*" matches any connected standby by application_name, not a
+		// specific one: with two standbys, ANY 1 tolerates either being
+		// briefly unreachable (bootstrapping, restarting) without
+		// blocking every write, at the cost of not guaranteeing the
+		// OTHER standby also has every acked write -- tracked as a
+		// known gap, not a byzantine-safe guarantee, per
+		// PHASE-05-TASKS.md D1's R1 (measure, don't assume, against the
+		// actual failover VM test).
+		conf += "synchronous_standby_names = 'ANY 1 (*)'\n"
+	}
 	return os.WriteFile(filepath.Join(pgdata, "postgresql.conf"), []byte(conf), 0o600)
 }
 
@@ -1116,7 +1126,12 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 		if err := pgCmd(ctx, nil, "", "initdb", "-D", pgdata, "--username=postgres", "--pwfile="+pwFile.Name()); err != nil {
 			return err
 		}
-		if err := writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
+		// sync=false: no standby can possibly be connected yet -- none
+		// can even authenticate before the CREATE ROLE below commits --
+		// so synchronous replication must not be active for this first,
+		// temporary start (writePGConf's own doc comment has the full
+		// deadlock this avoids).
+		if err := writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots, false); err != nil {
 			return err
 		}
 		// -l redirects the daemonized postmaster's own stdout/stderr to
@@ -1137,7 +1152,14 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 		if stopErr := pgCmd(ctx, nil, "", "pg_ctl", "-D", pgdata, "-w", "stop"); stopErr != nil && createErr == nil {
 			return stopErr
 		}
-		return createErr
+		if createErr != nil {
+			return createErr
+		}
+		// Now that the replicator role exists, the real, long-running
+		// start (runPostgres's own execWorkload, after this function
+		// returns) can safely require a synchronous standby -- one will
+		// eventually connect and authenticate against it.
+		return writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots, true)
 	case "replica":
 		env := []string{"PGPASSWORD=" + replPassword}
 		// Create the slot as its own idempotent step rather than via
@@ -1158,7 +1180,10 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 			"-D", pgdata, "-Fp", "-Xs", "-R", "-S", slot); err != nil {
 			return err
 		}
-		return writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots)
+		// sync=true: a fresh standby authenticates as the replicator role
+		// pg_basebackup itself already required to exist -- no deadlock,
+		// unlike the primary's own first start above.
+		return writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots, true)
 	default:
 		return fmt.Errorf("unrecognised role kind %q in %s", kind, roleFile)
 	}
