@@ -281,8 +281,10 @@ in
 
       unitConfig = { };
       # The volume runtime shells out to lvm and drbdadm/drbdsetup, and the mount
-      # manager to util-linux, e2fsprogs and cmp; the unit's own PATH is minimal.
-      path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils ];
+      # manager to util-linux, e2fsprogs and cmp; pgha's promotion seam (Stream B,
+      # X2) shells out to psql over a db/postgres replica's own local unix socket --
+      # the unit's own PATH is otherwise minimal.
+      path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils postgresql_18 ];
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
