@@ -135,6 +135,44 @@ func TestWaitForMountRetriesThroughStatErrors(t *testing.T) {
 	}
 }
 
+// TestMkdirAllRetryingSucceedsAfterTransientFailures is the regression
+// test for the X1 VM test's second permission-denied bug: mount.Manager
+// .attach chmods a fresh mount world-writable in a separate step right
+// after the mount syscall itself, not atomically with it, so a workload
+// waking from waitForMount in that narrow gap can see the mount as
+// landed before the chmod has actually run.
+func TestMkdirAllRetryingSucceedsAfterTransientFailures(t *testing.T) {
+	calls := 0
+	mkdir := func(string, os.FileMode) error {
+		calls++
+		if calls < 3 {
+			return errors.New("permission denied") // chmod hasn't landed yet
+		}
+		return nil
+	}
+	if err := mkdirAllRetrying(mkdir, "/x", 0o770, 5, time.Millisecond); err != nil {
+		t.Fatalf("mkdirAllRetrying: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want exactly 3 (stop retrying once it succeeds)", calls)
+	}
+}
+
+func TestMkdirAllRetryingGivesUpAfterExhaustingAttempts(t *testing.T) {
+	calls := 0
+	mkdir := func(string, os.FileMode) error {
+		calls++
+		return errors.New("permission denied")
+	}
+	err := mkdirAllRetrying(mkdir, "/x", 0o770, 3, time.Millisecond)
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want exactly 3 (the attempts budget)", calls)
+	}
+}
+
 // fakeDRBDStatuser is an in-memory drbdStatuser for waitForPrimaryDevice's
 // tests: a queue of canned responses, one per call.
 type fakeDRBDStatuser struct {

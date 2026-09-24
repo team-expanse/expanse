@@ -182,6 +182,23 @@ func waitForMount(path string, timeout, interval time.Duration, stat statter) er
 	}
 }
 
+// mkdirAllRetrying retries a MkdirAll-shaped call briefly rather than
+// failing on the first error. mkdir is injected (matching waitForMount's
+// own statter seam) so tests can fake transient failures without a real
+// filesystem race.
+func mkdirAllRetrying(mkdir func(string, os.FileMode) error, path string, perm os.FileMode, attempts int, interval time.Duration) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = mkdir(path, perm); err == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			time.Sleep(interval)
+		}
+	}
+	return err
+}
+
 // drbdStatuser abstracts drbd.Exec.Status for waitForPrimaryDevice's tests.
 type drbdStatuser interface {
 	Status(ctx context.Context, res string) (*drbd.Status, error)
@@ -874,14 +891,12 @@ const pgBootstrapTimeout = 120 * time.Second
 // via standby.signal's presence, and promotion afterward is pg_promote()
 // (D4), not a restart.
 //
-// Runs under DynamicUser (no capability in block.yaml routes it through
-// rootBlockTypes, and postgres refuses outright to run as uid 0 anyway):
-// pgdata's ownership must survive a Restart=on-failure cycle for this to
-// work at all, which depends on systemd reusing the same dynamically
-// allocated uid across that restart rather than minting a fresh one —
-// documented systemd behavior (the allocation is released only when the
-// unit fully stops, not on an in-place auto-restart), not re-verified
-// here; the VM test is what actually exercises a restart against it.
+// Runs under a fixed, non-root uid (pgha.StaticUID, wired via
+// internal/blocks/wire/bridge.go's Spec.StaticUID) rather than
+// DynamicUser: postgres refuses outright to run as uid 0, and
+// DynamicUser mints a fresh uid on every unit start rather than once
+// per replica, which the X1 VM test found left pgdata's ownership
+// unable to survive a single Restart=on-failure cycle at all.
 func runPostgres(ctx context.Context, instance string, args []string) error {
 	cfg, err := cfgMap(args)
 	if err != nil {
@@ -918,7 +933,12 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 	stateDir := filepath.Join(mountPath, ".expanse-postgres")
 	sockDir := filepath.Join(stateDir, "sock")
 	pgdata := filepath.Join(mountPath, "pgdata")
-	if err := os.MkdirAll(sockDir, 0o770); err != nil {
+	// mount.Manager.attach chmods a fresh mount world-writable in a
+	// separate step right after the mount syscall itself, not
+	// atomically with it (PHASE-05-TASKS.md Stream A X1) — a brief
+	// retry tolerates waking from waitForMount in that narrow gap,
+	// rather than failing permanently on a transient permission denied.
+	if err := mkdirAllRetrying(os.MkdirAll, sockDir, 0o770, 10, 500*time.Millisecond); err != nil {
 		return fmt.Errorf("db/postgres: %w", err)
 	}
 
