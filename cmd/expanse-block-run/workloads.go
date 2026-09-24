@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -951,17 +952,99 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 		return fmt.Errorf("db/postgres: %w", err)
 	}
 
+	roleFile := filepath.Join(stateDir, "role")
 	if _, err := os.Stat(filepath.Join(pgdata, "PG_VERSION")); err != nil {
 		slot := pgSlotName(instance)
-		if err := bootstrapPostgres(ctx, pgdata, filepath.Join(stateDir, "role"), sockDir,
+		if err := bootstrapPostgres(ctx, pgdata, roleFile, sockDir,
 			port, database, replPassword, superPassword, slot,
 			sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
 			return fmt.Errorf("db/postgres: %w", err)
 		}
 	}
 
+	// A demoted flag, not ctx cancellation: execWorkload treats a
+	// ctx-cancelled exit as this process's own deliberate stop and
+	// returns nil either way (its own doc comment explains why), which
+	// would leave a demotion-triggered stop looking identical to a
+	// clean shutdown -- exactly the case that must instead force a
+	// non-zero return here, so systemd's Restart=on-failure actually
+	// restarts the unit and re-bootstraps fresh (X4).
+	var demoted atomic.Bool
+	if isLocalPrimary(pgdata) {
+		go watchForDemotion(ctx, roleFile, pgdata, pgDemotePollInterval, &demoted)
+	}
+
 	fmt.Printf("expanse-block-run: postgres serving on :%s (pgdata=%s)\n", port, pgdata)
-	return execWorkload(ctx, "postgres", []string{"-D", pgdata})
+	err = execWorkload(ctx, "postgres", []string{"-D", pgdata})
+	if demoted.Load() {
+		return fmt.Errorf("db/postgres: demoted to replica, restarting to re-clone from the new primary (X4)")
+	}
+	return err
+}
+
+// pgDemotePollInterval bounds how quickly a stale, rebooted-or-healed
+// old primary notices pgha has demoted it (Stream C, X4). Comfortably
+// under pgha.LeaseTTL (10s): the role file can only flip once pgha's own
+// reclaim has already lost for real, so there is no failover-latency
+// budget to race here, just a "don't sit diverged any longer than
+// necessary" one.
+const pgDemotePollInterval = 3 * time.Second
+
+// isLocalPrimary reports whether pgdata's own on-disk state currently
+// configures it as a primary rather than a streaming standby.
+// standby.signal is postgres's own marker, written unconditionally by
+// pg_basebackup's -R flag (bootstrapPostgres's replica case) — reading
+// it directly is simpler and more trustworthy than tracking a bootstrap-
+// time flag, since it reflects the actual cluster on disk regardless of
+// which run of this process (or which bootstrap decision, possibly
+// stale) put it there.
+func isLocalPrimary(pgdata string) bool {
+	_, err := os.Stat(filepath.Join(pgdata, "standby.signal"))
+	return os.IsNotExist(err)
+}
+
+// roleFileSaysReplica reports whether roleFile's raw content is a
+// "replica <host> <port>" decision, the parsing waitForPGRole itself
+// already does, pulled out as a pure predicate for watchForDemotion.
+func roleFileSaysReplica(content string) bool {
+	fields := strings.Fields(content)
+	return len(fields) > 0 && fields[0] == "replica"
+}
+
+// watchForDemotion runs for as long as this node's postgres started out
+// primary, watching pgha's own role file for the flip to
+// "replica <host> <port>" that means pgha's reclaim lost to a different,
+// live node (internal/blocks/pgha's demoteIfLostToAnother) — this node
+// crashed or was partitioned away for long enough that another replica
+// already promoted for real (Stream C, X4).
+//
+// On that signal: stop this node's own postgres and wipe its now-
+// diverged pgdata, so the unit's forced non-zero exit (runPostgres's own
+// caller) makes systemd restart it into a fresh bootstrap — pg_basebackup
+// from the new primary the role file already names, not a permanently
+// diverged standalone primary or a manual pg_rewind.
+func watchForDemotion(ctx context.Context, roleFile, pgdata string, interval time.Duration, demoted *atomic.Bool) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		content, err := os.ReadFile(roleFile)
+		if err != nil || !roleFileSaysReplica(string(content)) {
+			continue
+		}
+		demoted.Store(true)
+		// Best effort: even a failed stop still gets the directory wiped
+		// (postgres exiting on SIGTERM from execWorkload's own eventual
+		// ctx-cancel teardown, or already dead, either way) and the
+		// forced non-zero return still restarts the unit either way.
+		_ = pgCmd(context.Background(), nil, "", "pg_ctl", "-D", pgdata, "-m", "fast", "-w", "stop")
+		_ = os.RemoveAll(pgdata)
+		return
+	}
 }
 
 // waitForPGRole polls roleFile until pgha's election controller has
@@ -1123,7 +1206,14 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 		if cerr != nil {
 			return cerr
 		}
-		if err := pgCmd(ctx, nil, "", "initdb", "-D", pgdata, "--username=postgres", "--pwfile="+pwFile.Name()); err != nil {
+		// --data-checksums: off by default, but Stream C's X3 exit
+		// criterion (amcheck + pg_checksums report zero corruption after
+		// failover) is meaningless without it -- pg_checksums --check
+		// simply refuses to run at all against a cluster where checksums
+		// were never enabled. Copied verbatim into every standby by
+		// pg_basebackup (a cluster-wide, physically replicated setting),
+		// so only the primary's own initdb needs the flag.
+		if err := pgCmd(ctx, nil, "", "initdb", "-D", pgdata, "--username=postgres", "--pwfile="+pwFile.Name(), "--data-checksums"); err != nil {
 			return err
 		}
 		// sync=false: no standby can possibly be connected yet -- none

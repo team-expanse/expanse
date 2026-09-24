@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -458,6 +459,88 @@ func TestWritePGConfOmitsSynchronousReplicationWhenNotSynced(t *testing.T) {
 	}
 	if strings.Contains(string(got), "synchronous_standby_names") {
 		t.Errorf("sync=false must omit synchronous_standby_names entirely:\n%s", got)
+	}
+}
+
+// isLocalPrimary reads standby.signal's presence directly rather than
+// tracking a bootstrap-time flag -- pg_basebackup's -R flag is what
+// actually writes it (bootstrapPostgres's replica case), so its absence
+// is real evidence, not an assumption.
+func TestIsLocalPrimaryTrueWithoutStandbySignal(t *testing.T) {
+	if !isLocalPrimary(t.TempDir()) {
+		t.Error("want true: no standby.signal means this pgdata is a primary")
+	}
+}
+
+func TestIsLocalPrimaryFalseWithStandbySignal(t *testing.T) {
+	pgdata := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pgdata, "standby.signal"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if isLocalPrimary(pgdata) {
+		t.Error("want false: standby.signal present means this pgdata is a replica")
+	}
+}
+
+func TestRoleFileSaysReplicaParsesTheSameShapeWaitForPGRoleDoes(t *testing.T) {
+	cases := map[string]bool{
+		"replica 10.42.0.5 5432\n": true,
+		"primary\n":                false,
+		"":                         false,
+		"garbage":                  false,
+	}
+	for content, want := range cases {
+		if got := roleFileSaysReplica(content); got != want {
+			t.Errorf("roleFileSaysReplica(%q) = %v, want %v", content, got, want)
+		}
+	}
+}
+
+// TestWatchForDemotionWipesPgdataOnceRoleFileSaysReplica is Stream C's
+// X4 regression test: once pgha's own role file flips from "primary" to
+// "replica <host> <port>" -- proof another node already won the primary
+// lease for real -- this node's watchdog must stop treating its own
+// stale, diverged PGDATA as primary and remove it, setting demoted so
+// runPostgres's caller forces a restart into a fresh re-clone. pg_ctl
+// itself is not on this test's PATH; watchForDemotion tolerates that
+// (best-effort stop) rather than requiring a real postgres.
+func TestWatchForDemotionWipesPgdataOnceRoleFileSaysReplica(t *testing.T) {
+	pgdata := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pgdata, "PG_VERSION"), []byte("18\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	roleFile := filepath.Join(t.TempDir(), "role")
+	if err := os.WriteFile(roleFile, []byte("primary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var demoted atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		watchForDemotion(ctx, roleFile, pgdata, 10*time.Millisecond, &demoted)
+		close(done)
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	if demoted.Load() {
+		t.Fatal("demoted set while the role file still says primary")
+	}
+	if err := os.WriteFile(roleFile, []byte("replica 10.42.0.9 5432\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchForDemotion never returned after the role file flipped to replica")
+	}
+	if !demoted.Load() {
+		t.Error("demoted not set after the role file flipped to replica")
+	}
+	if _, err := os.Stat(pgdata); !os.IsNotExist(err) {
+		t.Errorf("pgdata not removed after demotion: err=%v", err)
 	}
 }
 
