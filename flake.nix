@@ -182,6 +182,9 @@
 
           # Stream A, X1: a real vm/instance block deploy, not a probe.
           vm-instance = mkTest "vm-instance" ./nix/tests/vm-instance.nix;
+
+          # Stream B, X2 (the phase's decider)/X3: survives a hard node kill.
+          vm-instance-failover = mkTest "vm-instance-failover" ./nix/tests/vm-instance-failover.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
