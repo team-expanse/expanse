@@ -38,6 +38,12 @@ const (
 	DefaultIdleTimeout           = 90 * time.Second
 )
 
+// dialRetryBackoff is the pause between L4.handle's own dial retries —
+// short enough not to matter to a client's own connect-time budget,
+// long enough to give a transient "backend briefly too busy to accept()"
+// condition a real chance to clear before retrying.
+const dialRetryBackoff = 20 * time.Millisecond
+
 // Resolver maps a backend to its dial address ("host:port"). The
 // seam isolates the proxy from node addressing (agent wiring resolves
 // from the mesh/inventory; tests map backends to local listeners).
@@ -117,10 +123,25 @@ func (l *L4) closeBackendConns(id string) {
 	}
 }
 
-// Serve runs the accept loop until ln is closed or ctx is canceled.
+// acceptRetryCap bounds Serve's own Accept() backoff (mirrors
+// net/http.Server.Serve's long-established pattern for exactly this
+// class of error).
+const acceptRetryCap = time.Second
+
+// Serve runs the accept loop until ln is closed or ctx is canceled. A
+// transient Accept() error (a momentary FD/resource limit, not this
+// listener being intentionally closed) retries with a capped backoff
+// instead of returning outright — found running the Stream D
+// vertical-slice VM test: a sustained burst of short-lived connections
+// eventually hit exactly this, and with no retry here, the WHOLE VIP's
+// listener died silently for the rest of its holder's tenure (every
+// later connection attempt simply went nowhere), since nothing else
+// ever re-invokes Serve short of a full, much rarer VIP handover
+// (internal/agent's own lbListen only logs the error and returns).
 // Blocks; run in a goroutine.
 func (l *L4) Serve(ctx context.Context, ln net.Listener) error {
 	go l.drainLoop(ctx)
+	var retryDelay time.Duration
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -130,8 +151,19 @@ func (l *L4) Serve(ctx context.Context, ln net.Listener) error {
 			if closed {
 				return nil
 			}
-			return err
+			if retryDelay == 0 {
+				retryDelay = 5 * time.Millisecond
+			} else if retryDelay *= 2; retryDelay > acceptRetryCap {
+				retryDelay = acceptRetryCap
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryDelay):
+			}
+			continue
 		}
+		retryDelay = 0
 		go l.handle(c)
 	}
 }
@@ -218,9 +250,21 @@ func (l *L4) activeCount(id string) int64 {
 }
 
 // handle splices one client connection to the chosen backend. Connect
-// errors rotate to the next candidate (connection establishment is
-// side-effect free — §9 D5.7's "connect errors only, idempotent
-// operations" rule applied to L4 dials).
+// errors retry against the SAME candidate set (connection establishment
+// is side-effect free — §9 D5.7's "connect errors only, idempotent
+// operations" rule applied to L4 dials), not a shrinking one that
+// permanently drops a candidate after a single failed dial: found
+// running the Stream D vertical-slice VM test, PrimaryOnly's own
+// candidate set is never more than one backend (by design — D2), so
+// the old shrink-on-failure logic gave a transient dial hiccup against
+// the ONLY valid destination (postgres's own accept() queue briefly
+// busy under a bursty synchronous-commit-heavy write workload, not the
+// backend actually being down) zero retry margin — the client's
+// connection was simply closed outright on the very first transient
+// failure, no different backend ever existed to fall back to. A short
+// pause between attempts gives a genuinely transient condition a chance
+// to clear; a truly dead backend still fails every attempt, just
+// costing a bounded few dial timeouts instead of one.
 func (l *L4) handle(client net.Conn) {
 	defer client.Close()
 
@@ -246,28 +290,21 @@ func (l *L4) handle(client net.Conn) {
 
 	var backend net.Conn
 	var chosen Backend
-	remaining := healthy
-	for attempt := 0; attempt < 3 && len(remaining) > 0; attempt++ {
-		idx := l.pickAt(remaining, src)
+	for attempt := 0; attempt < 3; attempt++ {
+		idx := l.pickAt(healthy, src)
 		if idx < 0 {
 			break
 		}
-		b := remaining[idx]
+		b := healthy[idx]
 		addr := l.Resolve(b, svc.TargetPort)
 		c, err := net.DialTimeout("tcp", addr, l.dialTimeout())
 		if err == nil {
 			backend, chosen = c, b
 			break
 		}
-		// Delete-at-index idiom: copy already shrinks remaining by one
-		// (its return value is len(remaining)-idx-1), so this single
-		// line is the whole removal. A second, redundant
-		// remaining[:len(remaining)-1] used to follow here, silently
-		// dropping one extra valid candidate on every retry — and
-		// panicking outright ([:-1]) once exactly one candidate was
-		// left, killing the whole agent on any single-replica block
-		// whose backend was briefly unreachable when a client connected.
-		remaining = remaining[:idx+copy(remaining[idx:], remaining[idx+1:])]
+		if attempt < 2 {
+			time.Sleep(dialRetryBackoff)
+		}
 	}
 	if backend == nil {
 		return

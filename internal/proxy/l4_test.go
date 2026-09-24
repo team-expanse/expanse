@@ -26,9 +26,17 @@ func (f *fakeTable) setOne(backends ...Backend) {
 	f.set(&Table{Services: map[string]*Service{"default/web": svc}})
 }
 
-// setOnePrimary is setOne plus a PrimaryNodeID, for PrimaryOnly mode tests.
+// setOnePrimary is setOne plus a PrimaryNodeID, for PrimaryOnly mode
+// tests. Also sets ConfirmedPrimaryNodeID to match: these tests exercise
+// L4's OWN routing behavior given an already-decided Primary(), not the
+// confirmation gate itself (TestPoolPrimaryRequiresConfirmationToMatchTheCurrentLeaseHolder
+// covers that, in pool_test.go). An empty primary leaves both empty too,
+// matching Primary()'s own "no election decided yet" case.
 func (f *fakeTable) setOnePrimary(primary string, backends ...Backend) {
-	svc := &Service{Key: "default/web", Namespace: "default", Name: "web", Port: 80, TargetPort: 8080, Backends: backends, PrimaryNodeID: primary}
+	svc := &Service{
+		Key: "default/web", Namespace: "default", Name: "web", Port: 80, TargetPort: 8080,
+		Backends: backends, PrimaryNodeID: primary, ConfirmedPrimaryNodeID: primary,
+	}
 	for i := range svc.Backends {
 		svc.Backends[i].Healthy = true
 	}
@@ -174,6 +182,111 @@ func TestPrimaryOnlyRefusesBeforeElection(t *testing.T) {
 	c.SetReadDeadline(time.Now().Add(1 * time.Second))
 	if n, _ := c.Read(make([]byte, 32)); n != 0 {
 		t.Fatalf("request reached a backend before any election decided")
+	}
+}
+
+// TestHandleRetriesDialAgainstTheSoleCandidateOnTransientFailure is the
+// regression test for the Stream D vertical-slice VM test's own find:
+// PrimaryOnly's candidate set is never more than one backend (D2), so a
+// single transient dial failure against it must not close the client's
+// connection outright with nothing left to retry -- the old
+// shrink-the-candidate-list-on-failure logic did exactly that. The
+// FIRST dial targets a closed port (a real, addressable TCP endpoint
+// simulating "briefly not accepting," not "actually down"); every
+// attempt after resolves to the real, live backend.
+func TestHandleRetriesDialAgainstTheSoleCandidateOnTransientFailure(t *testing.T) {
+	tbl := &fakeTable{}
+	b1 := newFakeBackend(t, "n1")
+	backends := map[string]*fakeBackend{"n1": b1}
+	tbl.setOnePrimary("n1", backendFor(b1, 0))
+
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddr := dead.Addr().String()
+	dead.Close()
+
+	var calls atomic.Int32
+	l4 := &L4{
+		Pool: tbl, Key: "default/web", Mode: PrimaryOnly, DialTimeout: 2 * time.Second,
+		Resolve: func(b Backend, target int32) string {
+			if calls.Add(1) == 1 {
+				return deadAddr
+			}
+			return backends[b.NodeID].ln.Addr().String()
+		},
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l4.Close(); ln.Close() })
+	go func() { _ = l4.Serve(context.Background(), ln) }()
+
+	r, _ := dialProxy(t, ln.Addr().String())
+	if got := readReply(t, r); got != "backend-n1" {
+		t.Fatalf("got %q, want backend-n1 -- a single transient dial failure against PrimaryOnly's only candidate must not close the client's connection with nothing left to retry", got)
+	}
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("Resolve called %d times, want at least 2 (a retry after the first transient failure)", got)
+	}
+}
+
+// flakyListener injects a fixed number of non-close Accept() errors
+// before delegating to the real listener — a pending client connection
+// simply waits in the kernel's own accept backlog across those retries,
+// exactly as it would against a real, momentarily resource-exhausted
+// listener.
+type flakyListener struct {
+	net.Listener
+	failures atomic.Int32
+}
+
+func (f *flakyListener) Accept() (net.Conn, error) {
+	if f.failures.Add(-1) >= 0 {
+		return nil, &net.OpError{Op: "accept", Err: fmt.Errorf("simulated transient accept error")}
+	}
+	f.failures.Add(1) // don't let it go further negative than needed
+	return f.Listener.Accept()
+}
+
+// TestServeRetriesAfterATransientAcceptError is the regression test for
+// the Stream D vertical-slice VM test's own find: a transient Accept()
+// error (not this listener being intentionally Close()d) must not kill
+// the whole accept loop — internal/agent's own lbListen never
+// re-invokes Serve short of a full VIP handover, so one hiccup used to
+// mean every later connection to the VIP went nowhere for the rest of
+// that holder's tenure.
+func TestServeRetriesAfterATransientAcceptError(t *testing.T) {
+	tbl := &fakeTable{}
+	b1 := newFakeBackend(t, "n1")
+	backends := map[string]*fakeBackend{"n1": b1}
+	tbl.setOnePrimary("n1", backendFor(b1, 0))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fl := &flakyListener{Listener: ln}
+	fl.failures.Store(3)
+
+	l4 := &L4{
+		Pool: tbl, Key: "default/web", Mode: PrimaryOnly, DialTimeout: 2 * time.Second,
+		Resolve: func(b Backend, target int32) string { return backends[b.NodeID].ln.Addr().String() },
+	}
+	t.Cleanup(func() { l4.Close(); ln.Close() })
+	done := make(chan error, 1)
+	go func() { done <- l4.Serve(context.Background(), fl) }()
+
+	r, _ := dialProxy(t, ln.Addr().String())
+	if got := readReply(t, r); got != "backend-n1" {
+		t.Fatalf("got %q, want backend-n1 -- transient Accept() errors must not permanently kill the listener", got)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("Serve returned early despite only transient Accept() errors: %v", err)
+	default:
 	}
 }
 

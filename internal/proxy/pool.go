@@ -42,6 +42,30 @@ const statusSuffix = "/status"
 // replicasDir marks the per-replica health record subtree.
 const replicasDir = "/status/replicas/"
 
+// confirmedPrimaryPrefix is the store subtree of db/postgres's
+// per-instance CONFIRMED-primary records (key: confirmedPrimaryPrefix +
+// ref, value: the confirmed node's ID) — internal/blocks/pgha's Confirm
+// seam, internal/agent's own pgConfirm implements the write, published
+// only once (and re-asserted every pass after) cfg.Promote has actually
+// succeeded. Local copy of the naming convention, not an import of
+// internal/agent — same decoupling primaryLeasePrefix already uses. A
+// dedicated top-level prefix, not nested under BlockPrefix: an earlier
+// version put it at "<block>/status/pg-primary-confirmed", found
+// running the Stream D vertical-slice VM test to break
+// internal/blocks/controller's own /blocks/ reconcile scan, which
+// expects every entry there to be one of its own recognized shapes and
+// fails outright on anything else.
+//
+// Distinct from the raw pg-primary lease holder (primaryLeasePrefix):
+// winning that lease is necessary but not sufficient proof of being
+// primary — a node that won the lease but then failed pg_promote()
+// (postgres itself crashed mid-promotion under concurrent client load,
+// also found running that same VM test) was routed real writes for the
+// whole window its abandoned-but-undeleted lease record stayed live,
+// since the lease alone was treated as sufficient. Primary now requires
+// both to name the same node.
+const confirmedPrimaryPrefix = store.Key("/pg-primary-confirmed:")
+
 // Source is the store surface the pool needs. store.Store satisfies it.
 type Source interface {
 	Get(ctx context.Context, k store.Key) (*store.Entry, error)
@@ -79,15 +103,21 @@ type Service struct {
 	// any) currently names, or "" if no election has decided yet. Only
 	// meaningful for block types that run such an election.
 	PrimaryNodeID string
+	// ConfirmedPrimaryNodeID is the node pgha has actually confirmed
+	// promoted (confirmedPrimaryPrefix's own doc comment explains the
+	// race this closes). Primary() requires it to match PrimaryNodeID.
+	ConfirmedPrimaryNodeID string
 }
 
 // Primary returns the backend PrimaryNodeID names, if it is currently a
-// healthy backend of this service. False when no election has decided,
-// or the elected node's replica is not (or no longer) healthy — callers
+// healthy backend of this service AND pgha has confirmed that node's
+// own promotion actually succeeded (ConfirmedPrimaryNodeID matches, not
+// merely PrimaryNodeID being set) — a node that only won the election
+// lease but has not yet confirmed promotion is not routable: callers
 // must not guess a fallback, the same "do not misroute a write" rule D2
 // exists for.
 func (s *Service) Primary() (Backend, bool) {
-	if s.PrimaryNodeID == "" {
+	if s.PrimaryNodeID == "" || s.PrimaryNodeID != s.ConfirmedPrimaryNodeID {
 		return Backend{}, false
 	}
 	for _, b := range s.Healthy() {
@@ -142,11 +172,12 @@ type Pool struct {
 
 	// Ingest state keyed by raw store key, guarded by mu: two watch
 	// loops (blocks, primary leases) ingest and publish concurrently.
-	mu      sync.Mutex
-	blocks  map[string]*pb.Block
-	status  map[string]*pb.BlockStatus
-	health  map[string]*healthRecord // raw key → parsed record
-	primary map[string]string        // block ref ("ns/name") → pg-primary lease holder
+	mu        sync.Mutex
+	blocks    map[string]*pb.Block
+	status    map[string]*pb.BlockStatus
+	health    map[string]*healthRecord // raw key → parsed record
+	primary   map[string]string        // block ref ("ns/name") → pg-primary lease holder
+	confirmed map[string]string        // block ref ("ns/name") → pgha-confirmed primary node
 }
 
 // healthRecord mirrors internal/blocks/health.Record. Local copy (not
@@ -169,11 +200,12 @@ type leaseRecord struct {
 // reflects store contents.
 func NewPool(src Source) *Pool {
 	return &Pool{
-		src:     src,
-		blocks:  map[string]*pb.Block{},
-		status:  map[string]*pb.BlockStatus{},
-		health:  map[string]*healthRecord{},
-		primary: map[string]string{},
+		src:       src,
+		blocks:    map[string]*pb.Block{},
+		status:    map[string]*pb.BlockStatus{},
+		health:    map[string]*healthRecord{},
+		primary:   map[string]string{},
+		confirmed: map[string]string{},
 	}
 }
 
@@ -183,12 +215,25 @@ func NewPool(src Source) *Pool {
 func (p *Pool) Run(ctx context.Context) error {
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errCh := make(chan error, 2)
-	go func() { errCh <- p.watch(cctx, BlockPrefix, p.ingestBlock, p.removeBlock) }()
-	go func() { errCh <- p.watch(cctx, primaryLeasePrefix, p.ingestPrimary, p.removePrimary) }()
+	watches := []struct {
+		prefix store.Key
+		ingest func(string, []byte)
+		remove func(string)
+	}{
+		{BlockPrefix, p.ingestBlock, p.removeBlock},
+		{primaryLeasePrefix, p.ingestPrimary, p.removePrimary},
+		{confirmedPrimaryPrefix, p.ingestConfirmed, p.removeConfirmed},
+	}
+	errCh := make(chan error, len(watches))
+	for _, w := range watches {
+		w := w
+		go func() { errCh <- p.watch(cctx, w.prefix, w.ingest, w.remove) }()
+	}
 	err := <-errCh
-	cancel() // one loop ending must stop the other too, not leak it
-	<-errCh
+	cancel() // one loop ending must stop every other one too, not leak them
+	for i := 1; i < len(watches); i++ {
+		<-errCh
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -273,6 +318,31 @@ func (p *Pool) removeBlock(key string) {
 			delete(p.health, k)
 		}
 	}
+	// Tidiness only: a stale p.confirmed entry for a deleted block is
+	// harmless (publish() only ever builds services from p.blocks, so
+	// an orphaned confirmation can never surface), but there is no
+	// reason to keep it around for this instance's full remaining
+	// lifetime.
+	delete(p.confirmed, strings.TrimPrefix(key, "/blocks/"))
+}
+
+// ingestConfirmed records a db/postgres confirmed-primary publish
+// (confirmedPrimaryPrefix's own doc comment), keyed by the block ref the
+// key encodes.
+func (p *Pool) ingestConfirmed(key string, val []byte) {
+	ref := strings.TrimPrefix(key, string(confirmedPrimaryPrefix))
+	p.mu.Lock()
+	p.confirmed[ref] = string(val)
+	p.mu.Unlock()
+}
+
+// removeConfirmed drops a confirmed-primary record (rare — pgha only
+// ever overwrites it, never deletes).
+func (p *Pool) removeConfirmed(key string) {
+	ref := strings.TrimPrefix(key, string(confirmedPrimaryPrefix))
+	p.mu.Lock()
+	delete(p.confirmed, ref)
+	p.mu.Unlock()
 }
 
 // ingestPrimary records a pg-primary lease's current holder, keyed by
@@ -320,13 +390,14 @@ func (p *Pool) publish() {
 		}
 		st := p.status[key+"/status"]
 		svc := &Service{
-			Key:           ref,
-			Namespace:     ref[:slash],
-			Name:          ref[slash+1:],
-			Type:          b.GetSpec().GetType(),
-			Port:          port.GetPort(),
-			TargetPort:    target,
-			PrimaryNodeID: p.primary[ref],
+			Key:                    ref,
+			Namespace:              ref[:slash],
+			Name:                   ref[slash+1:],
+			Type:                   b.GetSpec().GetType(),
+			Port:                   port.GetPort(),
+			TargetPort:             target,
+			PrimaryNodeID:          p.primary[ref],
+			ConfirmedPrimaryNodeID: p.confirmed[ref],
 		}
 		for _, decl := range port.GetHttpRoutes() {
 			svc.HTTPRoutes = append(svc.HTTPRoutes, HTTPRouteDecl{

@@ -327,9 +327,18 @@ func TestPoolTracksPrimaryLease(t *testing.T) {
 		t.Fatal("Primary() true before any election lease exists")
 	}
 
-	// The election lease names n2 primary: Service.Primary() must follow
-	// it without waiting on any /blocks/ event.
+	// The election lease names n2 primary, but Primary() must stay false
+	// until pgha has ALSO confirmed n2's own promotion actually
+	// succeeded — winning the lease alone is not sufficient proof
+	// (primaryConfirmedSuffix's own doc comment explains the race this
+	// guards, found running the Stream D vertical-slice VM test).
 	fs.put(t, "/leases/pg-primary:default/pg", leaseJSON(t, "n2"))
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := p.Table().Service("default/pg").Primary(); ok {
+		t.Fatal("Primary() true from the lease alone, before any confirmation was published")
+	}
+
+	fs.put(t, "/pg-primary-confirmed:default/pg", []byte("n2"))
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if b, ok := p.Table().Service("default/pg").Primary(); ok && b.NodeID == "n2" {
@@ -343,7 +352,8 @@ func TestPoolTracksPrimaryLease(t *testing.T) {
 	}
 
 	// Lease released (owner shut down, or instance disappeared): Primary
-	// must go back to false, not stick to the last known holder.
+	// must go back to false, not stick to the last known holder, even
+	// though the (now stale) confirmation record is still present.
 	fs.del(t, "/leases/pg-primary:default/pg")
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -353,6 +363,51 @@ func TestPoolTracksPrimaryLease(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("Primary() still true after the lease was deleted")
+}
+
+// TestPoolPrimaryRequiresConfirmationToMatchTheCurrentLeaseHolder covers
+// the race primaryConfirmedSuffix's own doc comment describes: a node
+// that won the election lease but whose OWN promotion attempt is still
+// in flight (or already failed and was abandoned, leaving the lease
+// record live for its own TTL) must never be routed real writes just
+// because it is momentarily the named lease holder. A stale
+// confirmation from a PREVIOUS primary that no longer holds the lease
+// must not satisfy a new holder's Primary() either.
+func TestPoolPrimaryRequiresConfirmationToMatchTheCurrentLeaseHolder(t *testing.T) {
+	fs := newFakeSource()
+	p := NewPool(fs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = p.Run(ctx) }()
+
+	fs.put(t, "/blocks/default/pg", pgBlockSpec(t, "db/postgres", 5432, 5432))
+	fs.put(t, "/blocks/default/pg/status", statusWith(t, running(0, "n1"), running(1, "n2")))
+	// A stale confirmation left over from a PRIOR primary (n1) — must
+	// not satisfy the NEW holder's (n2) Primary() check.
+	fs.put(t, "/pg-primary-confirmed:default/pg", []byte("n1"))
+	fs.put(t, "/leases/pg-primary:default/pg", leaseJSON(t, "n2"))
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s := p.Table().Service("default/pg"); s != nil && len(s.Backends) == 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, ok := p.Table().Service("default/pg").Primary(); ok {
+		t.Fatal("Primary() true against a stale confirmation naming a different node than the current lease holder")
+	}
+
+	// n2 itself confirms: now it matches.
+	fs.put(t, "/pg-primary-confirmed:default/pg", []byte("n2"))
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, ok := p.Table().Service("default/pg").Primary(); ok && b.NodeID == "n2" {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("Primary() never became true once the current lease holder's own confirmation matched")
 }
 
 func TestPoolNoVIPPortNoService(t *testing.T) {
