@@ -976,13 +976,36 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 	// non-zero return here, so systemd's Restart=on-failure actually
 	// restarts the unit and re-bootstraps fresh (X4).
 	var demoted atomic.Bool
-	if isLocalPrimary(pgdata) {
-		go watchForDemotion(ctx, roleFile, pgdata, pgDemotePollInterval, &demoted)
+	demoteDone := make(chan struct{})
+	watching := isLocalPrimary(pgdata)
+	if watching {
+		go func() {
+			watchForDemotion(ctx, roleFile, pgdata, pgDemotePollInterval, &demoted)
+			close(demoteDone)
+		}()
 	}
 
 	fmt.Printf("expanse-block-run: postgres serving on :%s (pgdata=%s)\n", port, pgdata)
 	err = execWorkload(ctx, "postgres", []string{"-D", pgdata})
-	if demoted.Load() {
+	if watching && demoted.Load() {
+		// demoted.Store(true) happens (watchForDemotion's own code)
+		// strictly before it ever signals postgres to stop, so by now
+		// it is already set -- but execWorkload returns as soon as
+		// postgres itself (its own direct child) exits, which -- found
+		// running the X4 VM test -- consistently beats watchForDemotion's
+		// own pg_ctl stop call finishing and reaching os.RemoveAll:
+		// pg_ctl's own subprocess still has to notice postgres is gone
+		// and return control to pgCmd afterward, strictly more steps
+		// than execWorkload's direct wait on the same exit. Returning
+		// here regardless would let this whole process exit -- killing
+		// that goroutine -- often BEFORE it ever wipes pgdata, so every
+		// restart just re-found the same never-actually-wiped diverged
+		// primary forever. Only reached once a demotion is confirmed
+		// already in progress, so this never delays an ordinary exit.
+		select {
+		case <-demoteDone:
+		case <-time.After(10 * time.Second):
+		}
 		return fmt.Errorf("db/postgres: demoted to replica, restarting to re-clone from the new primary (X4)")
 	}
 	return err
