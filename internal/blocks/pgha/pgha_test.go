@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
+	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 )
 
@@ -510,6 +512,126 @@ func TestDecidedReplicaPromotesWhenThePrimaryLeaseIsFree(t *testing.T) {
 	}
 }
 
+// TestPromotionConfirmsPrimaryOnceItActuallyPromotes is the regression
+// test for the LB routing race found running the Stream D
+// vertical-slice VM test: winning the primary lease alone is not
+// sufficient proof of being primary, so pgha must also publish a
+// separate, positive confirmation once (and only once) cfg.Promote has
+// actually succeeded — internal/proxy's own Service.Primary() requires
+// it to route any write.
+func TestPromotionConfirmsPrimaryOnceItActuallyPromotes(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	seedBootstrapped(t, mount)
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	var confirmed []string
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "" },
+		Promote:     func(Instance) error { return nil },
+		Confirm: func(ref string) error {
+			confirmed = append(confirmed, ref)
+			return nil
+		},
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if len(confirmed) != 1 || confirmed[0] != ref {
+		t.Fatalf("Confirm calls = %v, want exactly one call naming %q", confirmed, ref)
+	}
+}
+
+// TestFailedPromotionNeverConfirms: a failed pg_promote() must not
+// publish a confirmation for a promotion that never actually happened
+// — Confirm is strictly downstream of Promote succeeding.
+func TestFailedPromotionNeverConfirms(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	seedBootstrapped(t, mount)
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	confirmCalls := 0
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "" },
+		Promote:     func(Instance) error { return fmt.Errorf("connection refused") },
+		Confirm:     func(string) error { confirmCalls++; return nil },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if confirmCalls != 0 {
+		t.Errorf("Confirm called %d times after a failed promotion, want 0", confirmCalls)
+	}
+}
+
+// TestMaintainActiveReconfirmsPrimaryEveryPass: the confirmation record
+// is re-asserted every pass, the same self-healing convention the role
+// file itself already follows — a single lost store write must not
+// permanently strand a genuinely healthy primary unroutable.
+func TestMaintainActiveReconfirmsPrimaryEveryPass(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	confirmCalls := 0
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n1"),
+		Self:        "n1",
+		ResolveAddr: func(string) string { return "" },
+		Confirm:     func(string) error { confirmCalls++; return nil },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst}) // elect(): wins, becomes active
+	c.Pass(context.Background(), map[string]Instance{ref: inst}) // maintainActive
+	c.Pass(context.Background(), map[string]Instance{ref: inst}) // maintainActive again
+
+	if confirmCalls != 2 {
+		t.Fatalf("Confirm called %d times across 3 passes (elect + 2 maintainActive), want 2", confirmCalls)
+	}
+}
+
+// TestConfirmFailureDoesNotAbandonAnAlreadySuccessfulPromotion: Confirm
+// only informs OTHER readers (the LB pool) of a decision this node has
+// already made and already acted on locally (the lease and the role
+// file) — a failing publish must retry next pass, never unwind the
+// promotion itself.
+func TestConfirmFailureDoesNotAbandonAnAlreadySuccessfulPromotion(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	seedBootstrapped(t, mount)
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "" },
+		Promote:     func(Instance) error { return nil },
+		Confirm:     func(string) error { return fmt.Errorf("store unavailable") },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if !active {
+		t.Error("a failing Confirm must not abandon an already-successful promotion")
+	}
+	if got := readRole(t, mount); got != primaryContent {
+		t.Errorf("role file = %q, want %q", got, primaryContent)
+	}
+}
+
 // TestPromotionAbandonsTheLeaseWhenPromoteFails: pg_promote() actually
 // failing (e.g. the local socket isn't reachable yet) must not leave
 // this node fenced as a primary that never promoted anything — another
@@ -721,6 +843,73 @@ func TestReclaimPrimaryKeepsRetryingWhenTheWinnersAddressIsUnresolved(t *testing
 	if got := readRole(t, mount); got != primaryContent {
 		t.Errorf("role file changed although the new primary's address is unresolved: %q", got)
 	}
+}
+
+// TestActivePrimaryDemotesWhenItsOwnLeaseIsLostToAnotherNodeWithoutRestarting
+// is the regression test for PHASE-05-TASKS.md R3 (a real network
+// partition, not just .crash()): before this fix, reconcileOne treated
+// an entry in c.active as sticky forever once set, so a live node whose
+// underlying lease had actually been lost — reassigned to a different
+// node while this one was partitioned away — would keep re-asserting
+// "primary" in its own role file forever, unless its whole agent
+// process also happened to restart (every prior VM test only ever used
+// .crash(), which always restarts the agent, so this path was never
+// exercised). Mirrors vip.Holder's own proven held.Done()-watch pattern
+// (internal/network/vip/holder.go's onLeaseLost).
+func TestActivePrimaryDemotesWhenItsOwnLeaseIsLostToAnotherNodeWithoutRestarting(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+
+	c := New(Config{
+		Leases: lease.NewManager(st, "n1"),
+		Self:   "n1",
+		ResolveAddr: func(node string) string {
+			if node == "n3" {
+				return "10.42.0.9"
+			}
+			return ""
+		},
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst}) // n1 elects itself
+
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if !active {
+		t.Fatal("setup: n1 did not become active primary")
+	}
+
+	// n3 genuinely wins the SAME lease while n1 is partitioned away —
+	// the store record changes to a different holder out from under
+	// n1's own Held, which closes its Done() (lease.go's own doc: "lost
+	// for ANY reason ... network partition"), entirely independent of
+	// n1's agent process, which never restarts here.
+	rec, err := lease.EncodeForTest(lease.Lease{Holder: "n3", ExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		t.Fatalf("EncodeForTest: %v", err)
+	}
+	if _, err := st.Put(context.Background(), store.Key(lease.Prefix+LeaseName(ref)), rec); err != nil {
+		t.Fatalf("simulate n3 taking the lease: %v", err)
+	}
+
+	want := "replica 10.42.0.9 5432\n"
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.Pass(context.Background(), map[string]Instance{ref: inst})
+		if got := readRole(t, mount); got == want {
+			c.mu.Lock()
+			_, stillActive := c.active[ref]
+			c.mu.Unlock()
+			if stillActive {
+				t.Fatal("n1 demoted its role file but still holds the primary lease active")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("n1 never demoted to replica after losing its own lease to n3; role file = %q", readRole(t, mount))
 }
 
 func TestPassReleasesGoneInstance(t *testing.T) {

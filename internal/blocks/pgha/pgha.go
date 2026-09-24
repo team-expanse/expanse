@@ -162,8 +162,21 @@ type Config struct {
 	// promotion actually happens, the same construction every existing
 	// test avoids as Promote's own doc explains.
 	Reconfigure func(inst Instance, newHost string) error
-	TTL         time.Duration // default LeaseTTL
-	Logger      *slog.Logger  // optional; nil disables logging
+	// Confirm publishes this node as the CONFIRMED primary of ref
+	// (internal/proxy's own primaryConfirmedSuffix doc comment explains
+	// the race this closes: winning the primary lease alone is not
+	// sufficient proof of being primary, since the winner's own
+	// cfg.Promote can still fail after the lease record is already
+	// store-visible). Re-asserted every pass this node believes itself
+	// primary (maintainActive), the same self-healing convention the
+	// role file itself already follows. A nil Confirm or a failing call
+	// is logged and retried next pass, never a reason to abandon an
+	// already-successful local promotion — the lease and the role file
+	// are this node's own authoritative state; Confirm only informs
+	// OTHER readers (the LB pool) of it.
+	Confirm func(ref string) error
+	TTL     time.Duration // default LeaseTTL
+	Logger  *slog.Logger  // optional; nil disables logging
 }
 
 // Controller runs primary election for every db/postgres instance a
@@ -226,15 +239,51 @@ func (c *Controller) releaseLocked(ref string, held *lease.Held) {
 
 func (c *Controller) reconcileOne(ctx context.Context, ref string, inst Instance) {
 	c.mu.Lock()
-	_, active := c.active[ref]
+	held, active := c.active[ref]
 	c.mu.Unlock()
 	if active {
-		// The Held's own background renewal loop keeps the lease alive;
-		// nothing to do here except catch up a role file a prior
-		// promotion couldn't write (promoteOnLoss's own comment explains
-		// why that never abandons the lease).
-		c.maintainActive(ref, inst)
-		return
+		select {
+		case <-held.Done():
+			// This node's own lease was lost for real -- expiry,
+			// explicit release, or (PHASE-05-TASKS.md R3) its renewal
+			// loop failing to reach the store at all, e.g. a network
+			// partition, self-fenced within the documented guard band
+			// regardless of whether this node ever notices. Mirrors
+			// vip.Holder's own Run loop watching held.Done() (internal/
+			// network/vip/holder.go's onLeaseLost) -- without this
+			// check, reconcileOne treated "active" as sticky forever
+			// once set, so a partitioned primary's OWN node would never
+			// re-derive the truth even after the partition healed,
+			// unless its whole agent process also restarted (found
+			// scoping R3: Streams B/C's VM tests only ever used
+			// .crash(), which always restarts the agent, so this path
+			// was never actually exercised before). Abandon() is safe
+			// to call again here (idempotent) even though the lease's
+			// own renewal loop already closed Done() on its own -- the
+			// same belt-and-suspenders call vip.Holder's own
+			// onLeaseLost makes.
+			held.Abandon()
+			c.mu.Lock()
+			delete(c.active, ref)
+			c.mu.Unlock()
+			c.log(c.cfg.Logger.Warn, "pgha: lost the primary lease this node believed it held, re-deriving role", "block", ref)
+			// Fall through to the normal reconcile below: the role file
+			// still says "primary" (nothing has rewritten it yet), so
+			// onDecided routes this to reclaimPrimary -- the exact same
+			// path an agent restart already takes, correctly handling
+			// both outcomes: reclaiming the SAME lease back if it is
+			// genuinely still free (no data lost, no reclone needed),
+			// or discovering a live different holder and demoting via
+			// demoteIfLostToAnother (X4's existing wipe-and-reclone
+			// path) if another replica already won it for real.
+		default:
+			// The Held's own background renewal loop keeps the lease
+			// alive; nothing to do here except catch up a role file a
+			// prior promotion couldn't write (promoteOnLoss's own
+			// comment explains why that never abandons the lease).
+			c.maintainActive(ref, inst)
+			return
+		}
 	}
 	content, err := os.ReadFile(RolePath(inst.MountPath))
 	if err == nil {
@@ -464,11 +513,16 @@ func hasBootstrapped(mountPath string) bool {
 // replica promoting too).
 func (c *Controller) maintainActive(ref string, inst Instance) {
 	path := RolePath(inst.MountPath)
-	if content, err := os.ReadFile(path); err == nil && string(content) == primaryContent {
+	if content, err := os.ReadFile(path); err != nil || string(content) != primaryContent {
+		if werr := writeRoleFile(path, primaryContent); werr != nil {
+			c.log(c.cfg.Logger.Warn, "pgha: role file not yet writable, retrying next pass", "block", ref, "err", werr)
+		}
+	}
+	if c.cfg.Confirm == nil {
 		return
 	}
-	if werr := writeRoleFile(path, primaryContent); werr != nil {
-		c.log(c.cfg.Logger.Warn, "pgha: role file not yet writable, retrying next pass", "block", ref, "err", werr)
+	if cerr := c.cfg.Confirm(ref); cerr != nil {
+		c.log(c.cfg.Logger.Warn, "pgha: publishing confirmed primary failed, retrying next pass", "block", ref, "err", cerr)
 	}
 }
 

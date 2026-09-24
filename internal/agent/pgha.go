@@ -54,6 +54,7 @@ func (a *Agent) initPG() {
 		ResolveAddr: a.lookupNodeIP,
 		Promote:     a.pgPromote,
 		Reconfigure: a.pgReconfigure,
+		Confirm:     a.pgConfirm,
 		Logger:      a.logger.With("component", "pgha"),
 	})
 }
@@ -258,6 +259,40 @@ func (a *Agent) pgPromote(inst pgha.Instance) error {
 		return fmt.Errorf("pg_promote: server reported %q, want \"t\"", trimmed)
 	}
 	return nil
+}
+
+// pgConfirmTimeout bounds one confirmed-primary store publish. A plain
+// Put, not a SQL round-trip like pgPromoteTimeout's callers, so a much
+// tighter budget is enough.
+const pgConfirmTimeout = 5 * time.Second
+
+// pgConfirmedPrimaryKey is the store key internal/proxy's own pool
+// watches for db/postgres's confirmed-primary record (its own
+// confirmedPrimaryPrefix constant is the duplicated-not-imported
+// convention's other half). ref is "namespace/name". A dedicated
+// top-level prefix, not nested under /blocks/ -- an earlier version put
+// it at "/blocks/<ref>/status/pg-primary-confirmed", found running the
+// Stream D vertical-slice VM test to break internal/blocks/controller's
+// own /blocks/ reconcile scan, which expects every entry there to be
+// one of its own recognized shapes.
+func pgConfirmedPrimaryKey(ref string) store.Key {
+	return store.Key("/pg-primary-confirmed:" + ref)
+}
+
+// pgConfirm is pgha.Config's Confirm seam (Stream D): publishes this
+// node's own ID as ref's confirmed db/postgres primary, closing the
+// race internal/proxy's own primaryConfirmedSuffix doc comment
+// describes in full -- winning the election lease alone is not
+// sufficient proof of being primary, only that cfg.Promote was about to
+// be attempted. Called every pass this node believes itself primary
+// (pgha's maintainActive), so a single lost write self-heals on the
+// next pass rather than leaving the LB permanently refusing to route
+// to a genuinely healthy, already-confirmed primary.
+func (a *Agent) pgConfirm(ref string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), pgConfirmTimeout)
+	defer cancel()
+	_, err := a.store.Put(ctx, pgConfirmedPrimaryKey(ref), []byte(a.cfg.NodeID))
+	return err
 }
 
 // runReconfigureSQL execs one or more ;-separated SQL statements over
