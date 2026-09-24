@@ -87,13 +87,19 @@ def wait_single_holder(vip_addr, timeout, want_nodes=None):
     raise AssertionError(f"{vip_addr}: never settled on exactly 1 holder in {want_nodes} (last: {holders})")
 
 
-def psql_client(host, port, sql, timeout=90):
+def psql_client(host, port, sql, timeout=240):
     """Run one SQL statement from the external client, over the VIP.
     Retries: the VIP can still be settling (or briefly re-homing while a
     replica finishes its own bootstrap, see the module docstring's own
     note) even after wait_single_holder first sees it land -- a single
     one-shot attempt right after that catches exactly that window and
-    times out, not a real failure."""
+    times out, not a real failure. 240s budget: the block reports
+    RUNNING as soon as each replica's systemd unit is merely active
+    (runtime.go), well before the real bootstrap chain finishes --
+    initdb, then CREATE ROLE, then pg_basebackup for every standby
+    (each a full base backup over the network, sequenced after the
+    primary is actually listening) -- so the VIP's very first
+    connection attempt races real, possibly slow work, not a hang."""
     cmd = (f"PGPASSWORD={SUPER_PASSWORD} psql -h {host} -p {port} -U postgres -d {DATABASE} "
            f"-v ON_ERROR_STOP=1 -tA -c {shlex.quote(sql)}")
     deadline = time.time() + timeout
