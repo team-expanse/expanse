@@ -413,8 +413,15 @@ func TestWritePGConfOverwritesAnExistingConf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(hba), "10.42.0.0/16") {
-		t.Errorf("pg_hba.conf missing the overlay CIDR: %s", hba)
+	// Not restricted to a specific CIDR (X1 VM test: lookupNodeIP
+	// resolves a node's Raft/API advertise address, not a fixed overlay
+	// range this package could predict) -- scram-sha-256 is the actual
+	// security boundary.
+	if !strings.Contains(string(hba), "scram-sha-256") {
+		t.Errorf("pg_hba.conf missing password auth: %s", hba)
+	}
+	if strings.Contains(string(hba), "trust") && strings.Count(string(hba), "trust") != 1 {
+		t.Errorf("pg_hba.conf must only trust the local unix socket: %s", hba)
 	}
 }
 

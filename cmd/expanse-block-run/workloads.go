@@ -985,12 +985,20 @@ func waitForPGRole(ctx context.Context, roleFile string, timeout, interval time.
 
 // pgHBAConf is pg_hba.conf's content for every db/postgres replica:
 // local admin access (the controller, over the unix socket) is trust,
-// everything else must present a password and arrive over the
-// WireGuard overlay (10.42.0.0/16, internal/network/addrplan) — the
-// only network this block's replication/admin traffic ever crosses.
+// everything else must present a password. Not restricted to the
+// WireGuard overlay CIDR (an earlier, unverified assumption corrected
+// by the X1 VM test): cross-node replication/client traffic (both the
+// LB's own backend dialing, internal/agent/lb.go's lookupNodeIP, and
+// this election controller's ResolveAddr, internal/blocks/pgha) both
+// resolve a node's Raft/API advertise address, not an overlay address
+// — an address this package has no fixed, predictable CIDR for at
+// config-generation time, since it depends entirely on how the cluster
+// was actually deployed. The password (scram-sha-256) is the real
+// security boundary here, not a network-level restriction that does
+// not match how this project's own node-to-node dialing works.
 const pgHBAConf = `local   all             all                                     trust
-host    replication     replicator      10.42.0.0/16            scram-sha-256
-host    all             all             10.42.0.0/16            scram-sha-256
+host    replication     replicator      0.0.0.0/0               scram-sha-256
+host    all             all             0.0.0.0/0               scram-sha-256
 `
 
 // writePGConf (re)writes pgdata's postgresql.conf and pg_hba.conf.
