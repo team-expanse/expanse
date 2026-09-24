@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/expanse/expanse/internal/blocks/controller"
@@ -274,5 +275,96 @@ func TestPgPromoteFailsWhenServerReportsFalse(t *testing.T) {
 	inst := pgha.Instance{BlockRef: "default/pg", MountPath: "/mnt", Port: 5432}
 	if err := a.pgPromote(inst); err == nil {
 		t.Fatal("pgPromote returned nil despite pg_promote() reporting false")
+	}
+}
+
+type reconfigureCall struct {
+	host, user, password, dbname, sql string
+	port                              int32
+}
+
+// fakeRunReconfigureSQL stubs the psql exec seam, recording every call
+// in order.
+func fakeRunReconfigureSQL(t *testing.T, results ...error) *[]reconfigureCall {
+	t.Helper()
+	var calls []reconfigureCall
+	orig := runReconfigureSQL
+	runReconfigureSQL = func(_ context.Context, host string, port int32, user, password, dbname, sql string) ([]byte, error) {
+		calls = append(calls, reconfigureCall{host, user, password, dbname, sql, port})
+		if len(calls)-1 < len(results) {
+			if err := results[len(calls)-1]; err != nil {
+				return []byte("psql: error: boom"), err
+			}
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { runReconfigureSQL = orig })
+	return &calls
+}
+
+// TestPgReconfigureCreatesSlotOnNewPrimaryThenRetargetsLocally is the
+// regression test for the X2 VM test's real failure: promotion alone
+// left a surviving standby permanently streaming from the dead
+// primary, which with synchronous_standby_names active meant the new
+// primary could never complete a write at all.
+func TestPgReconfigureCreatesSlotOnNewPrimaryThenRetargetsLocally(t *testing.T) {
+	calls := fakeRunReconfigureSQL(t)
+	a := &Agent{}
+	inst := pgha.Instance{
+		BlockRef: "default/pg", MountPath: "/var/lib/expanse/volumes/vol-a/mnt",
+		Port: 55432, Index: 2, ReplPassword: "repl-s3cret",
+	}
+	if err := a.pgReconfigure(inst, "192.168.1.9"); err != nil {
+		t.Fatalf("pgReconfigure: %v", err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("runReconfigureSQL called %d times, want 2", len(*calls))
+	}
+	slotCall := (*calls)[0]
+	if slotCall.host != "192.168.1.9" || slotCall.port != 55432 {
+		t.Errorf("slot creation dialed %s:%d, want the new primary 192.168.1.9:55432", slotCall.host, slotCall.port)
+	}
+	if slotCall.user != "replicator" || slotCall.password != "repl-s3cret" {
+		t.Errorf("slot creation authenticated as %q/%q, want replicator/repl-s3cret", slotCall.user, slotCall.password)
+	}
+	wantSlot := "expanse_default_pg_2"
+	if !strings.Contains(slotCall.sql, wantSlot) {
+		t.Errorf("slot creation SQL %q missing slot name %q", slotCall.sql, wantSlot)
+	}
+	retargetCall := (*calls)[1]
+	if retargetCall.host != "/var/lib/expanse/volumes/vol-a/mnt/.expanse-postgres/sock" {
+		t.Errorf("retarget dialed %q, want this replica's own local socket dir", retargetCall.host)
+	}
+	if retargetCall.user != "postgres" || retargetCall.password != "" {
+		t.Errorf("retarget authenticated as %q/%q, want postgres over the local trust rule (no password)", retargetCall.user, retargetCall.password)
+	}
+	for _, want := range []string{"primary_conninfo", "192.168.1.9", wantSlot, "pg_reload_conf"} {
+		if !strings.Contains(retargetCall.sql, want) {
+			t.Errorf("retarget SQL %q missing %q", retargetCall.sql, want)
+		}
+	}
+}
+
+func TestPgReconfigureFailsWithoutRetargetingIfSlotCreationFails(t *testing.T) {
+	calls := fakeRunReconfigureSQL(t, fmt.Errorf("connection refused"))
+	a := &Agent{}
+	inst := pgha.Instance{BlockRef: "default/pg", MountPath: "/mnt", Port: 55432, ReplPassword: "x"}
+	if err := a.pgReconfigure(inst, "192.168.1.9"); err == nil {
+		t.Fatal("pgReconfigure returned nil despite a failed slot creation")
+	}
+	if len(*calls) != 1 {
+		t.Errorf("runReconfigureSQL called %d times, want 1 (must not retarget without a slot)", len(*calls))
+	}
+}
+
+func TestPgReconfigureFailsIfLocalRetargetFails(t *testing.T) {
+	calls := fakeRunReconfigureSQL(t, nil, fmt.Errorf("connection refused"))
+	a := &Agent{}
+	inst := pgha.Instance{BlockRef: "default/pg", MountPath: "/mnt", Port: 55432, ReplPassword: "x"}
+	if err := a.pgReconfigure(inst, "192.168.1.9"); err == nil {
+		t.Fatal("pgReconfigure returned nil despite a failed local retarget")
+	}
+	if len(*calls) != 2 {
+		t.Errorf("runReconfigureSQL called %d times, want 2", len(*calls))
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,11 +84,50 @@ func RolePath(mountPath string) string {
 	return filepath.Join(mountPath, RoleFile)
 }
 
+// SlotName derives one replica's own physical replication slot name,
+// deterministically from its identity. Shared by the workload
+// (cmd/expanse-block-run's own pgSlotName, which creates the slot at
+// bootstrap against whichever node is primary then) and this package's
+// Reconfigure path (Stream B, which must re-create the same slot on
+// whichever node becomes primary after a failover, since a fresh
+// primary carries no replication slots of its own). Not imported by
+// cmd/expanse-block-run (that package is main, not a library) — kept in
+// sync by producing byte-identical output for the same replica, proven
+// by each package's own test against the same example. Postgres slot
+// names must match [a-z0-9_]+.
+func SlotName(ns, name string, idx int) string {
+	raw := fmt.Sprintf("%s-%s-%d", ns, name, idx)
+	var b strings.Builder
+	for _, r := range strings.ToLower(raw) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return "expanse_" + b.String()
+}
+
+// parseReplicaRole splits a decided replica's role-file content,
+// "replica <host> <port>\n", into host and port. Empty strings for any
+// other content (including "primary\n", which callers must not pass
+// here).
+func parseReplicaRole(content string) (host, port string) {
+	fields := strings.Fields(content)
+	if len(fields) < 3 || fields[0] != "replica" {
+		return "", ""
+	}
+	return fields[1], fields[2]
+}
+
 // Instance is one db/postgres replica placement a node hosts.
 type Instance struct {
-	BlockRef  string // block ref, e.g. "default/pg"
-	MountPath string // spec.storage[0].mountPath
-	Port      int32  // spec.config.port (same for every replica of one instance)
+	BlockRef     string // block ref, e.g. "default/pg"
+	MountPath    string // spec.storage[0].mountPath
+	Port         int32  // spec.config.port (same for every replica of one instance)
+	Index        int32  // this replica's own index, for SlotName
+	ReplPassword string // spec.config.replicationPassword, for Reconfigure's primary_conninfo
 }
 
 // AddrResolver returns a node's routable dial address (host only, no
@@ -107,8 +147,19 @@ type Config struct {
 	// replica actually wins that race, which every existing election
 	// test avoids by construction (a live or absent-but-unraced lease).
 	Promote func(inst Instance) error
-	TTL     time.Duration // default LeaseTTL
-	Logger  *slog.Logger  // optional; nil disables logging
+	// Reconfigure retargets this node's own standby at a new primary
+	// (host) once the primary lease has moved to a different node than
+	// whichever one this replica currently streams from (Stream B, X2):
+	// without it, a surviving standby keeps trying to reach the dead
+	// primary forever, and with synchronous_standby_names active, every
+	// write to the new primary blocks forever waiting for a synchronous
+	// standby that can never arrive — found running the X2 VM test, not
+	// assumed in advance. A nil Reconfigure only matters once a
+	// promotion actually happens, the same construction every existing
+	// test avoids as Promote's own doc explains.
+	Reconfigure func(inst Instance, newHost string) error
+	TTL         time.Duration // default LeaseTTL
+	Logger      *slog.Logger  // optional; nil disables logging
 }
 
 // Controller runs primary election for every db/postgres instance a
@@ -202,7 +253,7 @@ func (c *Controller) onDecided(ctx context.Context, ref string, inst Instance, c
 		c.reclaimPrimary(ctx, ref)
 		return
 	}
-	c.promoteOnLoss(ctx, ref, inst)
+	c.promoteOnLoss(ctx, ref, inst, content)
 }
 
 // reclaimPrimary keeps a self-elected primary's lease alive across
@@ -237,30 +288,77 @@ func (c *Controller) reclaimPrimary(ctx context.Context, ref string) {
 // has actually expired does TryAcquire succeed here, at which point
 // this replica's own already-streaming postgres is promoted via
 // cfg.Promote before the role file is rewritten to match.
-func (c *Controller) promoteOnLoss(ctx context.Context, ref string, inst Instance) {
+//
+// Losing the race is not always a pure no-op, unlike Stream A's elect():
+// the winner may be a DIFFERENT node than the one this replica's own
+// role file still names, meaning a previous promotion moved the primary
+// out from under it. Retargeting via cfg.Reconfigure is required for
+// correctness, not just completeness — with synchronous_standby_names
+// active, a standby that never reconnects means the new primary can
+// never complete a synchronous commit at all (found running the X2 VM
+// test: promotion itself succeeded, but every client write past that
+// point hung, because the surviving standby was still streaming from
+// the now-dead primary and no synchronous standby could ever ack).
+func (c *Controller) promoteOnLoss(ctx context.Context, ref string, inst Instance, content string) {
 	held, err := c.cfg.Leases.TryAcquire(ctx, LeaseName(ref), c.cfg.TTL)
-	if err != nil {
-		if !errors.Is(err, errors.KindConflict) {
-			c.log(c.cfg.Logger.Warn, "pgha: promotion lease attempt failed, retrying next pass", "block", ref, "err", err)
+	if err == nil {
+		c.log(c.cfg.Logger.Warn, "pgha: primary lease free, promoting this replica", "block", ref, "node", c.cfg.Self)
+		if c.cfg.Promote == nil {
+			c.log(c.cfg.Logger.Error, "pgha: won promotion race but no Promote seam configured", "block", ref)
+			held.Abandon()
+			return
 		}
-		return // the common case: primary alive, lease still held elsewhere
-	}
-	c.log(c.cfg.Logger.Warn, "pgha: primary lease free, promoting this replica", "block", ref, "node", c.cfg.Self)
-	if c.cfg.Promote == nil {
-		c.log(c.cfg.Logger.Error, "pgha: won promotion race but no Promote seam configured", "block", ref)
-		held.Abandon()
+		if perr := c.cfg.Promote(inst); perr != nil {
+			c.log(c.cfg.Logger.Error, "pgha: pg_promote failed, abandoning lease", "block", ref, "err", perr)
+			held.Abandon() // nothing was actually promoted; do not stay fenced as primary
+			return
+		}
+		c.mu.Lock()
+		c.active[ref] = held
+		c.mu.Unlock()
+		c.log(c.cfg.Logger.Info, "pgha: promoted to primary", "block", ref, "node", c.cfg.Self)
+		c.maintainActive(ref, inst)
 		return
 	}
-	if perr := c.cfg.Promote(inst); perr != nil {
-		c.log(c.cfg.Logger.Error, "pgha: pg_promote failed, abandoning lease", "block", ref, "err", perr)
-		held.Abandon() // nothing was actually promoted; do not stay fenced as primary
+	if !errors.Is(err, errors.KindConflict) {
+		c.log(c.cfg.Logger.Warn, "pgha: promotion lease attempt failed, retrying next pass", "block", ref, "err", err)
 		return
 	}
-	c.mu.Lock()
-	c.active[ref] = held
-	c.mu.Unlock()
-	c.log(c.cfg.Logger.Info, "pgha: promoted to primary", "block", ref, "node", c.cfg.Self)
-	c.maintainActive(ref, inst)
+	c.retargetIfPrimaryMoved(ctx, ref, inst, content)
+}
+
+// retargetIfPrimaryMoved runs after losing the primary-lease race to a
+// live holder: learns who currently holds it, and — only if that
+// differs from the host this replica's own role file already names —
+// retargets this node's local standby via cfg.Reconfigure and rewrites
+// the role file to match. A no-op in the overwhelmingly common case
+// (the original primary is still alive and still who we're streaming
+// from), so this costs one extra Inspect per pass, not a reconfigure.
+func (c *Controller) retargetIfPrimaryMoved(ctx context.Context, ref string, inst Instance, content string) {
+	l, ok, ierr := c.cfg.Leases.Inspect(ctx, LeaseName(ref))
+	if ierr != nil || !ok || l.Holder == "" || l.Holder == c.cfg.Self {
+		return // nothing new to learn this pass
+	}
+	host := c.cfg.ResolveAddr(l.Holder)
+	if host == "" {
+		return // retry next pass
+	}
+	if curHost, _ := parseReplicaRole(content); curHost == host {
+		return // already tracking the current primary
+	}
+	if c.cfg.Reconfigure == nil {
+		c.log(c.cfg.Logger.Error, "pgha: primary moved but no Reconfigure seam configured", "block", ref, "primary", l.Holder)
+		return
+	}
+	if rerr := c.cfg.Reconfigure(inst, host); rerr != nil {
+		c.log(c.cfg.Logger.Error, "pgha: retargeting streaming replication failed, retrying next pass", "block", ref, "primary", l.Holder, "err", rerr)
+		return
+	}
+	if werr := writeRoleFile(RolePath(inst.MountPath), fmt.Sprintf("replica %s %d\n", host, inst.Port)); werr != nil {
+		c.log(c.cfg.Logger.Error, "pgha: retargeted but role file write failed, retrying next pass", "block", ref, "err", werr)
+		return
+	}
+	c.log(c.cfg.Logger.Info, "pgha: retargeted streaming replication to new primary", "block", ref, "primary", l.Holder, "host", host)
 }
 
 // maintainActive keeps the on-disk role file in step with a lease this

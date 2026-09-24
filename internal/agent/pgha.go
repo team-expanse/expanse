@@ -53,6 +53,7 @@ func (a *Agent) initPG() {
 		Self:        a.cfg.NodeID,
 		ResolveAddr: a.lookupNodeIP,
 		Promote:     a.pgPromote,
+		Reconfigure: a.pgReconfigure,
 		Logger:      a.logger.With("component", "pgha"),
 	})
 }
@@ -132,7 +133,13 @@ func (a *Agent) scanPostgresInstances(ctx context.Context) map[string]pgha.Insta
 		if v, ok := b.GetSpec().GetConfig().GetFields()["port"]; ok {
 			port = int32(v.GetNumberValue())
 		}
-		out[ref] = pgha.Instance{BlockRef: ref, MountPath: mount, Port: port}
+		// replicationPassword: required by admission (V19) on every
+		// db/postgres block, so its absence here means the field itself
+		// changed shape, not a legitimate empty case -- ReplPassword
+		// simply comes back "", and Reconfigure fails loudly rather than
+		// silently misconnecting.
+		replPassword := b.GetSpec().GetConfig().GetFields()["replicationPassword"].GetStringValue()
+		out[ref] = pgha.Instance{BlockRef: ref, MountPath: mount, Port: port, Index: idx, ReplPassword: replPassword}
 	}
 	return out
 }
@@ -249,6 +256,75 @@ func (a *Agent) pgPromote(inst pgha.Instance) error {
 	}
 	if !bytes.Equal(trimmed, []byte("t")) {
 		return fmt.Errorf("pg_promote: server reported %q, want \"t\"", trimmed)
+	}
+	return nil
+}
+
+// runReconfigureSQL execs one SQL command over psql against host:port,
+// as user (authenticated by password if non-empty, otherwise the local
+// "trust" rule pgHBAConf documents), and returns its trimmed combined
+// output. A package var, not a plain func, for the same fakeability
+// runPromoteSQL and checkDistinctMount already provide.
+var runReconfigureSQL = func(ctx context.Context, host string, port int32, user, password, dbname, sql string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "psql",
+		"-h", host, "-p", strconv.Itoa(int(port)),
+		"-U", user, "-d", dbname,
+		"-v", "ON_ERROR_STOP=1", "-c", sql)
+	if password != "" {
+		cmd.Env = append(cmd.Environ(), "PGPASSWORD="+password)
+	}
+	return cmd.CombinedOutput()
+}
+
+// sqlQuote wraps s as a single-quoted SQL string literal, doubling any
+// embedded quote -- the standard SQL escaping rule, needed here because
+// the values involved (a resolved node address, a replication password)
+// are not literal constants this package controls.
+func sqlQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// pgReconfigure is pgha.Config's Reconfigure seam (Stream B, X2):
+// retargets this node's own standby at a new primary once pgha has
+// learned the primary lease moved there. Two steps, since a fresh
+// primary carries no replication slots of its own -- each standby's
+// slot only ever existed on whichever node created it:
+//
+//  1. (Re)create this replica's own slot on the new primary, over the
+//     network, as the replicator role -- the same idempotent shape
+//     cmd/expanse-block-run's own ensureSlot uses at bootstrap, just
+//     against a different (the new) primary.
+//  2. Retarget this replica's own local postgres at the new primary and
+//     that slot, then reload -- primary_conninfo/primary_slot_name are
+//     PGC_SIGHUP GUCs; postgres itself restarts the walreceiver when a
+//     reload changes either, no restart of this process required.
+func (a *Agent) pgReconfigure(inst pgha.Instance, newHost string) error {
+	slash := strings.Index(inst.BlockRef, "/")
+	if slash < 0 {
+		return fmt.Errorf("pgReconfigure: malformed block ref %q", inst.BlockRef)
+	}
+	ns, name := inst.BlockRef[:slash], inst.BlockRef[slash+1:]
+	slot := pgha.SlotName(ns, name, int(inst.Index))
+
+	ctx, cancel := context.WithTimeout(context.Background(), pgPromoteTimeout)
+	defer cancel()
+
+	ensureSlot := fmt.Sprintf(
+		"SELECT pg_create_physical_replication_slot(%s) WHERE NOT EXISTS "+
+			"(SELECT 1 FROM pg_replication_slots WHERE slot_name = %s);",
+		sqlQuote(slot), sqlQuote(slot))
+	if out, err := runReconfigureSQL(ctx, newHost, inst.Port, "replicator", inst.ReplPassword, "postgres", ensureSlot); err != nil {
+		return fmt.Errorf("ensure slot on new primary: %w: %s", err, bytes.TrimSpace(out))
+	}
+
+	sockDir := filepath.Join(inst.MountPath, ".expanse-postgres", "sock")
+	conninfo := fmt.Sprintf("host=%s port=%d user=replicator password=%s application_name=expanse",
+		newHost, inst.Port, inst.ReplPassword)
+	retarget := fmt.Sprintf(
+		"ALTER SYSTEM SET primary_conninfo = %s; ALTER SYSTEM SET primary_slot_name = %s; SELECT pg_reload_conf();",
+		sqlQuote(conninfo), sqlQuote(slot))
+	if out, err := runReconfigureSQL(ctx, sockDir, inst.Port, "postgres", "", "postgres", retarget); err != nil {
+		return fmt.Errorf("retarget local standby: %w: %s", err, bytes.TrimSpace(out))
 	}
 	return nil
 }

@@ -227,6 +227,144 @@ func TestDecidedReplicaStaysPutWhilePrimaryLeaseIsHeld(t *testing.T) {
 	}
 }
 
+// TestReplicaRetargetsWhenThePrimaryMoves is the regression test for the
+// bug found running the X2 VM test past promotion itself working: a
+// decided replica whose own role file still names the ORIGINAL primary
+// must retarget once a DIFFERENT node has since won the lease (a past
+// promotion), or its streaming connection -- and, with
+// synchronous_standby_names active, the new primary's every write --
+// stays stuck forever.
+func TestReplicaRetargetsWhenThePrimaryMoves(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	// n3 has since won the lease (a promotion this replica hasn't heard
+	// about yet).
+	held, err := lease.NewManager(st, "n3").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	var gotInst Instance
+	var gotHost string
+	calls := 0
+	c := New(Config{
+		Leases: lease.NewManager(st, "n2"),
+		Self:   "n2",
+		ResolveAddr: func(node string) string {
+			if node == "n3" {
+				return "10.42.0.9"
+			}
+			return ""
+		},
+		Reconfigure: func(inst Instance, newHost string) error {
+			calls++
+			gotInst, gotHost = inst, newHost
+			return nil
+		},
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if calls != 1 {
+		t.Fatalf("Reconfigure called %d times, want 1", calls)
+	}
+	if gotHost != "10.42.0.9" {
+		t.Errorf("Reconfigure newHost = %q, want %q", gotHost, "10.42.0.9")
+	}
+	if gotInst.BlockRef != ref {
+		t.Errorf("Reconfigure called with instance %+v", gotInst)
+	}
+	want := "replica 10.42.0.9 5432\n"
+	if got := readRole(t, mount); got != want {
+		t.Errorf("role file = %q, want %q", got, want)
+	}
+}
+
+// TestReplicaDoesNotRetargetWhenThePrimaryIsUnchanged is the steady-state
+// counterpart: the same node still holds the lease and still resolves to
+// the host already on record, so there is nothing to reconfigure.
+func TestReplicaDoesNotRetargetWhenThePrimaryIsUnchanged(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	held, err := lease.NewManager(st, "n1").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	calls := 0
+	c := New(Config{
+		Leases: lease.NewManager(st, "n2"),
+		Self:   "n2",
+		ResolveAddr: func(node string) string {
+			if node == "n1" {
+				return "10.42.0.5"
+			}
+			return ""
+		},
+		Reconfigure: func(Instance, string) error { calls++; return nil },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if calls != 0 {
+		t.Errorf("Reconfigure called %d times, want 0 (primary unchanged)", calls)
+	}
+	if got := readRole(t, mount); got != "replica 10.42.0.5 5432\n" {
+		t.Errorf("role file changed although the primary is unchanged: %q", got)
+	}
+}
+
+// TestReplicaRetargetRetriesNextPassWhenReconfigureFails: a failed
+// retarget attempt (the new primary not reachable yet, e.g.) must not
+// corrupt the role file -- it stays exactly as it was, so the next
+// pass's comparison still correctly detects "not yet retargeted".
+func TestReplicaRetargetRetriesNextPassWhenReconfigureFails(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	held, err := lease.NewManager(st, "n3").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "10.42.0.9" },
+		Reconfigure: func(Instance, string) error { return fmt.Errorf("connection refused") },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if got := readRole(t, mount); got != "replica 10.42.0.5 5432\n" {
+		t.Errorf("role file changed despite a failed Reconfigure: %q", got)
+	}
+}
+
+func TestSlotNameMatchesTheWorkloadsSideDerivation(t *testing.T) {
+	// cmd/expanse-block-run's own TestPgSlotNameHasNoHyphens asserts the
+	// identical result for the same replica identity ("default-pg-0"),
+	// proven byte-for-byte here without importing across the main/
+	// library boundary.
+	if got := SlotName("default", "pg", 0); got != "expanse_default_pg_0" {
+		t.Errorf("SlotName = %q, want expanse_default_pg_0", got)
+	}
+}
+
 // TestDecidedReplicaPromotesWhenThePrimaryLeaseIsFree is Stream B's core
 // case: the primary's lease has expired (it died), and this replica
 // wins the race to take it over — it must promote its own already-
@@ -326,7 +464,7 @@ func TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails(t *testing.T) {
 	// can't exist) falls through to elect(), not onDecided -- exercise
 	// promoteOnLoss directly, the same way reconcileOne would once the
 	// role file legitimately said "replica ...".
-	c.promoteOnLoss(context.Background(), ref, inst)
+	c.promoteOnLoss(context.Background(), ref, inst, "")
 
 	c.mu.Lock()
 	_, active := c.active[ref]
