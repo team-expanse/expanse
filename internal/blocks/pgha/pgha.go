@@ -4,14 +4,18 @@
 // electing which replica of a db/postgres block instance believes
 // itself primary rather than which node holds a VIP.
 //
-// Scope (Stream A / X1 only): initial election. The controller decides
-// exactly once per instance which replica becomes primary and writes
-// that decision to the file nix/blocks/db/postgres/module.nix's
-// bootstrap script consults on a replica's very first start. It keeps
-// the winning node's lease held for as long as this agent runs,
-// including across an agent restart (reclaimed, not re-elected) —
-// laying the groundwork for Stream B's promotion-on-loss, which this
-// package does not implement.
+// Scope: initial election (Stream A / X1) plus automatic failover
+// (Stream B / X2). The controller decides exactly once per instance
+// which replica becomes primary and writes that decision to the file
+// nix/blocks/db/postgres/module.nix's bootstrap script consults on a
+// replica's very first start; it keeps the winning node's lease held
+// for as long as this agent runs, including across an agent restart
+// (reclaimed, not re-elected). A decided replica never stops
+// re-attempting the primary lease on every pass — cheap and silent
+// while the primary is alive (an immediate conflict), and on the rare
+// pass where the primary's lease has actually expired, the winner
+// promotes its own already-streaming replica via cfg.Promote
+// (pg_promote(), D4) rather than restarting anything.
 package pgha
 
 import (
@@ -60,12 +64,13 @@ const RoleFile = ".expanse-postgres/role"
 // parses as the "primary" case.
 const primaryContent = "primary\n"
 
-// LeaseTTL is the primary-election lease TTL. Longer than
-// vip.LeaseTTL: losing and reacquiring this lease is not yet wired to
-// any promotion action (Stream B), so there is no failover-latency
-// budget to bound it against — correctness (one primary at a time)
-// is what Stream A needs, not speed.
-const LeaseTTL = lease.DefaultTTL
+// LeaseTTL is the primary-election lease TTL. Matches vip.LeaseTTL (not
+// imported — same "local copy of the convention" decoupling this
+// package's other constants already use): losing this lease now drives
+// a real failover (Stream B), so the same failover-latency budget
+// applies — TTL/3 renewal + slippage bounds how long a dead primary's
+// fence outlives it before a standby can promote.
+const LeaseTTL = 10 * time.Second
 
 // LeaseName is the lease key electing one node primary for one
 // db/postgres block instance.
@@ -95,8 +100,15 @@ type Config struct {
 	Leases      *lease.Manager
 	Self        string
 	ResolveAddr AddrResolver
-	TTL         time.Duration // default LeaseTTL
-	Logger      *slog.Logger  // optional; nil disables logging
+	// Promote triggers pg_promote() (D4) against this node's own,
+	// already-streaming replica once it has won the primary lease after
+	// the previous primary's lease expired (Stream B, X2). Required for
+	// failover to ever complete; a nil Promote only ever matters if a
+	// replica actually wins that race, which every existing election
+	// test avoids by construction (a live or absent-but-unraced lease).
+	Promote func(inst Instance) error
+	TTL     time.Duration // default LeaseTTL
+	Logger  *slog.Logger  // optional; nil disables logging
 }
 
 // Controller runs primary election for every db/postgres instance a
@@ -158,9 +170,20 @@ func (c *Controller) releaseLocked(ref string, held *lease.Held) {
 }
 
 func (c *Controller) reconcileOne(ctx context.Context, ref string, inst Instance) {
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if active {
+		// The Held's own background renewal loop keeps the lease alive;
+		// nothing to do here except catch up a role file a prior
+		// promotion couldn't write (promoteOnLoss's own comment explains
+		// why that never abandons the lease).
+		c.maintainActive(ref, inst)
+		return
+	}
 	content, err := os.ReadFile(RolePath(inst.MountPath))
 	if err == nil {
-		c.onDecided(ctx, ref, string(content))
+		c.onDecided(ctx, ref, inst, string(content))
 		return
 	}
 	if !os.IsNotExist(err) {
@@ -170,21 +193,24 @@ func (c *Controller) reconcileOne(ctx context.Context, ref string, inst Instance
 	c.elect(ctx, ref, inst)
 }
 
-// onDecided keeps a self-elected primary's lease alive across agent
-// restarts: a role file already saying "primary" means this node won
-// a past election, but the in-memory Held from that run is gone on
-// restart — reclaim the record rather than re-electing, since a
-// decided role file is never rewritten.
-func (c *Controller) onDecided(ctx context.Context, ref, content string) {
-	if content != primaryContent {
-		return // decided replica: nothing to maintain
-	}
-	c.mu.Lock()
-	_, already := c.active[ref]
-	c.mu.Unlock()
-	if already {
+// onDecided routes an instance whose role file already names a
+// decision: "primary" reclaims this node's own past election across an
+// agent restart; anything else is a replica watching for its chance to
+// promote (Stream B, X2).
+func (c *Controller) onDecided(ctx context.Context, ref string, inst Instance, content string) {
+	if content == primaryContent {
+		c.reclaimPrimary(ctx, ref)
 		return
 	}
+	c.promoteOnLoss(ctx, ref, inst)
+}
+
+// reclaimPrimary keeps a self-elected primary's lease alive across
+// agent restarts: a role file already saying "primary" means this node
+// won a past election, but the in-memory Held from that run is gone on
+// restart — reclaim the record rather than re-electing, since a
+// decided role file is never rewritten by this path.
+func (c *Controller) reclaimPrimary(ctx context.Context, ref string) {
 	// Bounded, not the indefinite retry AcquireReclaiming normally does:
 	// a stuck reclaim must not block reconciling this node's OTHER
 	// instances in the same Pass. A record that turns out to be held
@@ -201,6 +227,58 @@ func (c *Controller) onDecided(ctx context.Context, ref, content string) {
 	c.mu.Lock()
 	c.active[ref] = held
 	c.mu.Unlock()
+}
+
+// promoteOnLoss is Stream B's failover path: a decided replica retries
+// TryAcquire on the primary lease every pass instead of ever going
+// quiet. In the steady state (the primary is alive and renewing) this
+// is an immediate, cheap conflict — the exact cost elect() already
+// pays win-or-lose, just repeated. Only once the dead primary's lease
+// has actually expired does TryAcquire succeed here, at which point
+// this replica's own already-streaming postgres is promoted via
+// cfg.Promote before the role file is rewritten to match.
+func (c *Controller) promoteOnLoss(ctx context.Context, ref string, inst Instance) {
+	held, err := c.cfg.Leases.TryAcquire(ctx, LeaseName(ref), c.cfg.TTL)
+	if err != nil {
+		if !errors.Is(err, errors.KindConflict) {
+			c.log(c.cfg.Logger.Warn, "pgha: promotion lease attempt failed, retrying next pass", "block", ref, "err", err)
+		}
+		return // the common case: primary alive, lease still held elsewhere
+	}
+	c.log(c.cfg.Logger.Warn, "pgha: primary lease free, promoting this replica", "block", ref, "node", c.cfg.Self)
+	if c.cfg.Promote == nil {
+		c.log(c.cfg.Logger.Error, "pgha: won promotion race but no Promote seam configured", "block", ref)
+		held.Abandon()
+		return
+	}
+	if perr := c.cfg.Promote(inst); perr != nil {
+		c.log(c.cfg.Logger.Error, "pgha: pg_promote failed, abandoning lease", "block", ref, "err", perr)
+		held.Abandon() // nothing was actually promoted; do not stay fenced as primary
+		return
+	}
+	c.mu.Lock()
+	c.active[ref] = held
+	c.mu.Unlock()
+	c.log(c.cfg.Logger.Info, "pgha: promoted to primary", "block", ref, "node", c.cfg.Self)
+	c.maintainActive(ref, inst)
+}
+
+// maintainActive keeps the on-disk role file in step with a lease this
+// node already, definitely holds. It is never the reason a lease is
+// abandoned: postgres has already been promoted (or was elected primary
+// to begin with) by the time this runs, so a write failure here — the
+// state directory's mount lagging, e.g. — is retried next pass, not
+// treated as a reason to give up the fence (D5: relinquishing a lease
+// this node's own postgres already believes it holds risks a second
+// replica promoting too).
+func (c *Controller) maintainActive(ref string, inst Instance) {
+	path := RolePath(inst.MountPath)
+	if content, err := os.ReadFile(path); err == nil && string(content) == primaryContent {
+		return
+	}
+	if werr := writeRoleFile(path, primaryContent); werr != nil {
+		c.log(c.cfg.Logger.Warn, "pgha: role file not yet writable, retrying next pass", "block", ref, "err", werr)
+	}
 }
 
 // elect runs the Stream A election: exactly one replica across the

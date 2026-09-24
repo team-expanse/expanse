@@ -2,6 +2,7 @@ package pgha
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -183,7 +184,97 @@ func TestOnDecidedPrimaryReclaimsAcrossRestart(t *testing.T) {
 	}
 }
 
-func TestDecidedReplicaIsNoop(t *testing.T) {
+// TestDecidedReplicaStaysPutWhilePrimaryLeaseIsHeld is the steady-state
+// case: a replica whose role file already names a decision retries
+// TryAcquire every pass (Stream B, X2), but while the primary is alive
+// and renewing that is always a conflict — a no-op indistinguishable
+// from the pre-Stream-B behavior from the outside.
+func TestDecidedReplicaStaysPutWhilePrimaryLeaseIsHeld(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	leaseMgr := lease.NewManager(st, "n1")
+	held, err := leaseMgr.TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	promoted := false
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "" },
+		Promote:     func(Instance) error { promoted = true; return nil },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if active {
+		t.Error("a replica must not hold the primary lease while it is held elsewhere")
+	}
+	if promoted {
+		t.Error("Promote called although the primary lease is still live")
+	}
+	if got := readRole(t, mount); got != "replica 10.42.0.5 5432\n" {
+		t.Errorf("role file changed while primary lease is held: %q", got)
+	}
+}
+
+// TestDecidedReplicaPromotesWhenThePrimaryLeaseIsFree is Stream B's core
+// case: the primary's lease has expired (it died), and this replica
+// wins the race to take it over — it must promote its own already-
+// streaming postgres, not just relabel the role file.
+func TestDecidedReplicaPromotesWhenThePrimaryLeaseIsFree(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	var promotedInst Instance
+	promotions := 0
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "" },
+		Promote: func(inst Instance) error {
+			promotions++
+			promotedInst = inst
+			return nil
+		},
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if promotions != 1 {
+		t.Fatalf("Promote called %d times, want 1", promotions)
+	}
+	if promotedInst.BlockRef != ref {
+		t.Errorf("Promote called with instance %+v, want BlockRef %q", promotedInst, ref)
+	}
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if !active {
+		t.Error("winner did not keep the primary lease after promoting")
+	}
+	if got := readRole(t, mount); got != primaryContent {
+		t.Errorf("role file = %q, want %q", got, primaryContent)
+	}
+}
+
+// TestPromotionAbandonsTheLeaseWhenPromoteFails: pg_promote() actually
+// failing (e.g. the local socket isn't reachable yet) must not leave
+// this node fenced as a primary that never promoted anything — another
+// replica needs a chance once the abandoned lease expires.
+func TestPromotionAbandonsTheLeaseWhenPromoteFails(t *testing.T) {
 	st := newTestStore(t)
 	ref := "default/pg"
 	mount := t.TempDir()
@@ -194,15 +285,75 @@ func TestDecidedReplicaIsNoop(t *testing.T) {
 		Leases:      lease.NewManager(st, "n2"),
 		Self:        "n2",
 		ResolveAddr: func(string) string { return "" },
+		Promote:     func(Instance) error { return fmt.Errorf("connection refused") },
 	})
 	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
 	c.Pass(context.Background(), map[string]Instance{ref: inst})
 
 	c.mu.Lock()
-	_, held := c.active[ref]
+	_, active := c.active[ref]
 	c.mu.Unlock()
-	if held {
-		t.Error("a decided replica must never attempt or hold the primary lease")
+	if active {
+		t.Error("a failed promotion must not keep the lease active")
+	}
+	if got := readRole(t, mount); got != "replica 10.42.0.5 5432\n" {
+		t.Errorf("role file changed despite a failed promotion: %q", got)
+	}
+}
+
+// TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails is the D5
+// (split-brain) invariant: once pg_promote() has actually succeeded,
+// this node genuinely is primary, so a role-file write failure right
+// afterward must never abandon the lease — doing so could let a second
+// replica win and promote too. mount is a plain file, not a directory,
+// so MkdirAll for the role file's own parent is guaranteed to fail.
+func TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(mount, []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed mount as a plain file: %v", err)
+	}
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "" },
+		Promote:     func(Instance) error { return nil },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	// reconcileOne would normally read the role file first; a
+	// non-existent one (mount isn't a directory, so RolePath under it
+	// can't exist) falls through to elect(), not onDecided -- exercise
+	// promoteOnLoss directly, the same way reconcileOne would once the
+	// role file legitimately said "replica ...".
+	c.promoteOnLoss(context.Background(), ref, inst)
+
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if !active {
+		t.Error("a role-file write failure after a successful promotion must not abandon the lease (D5)")
+	}
+
+	// The mount recovers (e.g. the real filesystem finishes mounting
+	// over it); the next Pass must find this node already active (via
+	// c.active, not the unreadable role file) and repair the role file
+	// without ever re-attempting TryAcquire or Promote again.
+	if err := os.Remove(mount); err != nil {
+		t.Fatalf("remove the stand-in file: %v", err)
+	}
+	if err := os.MkdirAll(mount, 0o755); err != nil {
+		t.Fatalf("recreate mount as a real directory: %v", err)
+	}
+	promotions := 0
+	c.cfg.Promote = func(Instance) error { promotions++; return nil }
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if promotions != 0 {
+		t.Errorf("Promote called %d times on retry, want 0 (already active)", promotions)
+	}
+	if got := readRole(t, mount); got != primaryContent {
+		t.Errorf("role file = %q after recovery, want %q", got, primaryContent)
 	}
 }
 
