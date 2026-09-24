@@ -215,6 +215,7 @@ func TestDecidedReplicaStaysPutWhilePrimaryLeaseIsHeld(t *testing.T) {
 	defer held.Abandon()
 
 	mount := t.TempDir()
+	seedBootstrapped(t, mount)
 	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
 		t.Fatalf("seed role file: %v", err)
 	}
@@ -473,6 +474,7 @@ func TestDecidedReplicaPromotesWhenThePrimaryLeaseIsFree(t *testing.T) {
 	st := newTestStore(t)
 	ref := "default/pg"
 	mount := t.TempDir()
+	seedBootstrapped(t, mount)
 	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
 		t.Fatalf("seed role file: %v", err)
 	}
@@ -516,6 +518,7 @@ func TestPromotionAbandonsTheLeaseWhenPromoteFails(t *testing.T) {
 	st := newTestStore(t)
 	ref := "default/pg"
 	mount := t.TempDir()
+	seedBootstrapped(t, mount)
 	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
 		t.Fatalf("seed role file: %v", err)
 	}
@@ -543,14 +546,19 @@ func TestPromotionAbandonsTheLeaseWhenPromoteFails(t *testing.T) {
 // (split-brain) invariant: once pg_promote() has actually succeeded,
 // this node genuinely is primary, so a role-file write failure right
 // afterward must never abandon the lease — doing so could let a second
-// replica win and promote too. mount is a plain file, not a directory,
-// so MkdirAll for the role file's own parent is guaranteed to fail.
+// replica win and promote too. mount is a normal, already-bootstrapped
+// replica directory (so promoteOnLoss's own hasBootstrapped gate lets it
+// through to actually attempt promotion); only the role file's own
+// parent is pre-created as a plain file, so writeRoleFile's MkdirAll is
+// guaranteed to fail regardless.
 func TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails(t *testing.T) {
 	st := newTestStore(t)
 	ref := "default/pg"
-	mount := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(mount, []byte("x"), 0o644); err != nil {
-		t.Fatalf("seed mount as a plain file: %v", err)
+	mount := t.TempDir()
+	seedBootstrapped(t, mount)
+	roleDir := filepath.Join(mount, ".expanse-postgres")
+	if err := os.WriteFile(roleDir, []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed role dir as a plain file: %v", err)
 	}
 	c := New(Config{
 		Leases:      lease.NewManager(st, "n2"),
@@ -560,10 +568,10 @@ func TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails(t *testing.T) {
 	})
 	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
 	// reconcileOne would normally read the role file first; a
-	// non-existent one (mount isn't a directory, so RolePath under it
-	// can't exist) falls through to elect(), not onDecided -- exercise
-	// promoteOnLoss directly, the same way reconcileOne would once the
-	// role file legitimately said "replica ...".
+	// non-existent one (its own parent isn't a directory, so RolePath
+	// under it can't exist) falls through to elect(), not onDecided --
+	// exercise promoteOnLoss directly, the same way reconcileOne would
+	// once the role file legitimately said "replica ...".
 	c.promoteOnLoss(context.Background(), ref, inst, "")
 
 	c.mu.Lock()
@@ -573,15 +581,12 @@ func TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails(t *testing.T) {
 		t.Error("a role-file write failure after a successful promotion must not abandon the lease (D5)")
 	}
 
-	// The mount recovers (e.g. the real filesystem finishes mounting
+	// The role dir recovers (e.g. the real filesystem finishes settling
 	// over it); the next Pass must find this node already active (via
 	// c.active, not the unreadable role file) and repair the role file
 	// without ever re-attempting TryAcquire or Promote again.
-	if err := os.Remove(mount); err != nil {
+	if err := os.Remove(roleDir); err != nil {
 		t.Fatalf("remove the stand-in file: %v", err)
-	}
-	if err := os.MkdirAll(mount, 0o755); err != nil {
-		t.Fatalf("recreate mount as a real directory: %v", err)
 	}
 	promotions := 0
 	c.cfg.Promote = func(Instance) error { promotions++; return nil }
@@ -592,6 +597,50 @@ func TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails(t *testing.T) {
 	}
 	if got := readRole(t, mount); got != primaryContent {
 		t.Errorf("role file = %q after recovery, want %q", got, primaryContent)
+	}
+}
+
+// TestNotYetBootstrappedReplicaNeverEntersThePromotionRace is the
+// regression test for the starvation bug found running the X3/X4 VM
+// test: a replica still mid-way through its OWN first-ever bootstrap
+// must never attempt TryAcquire even when the primary lease is genuinely
+// free -- winning it would only fail cfg.Promote (no local postgres) and
+// abandon, but an abandoned record stays live for its own TTL, so a
+// replica that keeps winning the timing race every cycle can starve a
+// genuinely viable replica out of ever getting a turn (observed running
+// for over a minute in the wild before this fix).
+func TestNotYetBootstrappedReplicaNeverEntersThePromotionRace(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir() // no pgdata/PG_VERSION: never bootstrapped
+	if err := writeRoleFile(RolePath(mount), "replica 10.42.0.5 5432\n"); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	promotions := 0
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n2"),
+		Self:        "n2",
+		ResolveAddr: func(string) string { return "" },
+		Promote:     func(Instance) error { promotions++; return nil },
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst}) // lease genuinely free
+
+	if promotions != 0 {
+		t.Errorf("Promote called %d times, want 0 (never bootstrapped, must not enter the race)", promotions)
+	}
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if active {
+		t.Error("a never-bootstrapped replica must not hold the primary lease")
+	}
+	l, ok, err := lease.NewManager(st, "n1").Inspect(context.Background(), LeaseName(ref))
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if ok {
+		t.Errorf("lease record must stay free, not won-then-abandoned, so a viable replica can take it next pass: %+v", l)
 	}
 }
 

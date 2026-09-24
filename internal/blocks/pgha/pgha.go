@@ -347,6 +347,19 @@ func (c *Controller) demoteIfLostToAnother(ctx context.Context, ref string, inst
 // point hung, because the surviving standby was still streaming from
 // the now-dead primary and no synchronous standby could ever ack).
 func (c *Controller) promoteOnLoss(ctx context.Context, ref string, inst Instance, content string) {
+	if !hasBootstrapped(inst.MountPath) {
+		// Never enter the race at all with no local postgres to actually
+		// promote: winning TryAcquire only to fail cfg.Promote and abandon
+		// still holds the record live for its own TTL, which starves a
+		// genuinely viable replica out of ever getting a turn if this one
+		// keeps winning the timing race every cycle (found running the
+		// X3/X4 VM test: a third replica still mid-bootstrap did exactly
+		// that, repeatedly, blocking the one replica that COULD actually
+		// promote for over a minute). Still watch for a winner to learn
+		// about via retargetIfPrimaryMoved's own hasBootstrapped check.
+		c.retargetIfPrimaryMoved(ctx, ref, inst, content)
+		return
+	}
 	held, err := c.cfg.Leases.TryAcquire(ctx, LeaseName(ref), c.cfg.TTL)
 	if err == nil {
 		c.log(c.cfg.Logger.Warn, "pgha: primary lease free, promoting this replica", "block", ref, "node", c.cfg.Self)

@@ -285,12 +285,27 @@ with subtest("pg_checksums reports zero corruption on the promoted primary (X3)"
     assert new_primary_idx is not None, f"no live placement for {new_primary_name}: {b.get('status')}"
     new_primary_m = NODE_BY_NAME[new_primary_name]
     unit = f"expanse-block@default-pg-{new_primary_idx}.service"
-    pgdata = replica_mount(new_primary_m, new_primary_idx) + "/pgdata"
+    mount = replica_mount(new_primary_m, new_primary_idx)
+    pgdata = mount + "/pgdata"
+    # setpriv drops to pgdata's own owning uid, but the VOLUME directory
+    # itself (mount's own parent, created by the root-run storage layer,
+    # not postgres) is not necessarily traversable by that uid the way
+    # postgres's own already-running process's path already is -- grant
+    # any uid read/traverse from the volume root down, rather than guess
+    # at the exact owner/group postgres actually got, since this VM is
+    # disposable test state, not a real deployment.
+    volume_root = mount.removesuffix("/mnt")
+    new_primary_m.succeed(f"chmod o+rX {volume_root} && chmod -R o+rX {mount}")
     # pg_checksums requires the cluster cleanly shut down -- a brief,
     # deliberate stop/check/restart of the SAME managed unit, not a
     # lasting disruption: by this point in the test nothing but this
     # check is still exercising the promoted primary's own write path.
-    new_primary_m.succeed(as_pguser(f"pg_ctl -D {pgdata} -m fast -w stop"))
+    # Stopped via systemctl (root, tracking the real PID through its own
+    # cgroup), not `pg_ctl stop` under setpriv: pg_ctl reads PID from
+    # postmaster.pid and signals it directly, which failed here with
+    # "Operation not permitted" -- systemctl's own PID tracking sidesteps
+    # whatever that file's actual owner/PID mismatch was.
+    new_primary_m.succeed(f"systemctl stop {unit}")
     out = new_primary_m.succeed(as_pguser(f"pg_checksums -D {pgdata} -c"))
     print(f"[diag] pg_checksums: {out}")
     new_primary_m.succeed(f"systemctl start {unit}")

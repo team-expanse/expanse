@@ -50,13 +50,15 @@ let
     # pgdata's own owning uid (postgres's frontend tools refuse root).
     environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.postgresql_18 pkgs.util-linux ];
     networking.firewall.allowedTCPPorts = [ 5432 55432 ];
-    virtualisation.memorySize = 2048;
-    # 2 cores, not the 1-vCPU default X1/X2's tests get by fine with:
-    # --data-checksums (X3's own prerequisite) makes both initdb and
-    # pg_basebackup's now-default checksum verification measurably
-    # heavier, and this test's own setup (pgbench -i plus extra table
-    # writes) adds more concurrent work during the same 3-way bootstrap
-    # race than X1/X2 exercise at that point.
+    # More headroom than X1/X2's tests need: --data-checksums (X3's own
+    # prerequisite) makes initdb heavier, and this test's own setup
+    # (pgbench -i plus extra table writes) adds more concurrent work
+    # during the same 3-way bootstrap race than X1/X2 exercise at that
+    # point -- a replica's own pg_basebackup was observed stalling for
+    # the rest of the run under the default budget (diagnosed as
+    # resource contention, not a hang: pg_basebackup completes in well
+    # under a second against the same primary in isolation).
+    virtualisation.memorySize = 3072;
     virtualisation.cores = 2;
   };
 in
