@@ -116,6 +116,13 @@ see `PHASE-06-TASKS.md` Streams A-D.
 
 ## Phase 7 — On-prem LLM subsystem
 
+**Status: paused before any code** (task breakout and D1's adoption test done — Ollama's own
+CPU/Vulkan/CUDA/ROCm builds confirmed available in nixpkgs, NPU confirmed to need from-scratch
+driver packaging and deferred; see `PHASE-07-TASKS.md`). Paused on direct instruction: no accelerator
+test hardware is available and this was future planning, not a current need. Independent of every
+other phase per this roadmap's own Parallelism section below; resume whenever it's worth another
+look, no other phase depends on it.
+
 **Goal:** premise feature 5 (LLMs).
 
 - Ollama / llama.cpp block exposing an OpenAI-compatible endpoint, load-balanced across replicas.
