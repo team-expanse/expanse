@@ -246,6 +246,39 @@ func TestAttachIsRepeatable(t *testing.T) {
 	}
 }
 
+// A fresh mount's root must be writable by a DynamicUser workload
+// (PHASE-05-TASKS.md Stream A: db/postgres, the first storage-bound
+// block that isn't RunAsRoot) whose uid systemd only allocates once its
+// unit starts — unknowable here to chown to in advance, so world-
+// writable is the only workable fix (regression test for the
+// "permission denied" mkdir a DynamicUser workload hit against a
+// freshly mounted, root:root 0755 filesystem).
+func TestAttachMakesAFreshMountWorldWritable(t *testing.T) {
+	h := newHost()
+	if err := manager(h, drbd.RolePrimary).attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	if !h.ran("chmod 0777 " + HostPath("", volID)) {
+		t.Fatalf("want the fresh mount chmod'd 0777: %v", h.calls)
+	}
+}
+
+// The chmod must run only on the mount that actually just happened, not
+// every reconcile pass — a workload's own later permission changes
+// inside the mount must never be stomped on by a routine re-attach.
+func TestAttachOnlyChmodsOnTheInitialMount(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	for i := 0; i < 2; i++ {
+		if err := m.attach(context.Background(), spec("ext4")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(strings.Join(h.calls, "\n"), "chmod 0777"); n != 1 {
+		t.Fatalf("chmod'd %d times, want once: %v", n, h.calls)
+	}
+}
+
 func observe(t *testing.T, m *Manager) reconcile.Observed {
 	t.Helper()
 	r, err := m.Load("volume-mount:"+volID, []byte(`{"volId":"vol-a","mountPath":"/x","filesystem":"ext4"}`))

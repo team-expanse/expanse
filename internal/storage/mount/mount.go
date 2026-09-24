@@ -281,6 +281,22 @@ func (m *Manager) attach(ctx context.Context, spec Resource) error {
 		if _, err := m.Run.Run(ctx, "mount", "-o", "noatime", dev, host); err != nil {
 			return fmt.Errorf("mount %s at %s: %w", dev, host, err)
 		}
+		// A fresh filesystem's root is root:root 0755 (mkfs's own
+		// default) — fine for a RunAsRoot workload (share/smb,
+		// iscsi/target), but a DynamicUser one (PHASE-05-TASKS.md
+		// Stream A: db/postgres, the first storage-bound block that
+		// isn't RunAsRoot) gets a uid systemd allocates per unit
+		// start, unknowable here to chown to in advance. World-writable
+		// is the pragmatic fix, not a real exposure: the only process
+		// that can even see this host path at all is the one unit
+		// whose own BindPaths/mount namespace names it (every other
+		// unit's sandbox has no visibility into it regardless of host
+		// permission bits). Only on the mount that just happened, not
+		// every reconcile pass, so a workload's own later chmod inside
+		// the mount is never stomped on.
+		if _, err := m.Run.Run(ctx, "chmod", "0777", host); err != nil {
+			return fmt.Errorf("chmod %s: %w", host, err)
+		}
 	}
 	return m.grow(ctx, spec)
 }
