@@ -177,7 +177,10 @@ func TestBridgeSyncConverges(t *testing.T) {
 }
 
 // seedVolume gives the placed block a storage entry backed by a volume whose
-// primary is the given node.
+// primary is the given node. SINGLETON (PHASE-05-TASKS.md D3: this
+// helper's callers all test the shared-volume-follows-primary wiring
+// that only SINGLETON/DAEMONSET use; seedPlaced's own active-active
+// shape would instead resolve each replica to its OWN volume name).
 func seedVolume(t *testing.T, ctx context.Context, st *raftstore.Store, primary string) {
 	t.Helper()
 	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
@@ -188,6 +191,7 @@ func seedVolume(t *testing.T, ctx context.Context, st *raftstore.Store, primary 
 	if err := proto.Unmarshal(e.Value, &blk); err != nil {
 		t.Fatal(err)
 	}
+	blk.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_SINGLETON}
 	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data"}}
 	out, err := proto.Marshal(&blk)
 	if err != nil {
@@ -335,6 +339,10 @@ func TestBridgeAttachResourceUsesTheStorageEntrysDeclaredFilesystem(t *testing.T
 	if err := proto.Unmarshal(e.Value, &blk); err != nil {
 		t.Fatal(err)
 	}
+	// SINGLETON: this test is about filesystem propagation onto the
+	// shared-volume attach resource, not D3's active-active per-replica
+	// naming, so it seeds the volume under the shared composite name.
+	blk.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_SINGLETON}
 	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data", Filesystem: "none"}}
 	out, err := proto.Marshal(&blk)
 	if err != nil {
@@ -411,6 +419,10 @@ func TestBridgeOmitsTheDirectoryBindForARawStorageEntry(t *testing.T) {
 	if err := proto.Unmarshal(e.Value, &blk); err != nil {
 		t.Fatal(err)
 	}
+	// SINGLETON: this test is about the raw-entry mount-omission rule,
+	// not D3's active-active per-replica naming, so it seeds the volume
+	// under the shared composite name.
+	blk.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_SINGLETON}
 	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data", Filesystem: "none"}}
 	out, err := proto.Marshal(&blk)
 	if err != nil {
@@ -457,6 +469,10 @@ func TestBridgeVoldevArgForARawStorageEntry(t *testing.T) {
 	if err := proto.Unmarshal(e.Value, &blk); err != nil {
 		t.Fatal(err)
 	}
+	// SINGLETON: this test is about the raw-entry --voldev arg, not D3's
+	// active-active per-replica naming, so it seeds the volume under the
+	// shared composite name.
+	blk.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_SINGLETON}
 	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data", Filesystem: "none"}}
 	out, err := proto.Marshal(&blk)
 	if err != nil {
@@ -504,6 +520,10 @@ func TestBridgeIgnoresAVolumeNamedAfterTheRawStorageEntry(t *testing.T) {
 	if err := proto.Unmarshal(e.Value, &blk); err != nil {
 		t.Fatal(err)
 	}
+	// SINGLETON: this test is about rejecting a wrongly-named volume
+	// under the shared composite scheme, not D3's active-active
+	// per-replica naming.
+	blk.Spec.Strategy = &pb.Strategy{Kind: pb.StrategyKind_SINGLETON}
 	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data"}}
 	out, err := proto.Marshal(&blk)
 	if err != nil {
@@ -524,5 +544,65 @@ func TestBridgeIgnoresAVolumeNamedAfterTheRawStorageEntry(t *testing.T) {
 	}
 	if hasKey(ctx, st, "/node/n1/resources/"+expmount.Type+":vol-1") {
 		t.Fatal("mounted a volume named after the raw storage entry name, not its composite name")
+	}
+}
+
+// TestBridgeActiveActiveReplicasMountTheirOwnIndependentVolumes is the
+// regression test for PHASE-05-TASKS.md D3: an active-active block's
+// storage entry must resolve to one INDEPENDENT volume per replica
+// index, not the single shared composite name SINGLETON/DAEMONSET
+// blocks use — otherwise every replica but the volume's primary-holding
+// one would get no mount at all.
+func TestBridgeActiveActiveReplicasMountTheirOwnIndependentVolumes(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080) // active-active, idx 0 on n1, idx 1 on n2
+	e, err := st.Get(ctx, store.Key("/blocks/default/web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blk pb.Block
+	if err := proto.Unmarshal(e.Value, &blk); err != nil {
+		t.Fatal(err)
+	}
+	blk.Spec.Storage = []*pb.Storage{{Name: "data", MountPath: "/data"}}
+	out, err := proto.Marshal(&blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, store.Key("/blocks/default/web"), out); err != nil {
+		t.Fatal(err)
+	}
+	v0 := expstorage.BlockReplicaVolumeName("default", "web", "data", 0)
+	v1 := expstorage.BlockReplicaVolumeName("default", "web", "data", 1)
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-0", Name: v0, Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveStatus(ctx, st, "vol-0", expstorage.Status{Primary: "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveSpec(ctx, st, expstorage.Spec{ID: "vol-1", Name: v1, Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := expstorage.SaveStatus(ctx, st, "vol-1", expstorage.Status{Primary: "n2"}); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{St: st}
+	if err := b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !hasKey(ctx, st, "/node/n1/resources/"+expmount.Type+":vol-0") {
+		t.Error("replica 0 (n1) never got its own volume's mount resource")
+	}
+	if !hasKey(ctx, st, "/node/n2/resources/"+expmount.Type+":vol-1") {
+		t.Error("replica 1 (n2) never got its own volume's mount resource")
+	}
+	// Cross-wiring would be worse than no wiring at all: replica 0 must
+	// never be handed replica 1's volume, or vice versa.
+	if hasKey(ctx, st, "/node/n1/resources/"+expmount.Type+":vol-1") {
+		t.Error("replica 0 (n1) was wired to replica 1's volume")
+	}
+	if hasKey(ctx, st, "/node/n2/resources/"+expmount.Type+":vol-0") {
+		t.Error("replica 1 (n2) was wired to replica 0's volume")
 	}
 }

@@ -21,5 +21,6 @@
     packages.x86_64-linux.ai-ollama = ./stubs/ai-ollama;
     packages.x86_64-linux.share-smb = ./stubs/share-smb;
     packages.x86_64-linux.iscsi-target = ./stubs/iscsi-target;
+    packages.x86_64-linux.db-postgres = ./stubs/db-postgres;
   };
 }

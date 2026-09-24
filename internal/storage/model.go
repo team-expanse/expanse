@@ -204,6 +204,16 @@ func BlockVolumeName(ns, block, storage string) string {
 	return fmt.Sprintf("blk-%s-%s-%s", ns, block, storage)
 }
 
+// BlockReplicaVolumeName is the cluster volume name auto-provisioned for
+// one replica's OWN independent storage entry (PHASE-05-TASKS.md D3):
+// unlike BlockVolumeName's single composite name shared by every
+// placement of a SINGLETON/DAEMONSET block, an active-active block with
+// bound storage gets one of these per replica index, so N replicas never
+// contend over the same volume's DRBD primary.
+func BlockReplicaVolumeName(ns, block, storage string, idx int) string {
+	return fmt.Sprintf("%s-%d", BlockVolumeName(ns, block, storage), idx)
+}
+
 // VolumePrefix is the store key namespace for volumes (§4.1).
 const VolumePrefix = "/volumes/"
 

@@ -139,7 +139,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 			// device for this block's unit. One attach
 			// resource per (node, volume, mountPath).
 			for _, st := range blk.GetSpec().GetStorage() {
-				v, ok := vols[expstorage.BlockVolumeName(ns, name, st.GetName())]
+				v, ok := vols[blockStorageVolumeName(&blk, ns, name, st, int(p.GetReplicaIndex()))]
 				if !ok || v.primary != p.GetNodeId() || st.GetMountPath() == "" {
 					continue
 				}
@@ -222,6 +222,21 @@ func volumeView(ctx context.Context, st *bStore) (map[string]volumeRef, error) {
 // bStore is the store surface the bridge and storage helpers share.
 type bStore = raftstore.Store
 
+// blockStorageVolumeName resolves the cluster volume name one storage
+// entry maps to for one specific placement (PHASE-05-TASKS.md D3): a
+// SINGLETON/DAEMONSET block's placements all share the single composite
+// name (the volume follows the block as a whole), but an active-active
+// or primary-replica block gives each replica its own independent
+// volume, so idx must match how internal/storage/controller's
+// reconcileBlocks named it.
+func blockStorageVolumeName(blk *pb.Block, ns, name string, st *pb.Storage, idx int) string {
+	kind := blk.GetSpec().GetStrategy().GetKind()
+	if kind == pb.StrategyKind_SINGLETON || kind == pb.StrategyKind_DAEMONSET {
+		return expstorage.BlockVolumeName(ns, name, st.GetName())
+	}
+	return expstorage.BlockReplicaVolumeName(ns, name, st.GetName(), idx)
+}
+
 // replicaSpec builds the JSON block-replica spec for one placement.
 // The config travels as a single --config argument (JSON); the runtime
 // helper (expanse-block-run) owns the interpretation.
@@ -253,7 +268,7 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 		spec.RunAsRoot = true
 	}
 	for _, st := range blk.GetSpec().GetStorage() {
-		v, ok := vols[expstorage.BlockVolumeName(ns, name, st.GetName())]
+		v, ok := vols[blockStorageVolumeName(blk, ns, name, st, idx)]
 		if !ok || st.GetMountPath() == "" {
 			continue
 		}

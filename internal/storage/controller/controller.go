@@ -287,6 +287,13 @@ func (c *Controller) volIDByName(m map[string]string, name string) (string, bool
 //     preference — the scheduler's own P12 filter guarantees a healthy
 //     replica is already there, so this only ever chooses among nodes
 //     that can actually promote).
+//
+// SINGLETON/DAEMONSET blocks share one volume per storage entry across
+// every placement (the shape above). An active-active or primary-replica
+// block instead gets one INDEPENDENT volume per replica index
+// (PHASE-05-TASKS.md D3): N replicas must never contend over the same
+// volume's DRBD primary the way a floating SINGLETON/DAEMONSET volume
+// does, since each replica owns its own on-disk state.
 func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool) error {
 	entries, err := c.opts.St.List(ctx, "/blocks/")
 	if err != nil {
@@ -317,34 +324,76 @@ func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool
 				blk.Status = &st
 			}
 		}
+		kind := blk.GetSpec().GetStrategy().GetKind()
+		shared := kind == pb.StrategyKind_SINGLETON || kind == pb.StrategyKind_DAEMONSET
 		for _, s := range blk.GetSpec().GetStorage() {
-			vname := storage.BlockVolumeName(ns, name, s.GetName())
-			if ve, ok := volByName[vname]; ok {
-				// §4.7 step 2: primary co-located with the block.
-				c.movePrimaryForBlock(ctx, ve, blockNodes(&blk), meshed)
+			if shared {
+				if err := c.reconcileSharedVolume(ctx, &blk, ns, name, s, volByName, meshed); err != nil {
+					return err
+				}
 				continue
 			}
-			// §4.7 step 1: create (idempotent pending request).
-			size, err := quantity.ParseBytes(s.GetSize())
-			if err != nil {
-				continue // validation (V12) rejects earlier
-			}
-			vspec := &pb.VolumeSpec{
-				Name:        vname,
-				SizeBytes:   uint64(size.N),
-				Class:       s.GetClass(),
-				Replication: s.GetReplication(),
-			}
-			raw, err := pbproto.Marshal(vspec)
-			if err != nil {
-				continue
-			}
-			if _, err := c.opts.St.Put(ctx, storage.PendingCreateKey(vname), raw); err != nil {
+			if err := c.reconcileReplicaVolumes(ctx, &blk, ns, name, s, volByName, meshed); err != nil {
 				return err
 			}
-			c.log.Info("block volume create requested", "block", ns+"/"+name, "vol", vname)
 		}
 	}
+	return nil
+}
+
+// reconcileSharedVolume is reconcileBlocks's SINGLETON/DAEMONSET case:
+// one volume, shared by every placement, whose primary follows the
+// block as a whole.
+func (c *Controller) reconcileSharedVolume(ctx context.Context, blk *pb.Block, ns, name string, s *pb.Storage, volByName map[string]volEntry, meshed map[string]bool) error {
+	vname := storage.BlockVolumeName(ns, name, s.GetName())
+	if ve, ok := volByName[vname]; ok {
+		c.movePrimaryForBlock(ctx, ve, blockNodes(blk), meshed)
+		return nil
+	}
+	return c.requestVolume(ctx, ns, name, vname, s)
+}
+
+// reconcileReplicaVolumes is reconcileBlocks's active-active/primary-
+// replica case (D3): one independent volume per replica index, each
+// one's primary co-located with that specific replica's own placement,
+// never with any other replica's node.
+func (c *Controller) reconcileReplicaVolumes(ctx context.Context, blk *pb.Block, ns, name string, s *pb.Storage, volByName map[string]volEntry, meshed map[string]bool) error {
+	for idx := 0; idx < int(blk.GetSpec().GetReplicas()); idx++ {
+		vname := storage.BlockReplicaVolumeName(ns, name, s.GetName(), idx)
+		if ve, ok := volByName[vname]; ok {
+			c.movePrimaryForBlock(ctx, ve, replicaNode(blk, idx), meshed)
+			continue
+		}
+		if err := c.requestVolume(ctx, ns, name, vname, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// requestVolume queues an idempotent pending-create request for a
+// not-yet-provisioned volume name. A spec that fails to parse/marshal is
+// skipped, not fatal — admission (V12) already rejects that before it
+// reaches here; only the store write itself is a real failure to report.
+func (c *Controller) requestVolume(ctx context.Context, ns, name, vname string, s *pb.Storage) error {
+	size, err := quantity.ParseBytes(s.GetSize())
+	if err != nil {
+		return nil
+	}
+	vspec := &pb.VolumeSpec{
+		Name:        vname,
+		SizeBytes:   uint64(size.N),
+		Class:       s.GetClass(),
+		Replication: s.GetReplication(),
+	}
+	raw, err := pbproto.Marshal(vspec)
+	if err != nil {
+		return nil
+	}
+	if _, err := c.opts.St.Put(ctx, storage.PendingCreateKey(vname), raw); err != nil {
+		return err
+	}
+	c.log.Info("block volume create requested", "block", ns+"/"+name, "vol", vname)
 	return nil
 }
 
@@ -384,6 +433,21 @@ func blockNodes(blk *pb.Block) map[string]bool {
 	if status := blk.GetStatus(); status != nil {
 		for _, p := range status.GetPlacements() {
 			if p.GetReplicaIndex() >= 0 && p.GetPhase() != pb.Phase_LOST {
+				out[p.GetNodeId()] = true
+			}
+		}
+	}
+	return out
+}
+
+// replicaNode is blockNodes narrowed to one specific replica index's own
+// placement (D3): a per-replica volume's primary must co-locate only
+// with that replica, never with a sibling replica's node.
+func replicaNode(blk *pb.Block, idx int) map[string]bool {
+	out := map[string]bool{}
+	if status := blk.GetStatus(); status != nil {
+		for _, p := range status.GetPlacements() {
+			if p.GetReplicaIndex() == int32(idx) && p.GetPhase() != pb.Phase_LOST {
 				out[p.GetNodeId()] = true
 			}
 		}

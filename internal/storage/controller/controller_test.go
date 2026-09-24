@@ -80,6 +80,38 @@ func seedSingletonBlock(t *testing.T, st *boltstore.Store, ns, name, storageName
 	}
 }
 
+// seedActiveActiveBlock writes an active-active block (no strategy.kind,
+// PHASE-05-TASKS.md D3's plain N-replica shape) with one storage entry,
+// one placement per node in nodes (replica index = position in nodes).
+func seedActiveActiveBlock(t *testing.T, st *boltstore.Store, ns, name, storageName string, replicas int32, nodes ...string) {
+	t.Helper()
+	blk := &pb.Block{
+		Spec: &pb.BlockSpec{
+			Replicas: &replicas,
+			Storage:  []*pb.Storage{{Name: storageName, Size: "64Mi"}},
+		},
+	}
+	raw, err := pbproto.Marshal(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(context.Background(), store.Key("/blocks/"+ns+"/"+name), raw); err != nil {
+		t.Fatal(err)
+	}
+	status := &pb.BlockStatus{}
+	for i, n := range nodes {
+		status.Placements = append(status.Placements,
+			&pb.PlacementStatus{ReplicaIndex: int32(i), NodeId: n, Phase: pb.Phase_RUNNING})
+	}
+	sraw, err := pbproto.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(context.Background(), store.Key("/blocks/"+ns+"/"+name+"/status"), sraw); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // edit rewrites a volume's status in place.
 func edit(t *testing.T, st *boltstore.Store, id string, fn func(*storage.Status)) {
 	t.Helper()
@@ -535,5 +567,55 @@ func TestBlockBoundVolumeNeverMovesPrimaryToAnUnhealthyReplica(t *testing.T) {
 
 	if got := load(t, st, vname).Primary; got != "n1" {
 		t.Fatalf("primary = %q, want n1 unchanged (n2's replica is unhealthy)", got)
+	}
+}
+
+// PHASE-05-TASKS.md D3: an active-active block's storage entry must not
+// collapse to a single shared volume the way SINGLETON/DAEMONSET's does —
+// each of its N replicas gets its own independently-named, independently
+// requested volume.
+func TestActiveActiveBlockRequestsOneVolumePerReplica(t *testing.T) {
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	seedActiveActiveBlock(t, st, "default", "pg", "pgdata", 3, "n1", "n2", "n3")
+
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+
+	for i := 0; i < 3; i++ {
+		vname := storage.BlockReplicaVolumeName("default", "pg", "pgdata", i)
+		if _, err := st.Get(context.Background(), storage.PendingCreateKey(vname)); err != nil {
+			t.Fatalf("replica %d: no pending create for %q: %v", i, vname, err)
+		}
+	}
+	// The old shared-volume name (as a SINGLETON/DAEMONSET block of the
+	// same name would use) must never itself be requested.
+	shared := storage.BlockVolumeName("default", "pg", "pgdata")
+	if _, err := st.Get(context.Background(), storage.PendingCreateKey(shared)); err == nil {
+		t.Fatalf("a shared composite volume %q was requested; active-active must not collapse replicas onto one volume", shared)
+	}
+}
+
+// Each replica's own volume must co-locate with THAT replica's node only —
+// never with a sibling replica's node, which would defeat D3's whole point
+// (independent, non-contending per-replica storage).
+func TestActiveActiveReplicaVolumePrimaryCoLocatesOnlyWithItsOwnReplica(t *testing.T) {
+	st := newStore(t)
+	seedMesh(st, "n1", "n2", "n3")
+	v0 := storage.BlockReplicaVolumeName("default", "pg", "pgdata", 0)
+	v1 := storage.BlockReplicaVolumeName("default", "pg", "pgdata", 1)
+	// Both volumes seeded with n3 as primary — reconcile must move v0's
+	// primary to replica 0's node (n1) and v1's to replica 1's node (n2),
+	// never to each other's or a third node.
+	seedVolume(t, st, v0, 3, []string{"n1", "n2", "n3"}, "n3", storage.StateHealthy)
+	seedVolume(t, st, v1, 3, []string{"n1", "n2", "n3"}, "n3", storage.StateHealthy)
+	seedActiveActiveBlock(t, st, "default", "pg", "pgdata", 2, "n1", "n2")
+
+	reconcile(t, leaderCtl(st, func(AlertEvent) {}))
+
+	if got := load(t, st, v0).Primary; got != "n1" {
+		t.Fatalf("replica 0's volume primary = %q, want n1 (its own replica's node)", got)
+	}
+	if got := load(t, st, v1).Primary; got != "n2" {
+		t.Fatalf("replica 1's volume primary = %q, want n2 (its own replica's node)", got)
 	}
 }
