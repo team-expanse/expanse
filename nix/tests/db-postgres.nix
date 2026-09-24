@@ -50,6 +50,15 @@ let
     # "upstream binary shipped in the deployment image, exec'd from
     # PATH" convention share-smb.nix's samba package already uses.
     environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.postgresql_18 ];
+    # PORT (the VIP-exposed, client-facing port) and PG_PORT (postgres's
+    # own internal listen port, used directly node-to-node for
+    # streaming replication/pg_basebackup, bypassing the VIP/LB
+    # entirely) both need to be open on every node, since any of the 3
+    # could hold the VIP or be the elected primary. Missed on the first
+    # pass (share-smb.nix's own analogous 445 was the precedent to
+    # follow) -- pg_basebackup timed out reaching the primary directly
+    # until this was added.
+    networking.firewall.allowedTCPPorts = [ 5432 55432 ];
     virtualisation.memorySize = 2048;
   };
 in
