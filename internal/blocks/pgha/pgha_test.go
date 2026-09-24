@@ -495,6 +495,85 @@ func TestPromotionKeepsTheLeaseWhenTheRoleFileWriteFails(t *testing.T) {
 	}
 }
 
+// TestReclaimPrimaryDemotesWhenAnotherNodeHoldsTheLease is Stream C's X4
+// regression test: a node whose own role file still says "primary" (it
+// crashed or was partitioned away) finds, on reclaim, that a DIFFERENT
+// node genuinely holds the lease now -- proof another replica already
+// promoted while it was gone. It must demote its own role file to
+// "replica <host> <port>", the signal cmd/expanse-block-run's own
+// demote-watch goroutine waits for to stop and re-clone rather than stay
+// a permanently diverged primary or need a manual pg_rewind.
+func TestReclaimPrimaryDemotesWhenAnotherNodeHoldsTheLease(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), primaryContent); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	// n3 already won the lease for real (a promotion this node never
+	// heard about, having been down or partitioned).
+	held, err := lease.NewManager(st, "n3").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	c := New(Config{
+		Leases: lease.NewManager(st, "n1"),
+		Self:   "n1",
+		ResolveAddr: func(node string) string {
+			if node == "n3" {
+				return "10.42.0.9"
+			}
+			return ""
+		},
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	want := "replica 10.42.0.9 5432\n"
+	if got := readRole(t, mount); got != want {
+		t.Errorf("role file = %q, want %q", got, want)
+	}
+	c.mu.Lock()
+	_, active := c.active[ref]
+	c.mu.Unlock()
+	if active {
+		t.Error("a demoted node must not hold the primary lease")
+	}
+}
+
+// TestReclaimPrimaryKeepsRetryingWhenTheWinnersAddressIsUnresolved: the
+// same "not yet actionable" shape elect()'s own replica-write branch
+// already handles -- a demotion must not happen (and the role file must
+// stay untouched) until the new primary's node address actually
+// resolves.
+func TestReclaimPrimaryKeepsRetryingWhenTheWinnersAddressIsUnresolved(t *testing.T) {
+	st := newTestStore(t)
+	ref := "default/pg"
+	mount := t.TempDir()
+	if err := writeRoleFile(RolePath(mount), primaryContent); err != nil {
+		t.Fatalf("seed role file: %v", err)
+	}
+	held, err := lease.NewManager(st, "n3").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+	if err != nil {
+		t.Fatalf("seed primary lease: %v", err)
+	}
+	defer held.Abandon()
+
+	c := New(Config{
+		Leases:      lease.NewManager(st, "n1"),
+		Self:        "n1",
+		ResolveAddr: func(string) string { return "" }, // n3's address not yet known
+	})
+	inst := Instance{BlockRef: ref, MountPath: mount, Port: 5432}
+	c.Pass(context.Background(), map[string]Instance{ref: inst})
+
+	if got := readRole(t, mount); got != primaryContent {
+		t.Errorf("role file changed although the new primary's address is unresolved: %q", got)
+	}
+}
+
 func TestPassReleasesGoneInstance(t *testing.T) {
 	st := newTestStore(t)
 	c := New(Config{

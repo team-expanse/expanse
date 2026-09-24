@@ -4,17 +4,21 @@
 // electing which replica of a db/postgres block instance believes
 // itself primary rather than which node holds a VIP.
 //
-// Scope: initial election (Stream A / X1) plus automatic failover
-// (Stream B / X2). The controller decides exactly once per instance
-// which replica becomes primary and writes that decision to the file
+// Scope: initial election (Stream A / X1), automatic failover
+// (Stream B / X2), and old-primary demotion on rejoin (Stream C / X4).
+// The controller decides exactly once per instance which replica
+// becomes primary and writes that decision to the file
 // nix/blocks/db/postgres/module.nix's bootstrap script consults on a
 // replica's very first start; it keeps the winning node's lease held
 // for as long as this agent runs, including across an agent restart
-// (reclaimed, not re-elected). A decided replica never stops
-// re-attempting the primary lease on every pass — cheap and silent
-// while the primary is alive (an immediate conflict), and on the rare
-// pass where the primary's lease has actually expired, the winner
-// promotes its own already-streaming replica via cfg.Promote
+// (reclaimed, not re-elected) — unless that reclaim discovers another
+// node already won the lease for real while this one was down or
+// partitioned away, in which case it demotes this node's role file to
+// "replica" instead (demoteIfLostToAnother). A decided replica never
+// stops re-attempting the primary lease on every pass — cheap and
+// silent while the primary is alive (an immediate conflict), and on
+// the rare pass where the primary's lease has actually expired, the
+// winner promotes its own already-streaming replica via cfg.Promote
 // (pg_promote(), D4) rather than restarting anything.
 package pgha
 
@@ -250,7 +254,7 @@ func (c *Controller) reconcileOne(ctx context.Context, ref string, inst Instance
 // promote (Stream B, X2).
 func (c *Controller) onDecided(ctx context.Context, ref string, inst Instance, content string) {
 	if content == primaryContent {
-		c.reclaimPrimary(ctx, ref)
+		c.reclaimPrimary(ctx, ref, inst)
 		return
 	}
 	c.promoteOnLoss(ctx, ref, inst, content)
@@ -261,23 +265,66 @@ func (c *Controller) onDecided(ctx context.Context, ref string, inst Instance, c
 // won a past election, but the in-memory Held from that run is gone on
 // restart — reclaim the record rather than re-electing, since a
 // decided role file is never rewritten by this path.
-func (c *Controller) reclaimPrimary(ctx context.Context, ref string) {
+//
+// A reclaim can also lose for real (Stream C, X4): this node was down
+// or partitioned long enough that another replica's own promotion
+// (promoteOnLoss) already won the lease, so the record AcquireReclaiming
+// finds live is no longer this node's own. That is not a blip to retry
+// — it is this node discovering it is now a stale, diverged ex-primary,
+// handled by demoteIfLostToAnother.
+func (c *Controller) reclaimPrimary(ctx context.Context, ref string, inst Instance) {
 	// Bounded, not the indefinite retry AcquireReclaiming normally does:
 	// a stuck reclaim must not block reconciling this node's OTHER
-	// instances in the same Pass. A record that turns out to be held
-	// live by someone else (should not happen absent a bug — only the
-	// role file's own owner ever attempts this) resolves on the next
-	// Pass instead of hanging this one.
+	// instances in the same Pass. AcquireReclaiming's own internal loop
+	// (lease.Manager.acquire) already retries a live-elsewhere conflict
+	// silently for this whole budget, surfacing it to us as a timeout,
+	// not errors.KindConflict — so the error's kind cannot distinguish
+	// "someone else genuinely holds it" from a plain store hiccup here;
+	// demoteIfLostToAnother's own Inspect call is what actually tells
+	// those apart, on ANY failure of this call.
 	rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	held, err := c.cfg.Leases.AcquireReclaiming(rctx, LeaseName(ref), c.cfg.TTL)
-	if err != nil {
-		c.log(c.cfg.Logger.Warn, "pgha: reclaim primary lease failed, retrying next pass", "block", ref, "err", err)
+	if err == nil {
+		c.mu.Lock()
+		c.active[ref] = held
+		c.mu.Unlock()
 		return
 	}
-	c.mu.Lock()
-	c.active[ref] = held
-	c.mu.Unlock()
+	c.demoteIfLostToAnother(ctx, ref, inst)
+}
+
+// demoteIfLostToAnother runs once reclaimPrimary's AcquireReclaiming has
+// lost to a live holder that is not this node: definitive proof another
+// replica already promoted while this one was unreachable, not a
+// not-yet-landed record (Inspect resolving to "" or to this node itself
+// is exactly that ambiguous case, and is left to retry next pass rather
+// than acted on).
+//
+// The only action taken here is rewriting the role file to
+// "replica <host> <port>" — the same content elect()'s losing branch
+// writes for a brand-new replica. That is deliberate: this package never
+// touches postgres itself or the node's own PGDATA (Promote/Reconfigure
+// are the only seams that do, and both require inst's Instance data this
+// call already has, but a demotion needs neither). Stopping the stale
+// primary and wiping its diverged data directory belongs to
+// cmd/expanse-block-run's own workload process, which already owns that
+// directory's whole lifecycle end to end — this file is simply the
+// signal its demote-watch goroutine waits for.
+func (c *Controller) demoteIfLostToAnother(ctx context.Context, ref string, inst Instance) {
+	l, ok, ierr := c.cfg.Leases.Inspect(ctx, LeaseName(ref))
+	if ierr != nil || !ok || l.Holder == "" || l.Holder == c.cfg.Self {
+		return // not a definitive loss yet -- retry next pass
+	}
+	host := c.cfg.ResolveAddr(l.Holder)
+	if host == "" {
+		return // retry next pass
+	}
+	if werr := writeRoleFile(RolePath(inst.MountPath), fmt.Sprintf("replica %s %d\n", host, inst.Port)); werr != nil {
+		c.log(c.cfg.Logger.Error, "pgha: demoted but role file write failed, retrying next pass", "block", ref, "err", werr)
+		return
+	}
+	c.log(c.cfg.Logger.Warn, "pgha: primary lease held by another live node, demoting to replica", "block", ref, "primary", l.Holder, "host", host)
 }
 
 // promoteOnLoss is Stream B's failover path: a decided replica retries
