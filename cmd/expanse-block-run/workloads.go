@@ -1057,16 +1057,6 @@ func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string)
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	out, err := cmd.CombinedOutput()
-	// TEMPORARY diagnostic (PHASE-05-TASKS.md Stream A X1 VM test):
-	// pgCmd previously only surfaced output on failure, but a run
-	// showed a primary's CREATE ROLE/CREATE DATABASE step neither
-	// crash the unit (no error) nor leave a usable database/role
-	// behind -- printing on success too until that's understood. psql's
-	// own output here is command tags ("CREATE ROLE") or error text,
-	// never the SQL/password themselves.
-	if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
-		fmt.Printf("expanse-block-run: %s output: %s\n", bin, trimmed)
-	}
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -1099,34 +1089,30 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 		if cerr != nil {
 			return cerr
 		}
-		// TEMPORARY step-by-step diagnostic (PHASE-05-TASKS.md Stream A
-		// X1 VM test): a run left the primary's postgres genuinely
-		// serving connections (auth as the initdb superuser works) yet
-		// neither the replicator role nor the database ever existed,
-		// with no error/crash logged at all -- consistent with pg_ctl
-		// -w start itself never returning even though the daemonized
-		// postmaster it forked came up fine regardless. Bracketing each
-		// step until that's confirmed.
-		fmt.Println("expanse-block-run: bootstrapPostgres: running initdb")
 		if err := pgCmd(ctx, nil, "", "initdb", "-D", pgdata, "--username=postgres", "--pwfile="+pwFile.Name()); err != nil {
 			return err
 		}
 		if err := writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
 			return err
 		}
-		fmt.Println("expanse-block-run: bootstrapPostgres: starting postgres for bootstrap SQL")
-		if err := pgCmd(ctx, nil, "", "pg_ctl", "-D", pgdata, "-w", "start"); err != nil {
+		// -l redirects the daemonized postmaster's own stdout/stderr to
+		// a real file instead of leaving it to inherit this process's:
+		// without it (X1 VM test), the postmaster pg_ctl forks keeps
+		// those inherited pipe fds open for as long as it runs (i.e.
+		// forever), so cmd.CombinedOutput's own wait for pipe EOF never
+		// completes even though pg_ctl itself (and the postmaster) had
+		// already started successfully — hanging this call forever and
+		// never reaching the CREATE ROLE/CREATE DATABASE step below.
+		bootLog := filepath.Join(filepath.Dir(sockDir), "bootstrap.log")
+		if err := pgCmd(ctx, nil, "", "pg_ctl", "-D", pgdata, "-l", bootLog, "-w", "start"); err != nil {
 			return err
 		}
-		fmt.Println("expanse-block-run: bootstrapPostgres: pg_ctl start returned; running CREATE ROLE/CREATE DATABASE")
 		sql := "CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD :'pass';\nCREATE DATABASE :\"dbname\";\n"
 		createErr := pgCmd(ctx, nil, sql, "psql", "-h", sockDir, "-p", port, "-U", "postgres",
 			"-v", "ON_ERROR_STOP=1", "-v", "pass="+replPassword, "-v", "dbname="+database)
-		fmt.Printf("expanse-block-run: bootstrapPostgres: CREATE ROLE/CREATE DATABASE returned: %v\n", createErr)
 		if stopErr := pgCmd(ctx, nil, "", "pg_ctl", "-D", pgdata, "-w", "stop"); stopErr != nil && createErr == nil {
 			return stopErr
 		}
-		fmt.Println("expanse-block-run: bootstrapPostgres: primary bootstrap complete")
 		return createErr
 	case "replica":
 		env := []string{"PGPASSWORD=" + replPassword}

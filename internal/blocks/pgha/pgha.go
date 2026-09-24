@@ -230,12 +230,12 @@ func (c *Controller) elect(ctx context.Context, ref string, inst Instance) {
 	// guess.
 	l, ok, ierr := c.cfg.Leases.Inspect(ctx, name)
 	if ierr != nil || !ok || l.Holder == "" || l.Holder == c.cfg.Self {
-		// TEMPORARY diagnostic (PHASE-05-TASKS.md Stream A X1 VM test):
-		// this branch is silent by design when the winner's record
-		// simply hasn't landed yet, but a losing replica in this VM
-		// test never got a role file within its own 120s budget at
-		// all -- narrowing down which of these four silent cases it
-		// actually hits.
+		// Expected and brief in the common case (the winner's record
+		// simply hasn't landed yet, or this node is the winner itself
+		// re-losing its own already-held lease's fresh TryAcquire) —
+		// logged rather than fully silent so a losing replica that
+		// never gets a role file at all is diagnosable from which of
+		// these cases it's actually stuck on.
 		c.log(c.cfg.Logger.Warn, "pgha: lost election, no usable winner record yet", "block", ref, "ierr", ierr, "ok", ok, "holder", l.Holder, "self", c.cfg.Self)
 		return
 	}
