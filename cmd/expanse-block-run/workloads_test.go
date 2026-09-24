@@ -314,6 +314,22 @@ func TestSanitizeIDReplacesUnsafeCharacters(t *testing.T) {
 	}
 }
 
+// TestPgSlotNameHasNoHyphens is the regression test for the X1 VM
+// test's replication slot rejection: sanitizeID's own dash/dot
+// allowance (fine for IQNs) produces a name postgres itself rejects
+// ("contains invalid character") for a replication slot.
+func TestPgSlotNameHasNoHyphens(t *testing.T) {
+	got := pgSlotName("default-pg-0")
+	if got != "expanse_default_pg_0" {
+		t.Errorf("pgSlotName = %q, want expanse_default_pg_0", got)
+	}
+	for _, r := range got {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_') {
+			t.Errorf("pgSlotName = %q contains %q, postgres slot names must match [a-z0-9_]+", got, r)
+		}
+	}
+}
+
 // waitForPGRole parses pgha.go's exact role-file formats: "primary\n"
 // (no host/port) and "replica <host> <port>\n".
 func TestWaitForPGRoleParsesPrimary(t *testing.T) {

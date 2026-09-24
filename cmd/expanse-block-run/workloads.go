@@ -820,6 +820,15 @@ func sanitizeID(s string) string {
 	return b.String()
 }
 
+// pgSlotName derives a physical replication slot name from a replica's
+// instance string. Postgres slot names must match [a-z0-9_]+ (X1 VM
+// test: sanitizeID's own dash/dot allowance, fine for IQNs, is invalid
+// here -- "expanse_default-pg-0" was rejected with "contains invalid
+// character") -- '-' and '.' become '_'.
+func pgSlotName(instance string) string {
+	return "expanse_" + strings.NewReplacer("-", "_", ".", "_").Replace(sanitizeID(instance))
+}
+
 // runWhoami serves web/whoami: an in-process HTTP server that reports
 // the replica index (from the per-replica spec the agent wrote) — the
 // load-balancer distribution tests' distinguishing backend. Binds all
@@ -943,7 +952,7 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 	}
 
 	if _, err := os.Stat(filepath.Join(pgdata, "PG_VERSION")); err != nil {
-		slot := "expanse_" + sanitizeID(instance)
+		slot := pgSlotName(instance)
 		if err := bootstrapPostgres(ctx, pgdata, filepath.Join(stateDir, "role"), sockDir,
 			port, database, replPassword, superPassword, slot,
 			sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
