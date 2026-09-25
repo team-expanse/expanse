@@ -100,13 +100,22 @@ echo "== 5/6: nixos-rebuild switch =="
 # under sudo does not inherit. Scoped to just this command, not written to any file.
 NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
 
-echo "== 6/6: starting containers and waiting for them ready =="
-# containers.<name> (autoStart = false) registers and populates the machine the first
-# time container@<name>.service itself starts -- `machinectl start` only works on an
-# already-registered image and fails "Machine image '<name>' does not exist" before
-# that, found on the real run.
+echo "== 6/6: (re)starting containers so they pick up whatever was just built =="
+# `restart`, not `start`: containers.<name> (autoStart = false) registers and populates
+# the machine the first time container@<name>.service itself starts -- `machinectl
+# start` only works on an already-registered image and fails "Machine image '<name>'
+# does not exist" before that (found live). And autoStart = false ALSO disables NixOS's
+# own restart-on-config-change machinery (nixos-containers.nix's restartTriggers/
+# restartIfChanged are set inside `optionalAttrs containerConfig.autoStart { ... }` --
+# a no-op when it's false), so `nixos-rebuild switch` alone never restarts an already-
+# running container to pick up a rebuilt config -- `systemctl start` on an
+# already-active unit is *also* a no-op, silently leaving the OLD process running with
+# stale capabilities/devices even though the new config built and switched correctly.
+# Found live: this is exactly why the CAP_MKNOD fix never took effect on a container
+# that was already running successfully from the bridge fix. `restart` is correct
+# whether the unit is currently stopped or running.
 for n in "${NAMES[@]}"; do
-    systemctl start "container@$n.service"
+    systemctl restart "container@$n.service"
 done
 
 # systemd-run --machine= depends on the container's D-Bus machine-transport socket,
