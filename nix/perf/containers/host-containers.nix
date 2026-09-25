@@ -153,6 +153,26 @@ in
 {
   boot.enableContainers = true;
 
+  # dm-thin-pool is a HOST kernel module, not a per-container thing -- a container
+  # cannot modprobe it itself (no CAP_SYS_MODULE, correctly so), so it must already be
+  # loaded on the host before any container's own `lvcreate --type thin-pool` can work.
+  # Found live: CAP_MKNOD (previous commit) fixed the mknod permission error, but the
+  # very next attempt failed differently -- "thin-pool: Required device-mapper
+  # target(s) not detected in your kernel." boot.kernelModules should apply immediately
+  # on `nixos-rebuild switch`, but this also loads it explicitly and synchronously
+  # before any container starts, rather than trusting activation-script timing this
+  # session has no way to verify directly.
+  boot.kernelModules = [ "dm_thin_pool" ];
+  systemd.services.expanse-perf-dm-thin = {
+    description = "Ensure dm-thin-pool is loaded before the X1 perf containers start";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "container@n1.service" "container@n2.service" "container@n3.service" ];
+    path = [ pkgs.kmod ];
+    serviceConfig.Type = "oneshot";
+    serviceConfig.RemainAfterExit = true;
+    script = "modprobe dm_thin_pool";
+  };
+
   # Isolated bridge, no physical uplink: containers reach each other over it
   # directly (matching the nixosTest VM tests' own single-vlan eth1 model),
   # never touching the host's real LAN. Plain `ip link`, not
