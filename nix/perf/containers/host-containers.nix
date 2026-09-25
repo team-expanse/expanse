@@ -32,6 +32,18 @@ let
     name = "n${toString idx}";
     disk = disks.${name};
     addr = addrs.${name};
+    # Per-container, not the real install's literal "expanse": device-mapper has no
+    # per-container namespacing under systemd-nspawn -- it's a single, flat,
+    # host-kernel-wide device-name space. LVM names the activated DM device
+    # "<vg>-<lv>", so 3 containers all naming their VG "expanse" would all try to
+    # activate an identically-named "expanse-pool" device and collide -- found live
+    # ("device-mapper: create ioctl on expanse-pool ... failed: Device or resource
+    # busy") the moment a second container tried it after the first had already
+    # claimed the name, even though the two VGs are on different real disks with
+    # different VG UUIDs and never collide at the LVM-metadata level. Doesn't affect
+    # what X1 measures -- storage/DRBD behavior under load, not the literal VG name a
+    # real install would use.
+    vg = "expanse-${name}";
   in {
     privateNetwork = true;
     hostBridge = "br-expanse";
@@ -77,7 +89,7 @@ let
       expanse.hostId = "0000000${toString idx}";
       expanse.hostname = name;
       expanse.agent.raftAdvertise = "${addr}:7444";
-      expanse.agent.storageVG = "expanse";
+      expanse.agent.storageVG = vg;
       expanse.agent.storagePool = "pool";
 
       # nixpkgs' own virtualisation/container-config.nix (auto-applied under
@@ -149,12 +161,12 @@ let
       # failover timing, not the reboot-wipe mechanism.
 
       # The dedicated disk backing the real DRBD-replicated volume: create
-      # the "expanse" VG + thin pool once, exactly like nix/modules/agent.nix
+      # this container's own VG + thin pool once, exactly like nix/modules/agent.nix
       # expects a real install's disko layout to have already done, and like
       # nix/tests/modules/storage-test.nix does for the VM tests -- reusing
       # that same idempotent, never-wipes-an-existing-VG shape.
       systemd.services.expanse-scratch-vg = {
-        description = "Create the expanse LVM volume group on the dedicated disk (X1 container harness)";
+        description = "Create the ${vg} LVM volume group on the dedicated disk (X1 container harness)";
         wantedBy = [ "multi-user.target" ];
         before = [ "expansed.service" ];
         after = [ "systemd-udev-settle.service" ];
@@ -163,18 +175,18 @@ let
         serviceConfig.Type = "oneshot";
         serviceConfig.RemainAfterExit = true;
         script = ''
-          vgchange -ay expanse >/dev/null 2>&1 || true
+          vgchange -ay ${vg} >/dev/null 2>&1 || true
           # Check the POOL, not just the VG: a real prior run on this exact host got
           # partway (VG created) before the thin-pool step itself failed (missing
-          # CAP_MKNOD, fixed separately) -- checking only `vgs expanse` would have
+          # CAP_MKNOD, fixed separately) -- checking only `vgs ${vg}` would have
           # treated that half-built state as "already done" and never retried the
           # pool, found live rather than assumed.
-          if lvs expanse/pool >/dev/null 2>&1; then
+          if lvs ${vg}/pool >/dev/null 2>&1; then
             echo "expanse-scratch-vg: volume group + thin pool already exist"
             exit 0
           fi
-          vgs expanse >/dev/null 2>&1 || vgcreate expanse ${disk}
-          lvcreate --yes --type thin-pool -l 80%FREE -n pool expanse
+          vgs ${vg} >/dev/null 2>&1 || vgcreate ${vg} ${disk}
+          lvcreate --yes --type thin-pool -l 80%FREE -n pool ${vg}
         '';
       };
     };
