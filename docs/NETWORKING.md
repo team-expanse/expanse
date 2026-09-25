@@ -84,8 +84,12 @@ ports, and per-block VIP ports (dynamic sets `@vip_addresses`,
 `@block_tcp_ports`, `@block_udp_ports`). After bootstrap the ruleset is
 never reloaded — dynamic sets are updated with element add/delete only,
 because a full reload drops conntrack (D5.6). Per-block network policy
-(chain `blockpol`, priority 10) adds declared egress rules as intent;
-`expanse firewall sync --dry-run` renders without applying.
+(chain `blockpol`, priority 10) adds declared egress rules as intent.
+Sync is internal (`internal/network/firewall.Sync`), driven
+automatically by the agent's own reconcile loop, not a CLI verb — the
+live ruleset is inspected read-only with `expanse firewall show`, and
+`expanse firewall test <port>` checks whether a port is admitted by
+the per-block sets.
 
 ## Troubleshooting: `expanse doctor network`
 
@@ -104,7 +108,7 @@ with a hint; exit code 1 if anything failed.
 | `arp` | VIP resolves to ONE MAC from every vantage point | Different MACs from different nodes = duplicate holders | Same as vips ≥ 2; the chaos suite (`RUN_CHAOS=1 go test ./test/chaos/...`) covers this continuously |
 | `block-dns` | `<block>.<ns>.expanse.local` resolves | Zone builder stale or DNS listener down | Check the block exists and is RUNNING; listener binds `10.42.N.1:53` (see n3's `dns listener failed` if the overlay is not up yet) |
 | `upstream-dns` | A public name forwards | No upstream reachability | Not fatal (authoritative names still work); check resolv.conf/upstream reachability |
-| `firewall` | `expanse` nftables table loaded, counters live | Ruleset missing, or read-back errors | Re-run `expanse firewall sync`; never full-reload manually (drops conntrack, D5.6) |
+| `firewall` | `expanse` nftables table loaded, counters live | Ruleset missing, or read-back errors | Restart the agent to re-bootstrap the table (sync itself is internal, driven by the reconcile loop, not a CLI verb); never full-reload manually (drops conntrack, D5.6) |
 | `conntrack` | Table usage + per-block connection counts | ≥ 90% full (FAIL) / ≥ 70% (WARN) | Raise `nf_conntrack_max`; a leaking block? `conntrack -L` to find it |
 | `time-sync` | Chrony offset < 100 ms | Clock drift breaks lease expiry judgments | `chronyc sources`; NTP must be working — the lease safety argument tolerates bounded skew only |
 

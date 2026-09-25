@@ -25,9 +25,9 @@ node's own `expanse` daemon must be stopped first** — the rest of the cluster 
 serving reads and writes throughout.
 
 ```sh
-systemctl stop expanse
+systemctl stop expansed
 expanse cluster ca rotate
-systemctl start expanse
+systemctl start expansed
 ```
 
 This generates a fresh root CA and writes it as the new primary; the old CA stays trusted alongside it
@@ -44,9 +44,9 @@ reports `rotating: primary CA fingerprint <sha256>` plus either the list of node
 confirmation that every node has caught up. Once every node has renewed, retire the old CA:
 
 ```sh
-systemctl stop expanse
+systemctl stop expansed
 expanse cluster ca complete
-systemctl start expanse
+systemctl start expansed
 ```
 
 `ca complete` refuses (with a clear error) if any node is still pending, so it is safe to run

@@ -46,9 +46,10 @@ nix flake check      # all checks: lint + unit + vm-test
 ## Adding a New NixOS VM Test
 
 1. Create `nix/tests/<name>.nix` following the pattern in `nix/tests/smoke.nix`.
-2. Add it to `flake.nix` checks:
+2. Add it to `flake.nix` checks, using its own `mkTest` helper (every existing
+   check follows this form, not a bare `pkgs.nixosTest` call):
    ```nix
-   checks.<area> = pkgs.nixosTest (import ./nix/tests/<name>.nix { inherit self; });
+   checks.<area> = mkTest "<area>" ./nix/tests/<name>.nix;
    ```
 
 ## Adding a Performance Budget
@@ -64,4 +65,3 @@ nix flake check      # all checks: lint + unit + vm-test
 - Every log line from a subsystem carries `component=<name>`.
 - Errors always logged with key `err`.
 - `//nolint` only with an explanation comment.
-- See `PRODUCT_DESIGN.md` §16 for full conventions.

@@ -192,8 +192,10 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | `defaults.yaml` | fallback values for unset config keys |
 | `module.nix` | NixOS closure the unit runs from |
 
-The shipped six: `util/echo`, `web/nginx`, `web/static-site`,
-`db/redis`, `monitor/node-exporter`, `ai/ollama`. Inspect them with:
+The shipped eleven: `util/echo`, `web/nginx`, `web/static-site`,
+`web/whoami`, `db/redis`, `db/postgres`, `monitor/node-exporter`,
+`ai/ollama`, `share/smb`, `iscsi/target`, `vm/instance`. Inspect them
+with:
 
 ```console
 $ expanse ctl catalog list

@@ -11,7 +11,7 @@ import (
 	fw "github.com/expanse/expanse/internal/network/firewall"
 )
 
-// newFirewallCmd provides `expanse ctl firewall show|test <port>`
+// newFirewallCmd provides `expanse firewall show|test <port>`
 // diagnostics (§4.5). Both read the live kernel ruleset and require
 // root (CAP_NET_ADMIN) on the node.
 func newFirewallCmd() *cobra.Command {

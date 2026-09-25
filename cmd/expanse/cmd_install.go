@@ -16,7 +16,7 @@ func newInstallCmd() *cobra.Command {
 ISO or any Linux with the prerequisites) into an Expanse node.
 
 Stages: preflight, detect, confirm, partition (disko), snapshot,
-config, install (nixos-install), identity, verify.`,
+identity, config, install (nixos-install), verify.`,
 		RunE: runInstall,
 	}
 	cmd.Flags().String("config", "", "install config yaml (omit for interactive TUI)")
