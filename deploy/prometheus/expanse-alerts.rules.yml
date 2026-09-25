@@ -1,0 +1,109 @@
+# Default Prometheus alert rules for Expanse's exported metrics
+# (internal/metrics, the expanse_* series, PHASE-09-TASKS.md D3/D4).
+# Point a Prometheus server's `rule_files:` at this file to alert on
+# node, resource (including block), volume and quorum degradation --
+# see docs/OBSERVABILITY.md for how to wire it up.
+#
+# `for: 0s` on every critical rule is deliberate (D6): the 30 s
+# ROADMAP.md exit budget is spent on scrape interval and evaluation, not
+# a pending window. Warning-severity rules use a short `for` to avoid
+# flapping on transient blips, since they are not on the release-blocking
+# X5 vertical slice.
+groups:
+  - name: expanse-node
+    rules:
+      - alert: ExpanseNodeUnhealthy
+        expr: expanse_node_health == 3
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.node }} check {{ $labels.check }} is unhealthy"
+          description: "{{ $labels.node }}'s {{ $labels.check }} health check reports HEALTH_UNHEALTHY."
+
+      - alert: ExpanseNodeDegraded
+        expr: expanse_node_health == 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node {{ $labels.node }} check {{ $labels.check }} is degraded"
+          description: "{{ $labels.node }}'s {{ $labels.check }} health check has reported HEALTH_DEGRADED for 2 minutes."
+
+  - name: expanse-resource
+    rules:
+      - alert: ExpanseResourceUnhealthy
+        expr: expanse_resource_health == 3
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Resource {{ $labels.id }} ({{ $labels.type }}) is unhealthy"
+          description: "{{ $labels.id }} (type={{ $labels.type }}, which includes blocks) reports HEALTH_UNHEALTHY."
+
+      - alert: ExpanseResourceDegraded
+        expr: expanse_resource_health == 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Resource {{ $labels.id }} ({{ $labels.type }}) is degraded"
+          description: "{{ $labels.id }} (type={{ $labels.type }}) has reported HEALTH_DEGRADED for 5 minutes."
+
+  - name: expanse-volume
+    rules:
+      - alert: ExpanseVolumeFailed
+        expr: expanse_volume_health == 6 or expanse_volume_health == 8
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Volume {{ $labels.volume }} has failed"
+          description: "{{ $labels.volume }} is in state {{ $labels.state }} -- data may be at risk."
+
+      - alert: ExpanseVolumeReadOnly
+        expr: expanse_volume_health == 4
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Volume {{ $labels.volume }} is read-only"
+          description: "{{ $labels.volume }} has fallen back to read-only (state={{ $labels.state }})."
+
+      - alert: ExpanseVolumeDegraded
+        expr: expanse_volume_health == 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Volume {{ $labels.volume }} is degraded"
+          description: "{{ $labels.volume }} has reported state=Degraded for 5 minutes -- a replica may be down."
+
+  - name: expanse-quorum
+    rules:
+      - alert: ExpanseQuorumNoLeader
+        expr: expanse_quorum_has_leader == 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cluster has no Raft leader"
+          description: "This node sees no Raft leader -- the cluster is read-only (ARCHITECTURE.md sec 4.10)."
+
+      - alert: ExpanseQuorumDegraded
+        expr: expanse_quorum_degraded == 1
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cluster quorum is degraded"
+          description: "This node cannot reach Raft quorum."
+
+      - alert: ExpanseQuorumNodeDegraded
+        expr: expanse_quorum_node_degraded == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node {{ $labels.node }} self-reports degraded"
+          description: "{{ $labels.node }} has self-reported degraded=true in the cluster status for 2 minutes (PHASE-09-TASKS.md D5)."

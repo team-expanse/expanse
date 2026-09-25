@@ -223,6 +223,12 @@
           # node/resource/volume/quorum health samples are queried back out
           # of Prometheus's own HTTP API.
           observability-metrics = mkTest "observability-metrics" ./nix/tests/observability-metrics.nix;
+
+          # Phase 09 Stream B (X2): the shipped alert rules
+          # (deploy/prometheus/expanse-alerts.rules.yml), evaluated by a
+          # real Prometheus, actually fire under genuinely degraded
+          # fixtures on a real 3-node cluster.
+          observability-alerts = mkTest "observability-alerts" ./nix/tests/observability-alerts.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })

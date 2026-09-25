@@ -53,7 +53,14 @@ func requireBearerToken(st store.Store, next http.Handler) http.Handler {
 			return
 		}
 		token := strings.TrimPrefix(auth, prefix)
-		if !VerifyToken(r.Context(), st, token) {
+		// Stale, deliberately (the same reasoning as collector.go's
+		// resource/volume/quorum reads): a token record changes rarely,
+		// and a scrape's *auth check* must not itself block on a
+		// leader that a degraded cluster doesn't have -- that is
+		// exactly when a scrape (and any alert built on it) matters
+		// most. A linearizable check here would 401 every scrape the
+		// instant quorum is lost, taking the whole endpoint dark.
+		if !VerifyToken(store.WithStale(r.Context()), st, token) {
 			http.Error(w, "invalid bearer token", http.StatusUnauthorized)
 			return
 		}

@@ -83,7 +83,12 @@ func (c *Collector) collectNodeHealth(ctx context.Context, ch chan<- prometheus.
 }
 
 func (c *Collector) collectResourceHealth(ctx context.Context, ch chan<- prometheus.Metric) {
-	resp, err := c.node.ListResources(ctx, &pb.ListResourcesRequest{})
+	// Stale (§4.10.3's "advisory" reasoning, the same one
+	// GetClusterStatus's own fallback already uses): a degraded node
+	// can't linearize a read at all without a leader, and a scrape
+	// blocking on the 5s leader-wait timeout is exactly wrong when the
+	// cluster is unhealthy -- that's when a scrape must stay fast.
+	resp, err := c.node.ListResources(store.WithStale(ctx), &pb.ListResourcesRequest{})
 	if err != nil {
 		return
 	}
@@ -97,6 +102,7 @@ func (c *Collector) collectVolumeHealth(ctx context.Context, ch chan<- prometheu
 	if c.store == nil {
 		return
 	}
+	ctx = store.WithStale(ctx) // advisory data; see collectResourceHealth
 	ids, err := storage.ListVolumeIDs(ctx, c.store)
 	if err != nil {
 		return
@@ -120,7 +126,10 @@ func (c *Collector) collectVolumeHealth(ctx context.Context, ch chan<- prometheu
 }
 
 func (c *Collector) collectQuorum(ctx context.Context, ch chan<- prometheus.Metric) {
-	resp, err := c.node.GetClusterStatus(ctx, &pb.GetClusterStatusRequest{})
+	// Stale, deliberately: this is the exact condition quorum alerting
+	// most needs to observe, so it must not pay GetClusterStatus's own
+	// linearize-then-fall-back-to-stale cost on every degraded scrape.
+	resp, err := c.node.GetClusterStatus(store.WithStale(ctx), &pb.GetClusterStatusRequest{})
 	if err != nil {
 		return // not a cluster-mode agent, or status genuinely unavailable
 	}

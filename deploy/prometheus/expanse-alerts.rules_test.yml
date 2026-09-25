@@ -1,0 +1,176 @@
+# promtool's own unit-test framework (`promtool test rules
+# expanse-alerts.rules_test.yml`) -- real PromQL evaluation against
+# synthetic time series, not "the rule file parses". Covers every alert
+# in expanse-alerts.rules.yml: fires under a genuinely degraded synthetic
+# series, and stays silent while healthy (PHASE-09-TASKS.md X2).
+rule_files:
+  - expanse-alerts.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ExpanseNodeUnhealthy: fires immediately (for: 0s); silent while healthy.
+  - interval: 1m
+    input_series:
+      - series: 'expanse_node_health{node="n1",check="disk-space",status="HEALTH_UNHEALTHY"}'
+        values: "1 3"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: ExpanseNodeUnhealthy
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: ExpanseNodeUnhealthy
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              node: n1
+              check: disk-space
+              status: HEALTH_UNHEALTHY
+            exp_annotations:
+              description: "n1's disk-space health check reports HEALTH_UNHEALTHY."
+              summary: "Node n1 check disk-space is unhealthy"
+  # ExpanseNodeDegraded: needs 2m sustained degraded before firing.
+  - interval: 1m
+    input_series:
+      - series: 'expanse_node_health{node="n1",check="memory",status="HEALTH_DEGRADED"}'
+        values: "1 2 2 2"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ExpanseNodeDegraded
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: ExpanseNodeDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              node: n1
+              check: memory
+              status: HEALTH_DEGRADED
+            exp_annotations:
+              description: "n1's memory health check has reported HEALTH_DEGRADED for 2 minutes."
+              summary: "Node n1 check memory is degraded"
+  # ExpanseResourceUnhealthy: also covers blocks -- type="block" is just
+  # another value of the same generic label (D3).
+  - interval: 1m
+    input_series:
+      - series: 'expanse_resource_health{type="block",id="default/web",status="HEALTH_UNHEALTHY"}'
+        values: "1 3"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ExpanseResourceUnhealthy
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              type: block
+              id: default/web
+              status: HEALTH_UNHEALTHY
+            exp_annotations:
+              description: "default/web (type=block, which includes blocks) reports HEALTH_UNHEALTHY."
+              summary: "Resource default/web (block) is unhealthy"
+  - interval: 1m
+    input_series:
+      - series: 'expanse_resource_health{type="file",id="file:/etc/x",status="HEALTH_DEGRADED"}'
+        values: "1 2 2 2 2 2 2"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ExpanseResourceDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              type: file
+              id: file:/etc/x
+              status: HEALTH_DEGRADED
+            exp_annotations:
+              description: "file:/etc/x (type=file) has reported HEALTH_DEGRADED for 5 minutes."
+              summary: "Resource file:/etc/x (file) is degraded"
+  - interval: 1m
+    input_series:
+      - series: 'expanse_volume_health{volume="v1",state="Failed"}'
+        values: "2 6"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ExpanseVolumeFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              volume: v1
+              state: Failed
+            exp_annotations:
+              description: "v1 is in state Failed -- data may be at risk."
+              summary: "Volume v1 has failed"
+  - interval: 1m
+    input_series:
+      - series: 'expanse_volume_health{volume="v2",state="ReadOnly"}'
+        values: "2 4"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ExpanseVolumeReadOnly
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              volume: v2
+              state: ReadOnly
+            exp_annotations:
+              description: "v2 has fallen back to read-only (state=ReadOnly)."
+              summary: "Volume v2 is read-only"
+  - interval: 1m
+    input_series:
+      - series: 'expanse_volume_health{volume="v3",state="Degraded"}'
+        values: "2 3 3 3 3 3 3"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ExpanseVolumeDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              volume: v3
+              state: Degraded
+            exp_annotations:
+              description: "v3 has reported state=Degraded for 5 minutes -- a replica may be down."
+              summary: "Volume v3 is degraded"
+  - interval: 1m
+    input_series:
+      - series: "expanse_quorum_has_leader"
+        values: "1 0"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: ExpanseQuorumNoLeader
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: ExpanseQuorumNoLeader
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              description: "This node sees no Raft leader -- the cluster is read-only (ARCHITECTURE.md sec 4.10)."
+              summary: "Cluster has no Raft leader"
+  - interval: 1m
+    input_series:
+      - series: "expanse_quorum_degraded"
+        values: "0 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ExpanseQuorumDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              description: "This node cannot reach Raft quorum."
+              summary: "Cluster quorum is degraded"
+  - interval: 1m
+    input_series:
+      - series: 'expanse_quorum_node_degraded{node="n2"}'
+        values: "0 1 1 1"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ExpanseQuorumNodeDegraded
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: ExpanseQuorumNodeDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              node: n2
+            exp_annotations:
+              description: "n2 has self-reported degraded=true in the cluster status for 2 minutes (PHASE-09-TASKS.md D5)."
+              summary: "Node n2 self-reports degraded"
