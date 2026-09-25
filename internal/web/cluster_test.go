@@ -43,7 +43,7 @@ func newClusterTestServer(t *testing.T) (*httptest.Server, string, store.Store) 
 	}
 
 	apiSrv := api.NewServer(nil, res.Store, slog.Default())
-	s, err := New("n1", res.Store, nil, nil, apiSrv)
+	s, err := New("n1", res.Store, nil, nil, apiSrv, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

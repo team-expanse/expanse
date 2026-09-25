@@ -436,14 +436,12 @@ func deriveSealPassphrase(clusterSecret []byte) string {
 	return hex.EncodeToString(key)
 }
 
-// SealKey encrypts the CA private key for storage at
-// /persist/expanse/secrets/ca.key. The key is age-encrypted with a
-// passphrase derived (HKDF-SHA256) from the cluster secret.
-func SealKey(priv ed25519.PrivateKey, clusterSecret []byte) ([]byte, error) {
-	pemKey, err := KeyPEM(priv)
-	if err != nil {
-		return nil, err
-	}
+// SealBytes age-encrypts arbitrary data with a passphrase derived
+// (HKDF-SHA256) from the cluster secret -- the mechanism SealKey uses
+// for the CA private key, generalized so other at-rest secrets (e.g.
+// internal/web/oidc's client secret) reuse it instead of a second
+// sealing implementation.
+func SealBytes(data, clusterSecret []byte) ([]byte, error) {
 	recipient, err := age.NewScryptRecipient(deriveSealPassphrase(clusterSecret))
 	if err != nil {
 		return nil, fmt.Errorf("ca: scrypt recipient: %w", err)
@@ -452,30 +450,49 @@ func SealKey(priv ed25519.PrivateKey, clusterSecret []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w, err := age.Encrypt(&buf, recipient)
 	if err != nil {
-		return nil, fmt.Errorf("ca: seal key: %w", err)
+		return nil, fmt.Errorf("ca: seal bytes: %w", err)
 	}
-	if _, err := w.Write(pemKey); err != nil {
-		return nil, fmt.Errorf("ca: seal key write: %w", err)
+	if _, err := w.Write(data); err != nil {
+		return nil, fmt.Errorf("ca: seal bytes write: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return nil, fmt.Errorf("ca: seal key close: %w", err)
+		return nil, fmt.Errorf("ca: seal bytes close: %w", err)
 	}
 	return buf.Bytes(), nil
 }
 
-// UnsealKey decrypts a key sealed by SealKey.
-func UnsealKey(data, clusterSecret []byte) (ed25519.PrivateKey, error) {
+// UnsealBytes decrypts data sealed by SealBytes.
+func UnsealBytes(data, clusterSecret []byte) ([]byte, error) {
 	identity, err := age.NewScryptIdentity(deriveSealPassphrase(clusterSecret))
 	if err != nil {
 		return nil, fmt.Errorf("ca: scrypt identity: %w", err)
 	}
 	r, err := age.Decrypt(bytes.NewReader(data), identity)
 	if err != nil {
-		return nil, fmt.Errorf("ca: unseal key (wrong cluster secret?): %w", err)
+		return nil, fmt.Errorf("ca: unseal bytes (wrong cluster secret?): %w", err)
 	}
-	pemKey, err := io.ReadAll(r)
+	out, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("ca: unseal key read: %w", err)
+		return nil, fmt.Errorf("ca: unseal bytes read: %w", err)
+	}
+	return out, nil
+}
+
+// SealKey encrypts the CA private key for storage at
+// /persist/expanse/secrets/ca.key, via SealBytes over its PEM encoding.
+func SealKey(priv ed25519.PrivateKey, clusterSecret []byte) ([]byte, error) {
+	pemKey, err := KeyPEM(priv)
+	if err != nil {
+		return nil, err
+	}
+	return SealBytes(pemKey, clusterSecret)
+}
+
+// UnsealKey decrypts a key sealed by SealKey.
+func UnsealKey(data, clusterSecret []byte) (ed25519.PrivateKey, error) {
+	pemKey, err := UnsealBytes(data, clusterSecret)
+	if err != nil {
+		return nil, err
 	}
 	return ParseKeyPEM(pemKey)
 }

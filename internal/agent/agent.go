@@ -867,7 +867,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		if tlsCfg, err := control.UIServerTLS(a.ctl.dataDir); err != nil {
 			a.logger.Error("web UI TLS setup failed", "err", err)
-		} else if webSrv, err := web.New(a.cfg.NodeID, a.store, a.blocks, a.blockCatalog, srv); err != nil {
+		} else if webSrv, err := web.New(a.cfg.NodeID, a.store, a.blocks, a.blockCatalog, srv, a.ctl.secret); err != nil {
 			a.logger.Error("web UI init failed", "err", err)
 		} else {
 			go func() {

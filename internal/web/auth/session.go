@@ -29,10 +29,14 @@ type Session struct {
 	CreatedAt int64  `json:"created"` // unix-nano
 }
 
-func randomToken(nBytes int) (string, error) {
+// RandomToken returns a hex-encoded random value of nBytes bytes,
+// exported so other packages needing an unguessable token (e.g.
+// internal/web/oidc's state/nonce pair) reuse this instead of a second
+// rand.Read call site.
+func RandomToken(nBytes int) (string, error) {
 	b := make([]byte, nBytes)
 	if _, err := rand.Read(b); err != nil {
-		return "", errors.New(errors.KindInternal, "auth.randomToken", "rand: "+err.Error())
+		return "", errors.New(errors.KindInternal, "auth.RandomToken", "rand: "+err.Error())
 	}
 	return hex.EncodeToString(b), nil
 }
@@ -42,11 +46,11 @@ func randomToken(nBytes int) (string, error) {
 // value; nothing about it reveals the user or CSRF token to a browser
 // that doesn't already hold the cookie.
 func IssueSession(ctx context.Context, st store.Store, userID string) (*Session, error) {
-	id, err := randomToken(32)
+	id, err := RandomToken(32)
 	if err != nil {
 		return nil, err
 	}
-	csrf, err := randomToken(32)
+	csrf, err := RandomToken(32)
 	if err != nil {
 		return nil, err
 	}

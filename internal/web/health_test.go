@@ -68,7 +68,7 @@ func newHealthTestServer(t *testing.T, checks ...health.Result) (*httptest.Serve
 		recon:  reconcile.New(res.Store, reconcile.Options{NodeID: "n1"}),
 	}
 	apiSrv := api.NewServer(agent, res.Store, slog.Default())
-	s, err := New("n1", res.Store, nil, nil, apiSrv)
+	s, err := New("n1", res.Store, nil, nil, apiSrv, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

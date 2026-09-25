@@ -54,7 +54,7 @@ func NewAdminRecord(password string) ([]byte, error) {
 // non-empty password back; every other caller (the record already
 // exists) gets ("", nil) and must not print anything.
 func EnsureAdmin(ctx context.Context, st store.Store) (password string, err error) {
-	pw, err := randomToken(generatedPasswordLen)
+	pw, err := RandomToken(generatedPasswordLen)
 	if err != nil {
 		return "", err
 	}
@@ -106,5 +106,5 @@ func SetAdminPassword(ctx context.Context, st store.Store, password string) erro
 // `expanse ctl admin reset-password` to hash and store, and to print
 // once to the operator.
 func GenerateResetPassword() (string, error) {
-	return randomToken(generatedPasswordLen)
+	return RandomToken(generatedPasswordLen)
 }

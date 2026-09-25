@@ -17,6 +17,9 @@
       <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
       <button type="submit">Sign in</button>
     </form>
+    {{if .SSOEnabled}}
+      <p class="sso"><a href="/login/oidc/start">Sign in with SSO</a></p>
+    {{end}}
   </main>
 </body>
 </html>

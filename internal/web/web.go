@@ -25,6 +25,7 @@ import (
 
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/web/auth"
+	"github.com/expanse/expanse/internal/web/oidc"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -46,6 +47,17 @@ const csrfCookie = "expanse_csrf"
 // csrfHeader is the header HTMX must echo the csrfCookie value back in.
 const csrfHeader = "X-CSRF-Token"
 
+// oidcStateCookie and oidcNonceCookie carry the authorization-code
+// flow's CSRF state and ID-token replay nonce (oidc.StartLogin) across
+// the redirect to the IdP and back. SameSiteLaxMode, not Strict: the
+// callback arrives as a top-level cross-site GET navigation from the
+// IdP's own origin, which Strict cookies are never sent on.
+const (
+	oidcStateCookie = "expanse_oidc_state"
+	oidcNonceCookie = "expanse_oidc_nonce"
+	oidcCookiePath  = "/login/oidc"
+)
+
 // Server is the UI's HTTP server.
 type Server struct {
 	// NodeID is this node's identity, shown in the footer so an
@@ -53,12 +65,13 @@ type Server struct {
 	// answered.
 	NodeID string
 
-	store   store.Store
-	blocks  pb.BlockServiceServer
-	catalog pb.CatalogServiceServer
-	cluster pb.NodeServiceServer
-	tmpl    *template.Template
-	mux     *http.ServeMux
+	store         store.Store
+	blocks        pb.BlockServiceServer
+	catalog       pb.CatalogServiceServer
+	cluster       pb.NodeServiceServer
+	clusterSecret []byte
+	tmpl          *template.Template
+	mux           *http.ServeMux
 }
 
 // New parses the embedded templates and registers routes. st is the
@@ -68,17 +81,22 @@ type Server struct {
 // catalog and cluster are the same in-process servers the local gRPC
 // socket registers (D1): nil on a node where the corresponding API is
 // disabled or this is a non-cluster agent, in which case the dependent
-// routes answer 503 rather than panic.
-func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb.CatalogServiceServer, cluster pb.NodeServiceServer) (*Server, error) {
+// routes answer 503 rather than panic. clusterSecret unseals the OIDC
+// client secret (internal/web/oidc, X3); nil disables OIDC login
+// (the SSO button never renders, /login/oidc/* 404) without otherwise
+// affecting a non-cluster agent's password login.
+func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb.CatalogServiceServer, cluster pb.NodeServiceServer, clusterSecret []byte) (*Server, error) {
 	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
-	s := &Server{NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, cluster: cluster, tmpl: tmpl}
+	s := &Server{NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, cluster: cluster, clusterSecret: clusterSecret, tmpl: tmpl}
 
 	s.mux = http.NewServeMux()
 	s.mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	s.mux.HandleFunc("/login", s.handleLogin)
+	s.mux.HandleFunc("/login/oidc/start", s.handleOIDCStart)
+	s.mux.HandleFunc("/login/oidc/callback", s.handleOIDCCallback)
 	s.mux.Handle("/logout", s.requireAuth(http.HandlerFunc(s.handleLogout)))
 	s.mux.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
 	s.registerBlockRoutes()
@@ -115,13 +133,14 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data any
 }
 
 type loginData struct {
-	Error bool
+	Error      bool
+	SSOEnabled bool
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.renderLogin(w, http.StatusOK, false)
+		s.renderLogin(w, r, http.StatusOK, false)
 	case http.MethodPost:
 		s.handleLoginSubmit(w, r)
 	default:
@@ -129,23 +148,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) renderLogin(w http.ResponseWriter, status int, failed bool) {
+func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int, failed bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := s.tmpl.ExecuteTemplate(w, "login.html", loginData{Error: failed}); err != nil {
+	data := loginData{Error: failed, SSOEnabled: oidc.IsConfigured(r.Context(), s.store)}
+	if err := s.tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }
 
 func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		s.renderLogin(w, http.StatusBadRequest, true)
+		s.renderLogin(w, r, http.StatusBadRequest, true)
 		return
 	}
 	username := r.PostForm.Get("username")
 	password := r.PostForm.Get("password")
 	if username != auth.AdminUsername || !auth.VerifyAdminPassword(r.Context(), s.store, password) {
-		s.renderLogin(w, http.StatusUnauthorized, true)
+		s.renderLogin(w, r, http.StatusUnauthorized, true)
 		return
 	}
 	sess, err := auth.IssueSession(r.Context(), s.store, username)
@@ -155,6 +175,78 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	setAuthCookies(w, sess)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleOIDCStart begins the authorization-code flow (oidc.StartLogin):
+// a live discovery round trip to the configured issuer, then a redirect
+// to its authorization endpoint. 404s if OIDC login isn't configured,
+// matching every other feature-disabled route in this server.
+func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
+	cfg, err := oidc.LoadConfig(r.Context(), s.store)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	authURL, state, nonce, err := oidc.StartLogin(r.Context(), cfg, s.clusterSecret)
+	if err != nil {
+		s.renderLogin(w, r, http.StatusServiceUnavailable, true)
+		return
+	}
+	setOIDCCookies(w, state, nonce)
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+// handleOIDCCallback completes the flow (oidc.HandleCallback): validates
+// the state cookie against the query parameter (CSRF), exchanges the
+// code, verifies the ID token against the nonce cookie, and — on an
+// authorized email — issues the exact same auth.Session password login
+// does.
+func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	cfg, err := oidc.LoadConfig(r.Context(), s.store)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	stateCookie, errState := r.Cookie(oidcStateCookie)
+	nonceCookie, errNonce := r.Cookie(oidcNonceCookie)
+	clearOIDCCookies(w)
+	if errState != nil || errNonce != nil || r.URL.Query().Get("state") == "" ||
+		subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(stateCookie.Value)) != 1 {
+		s.renderLogin(w, r, http.StatusForbidden, true)
+		return
+	}
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		s.renderLogin(w, r, http.StatusBadRequest, true)
+		return
+	}
+	userID, err := oidc.HandleCallback(r.Context(), cfg, s.clusterSecret, code, nonceCookie.Value)
+	if err != nil {
+		s.renderLogin(w, r, http.StatusUnauthorized, true)
+		return
+	}
+	sess, err := auth.IssueSession(r.Context(), s.store, userID)
+	if err != nil {
+		http.Error(w, "login failed", http.StatusInternalServerError)
+		return
+	}
+	setAuthCookies(w, sess)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func setOIDCCookies(w http.ResponseWriter, state, nonce string) {
+	for name, v := range map[string]string{oidcStateCookie: state, oidcNonceCookie: nonce} {
+		http.SetCookie(w, &http.Cookie{
+			Name: name, Value: v, Path: oidcCookiePath, MaxAge: 300,
+			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+		})
+	}
+}
+
+func clearOIDCCookies(w http.ResponseWriter) {
+	for _, name := range []string{oidcStateCookie, oidcNonceCookie} {
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: oidcCookiePath, MaxAge: -1, Secure: true, SameSite: http.SameSiteLaxMode})
+	}
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

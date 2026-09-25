@@ -40,7 +40,7 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 	// cluster is nil here: these tests exercise session/auth/block
 	// plumbing over a plain boltstore, not cluster status (cluster_test.go
 	// covers that against a real single-node raftstore).
-	s, err := New("node-1", st, blocks, cat, nil)
+	s, err := New("node-1", st, blocks, cat, nil, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -47,6 +47,7 @@ These do the heavy lifting of the data plane. Expanse configures and orchestrate
 | `gopkg.in/yaml.v3` | Block manifests, installer config | A YAML parser |
 | `google/uuid` | Identity generation | UUID generation |
 | `anishathalye/porcupine` | Linearizability checking of recorded histories (test-only) | A Wing & Gong checker — our 246-line one was replaced after 430k generated histories and a 13.6k-op recorded run gave identical verdicts |
+| `coreos/go-oidc/v3` + `golang.org/x/oauth2` | OIDC login for the web UI (`ARCHITECTURE.md` A39, `PHASE-10-TASKS.md` D2/X3): discovery, JWKS fetch/cache, ID-token signature and claims verification, and the authorization-code exchange | A JWT/JWKS verifier and an OAuth2 client — the exact hand-rolled crypto plumbing this phase's own first bullet (stop hand-rolling PKI/crypto) rules out writing a second time |
 
 ## 3. Planned — feature phases that will adopt rather than build
 

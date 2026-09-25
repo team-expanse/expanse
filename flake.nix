@@ -74,6 +74,8 @@
           cluster-generations = mkTest "cluster-generations" ./nix/tests/cluster-generations.nix;
           # Phase 10 X2.
           cluster-ca-rotation = mkTest "cluster-ca-rotation" ./nix/tests/cluster-ca-rotation.nix;
+          # Phase 10 X3.
+          oidc-login = mkTest "oidc-login" ./nix/tests/oidc-login.nix;
 
           # Phase 06 storage.
           vol-perf = mkTest "vol-perf" ./nix/tests/vol-perf.nix;

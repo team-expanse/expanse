@@ -29,6 +29,7 @@ import (
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	webauth "github.com/expanse/expanse/internal/web/auth"
+	webOIDC "github.com/expanse/expanse/internal/web/oidc"
 )
 
 const (
@@ -329,6 +330,47 @@ func newCtlCmd() *cobra.Command {
 	setTok.Flags().StringVar(&setToken, "token", "", "set this exact token instead of generating one (scripting use)")
 	metricsCmd.AddCommand(setTok)
 	cmd.AddCommand(metricsCmd)
+
+	// oidc: SSO login for the web UI (Phase 10 X3). Unlike admin/metrics,
+	// the client secret must be recoverable (presented at the token
+	// endpoint), not just hashed, so it is sealed to the cluster secret
+	// (ca.SealBytes) before this generic KV write -- the same "no bespoke
+	// RPC" pattern, plus a local, lock-free read of this node's own
+	// cluster-secret file (control.LoadCluster; unlike `cluster ca
+	// rotate`'s raft store reopen, this never touches the raft log, so
+	// it does not need the daemon stopped).
+	oidcCmd := &cobra.Command{Use: "oidc", Short: "OIDC (SSO) login for the web UI"}
+	var oidcIssuer, oidcClientID, oidcClientSecret, oidcRedirectURL, oidcAllow, oidcDataDir string
+	oidcConfigure := &cobra.Command{
+		Use:   "configure",
+		Short: "Set the OIDC login configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				_, secret, _, err := control.LoadCluster(oidcDataDir)
+				if err != nil {
+					return fmt.Errorf("load cluster secret from %s: %w", oidcDataDir, err)
+				}
+				allow := splitAndTrim(oidcAllow)
+				rec, err := webOIDC.NewConfigRecord(oidcIssuer, oidcClientID, oidcClientSecret, oidcRedirectURL, allow, secret)
+				if err != nil {
+					return err
+				}
+				if _, err := c.PutKeyValue(ctx, &pb.PutKeyValueRequest{Key: webOIDC.ConfigKey, Value: rec}); err != nil {
+					return fmt.Errorf("PutKeyValue: %w", err)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "OIDC login configured")
+				return nil
+			})
+		},
+	}
+	oidcConfigure.Flags().StringVar(&oidcIssuer, "issuer", "", "OIDC issuer URL (required)")
+	oidcConfigure.Flags().StringVar(&oidcClientID, "client-id", "", "OIDC client ID (required)")
+	oidcConfigure.Flags().StringVar(&oidcClientSecret, "client-secret", "", "OIDC client secret (required)")
+	oidcConfigure.Flags().StringVar(&oidcRedirectURL, "redirect-url", "", "the exact callback URL registered at the IdP, e.g. https://expanse-ui:8443/login/oidc/callback (required)")
+	oidcConfigure.Flags().StringVar(&oidcAllow, "allow-email", "", "comma-separated list of authorized verified-email claims (required; fail closed, no default allow-all)")
+	oidcConfigure.Flags().StringVar(&oidcDataDir, "data-dir", "/persist/expanse", "persistent state directory (read locally to seal --client-secret)")
+	oidcCmd.AddCommand(oidcConfigure)
+	cmd.AddCommand(oidcCmd)
 
 	// lease: §4.3 singleton leases. `hold` runs the holder loop
 	// server-side (renewal at TTL/3, loss detection) and streams the
@@ -1076,4 +1118,16 @@ func newCtlNodeLifecycleCmds() []*cobra.Command {
 // nodeTable renders aligned CLI tables for the node lifecycle commands.
 func nodeTable() *tabwriter.Writer {
 	return tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+}
+
+// splitAndTrim splits a comma-separated flag value (e.g. --allow-email)
+// into trimmed, non-empty entries.
+func splitAndTrim(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
