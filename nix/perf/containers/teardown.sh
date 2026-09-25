@@ -15,7 +15,8 @@ fi
 
 echo "== 1/5: stopping containers =="
 for n in "${NAMES[@]}"; do
-    machinectl terminate "$n" 2>/dev/null || true
+    systemctl stop "container@$n.service" 2>/dev/null || true
+    machinectl terminate "$n" 2>/dev/null || true  # belt-and-suspenders if still registered
 done
 
 echo "== 2/5: removing config-nix wiring =="

@@ -58,7 +58,13 @@ class Container:
         subprocess.run(["machinectl", "terminate", self.name])
 
     def start(self):
-        subprocess.run(["machinectl", "start", self.name], check=True)
+        """`systemctl start container@<name>.service`, not `machinectl start <name>`:
+        the container is declared via NixOS's own containers.<name> module (autoStart =
+        false), whose container@.service unit is what actually populates and registers
+        the machine on first start. `machinectl start` only works on an already-
+        registered machine image and fails "Machine image '<name>' does not exist" the
+        first time -- found live on the real host, not assumed."""
+        subprocess.run(["systemctl", "start", f"container@{self.name}.service"], check=True)
 
 
 @contextlib.contextmanager
@@ -68,13 +74,13 @@ def subtest(name):
 
 
 def start_all():
-    for name in ("n1", "n2", "n3"):
-        state = subprocess.run(
-            ["machinectl", "show", name, "-p", "State", "--value"],
+    for m in (n1, n2, n3):
+        active = subprocess.run(
+            ["systemctl", "is-active", f"container@{m.name}.service"],
             capture_output=True, text=True,
         ).stdout.strip()
-        if state != "running":
-            subprocess.run(["machinectl", "start", name], check=True)
+        if active != "active":
+            m.start()
     for m in (n1, n2, n3):
         m.wait_for_unit("multi-user.target", timeout=180)
 

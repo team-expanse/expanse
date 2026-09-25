@@ -101,8 +101,12 @@ echo "== 5/6: nixos-rebuild switch =="
 NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
 
 echo "== 6/6: starting containers and waiting for them ready =="
+# containers.<name> (autoStart = false) registers and populates the machine the first
+# time container@<name>.service itself starts -- `machinectl start` only works on an
+# already-registered image and fails "Machine image '<name>' does not exist" before
+# that, found on the real run.
 for n in "${NAMES[@]}"; do
-    machinectl start "$n"
+    systemctl start "container@$n.service"
 done
 for n in "${NAMES[@]}"; do
     timeout 180 systemd-run --machine="$n" --wait --pipe -- systemctl is-system-running --wait || true
