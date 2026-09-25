@@ -51,6 +51,16 @@ let
     allowedDevices = [
       { node = disk; modifier = "rwm"; }
       { node = "/dev/mapper/control"; modifier = "rwm"; }
+      # CAP_MKNOD only permits the mknod() syscall to exist; the device CGROUP
+      # separately gates *which* major:minor a process may create/open, checked at
+      # mknod time too, not just open time. Each new LV gets a dynamically allocated
+      # minor number under the device-mapper major, so no fixed path covers it --
+      # found live ("mknod for expanse-lvol0 failed: Operation not permitted" even
+      # with CAP_MKNOD and /dev/mapper/control already allowed). This is systemd's own
+      # device-class shorthand for "every device-mapper device," the same one
+      # systemd-nspawn@.service's own default ruleset grants for its own LUKS support
+      # (`DeviceAllow=block-device-mapper rw`), not a bespoke workaround.
+      { node = "block-device-mapper"; modifier = "rwm"; }
     ];
     additionalCapabilities = [ "CAP_MKNOD" ];
     # Started explicitly by setup.sh, not on every host boot.
