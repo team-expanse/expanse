@@ -49,6 +49,7 @@ import (
 	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/install"
 	"github.com/expanse/expanse/internal/logging"
+	"github.com/expanse/expanse/internal/metrics"
 	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
@@ -860,6 +861,28 @@ func (a *Agent) Run(ctx context.Context) error {
 				addr := fmt.Sprintf("0.0.0.0:%d", config.PortUI)
 				if err := webSrv.Serve(ctx, addr, tlsCfg); err != nil {
 					a.logger.Error("web UI server failed", "err", err)
+				}
+			}()
+		}
+
+		// Metrics endpoint (ROADMAP.md Phase 9, D2): its own dedicated
+		// TLS listener, bearer-token authenticated rather than session
+		// auth, since a Prometheus scrape config carries a static
+		// token, not a cookie. Same gating as the web UI (witnesses
+		// skip it) and the same cluster-CA-signed identity.
+		if tok, err := metrics.EnsureToken(ctx, a.store); err != nil {
+			a.logger.Error("metrics token bootstrap failed", "err", err)
+		} else if tok != "" {
+			a.logger.Warn("generated initial metrics scrape token — save it now, it will not be shown again", "token", tok)
+		}
+		if mtlsCfg, err := control.UIServerTLS(a.ctl.dataDir); err != nil {
+			a.logger.Error("metrics TLS setup failed", "err", err)
+		} else {
+			collector := metrics.NewCollector(srv, a.store)
+			go func() {
+				addr := fmt.Sprintf("0.0.0.0:%d", config.PortMetrics)
+				if err := metrics.Serve(ctx, addr, mtlsCfg, collector, a.store); err != nil {
+					a.logger.Error("metrics server failed", "err", err)
 				}
 			}()
 		}

@@ -217,6 +217,12 @@
           # one command (`expanse cluster restore`), data and configuration
           # both verify.
           backup-destroy-rebuild = mkTest "backup-destroy-rebuild" ./nix/tests/backup-destroy-rebuild.nix;
+
+          # Phase 09 Stream A (X1): a real Prometheus binary scrapes a real
+          # node's /metrics endpoint over mTLS with bearer-token auth, and
+          # node/resource/volume/quorum health samples are queried back out
+          # of Prometheus's own HTTP API.
+          observability-metrics = mkTest "observability-metrics" ./nix/tests/observability-metrics.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })

@@ -7,6 +7,7 @@ const (
 	PortRaft       = 7444 // Raft transport (mTLS)
 	PortMemberlist = 7445 // memberlist gossip (TCP+UDP)
 	PortJoin       = 7446 // Join/bootstrap service (TLS, token-authenticated)
+	PortMetrics    = 7447 // Prometheus scrape endpoint (TLS, bearer-token-authenticated, Phase 09)
 	PortMDNS       = 5353 // mDNS discovery (UDP)
 	PortUI         = 8443 // Web UI (Phase 02)
 

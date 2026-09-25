@@ -25,6 +25,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/cluster/nodelc"
+	"github.com/expanse/expanse/internal/metrics"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	webauth "github.com/expanse/expanse/internal/web/auth"
@@ -287,6 +288,47 @@ func newCtlCmd() *cobra.Command {
 	resetPW.Flags().StringVar(&resetPassword, "password", "", "set this exact password instead of generating one (scripting use)")
 	adminCmd.AddCommand(resetPW)
 	cmd.AddCommand(adminCmd)
+
+	// metrics: the Prometheus scrape bearer token (Phase 9 D2). Same
+	// shape as admin reset-password -- no bespoke RPC, just the generic
+	// KV RPC writing the same record shape EnsureToken's bootstrap
+	// path writes, so an operator can set a known token for their own
+	// Prometheus config instead of reading the auto-generated one out
+	// of the journal.
+	metricsCmd := &cobra.Command{Use: "metrics", Short: "The Prometheus scrape endpoint's bearer token"}
+	var setToken string
+	setTok := &cobra.Command{
+		Use:   "set-token",
+		Short: "Set the metrics scrape bearer token, generating one if --token is omitted",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				tok := setToken
+				if tok == "" {
+					generated, err := webauth.GenerateResetPassword()
+					if err != nil {
+						return fmt.Errorf("generate token: %w", err)
+					}
+					tok = generated
+				}
+				rec, err := metrics.NewTokenRecord(tok)
+				if err != nil {
+					return fmt.Errorf("hash token: %w", err)
+				}
+				if _, err := c.PutKeyValue(ctx, &pb.PutKeyValueRequest{Key: metrics.TokenKey, Value: rec}); err != nil {
+					return fmt.Errorf("PutKeyValue: %w", err)
+				}
+				if setToken == "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "new metrics token: %s\n(shown once -- save it now)\n", tok)
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "metrics token updated")
+				}
+				return nil
+			})
+		},
+	}
+	setTok.Flags().StringVar(&setToken, "token", "", "set this exact token instead of generating one (scripting use)")
+	metricsCmd.AddCommand(setTok)
+	cmd.AddCommand(metricsCmd)
 
 	// lease: §4.3 singleton leases. `hold` runs the holder loop
 	// server-side (renewal at TTL/3, loss detection) and streams the
