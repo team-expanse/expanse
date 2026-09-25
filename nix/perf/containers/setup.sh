@@ -49,8 +49,22 @@ for d in "${DISKS[@]}"; do
     echo "  $d: empty, OK"
 done
 
-echo "== 2/6: wiping any stale signatures on the three disks =="
+echo "== 2/6: deactivating any stale VG and wiping signatures on the three disks =="
+# A disk that still backs an ACTIVE VG (from a prior run -- device-mapper mappings
+# persist independent of any container's own lifecycle, they don't get torn down just
+# because the container that created them stops) makes wipefs fail outright: "Device
+# or resource busy" -- found live. Stop the containers first (nothing should still
+# have the VG open once they're down) and deactivate whatever VG the host itself can
+# see on each disk -- host-level lvm2 commands can see it directly from the PV headers
+# on disk, regardless of which container's own private lvm.conf originally created it,
+# so this generically handles any leftover name (the old shared "expanse", or the
+# current per-container "expanse-n<N>").
+for n in "${NAMES[@]}"; do
+    systemctl stop "container@$n.service" 2>/dev/null || true
+done
 for d in "${DISKS[@]}"; do
+    vg="$(pvs --noheadings -o vg_name "$d" 2>/dev/null | tr -d ' ')"
+    [[ -n "$vg" ]] && vgchange -an "$vg" 2>/dev/null || true
     wipefs -a "$d"
 done
 
