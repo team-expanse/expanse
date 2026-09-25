@@ -1,0 +1,69 @@
+{
+  "uid": "expanse-health",
+  "title": "Expanse Cluster Health",
+  "tags": ["expanse"],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Node Health",
+      "description": "expanse_node_health per node/check (D3): 1=Healthy, 2=Degraded, 3=Unhealthy, 4=Unknown.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "expanse-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "expanse_node_health", "instant": true, "legendFormat": "{{node}}/{{check}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Resource Health",
+      "description": "expanse_resource_health per resource (blocks are type=\"block\", D3): 1=Healthy, 2=Degraded, 3=Unhealthy, 4=Unknown.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "expanse-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "expanse_resource_health", "instant": true, "legendFormat": "{{type}}/{{id}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Volume Health",
+      "description": "expanse_volume_health per volume (D3): the storage.VolumeState ordinal, 2=Healthy.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "expanse-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "expanse_volume_health", "instant": true, "legendFormat": "{{volume}}: {{state}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Quorum",
+      "description": "expanse_quorum_voters, expanse_quorum_has_leader, expanse_quorum_degraded (D5).",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "expanse-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "expanse_quorum_voters", "instant": true, "legendFormat": "voters" },
+        { "refId": "B", "expr": "expanse_quorum_has_leader", "instant": true, "legendFormat": "has_leader" },
+        { "refId": "C", "expr": "expanse_quorum_degraded", "instant": true, "legendFormat": "degraded" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Per-node degraded flag",
+      "description": "expanse_quorum_node_degraded (D5, control.Report.Nodes[].Degraded).",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "expanse-prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "expanse_quorum_node_degraded", "instant": true, "legendFormat": "{{node}}" }
+      ]
+    }
+  ]
+}

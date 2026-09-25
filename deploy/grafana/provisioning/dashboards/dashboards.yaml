@@ -1,0 +1,15 @@
+# Grafana dashboard provisioning (PHASE-09-TASKS.md Stream C/X3): loads
+# every *.json file under options.path as a dashboard. Copy this file into
+# Grafana's provisioning/dashboards/ directory, and copy
+# deploy/grafana/dashboards/*.json to the path below (or edit it to taste).
+apiVersion: 1
+
+providers:
+  - name: Expanse
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards/expanse

@@ -229,6 +229,12 @@
           # real Prometheus, actually fire under genuinely degraded
           # fixtures on a real 3-node cluster.
           observability-alerts = mkTest "observability-alerts" ./nix/tests/observability-alerts.nix;
+
+          # Phase 09 Stream C (X3): the shipped Grafana provisioning and
+          # dashboard (deploy/grafana/), loaded by a real Grafana pointed
+          # at a real Prometheus, with panel queries proven to return
+          # real data back through Grafana's own /api/ds/query.
+          observability-grafana = mkTest "observability-grafana" ./nix/tests/observability-grafana.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })

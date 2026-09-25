@@ -1,0 +1,15 @@
+# Grafana datasource provisioning (D2/D4's "bring your own Grafana"
+# stance, PHASE-09-TASKS.md Stream C/X3): points Grafana at a Prometheus
+# already scraping expanse (deploy/prometheus/expanse-alerts.rules.yml's
+# own target). Copy into Grafana's provisioning/datasources/ directory
+# and edit `url` to your real Prometheus address.
+apiVersion: 1
+
+datasources:
+  - name: Expanse Prometheus
+    uid: expanse-prometheus
+    type: prometheus
+    access: proxy
+    url: http://localhost:9090
+    isDefault: true
+    editable: false
