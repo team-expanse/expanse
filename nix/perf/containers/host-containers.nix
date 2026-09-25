@@ -41,7 +41,18 @@ let
       hostPath = disk;
       isReadOnly = false;
     };
-    allowedDevices = [ { node = disk; modifier = "rwm"; } ];
+    # device-mapper's control device is not among nspawn's small set of
+    # auto-populated private /dev nodes, and LVM tries to mknod it itself the
+    # first time -- found live ("/dev/mapper/control: mknod failed: Operation
+    # not permitted") when expanse-scratch-vg.service ran. CAP_MKNOD lets that
+    # mknod succeed; allowedDevices grants the cgroup permission to actually
+    # use it once created. The device itself is host-kernel-wide (dm operates
+    # per-VG-name, not per-namespace), same as the real disk it manages.
+    allowedDevices = [
+      { node = disk; modifier = "rwm"; }
+      { node = "/dev/mapper/control"; modifier = "rwm"; }
+    ];
+    additionalCapabilities = [ "CAP_MKNOD" ];
     # Started explicitly by setup.sh, not on every host boot.
     autoStart = false;
 

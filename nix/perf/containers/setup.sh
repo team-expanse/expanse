@@ -108,10 +108,36 @@ echo "== 6/6: starting containers and waiting for them ready =="
 for n in "${NAMES[@]}"; do
     systemctl start "container@$n.service"
 done
+
+# systemd-run --machine= depends on the container's D-Bus machine-transport socket,
+# which is not reliably up yet right after start -- found live ("Failed to connect to
+# system scope bus via machine transport"). nsenter into the container's own PID
+# namespace via its leader PID instead (the same mechanism `nixos-container run` itself
+# uses, proven to work against a running container regardless of D-Bus state).
+failed=0
 for n in "${NAMES[@]}"; do
-    timeout 180 systemd-run --machine="$n" --wait --pipe -- systemctl is-system-running --wait || true
+    leader="$(machinectl show "$n" -p Leader --value)"
+    ok=0
+    for _ in $(seq 1 180); do
+        if [[ -n "$leader" ]] && nsenter --target "$leader" --all -- systemctl is-system-running 2>/dev/null | grep -qE "running|degraded"; then
+            ok=1
+            break
+        fi
+        sleep 1
+    done
+    if [[ $ok -eq 1 ]]; then
+        echo "  $n: up ($(nsenter --target "$leader" --all -- systemctl is-system-running 2>/dev/null))"
+    else
+        echo "  $n: NOT ready after 180s -- check: sudo journalctl -M $n -b --no-pager" >&2
+        failed=1
+    fi
 done
 
 echo
-echo "Containers up. Now run the measurement (also as root):"
+if [[ $failed -eq 0 ]]; then
+    echo "All 3 containers up. Now run the measurement (also as root):"
+else
+    echo "One or more containers did NOT come up cleanly -- see above before running the measurement." >&2
+fi
 echo "  sudo python3 $REPO/nix/perf/containers/run.py"
+[[ $failed -eq 0 ]]
