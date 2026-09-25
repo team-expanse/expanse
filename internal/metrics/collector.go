@@ -7,6 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -36,6 +37,14 @@ var (
 	quorumNodeDegradedDesc = prometheus.NewDesc(
 		"expanse_quorum_node_degraded",
 		"1 if a member node self-reports degraded in the quorum report, else 0 (D5's single liveness signal).",
+		[]string{"node"}, nil)
+	// Distinct from quorumNodeDegradedDesc: a node reports degraded
+	// itself, while nodelc's leader-side detector (§4.8) notices a peer
+	// gone silent -- this is the only signal that fires for a healthy
+	// node that has simply stopped responding (X5).
+	quorumNodeUnreachableDesc = prometheus.NewDesc(
+		"expanse_quorum_node_unreachable",
+		"1 if nodelc's failure monitor has marked a member node unreachable or failed (silent 15s/5m, §4.8), else 0.",
 		[]string{"node"}, nil)
 )
 
@@ -143,6 +152,8 @@ func (c *Collector) collectQuorum(ctx context.Context, ch chan<- prometheus.Metr
 	ch <- prometheus.MustNewConstMetric(quorumDegradedDesc, prometheus.GaugeValue, boolFloat(rep.Degraded))
 	for _, n := range rep.Nodes {
 		ch <- prometheus.MustNewConstMetric(quorumNodeDegradedDesc, prometheus.GaugeValue, boolFloat(n.Degraded), n.ID)
+		unreachable := n.Lifecycle == nodelc.StateUnreachable || n.Lifecycle == nodelc.StateFailed
+		ch <- prometheus.MustNewConstMetric(quorumNodeUnreachableDesc, prometheus.GaugeValue, boolFloat(unreachable), n.ID)
 	}
 }
 

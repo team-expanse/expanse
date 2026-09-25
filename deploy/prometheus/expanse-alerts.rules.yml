@@ -107,3 +107,19 @@ groups:
         annotations:
           summary: "Node {{ $labels.node }} self-reports degraded"
           description: "{{ $labels.node }} has self-reported degraded=true in the cluster status for 2 minutes (PHASE-09-TASKS.md D5)."
+
+      # X5's own vertical slice: in an otherwise-healthy odd-sized
+      # cluster, one node going silent loses neither quorum
+      # (ExpanseQuorumDegraded) nor a self-report (the dead node can't
+      # report anything) -- this is the only rule that fires for that
+      # case. for: 0s because nodelc's own 15s unreachable threshold
+      # (§4.8) already is the detection latency; a further pending
+      # window here would double-spend the 30s ROADMAP.md budget (D6).
+      - alert: ExpanseNodeUnreachable
+        expr: expanse_quorum_node_unreachable == 1
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.node }} is unreachable"
+          description: "{{ $labels.node }} has not updated its status past nodelc's unreachable threshold (15s, §4.8) -- the leader has not heard from it."

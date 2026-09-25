@@ -64,6 +64,17 @@
       "targets": [
         { "refId": "A", "expr": "expanse_quorum_node_degraded", "instant": true, "legendFormat": "{{node}}" }
       ]
+    },
+    {
+      "id": 6,
+      "title": "Per-node unreachable flag",
+      "description": "expanse_quorum_node_unreachable (X5, nodelc's leader-side failure monitor, silent 15s/5m, sec 4.8) -- fires for a node that has simply gone silent, distinct from panel 5's self-reported degraded.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "expanse-prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "targets": [
+        { "refId": "A", "expr": "expanse_quorum_node_unreachable", "instant": true, "legendFormat": "{{node}}" }
+      ]
     }
   ]
 }

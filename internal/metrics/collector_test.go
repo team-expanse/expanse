@@ -9,6 +9,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/storage"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -144,7 +145,10 @@ func TestCollectQuorum(t *testing.T) {
 		health: &pb.HealthReport{},
 		cluster: &control.Report{
 			Leader: "n1:7444", QuorumHave: 3, QuorumNeed: 2, Degraded: false,
-			Nodes: []control.NodeStatus{{ID: "n2", Degraded: true}},
+			Nodes: []control.NodeStatus{
+				{ID: "n2", Degraded: true},
+				{ID: "n3", Lifecycle: nodelc.StateUnreachable},
+			},
 		},
 	}
 	c := NewCollector(f, nil)
@@ -161,6 +165,13 @@ func TestCollectQuorum(t *testing.T) {
 	n2 := byDesc(t, metrics, quorumNodeDegradedDesc, "node")["n2"]
 	if n2.GetGauge().GetValue() != 1 {
 		t.Errorf("n2's degraded gauge = %v, want 1 (self-reported degraded)", n2.GetGauge().GetValue())
+	}
+	unreachable := byDesc(t, metrics, quorumNodeUnreachableDesc, "node")
+	if unreachable["n3"].GetGauge().GetValue() != 1 {
+		t.Errorf("n3's unreachable gauge = %v, want 1 (nodelc marked it unreachable)", unreachable["n3"].GetGauge().GetValue())
+	}
+	if unreachable["n2"].GetGauge().GetValue() != 0 {
+		t.Errorf("n2's unreachable gauge = %v, want 0 (degraded is not the same as unreachable)", unreachable["n2"].GetGauge().GetValue())
 	}
 }
 

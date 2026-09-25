@@ -174,3 +174,22 @@ tests:
             exp_annotations:
               description: "n2 has self-reported degraded=true in the cluster status for 2 minutes (PHASE-09-TASKS.md D5)."
               summary: "Node n2 self-reports degraded"
+  # ExpanseNodeUnreachable: fires immediately (for: 0s) -- X5's own case,
+  # a node that has gone silent without losing quorum or self-reporting.
+  - interval: 1m
+    input_series:
+      - series: 'expanse_quorum_node_unreachable{node="n3"}'
+        values: "0 1"
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: ExpanseNodeUnreachable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: ExpanseNodeUnreachable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              node: n3
+            exp_annotations:
+              description: "n3 has not updated its status past nodelc's unreachable threshold (15s, §4.8) -- the leader has not heard from it."
+              summary: "Node n3 is unreachable"

@@ -17,6 +17,7 @@ import (
 
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
+	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -125,7 +126,7 @@ func (s *Server) loadHealthOverview(ctx context.Context) (healthOverviewData, er
 
 // buildAlerts derives the currently-firing critical conditions directly
 // from the same signals above, using the identical thresholds as
-// deploy/prometheus/expanse-alerts.rules.yml's six `for: 0s` rules --
+// deploy/prometheus/expanse-alerts.rules.yml's seven `for: 0s` rules --
 // the warning-severity rules (which wait out a `for` window to avoid
 // flapping) are left to Prometheus/Alertmanager, not reimplemented here.
 func buildAlerts(checks []*pb.CheckResult, resources []*pb.Resource, volumes []*volumeView, report *control.Report) []alertView {
@@ -154,6 +155,14 @@ func buildAlerts(checks []*pb.CheckResult, resources []*pb.Resource, volumes []*
 		}
 		if report.Degraded {
 			alerts = append(alerts, alertView{Name: "ExpanseQuorumDegraded", Summary: "this node cannot reach Raft quorum"})
+		}
+		// X5's own case: a node that has gone silent without the
+		// cluster losing quorum or the node self-reporting anything --
+		// only nodelc's leader-side detector (§4.8) notices this.
+		for _, n := range report.Nodes {
+			if n.Lifecycle == nodelc.StateUnreachable || n.Lifecycle == nodelc.StateFailed {
+				alerts = append(alerts, alertView{Name: "ExpanseNodeUnreachable", Summary: "node " + n.ID + " is unreachable"})
+			}
 		}
 	}
 	return alerts

@@ -34,8 +34,14 @@ type NodeStatus struct {
 	RaftAddr string
 	APIAddr  string
 	Role     string
-	State    string // leader | follower | nonvoter | witness
+	State    string // leader | follower | nonvoter | witness, plus nodelc annotations
 	Degraded bool   // the node self-reported degraded=true (§4.10.3)
+	// Lifecycle is nodelc's raw failure-detector state for this node --
+	// "" (healthy), "unreachable" (silent 15s) or "failed" (silent 5m),
+	// §4.8 -- distinct from Degraded, which is self-reported by a live
+	// node that can't reach quorum; Lifecycle is the leader's judgment
+	// about a node that may not be reporting anything at all.
+	Lifecycle string
 }
 
 // WaitForLeader blocks until the store's raft node knows a leader
@@ -122,6 +128,7 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 		}
 		rep.Nodes = append(rep.Nodes, NodeStatus{
 			ID: r.ID, RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, Role: role, State: state, Degraded: deg,
+			Lifecycle: r.State,
 		})
 	}
 	rep.QuorumNeed = voters/2 + 1

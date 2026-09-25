@@ -14,6 +14,7 @@ import (
 	"github.com/expanse/expanse/internal/agent/inventory"
 	"github.com/expanse/expanse/internal/api"
 	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
@@ -213,7 +214,10 @@ func TestBuildAlertsMirrorsCriticalRules(t *testing.T) {
 		{Name: "ro-vol", State: storage.StateReadOnly},
 		{Name: "ok-vol", State: storage.StateHealthy},
 	}
-	report := &control.Report{Leader: "", Degraded: true}
+	report := &control.Report{
+		Leader: "", Degraded: true,
+		Nodes: []control.NodeStatus{{ID: "n3", Lifecycle: nodelc.StateUnreachable}},
+	}
 
 	alerts := buildAlerts(checks, resources, volumes, report)
 
@@ -224,6 +228,7 @@ func TestBuildAlertsMirrorsCriticalRules(t *testing.T) {
 		"ExpanseVolumeReadOnly":    false,
 		"ExpanseQuorumNoLeader":    false,
 		"ExpanseQuorumDegraded":    false,
+		"ExpanseNodeUnreachable":   false,
 	}
 	for _, a := range alerts {
 		if _, ok := want[a.Name]; !ok {

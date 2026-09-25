@@ -235,6 +235,14 @@
           # at a real Prometheus, with panel queries proven to return
           # real data back through Grafana's own /api/ds/query.
           observability-grafana = mkTest "observability-grafana" ./nix/tests/observability-grafana.nix;
+
+          # Phase 09 Stream E (X5, the release blocker): ROADMAP.md's own
+          # exit line -- a real killed node raises a real alert and is
+          # visible in the UI and dashboards within 30s, measured with a
+          # real stopwatch against the whole assembled Prometheus/
+          # Grafana/web-UI pipeline, not assumed from each component's
+          # own latency budget.
+          observability-vertical-slice = mkTest "observability-vertical-slice" ./nix/tests/observability-vertical-slice.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
