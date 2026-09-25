@@ -208,24 +208,43 @@ in
 {
   boot.enableContainers = true;
 
-  # dm-thin-pool is a HOST kernel module, not a per-container thing -- a container
-  # cannot modprobe it itself (no CAP_SYS_MODULE, correctly so), so it must already be
-  # loaded on the host before any container's own `lvcreate --type thin-pool` can work.
-  # Found live: CAP_MKNOD (previous commit) fixed the mknod permission error, but the
-  # very next attempt failed differently -- "thin-pool: Required device-mapper
-  # target(s) not detected in your kernel." boot.kernelModules should apply immediately
-  # on `nixos-rebuild switch`, but this also loads it explicitly and synchronously
-  # before any container starts, rather than trusting activation-script timing this
-  # session has no way to verify directly.
-  boot.kernelModules = [ "dm_thin_pool" ];
-  systemd.services.expanse-perf-dm-thin = {
-    description = "Ensure dm-thin-pool is loaded before the X1 perf containers start";
+  # base.nix pins boot.kernelPackages to pkgs.linuxPackages (not _latest) with a comment
+  # that DRBD 9 doesn't build against the latest series -- found live that this is now
+  # stale for the nixpkgs revision this flake pins: nixpkgs' own drbd derivation marks
+  # itself broken only for kernel >=6.18,<6.19 (`meta.broken = kernelOlder "6.19" &&
+  # kernelAtLeast "6.18"`), and pkgs.linuxPackages currently resolves to exactly
+  # 6.18.53 -- squarely in that window -- while pkgs.linuxPackages_latest (7.2.x,
+  # already what this host boots) is well past it and actually builds drbd
+  # successfully (`nix build .#legacyPackages.x86_64-linux.linuxPackages_latest.drbd`,
+  # confirmed live). Deliberately NOT overriding boot.kernelPackages here, then: the
+  # host's own existing pin already works, and forcing the nominal "LTS" series would
+  # both require a disruptive reboot of this machine AND actually break the build.
+
+  # dm-thin-pool and drbd are both HOST kernel modules, not a per-container thing -- a
+  # container cannot modprobe them itself (no CAP_SYS_MODULE, correctly so), so both
+  # must already be loaded on the host before any container's own `lvcreate --type
+  # thin-pool` or DRBD resource can work. dm_thin_pool found live: CAP_MKNOD (earlier
+  # commit) fixed the mknod permission error, but the next attempt failed differently
+  # -- "thin-pool: Required device-mapper target(s) not detected in your kernel."
+  # drbd found live: "modprobe: FATAL: Module drbd not found" once cluster/volume
+  # creation actually reached the replication step -- it's out-of-tree, so unlike
+  # dm_thin_pool it must be built (boot.extraModulePackages), not just loaded.
+  # boot.kernelModules should apply immediately on `nixos-rebuild switch`, but this
+  # also loads both explicitly and synchronously before any container starts, rather
+  # than trusting activation-script timing this session has no way to verify directly.
+  boot.extraModulePackages = [ config.boot.kernelPackages.drbd ];
+  boot.kernelModules = [ "dm_thin_pool" "drbd" ];
+  systemd.services.expanse-perf-kmods = {
+    description = "Ensure dm-thin-pool and drbd are loaded before the X1 perf containers start";
     wantedBy = [ "multi-user.target" ];
     before = [ "container@n1.service" "container@n2.service" "container@n3.service" ];
     path = [ pkgs.kmod ];
     serviceConfig.Type = "oneshot";
     serviceConfig.RemainAfterExit = true;
-    script = "modprobe dm_thin_pool";
+    script = ''
+      modprobe dm_thin_pool
+      modprobe drbd
+    '';
   };
 
   # Isolated bridge, no physical uplink: containers reach each other over it
