@@ -36,7 +36,8 @@ fi
 rm -f /etc/nixos/expanse-perf-persist-mounts.nix
 
 echo "== 3/5: nixos-rebuild switch =="
-nixos-rebuild switch
+# See setup.sh: root's nixos-rebuild doesn't inherit the invoking user's flakes config.
+NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
 
 echo "== 4/5: wiping the three disks =="
 for d in "${DISKS[@]}"; do

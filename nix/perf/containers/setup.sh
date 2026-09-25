@@ -94,7 +94,11 @@ else
 fi
 
 echo "== 5/6: nixos-rebuild switch =="
-nixos-rebuild switch
+# host-containers.nix's builtins.getFlake needs the flakes experimental feature.
+# /etc/nix/nix.conf (system-wide, what root's nixos-rebuild actually reads) has it
+# empty -- only the invoking user's own ~/.config/nix/nix.conf grants it, which root
+# under sudo does not inherit. Scoped to just this command, not written to any file.
+NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
 
 echo "== 6/6: starting containers and waiting for them ready =="
 for n in "${NAMES[@]}"; do

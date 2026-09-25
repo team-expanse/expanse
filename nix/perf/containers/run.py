@@ -10,6 +10,7 @@ start_all() a real container backend instead of a nixosTest driver) is new. This
 run as root (nixos-container run needs CAP_SYS_ADMIN); setup.sh invokes it that way.
 """
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -17,6 +18,12 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]  # repo root
 TESTS = ROOT / "nix" / "tests"
+
+# root (this runs under sudo) doesn't inherit the invoking user's own
+# ~/.config/nix/nix.conf, and /etc/nix/nix.conf has experimental-features empty --
+# same fix as setup.sh's NIX_CONFIG, scoped to this process's own subprocess calls
+# rather than written to any file.
+os.environ["NIX_CONFIG"] = "experimental-features = nix-command flakes"
 
 
 def nixos_container_path():
