@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -28,6 +29,7 @@ func newClusterCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newClusterInitCmd())
 	cmd.AddCommand(newClusterJoinCmd())
+	cmd.AddCommand(newClusterRestoreCmd())
 	cmd.AddCommand(newClusterStatusCmd())
 	cmd.AddCommand(newClusterLeaveCmd())
 	cmd.AddCommand(newClusterTokenCmd())
@@ -72,6 +74,44 @@ func newClusterInitCmd() *cobra.Command {
 
 func defaultAdvertise() string {
 	return fmt.Sprintf("%s:%d", control.LocalIP(), config.PortRaft)
+}
+
+// newClusterRestoreCmd implements `expanse cluster restore` (Phase 8 X6):
+// the "plus one command" rebuild side of destroy-and-restore. It shells
+// out to restic, which already owns "backup credentials" as the
+// RESTIC_REPOSITORY/RESTIC_PASSWORD (and backend-specific, e.g. AWS_*)
+// environment variables an operator already holds for whatever backed
+// this node up — no separate credential plumbing needed here. Run
+// before starting the daemon; --data-dir then holds cluster identity,
+// raft state and configuration exactly as they were at backup time, so
+// starting the daemon afterward rejoins under the original identity
+// with no separate re-init step, even with no live quorum to catch up
+// from (the harder scenario X5 deferred to this stream).
+func newClusterRestoreCmd() *cobra.Command {
+	var dataDir string
+	cmd := &cobra.Command{
+		Use:   "restore",
+		Short: "Restore this node's persistent state from a restic backup (Phase 8 X6)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runClusterRestore(cmd, dataDir)
+		},
+	}
+	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory to restore")
+	return cmd
+}
+
+func runClusterRestore(cmd *cobra.Command, dataDir string) error {
+	if _, err := exec.LookPath("restic"); err != nil {
+		return fmt.Errorf("restic not found on PATH: %w", err)
+	}
+	restic := exec.CommandContext(cmd.Context(), "restic", "restore", "latest", "--target", "/", "--include", dataDir)
+	restic.Stdout = cmd.OutOrStdout()
+	restic.Stderr = cmd.ErrOrStderr()
+	if err := restic.Run(); err != nil {
+		return fmt.Errorf("restic restore: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "restored %s from the latest backup\n", dataDir)
+	return nil
 }
 
 func newClusterJoinCmd() *cobra.Command {

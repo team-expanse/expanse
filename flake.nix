@@ -211,6 +211,12 @@
           # dataDir, both backed up, restored, and provably reconciled/
           # rejoined for real.
           backup-cluster-config = mkTest "backup-cluster-config" ./nix/tests/backup-cluster-config.nix;
+
+          # Phase 08 Stream D (X6, the decider): the vertical slice --
+          # destroy the whole cluster, rebuild from backup credentials plus
+          # one command (`expanse cluster restore`), data and configuration
+          # both verify.
+          backup-destroy-rebuild = mkTest "backup-destroy-rebuild" ./nix/tests/backup-destroy-rebuild.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
