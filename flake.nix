@@ -247,6 +247,12 @@
           # Grafana/web-UI pipeline, not assumed from each component's
           # own latency budget.
           observability-vertical-slice = mkTest "observability-vertical-slice" ./nix/tests/observability-vertical-slice.nix;
+
+          # Phase 11 Stream B (X2, the release blocker): storage, cluster and network
+          # faults injected concurrently over an extended soak, zero acked-write loss
+          # throughout -- ARCHITECTURE.md §8's own bar, now measured under compound
+          # rather than isolated fault load.
+          chaos-soak = mkTest "chaos-soak" ./nix/tests/chaos-soak.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
