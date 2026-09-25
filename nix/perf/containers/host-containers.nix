@@ -77,6 +77,26 @@ let
       # this needs mkForce to win.
       services.lvm.enable = lib.mkForce true;
 
+      # udevd doesn't run inside this container ("Rule-based Manager for Device Events
+      # and Files skipped, unmet condition check ConditionPathIsReadWrite=/sys" -- /sys
+      # is read-only in an unprivileged container), so nothing ever creates
+      # /dev/mapper/<lv> or /dev/<vg>/<lv> after a new LV appears at the kernel/DM
+      # level. LVM's default "wipe the start of a new LV" step then fails trying to
+      # open a device node that will never exist ("Aborting. Failed to wipe start of
+      # new LV.") -- found live, on the real thin-pool creation this stream needs.
+      # udev_sync=0/udev_rules=0 is the standard fix for LVM running where udev can't
+      # react to DM events: LVM creates and manages those device nodes itself instead
+      # of waiting for a uevent that will never come. This has to apply to every
+      # lvcreate the *agent* itself runs at measurement time too, not just this
+      # container's own one-time scratch-vg setup, so it belongs in lvm.conf globally
+      # for this container, not as a one-off flag on a single command.
+      environment.etc."lvm/lvm.conf".text = lib.mkAfter ''
+        activation {
+          udev_sync = 0
+          udev_rules = 0
+        }
+      '';
+
       # storage.nix (imported by self.nixosModules.expanse, unconditionally
       # under expanse.node.enable) marks "/", "/nix" and "/persist"
       # neededForBoot for a real install, where disko has declared them as
