@@ -84,6 +84,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s.registerBlockRoutes()
 	s.registerClusterRoutes()
 	s.registerVolumeRoutes()
+	s.registerHealthRoutes()
 	return s, nil
 }
 

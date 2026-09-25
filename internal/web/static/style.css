@@ -38,6 +38,18 @@ main {
   color: #c53030;
   font-weight: 600;
 }
+.alerts {
+  list-style: none;
+  padding: 0;
+}
+.badge-critical {
+  display: block;
+  margin: 0.25rem 0;
+  padding: 0.5rem 0.75rem;
+  background: rgba(197, 48, 48, 0.15);
+  border-left: 4px solid #c53030;
+  border-radius: 2px;
+}
 .log-view {
   max-height: 32rem;
   overflow-y: auto;

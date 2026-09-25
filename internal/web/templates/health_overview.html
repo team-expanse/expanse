@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expanse — Health</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/htmx-sse.min.js"></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
+  <header>
+    <h1>Expanse</h1>
+    <button hx-post="/logout">Sign out</button>
+  </header>
+  <main>
+    <p><a href="/">&larr; Home</a></p>
+    {{if .Error}}
+    <p class="error">Health status unavailable: {{.Error}}</p>
+    {{else}}
+    <div hx-ext="sse" sse-connect="/health/events">
+      <div id="health-fragment" sse-swap="health" hx-swap="innerHTML">
+        {{template "health-fragment" .}}
+      </div>
+    </div>
+    {{end}}
+    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
+  </main>
+</body>
+</html>
+
+{{define "health-fragment"}}
+<h2>Alerts</h2>
+{{if .Alerts}}
+<ul class="alerts">
+  {{range .Alerts}}
+  <li class="badge-critical"><strong>{{.Name}}</strong>: {{.Summary}}</li>
+  {{end}}
+</ul>
+{{else}}
+<p>No alerts firing.</p>
+{{end}}
+
+<h2>Quorum</h2>
+{{if .Report}}
+<dl>
+  <dt>Leader</dt><dd>{{if .Report.Leader}}{{.Report.Leader}}{{else}}(none){{end}}</dd>
+  <dt>Quorum</dt><dd>{{.Report.QuorumHave}}/{{.Report.QuorumNeed}}{{if .Report.Degraded}} (degraded){{end}}</dd>
+</dl>
+{{else}}
+<p>Quorum status unavailable.</p>
+{{end}}
+
+<h2>Node checks</h2>
+<table>
+  <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+  <tbody>
+    {{range .NodeChecks}}
+    <tr><td>{{.Name}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>
+    {{else}}
+    <tr><td colspan="3">No checks collected yet.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+
+<h2>Resource health</h2>
+<table>
+  <thead><tr><th>Type</th><th>ID</th><th>Status</th></tr></thead>
+  <tbody>
+    {{range .Resources}}
+    <tr><td>{{.Type}}</td><td>{{.ID}}</td><td>{{.Status}}</td></tr>
+    {{else}}
+    <tr><td colspan="3">No resources.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+
+<h2>Volume health</h2>
+<table>
+  <thead><tr><th>Volume</th><th>State</th></tr></thead>
+  <tbody>
+    {{range .Volumes}}
+    <tr><td>{{.Name}}</td><td>{{.State}}</td></tr>
+    {{else}}
+    <tr><td colspan="2">No volumes.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

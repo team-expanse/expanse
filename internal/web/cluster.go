@@ -128,41 +128,5 @@ func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
 // meta/generation under "/cluster/") into one channel, so the overview
 // refreshes on exactly the writes that could change it.
 func (s *Server) watchClusterPrefixes(ctx context.Context) (<-chan struct{}, error) {
-	cur, err := s.store.Revision(ctx)
-	if err != nil {
-		return nil, err
-	}
-	nodesCh, err := s.store.Watch(ctx, store.Key(join.NodesKeyPrefix), cur)
-	if err != nil {
-		return nil, err
-	}
-	clusterCh, err := s.store.Watch(ctx, store.Key("/cluster/"), cur)
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan struct{})
-	go func() {
-		defer close(out)
-		for nodesCh != nil || clusterCh != nil {
-			var chOK bool
-			select {
-			case _, chOK = <-nodesCh:
-				if !chOK {
-					nodesCh = nil
-					continue
-				}
-			case _, chOK = <-clusterCh:
-				if !chOK {
-					clusterCh = nil
-					continue
-				}
-			}
-			select {
-			case out <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return out, nil
+	return fanInWatches(ctx, s.store, store.Key(join.NodesKeyPrefix), store.Key("/cluster/"))
 }
