@@ -63,8 +63,17 @@ for n in "${NAMES[@]}"; do
     systemctl stop "container@$n.service" 2>/dev/null || true
 done
 for d in "${DISKS[@]}"; do
-    vg="$(pvs --noheadings -o vg_name "$d" 2>/dev/null | tr -d ' ')"
-    [[ -n "$vg" ]] && vgchange -an "$vg" 2>/dev/null || true
+    # By UUID, not name: 3 disks each carrying a VG literally named "expanse" (from
+    # before this VG-per-container naming existed) makes the *name* ambiguous across
+    # different UUIDs -- confirmed live ("WARNING: VG name expanse is used by VGs
+    # <uuid1> and <uuid2>. Fix duplicate VG names with vgrename uuid..."), which is
+    # almost certainly why `vgchange -an "$vg"` by name alone silently missed the one
+    # actually active, leaving wipefs still failing "Device or resource busy". A UUID
+    # is unambiguous regardless of how many VGs elsewhere share the same name string.
+    vguuid="$(pvs --noheadings -o vg_uuid "$d" 2>/dev/null | tr -d ' ')"
+    if [[ -n "$vguuid" ]]; then
+        vgchange -an "$vguuid" 2>/dev/null || true
+    fi
     wipefs -a "$d"
 done
 
