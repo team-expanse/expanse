@@ -97,11 +97,21 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 
 	// Revoked identity (§4.8): a removed node's ID is permanently
 	// rejected, regardless of token validity — checked before anything
-	// else so a revoked re-join can never consume a token.
-	if rev, err := s.St.Get(ctx, store.Key(RevokedKeyPrefix+req.GetNodeId())); err == nil {
-		_ = rev
+	// else so a revoked re-join can never consume a token. Fails
+	// CLOSED: only a confirmed "not found" means "not revoked" (mirrors
+	// nodelc.IsRevoked); any other store error (a transient Raft
+	// forwarding/leader-election hiccup, say) must not be silently
+	// treated as "proceed with the join" — a security review finding
+	// (Phase 10 X1) flagged the original fail-open form of this check.
+	switch _, err := s.St.Get(ctx, store.Key(RevokedKeyPrefix+req.GetNodeId())); {
+	case err == nil:
 		return nil, joinErr(codes.PermissionDenied, errors.New(errors.KindPermission, "join.Join",
 			"node "+req.GetNodeId()+" was removed from this cluster; its identity is revoked"))
+	case errors.Is(err, errors.KindNotFound):
+		// not revoked; continue
+	default:
+		return nil, joinErr(codes.Unavailable, errors.Wrap(err, errors.KindUnavailable, "join.Join",
+			"revocation check failed: "+err.Error()))
 	}
 
 	// 1. Token: HMAC + expiry + cluster binding.
@@ -136,15 +146,46 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 	if csr.Subject.CommonName != req.GetNodeId() {
 		return nil, joinErr(codes.InvalidArgument, errors.New(errors.KindInvalid, "join.Join", "CSR CN must equal node_id"))
 	}
+	// SANs are signed verbatim by ca.IssueCSR (it trusts its caller), so
+	// this is the only place that can validate them. The legitimate
+	// client (control.Enroll) only ever requests {node_id, UIVIPHostname}
+	// with no IP SANs — anything else is a forged-identity attempt, not
+	// a real joiner (security review finding, Phase 10 X1).
+	for _, name := range csr.DNSNames {
+		if name != req.GetNodeId() && name != ca.UIVIPHostname {
+			return nil, joinErr(codes.InvalidArgument, errors.New(errors.KindInvalid, "join.Join",
+				"CSR requests an unrecognized DNS SAN: "+name))
+		}
+	}
+	if len(csr.IPAddresses) > 0 {
+		return nil, joinErr(codes.InvalidArgument, errors.New(errors.KindInvalid, "join.Join", "CSR must not request IP SANs"))
+	}
+	fp, err := PubKeyFingerprint(csr.PublicKey)
+	if err != nil {
+		return nil, joinErr(codes.InvalidArgument, errors.New(errors.KindInvalid, "join.Join", "CSR public key: "+err.Error()))
+	}
 
 	// 3. Idempotent re-join: /nodes/<id> may already exist from an
-	// interrupted first attempt — that must succeed, not duplicate.
+	// interrupted first attempt — that must succeed, not duplicate. But
+	// it is only AUTHORIZED as a re-join, rather than a hijack of
+	// someone else's identity, if the token presented was deliberately
+	// scoped to this exact node_id (rec.ForNodeID, checked in step 4
+	// below) — node_id alone is client-supplied and proves nothing
+	// (security review finding, Phase 10 X1: the original check trusted
+	// node_id alone, so any valid token — e.g. a broadly-distributed
+	// bulk-provisioning one — could claim an arbitrary existing node's
+	// identity). The CSR's key is deliberately NOT required to match
+	// the original: a legitimate re-join can follow the joiner losing
+	// its key material (TestJoinInterruptedReRun), so key continuity
+	// can't be the authorization boundary — token scoping, which only
+	// an operator who already trusts this is a genuine recovery can
+	// grant, is.
 	nodesKey := store.Key(NodesKeyPrefix + req.GetNodeId())
 	existing, gerr := s.St.Get(ctx, nodesKey)
 	rejoin := gerr == nil
-	if rejoin {
-		// Re-join tolerates a corrupt or stale old record; AddVoter
-		// updates the raft address idempotently when it changed.
+	if rejoin && rec.ForNodeID != req.GetNodeId() {
+		return nil, joinErr(codes.AlreadyExists, errors.New(errors.KindConflict, "join.Join",
+			"node_id "+req.GetNodeId()+" is already enrolled; recovering it requires a token minted with --for-node "+req.GetNodeId()))
 	}
 
 	// 4. ONE Raft txn: consume token + node record. Racing joins with
@@ -157,7 +198,7 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 	nodeRecord := NodeRecord{
 		ID: req.GetNodeId(), RaftAddr: req.GetAdvertiseAddr(),
 		APIAddr: req.GetApiAddr(), JoinedAt: time.Now().UnixNano(),
-		Inventory: req.GetInventory(),
+		Inventory: req.GetInventory(), PubKeyFingerprint: fp,
 	}
 	if req.GetRole() != "" {
 		nodeRecord.Role = req.GetRole()

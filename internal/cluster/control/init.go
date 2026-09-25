@@ -167,7 +167,7 @@ func Init(ctx context.Context, opts InitOptions) (*InitResult, error) {
 	}
 
 	// 8. Join command with a fresh token.
-	token, _, err := join.CreateToken(ctx, st, clusterID, secret, join.DefaultTokenTTL, 1, nodeID)
+	token, _, err := join.CreateToken(ctx, st, clusterID, secret, join.DefaultTokenTTL, 1, nodeID, "")
 	if err != nil {
 		_ = st.Close()
 		return nil, errors.Wrap(err, errors.KindInternal, "control.Init", "mint token: "+err.Error())

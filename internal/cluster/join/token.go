@@ -26,9 +26,11 @@ package join
 
 import (
 	"context"
+	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -73,6 +75,18 @@ type tokenRecord struct {
 	Uses       int    `json:"uses"`    // consumption count
 	IssuedBy   string `json:"by"`      // issuing node ID
 	CreatedAt  int64  `json:"created"` // unix-nano
+
+	// ForNodeID, when set, is the only node_id this token may be used to
+	// re-join/recover — an already-enrolled node_id can NEVER be
+	// (re)claimed by a plain, unscoped token (empty ForNodeID), only by
+	// one an operator deliberately minted for that exact ID. Without
+	// this, any holder of any valid token — e.g. a broadly-distributed
+	// bulk-provisioning token — could claim an arbitrary existing node's
+	// identity by presenting its node_id, since node_id alone was the
+	// only thing gating the "idempotent re-join" path (security review
+	// finding, Phase 10 X1). A plain token still enrolls any *new*
+	// node_id, unaffected.
+	ForNodeID string `json:"for_node,omitempty"`
 }
 
 //	// RevokedKeyPrefix holds removed node identities: /cluster/revoked/<id>.
@@ -93,6 +107,28 @@ type NodeRecord struct {
 	Inventory string `json:"inventory,omitempty"`
 	State     string `json:"state,omitempty"`    // "" | unreachable | failed
 	Cordoned  bool   `json:"cordoned,omitempty"` // no new placements
+
+	// PubKeyFingerprint binds this record to the key that created it
+	// (see PubKeyFingerprint below). An "idempotent re-join" against an
+	// existing node_id is only genuine — the same joiner retrying — if
+	// its new CSR's key fingerprints match; otherwise it is a different
+	// actor claiming someone else's identity and must be refused.
+	PubKeyFingerprint string `json:"pubkey_fp,omitempty"`
+}
+
+// PubKeyFingerprint returns a stable, comparable fingerprint of a
+// public key: SHA-256 of its DER-encoded SubjectPublicKeyInfo, hex
+// encoded. Used to verify that a "re-join" against an existing node_id
+// really is the same joiner presenting the same key, not a different
+// key claiming that node's identity (security review finding, Phase 10
+// X1).
+func PubKeyFingerprint(pub crypto.PublicKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", fmt.Errorf("marshal public key: %w", err)
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // base58 (Bitcoin alphabet). Leading zero bytes encode as '1'.
@@ -175,8 +211,11 @@ func tokenMAC(secret []byte, payload []byte) []byte {
 }
 
 // CreateToken mints a join token and writes its consumption record
-// (CAS expect-absent) through st. uses<=0 means single-use.
-func CreateToken(ctx context.Context, st TokenWriter, clusterID string, secret []byte, ttl time.Duration, uses int, issuedBy string) (string, *TokenClaims, error) {
+// (CAS expect-absent) through st. uses<=0 means single-use. forNodeID,
+// if non-empty, scopes this token to recovering exactly that node_id
+// (see tokenRecord.ForNodeID) — pass "" for an ordinary token that can
+// only enroll new node_ids.
+func CreateToken(ctx context.Context, st TokenWriter, clusterID string, secret []byte, ttl time.Duration, uses int, issuedBy string, forNodeID string) (string, *TokenClaims, error) {
 	if len(secret) != 32 {
 		return "", nil, errors.New(errors.KindInvalid, "join.CreateToken", "cluster secret must be 32 bytes")
 	}
@@ -204,6 +243,7 @@ func CreateToken(ctx context.Context, st TokenWriter, clusterID string, secret [
 		MaxUses:    uses,
 		IssuedBy:   issuedBy,
 		CreatedAt:  time.Now().UnixNano(),
+		ForNodeID:  forNodeID,
 	}
 	if rec.MaxUses <= 0 {
 		rec.MaxUses = 1

@@ -353,7 +353,7 @@ func newClusterTokenCmd() *cobra.Command {
 }
 
 func newClusterTokenCreateCmd() *cobra.Command {
-	var dataDir, nodeID, ttl string
+	var dataDir, nodeID, ttl, forNode string
 	var uses int
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -377,7 +377,7 @@ func newClusterTokenCreateCmd() *cobra.Command {
 			if !control.WaitForLeader(ctx, st, 10*time.Second) {
 				return fmt.Errorf("no leader after 10s (quorum unavailable?)")
 			}
-			tok, err := control.CreateToken(ctx, st, clusterIDOf(dataDir), secret, d, uses, nodeID)
+			tok, err := control.CreateToken(ctx, st, clusterIDOf(dataDir), secret, d, uses, nodeID, forNode)
 			if err != nil {
 				return err
 			}
@@ -389,6 +389,7 @@ func newClusterTokenCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
 	cmd.Flags().StringVar(&ttl, "ttl", "15m", "token time-to-live")
 	cmd.Flags().IntVar(&uses, "uses", 1, "max number of joins with this token")
+	cmd.Flags().StringVar(&forNode, "for-node", "", "scope this token to recovering exactly this already-enrolled node_id (required to re-join/recover an existing node; a plain token can only enroll a new one)")
 	return cmd
 }
 

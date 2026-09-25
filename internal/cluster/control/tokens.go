@@ -22,15 +22,17 @@ type TokenInfo struct {
 }
 
 // CreateToken mints a join token and records it (join.CreateToken
-// wrapper with control-level defaults).
-func CreateToken(ctx context.Context, st store.Store, clusterID string, secret []byte, ttl time.Duration, uses int, by string) (string, error) {
+// wrapper with control-level defaults). forNodeID, if non-empty, scopes
+// the token to recovering exactly that already-enrolled node_id — see
+// join.tokenRecord.ForNodeID; pass "" for an ordinary new-node token.
+func CreateToken(ctx context.Context, st store.Store, clusterID string, secret []byte, ttl time.Duration, uses int, by string, forNodeID string) (string, error) {
 	if ttl <= 0 {
 		ttl = join.DefaultTokenTTL
 	}
 	if uses <= 0 {
 		uses = 1
 	}
-	tok, _, err := join.CreateToken(ctx, st, clusterID, secret, ttl, uses, by)
+	tok, _, err := join.CreateToken(ctx, st, clusterID, secret, ttl, uses, by, forNodeID)
 	return tok, err
 }
 

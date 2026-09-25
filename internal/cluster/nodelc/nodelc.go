@@ -254,20 +254,40 @@ func Remove(ctx context.Context, st *raftstore.Store, id string, opts *Options) 
 		return errors.Wrap(err, errors.KindUnavailable, "nodelc", "RemoveServer: "+err.Error())
 	}
 
+	// The revocation write is the security-critical step — join.Join
+	// consults it before anything else, so once it lands the identity
+	// is permanently refused regardless of what happens to /nodes/<id>.
+	// It must therefore succeed unconditionally, on its own, not gated
+	// behind a CAS on the node record's revision: a concurrent write to
+	// that record (e.g. a racing re-join landing between our read above
+	// and this write) must never be able to make the whole revocation
+	// silently fail (security review finding, Phase 10 X1 — the
+	// original single combined txn did exactly that).
 	rev := Revocation{NodeID: id, RemovedAt: nowOr(opts).UnixNano(), By: opts.By, Reason: opts.Reason}
 	rb, err := json.Marshal(rev)
 	if err != nil {
 		return errors.New(errors.KindInternal, "nodelc", "encode revocation: "+err.Error())
 	}
-	ops := []store.Op{{Kind: store.OpPut, Key: store.Key(RevokedKeyPrefix + id), Value: rb}}
-	if entry != nil {
-		// Delete the node record only if it hasn't changed since we
-		// read it; a concurrent join re-writing the record fails the
-		// whole txn, leaving a consistent (still-enrolled) state.
-		ops = append(ops, store.Op{Kind: store.OpDelete, Key: store.Key(join.NodesKeyPrefix + id), Expect: entry.Revision})
+	if _, err := st.Txn(ctx, []store.Op{{Kind: store.OpPut, Key: store.Key(RevokedKeyPrefix + id), Value: rb}}); err != nil {
+		return errors.Wrap(err, errors.KindInternal, "nodelc", "revocation write: "+err.Error())
 	}
-	if _, err := st.Txn(ctx, ops); err != nil {
-		return errors.Wrap(err, errors.KindInternal, "nodelc", "revocation txn: "+err.Error())
+
+	// Best-effort cleanup of /nodes/<id>: purely cosmetic (keeps node
+	// listings from showing a revoked node as still enrolled) now that
+	// the revocation record above is what actually enforces removal.
+	// Re-read the current revision each attempt rather than reusing the
+	// stale one captured before RemoveServer, so a racing write doesn't
+	// make this loop fail forever.
+	if entry != nil {
+		for attempt := 0; attempt < 3; attempt++ {
+			cur, gerr := st.Get(ctx, store.Key(join.NodesKeyPrefix+id))
+			if gerr != nil {
+				break // already gone (or unreadable) -- nothing left to clean up
+			}
+			if _, derr := st.Txn(ctx, []store.Op{{Kind: store.OpDelete, Key: store.Key(join.NodesKeyPrefix + id), Expect: cur.Revision}}); derr == nil {
+				break
+			}
+		}
 	}
 	return nil
 }

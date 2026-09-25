@@ -109,7 +109,7 @@ func (r *rig) mintToken() string {
 	r.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	tok, err := control.CreateToken(ctx, r.initRes.Store, r.initRes.ClusterID, r.initRes.Secret, time.Minute, 1, "n1")
+	tok, err := control.CreateToken(ctx, r.initRes.Store, r.initRes.ClusterID, r.initRes.Secret, time.Minute, 1, "n1", "")
 	if err != nil {
 		r.t.Fatalf("CreateToken: %v", err)
 	}

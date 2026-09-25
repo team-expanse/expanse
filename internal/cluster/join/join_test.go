@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +118,17 @@ func (e *env) joinCall(ctx context.Context, id, raftAddr, token string) (*pb.Joi
 
 func (e *env) mintToken(ctx context.Context, uses int) string {
 	e.t.Helper()
-	tok, _, err := join.CreateToken(ctx, e.store, testClusterID, e.secret, time.Minute, uses, "n0")
+	tok, _, err := join.CreateToken(ctx, e.store, testClusterID, e.secret, time.Minute, uses, "n0", "")
+	if err != nil {
+		e.t.Fatalf("CreateToken: %v", err)
+	}
+	return tok
+}
+
+// mintTokenFor mints a token scoped to recover exactly forNodeID.
+func (e *env) mintTokenFor(ctx context.Context, uses int, forNodeID string) string {
+	e.t.Helper()
+	tok, _, err := join.CreateToken(ctx, e.store, testClusterID, e.secret, time.Minute, uses, "n0", forNodeID)
 	if err != nil {
 		e.t.Fatalf("CreateToken: %v", err)
 	}
@@ -159,7 +170,7 @@ func TestTokenParseVerify(t *testing.T) {
 	ctx := context.Background()
 	secret := make([]byte, 32)
 
-	tok, _, err := join.CreateToken(ctx, st, testClusterID, secret, time.Minute, 1, "n0")
+	tok, _, err := join.CreateToken(ctx, st, testClusterID, secret, time.Minute, 1, "n0", "")
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
@@ -193,7 +204,7 @@ func TestTokenParseVerify(t *testing.T) {
 	}
 
 	// Expired.
-	expired, _, err := join.CreateToken(ctx, st, testClusterID, secret, 10*time.Millisecond, 1, "n0")
+	expired, _, err := join.CreateToken(ctx, st, testClusterID, secret, 10*time.Millisecond, 1, "n0", "")
 	if err != nil {
 		t.Fatalf("CreateToken expired: %v", err)
 	}
@@ -308,7 +319,10 @@ func TestJoinInterruptedReRun(t *testing.T) {
 
 	// First attempt completes; the "interruption" (joiner losing its
 	// cert before persisting) is reproduced by re-running with a fresh
-	// token — which must succeed and create no duplicate.
+	// token — which must succeed and create no duplicate. The retry
+	// token must be scoped with --for-node n10: an ordinary unscoped
+	// token cannot recover an already-enrolled node_id (that gate is
+	// what TestJoinCannotHijackExistingNode below proves).
 	token1 := e.mintToken(ctx, 1)
 	addr, err := e.newJoiner("n10")
 	if err != nil {
@@ -319,7 +333,7 @@ func TestJoinInterruptedReRun(t *testing.T) {
 		t.Fatalf("first join: %v", err)
 	}
 
-	token2 := e.mintToken(ctx, 1)
+	token2 := e.mintTokenFor(ctx, 1, "n10")
 	resp2, err := e.joinCall(ctx, "n10", addr, token2)
 	if err != nil {
 		t.Fatalf("re-join: %v", err)
@@ -332,6 +346,47 @@ func TestJoinInterruptedReRun(t *testing.T) {
 	entries, err := e.store.List(ctx, "/nodes/n10")
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("node entries = %d, %v; want exactly 1", len(entries), err)
+	}
+}
+
+// TestJoinCannotHijackExistingNode proves the security review fix
+// (Phase 10 X1): holding any valid, unconsumed token used to be enough
+// to claim ANY already-enrolled node_id, overwriting its raft address
+// and getting a freshly signed cert for that identity. An ordinary
+// (unscoped) token must now be refused against an existing node_id,
+// even though it would happily enroll a brand-new one.
+func TestJoinCannotHijackExistingNode(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	victimToken := e.mintToken(ctx, 1)
+	victimAddr, err := e.newJoiner("victim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.joinCall(ctx, "victim", victimAddr, victimToken); err != nil {
+		t.Fatalf("victim join: %v", err)
+	}
+
+	// Attacker holds an ordinary, unscoped, still-valid token (e.g. a
+	// broadly-distributed bulk-provisioning token) and targets the
+	// victim's already-enrolled node_id with its own address/key.
+	attackerToken := e.mintToken(ctx, 1)
+	attackerAddr, err := e.newJoiner("attacker-controlled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.joinCall(ctx, "victim", attackerAddr, attackerToken); !grpcCodeIs(err, codes.AlreadyExists) {
+		t.Fatalf("hijack attempt: err=%v, want AlreadyExists", err)
+	}
+
+	// The victim's node record must be untouched.
+	entry, err := e.store.Get(ctx, "/nodes/victim")
+	if err != nil {
+		t.Fatalf("victim record missing: %v", err)
+	}
+	if !strings.Contains(string(entry.Value), victimAddr) {
+		t.Errorf("victim record raft_addr was overwritten: %s", entry.Value)
 	}
 }
 
