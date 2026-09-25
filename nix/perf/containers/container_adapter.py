@@ -1,14 +1,12 @@
 """Adapter giving cluster-common.py's / vol_cluster.py's / vol_constrained_main.py's
 nixosTest-driver-shaped calls (m.succeed/execute/wait_for_unit, start_all(), subtest())
-a real backend on THIS host: systemd-nspawn containers managed via `nixos-container run`
-and `machinectl`, instead of a nixosTest driver's QEMU machines. Everything downstream
-of this file is the SAME test code the VM harness runs, unmodified -- see run.py.
+a real backend on THIS host: systemd-nspawn containers managed via `nsenter`/`machinectl`,
+instead of a nixosTest driver's QEMU machines. Everything downstream of this file is the
+SAME test code the VM harness runs, unmodified -- see run.py.
 """
 import contextlib
 import subprocess
 import time
-
-NIXOS_CONTAINER = "@NIXOS_CONTAINER@"  # patched to a real store path by run.py
 
 
 class Container:
@@ -16,9 +14,20 @@ class Container:
         self.name = name
 
     def execute(self, cmd):
-        """Matches nixosTest's Machine.execute(): returns (exit_status, combined output)."""
+        """Matches nixosTest's Machine.execute(): returns (exit_status, combined output).
+        nsenter's directly into the leader's namespaces rather than going through
+        `nixos-container run` (which shells commands through `su root -l -c ...`) --
+        `su`'s PAM account-phase check fails here ("helper binary execve failed": the
+        unix_chkpwd setuid wrapper isn't available inside this unprivileged container),
+        and even though su still succeeds functionally, the warning it prints pollutes
+        stdout/stderr enough to break exact-match assertions like wait_for_unit's, found
+        live. nsenter needs no PAM/su at all -- the same mechanism setup.sh's own
+        readiness check already uses cleanly."""
+        pid = self._leader_pid()
+        if pid is None:
+            return 1, f"{self.name}: no leader PID (container not running?)"
         p = subprocess.run(
-            [NIXOS_CONTAINER, "run", self.name, "--", "sh", "-c", cmd],
+            ["nsenter", "--target", str(pid), "--all", "--", "sh", "-c", cmd],
             capture_output=True, text=True,
         )
         return p.returncode, p.stdout + p.stderr

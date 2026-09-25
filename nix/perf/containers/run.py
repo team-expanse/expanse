@@ -7,7 +7,8 @@ node_control_plane_cpu_percent known_gap for the question this is actually answe
 Splices the SAME files nix/tests/vol-constrained.nix splices via readFile, completely
 unmodified, in the same order: only container_adapter.py (giving n1/n2/n3/subtest()/
 start_all() a real container backend instead of a nixosTest driver) is new. This must
-run as root (nixos-container run needs CAP_SYS_ADMIN); setup.sh invokes it that way.
+run as root (nsenter --all into a container's namespaces needs CAP_SYS_ADMIN); setup.sh
+invokes it that way.
 """
 import json
 import os
@@ -26,16 +27,6 @@ TESTS = ROOT / "nix" / "tests"
 os.environ["NIX_CONFIG"] = "experimental-features = nix-command flakes"
 
 
-def nixos_container_path():
-    out = subprocess.run(
-        ["nix", "build", "--no-link", "--print-out-paths", "nixpkgs#nixos-container"],
-        capture_output=True, text=True,
-    )
-    if out.returncode != 0:
-        sys.exit(f"could not build nixpkgs#nixos-container: {out.stderr}")
-    return out.stdout.strip() + "/bin/nixos-container"
-
-
 def budgets_json():
     out = subprocess.run(
         ["nix", "run", "nixpkgs#yq-go", "--", "-o=json", ".budgets", str(ROOT / "test/perf/budgets.yaml")],
@@ -47,11 +38,8 @@ def budgets_json():
 
 
 def main():
-    adapter = (HERE / "container_adapter.py").read_text().replace(
-        "@NIXOS_CONTAINER@", nixos_container_path()
-    )
     src = "\n".join([
-        adapter,
+        (HERE / "container_adapter.py").read_text(),
         (TESTS / "cluster-common.py").read_text(),
         (TESTS / "python" / "vol_cluster.py").read_text(),
         (TESTS / "python" / "vol_perf_lib.py").read_text(),
