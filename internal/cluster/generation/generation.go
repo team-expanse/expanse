@@ -245,6 +245,42 @@ func DiffGenerations(ctx context.Context, st store.Store, a, b uint64) (*Diff, e
 	return d, nil
 }
 
+// desiredStateOps diffs the live desired state against want and returns
+// the ops needed to converge to it: a Put for every key in want that is
+// missing or different live, and a Delete for every live desired key
+// absent from want.
+func desiredStateOps(ctx context.Context, st store.Store, want map[store.Key][]byte) ([]store.Op, error) {
+	// Current desired state (linearizable read via Txn's raft round-trip:
+	// the ops themselves carry the preconditions, so no separate Get is
+	// needed for correctness — but we must build the diff from a read).
+	have := make(map[store.Key][]byte)
+	for _, p := range DesiredPrefixes {
+		entries, err := st.List(ctx, store.Key(p))
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if IsDesiredKey(e.Key) {
+				have[e.Key] = e.Value
+			}
+		}
+	}
+
+	ops := []store.Op{}
+	for k, v := range want {
+		if hv, ok := have[k]; ok && string(hv) == string(v) {
+			continue // unchanged
+		}
+		ops = append(ops, store.Op{Kind: store.OpPut, Key: k, Value: v})
+	}
+	for k := range have {
+		if _, ok := want[k]; !ok {
+			ops = append(ops, store.Op{Kind: store.OpDelete, Key: k})
+		}
+	}
+	return ops, nil
+}
+
 // Rollback atomically restores the desired state of generation target by
 // writing it as a NEW generation (append-only history — see the package
 // comment). target==0 means "previous generation". Returns the new
@@ -277,34 +313,9 @@ func Rollback(ctx context.Context, st store.Store, target uint64, by, descriptio
 	if err != nil {
 		return 0, err
 	}
-
-	// Current desired state (linearizable read via Txn's raft round-trip:
-	// the ops themselves carry the preconditions, so no separate Get is
-	// needed for correctness — but we must build the diff from a read).
-	have := make(map[store.Key][]byte)
-	for _, p := range DesiredPrefixes {
-		entries, err := st.List(ctx, store.Key(p))
-		if err != nil {
-			return 0, err
-		}
-		for _, e := range entries {
-			if IsDesiredKey(e.Key) {
-				have[e.Key] = e.Value
-			}
-		}
-	}
-
-	ops := []store.Op{}
-	for k, v := range want {
-		if hv, ok := have[k]; ok && string(hv) == string(v) {
-			continue // unchanged
-		}
-		ops = append(ops, store.Op{Kind: store.OpPut, Key: k, Value: v})
-	}
-	for k := range have {
-		if _, ok := want[k]; !ok {
-			ops = append(ops, store.Op{Kind: store.OpDelete, Key: k})
-		}
+	ops, err := desiredStateOps(ctx, st, want)
+	if err != nil {
+		return 0, err
 	}
 	if len(ops) == 0 {
 		return cur, nil // state already equals target
@@ -317,5 +328,56 @@ func Rollback(ctx context.Context, st store.Store, target uint64, by, descriptio
 		return 0, err
 	}
 	// The FSM hook created generation cur+1 with the content of target.
+	return cur + 1, nil
+}
+
+// Export returns the canonical snapshot bytes of the current desired
+// state — the same content the newest generation's DataKey holds,
+// suitable for piping directly into an external backup tool (Phase 8
+// X4: the generation store's own state in the backup payload). Empty
+// (never nil) on a store with no generations yet.
+func Export(ctx context.Context, st store.Store) ([]byte, error) {
+	cur, err := Current(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	if cur == 0 {
+		return EncodeSnapshot(nil), nil
+	}
+	m, err := Content(ctx, st, cur)
+	if err != nil {
+		return nil, err
+	}
+	return EncodeSnapshot(m), nil
+}
+
+// Import applies an externally supplied canonical snapshot (as produced
+// by Export, e.g. decoded from a restored backup) as the new desired
+// state — the read half of Phase 8 X4. Mechanically identical to
+// Rollback: append-only (a new generation cur+1, history never
+// rewritten) and a no-op if the store already matches. by and
+// description are reserved for the same future audit trail Rollback's
+// parameters are (the FSM currently stamps CreatedBy "system").
+func Import(ctx context.Context, st store.Store, snapshot []byte, by, description string) (uint64, error) {
+	want, err := DecodeSnapshot(snapshot)
+	if err != nil {
+		return 0, err
+	}
+	cur, err := Current(ctx, st)
+	if err != nil {
+		return 0, err
+	}
+	ops, err := desiredStateOps(ctx, st, want)
+	if err != nil {
+		return 0, err
+	}
+	if len(ops) == 0 {
+		return cur, nil // already matches
+	}
+	_ = by
+	_ = description
+	if _, err := st.Txn(ctx, ops); err != nil {
+		return 0, err
+	}
 	return cur + 1, nil
 }

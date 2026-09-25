@@ -20,6 +20,13 @@ service NodeService {
   rpc GetGeneration(GetGenerationRequest) returns (GenerationInfo);
   rpc DiffGenerations(DiffGenerationsRequest) returns (DiffGenerationsResponse);
   rpc RollbackGeneration(RollbackGenerationRequest) returns (RollbackGenerationResponse);
+  // ExportGeneration/ImportGeneration (Phase 8 X4): the current desired
+  // state as a canonical snapshot, for feeding an external backup tool's
+  // stdin and restoring from it. Mechanically the same append-only
+  // convergence Rollback does, just sourced from bytes, not a stored
+  // generation number.
+  rpc ExportGeneration(ExportGenerationRequest) returns (ExportGenerationResponse);
+  rpc ImportGeneration(ImportGenerationRequest) returns (ImportGenerationResponse);
   // KV access to the node's store. In cluster mode a Put goes through
   // Raft (unavailable when degraded, §4.10.3); Get is linearizable by
   // default, `stale` serves the local FSM copy.
@@ -338,5 +345,21 @@ message RollbackGenerationRequest {
 }
 
 message RollbackGenerationResponse {
+  uint64 new_generation = 1;
+}
+
+message ExportGenerationRequest {}
+
+message ExportGenerationResponse {
+  bytes snapshot = 1; // canonical encoding (generation.EncodeSnapshot)
+  uint64 generation = 2; // the generation number this snapshot came from (0 = none recorded)
+}
+
+message ImportGenerationRequest {
+  bytes snapshot = 1; // canonical encoding, as produced by ExportGeneration
+  string description = 2;
+}
+
+message ImportGenerationResponse {
   uint64 new_generation = 1;
 }

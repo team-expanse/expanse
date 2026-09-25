@@ -205,6 +205,12 @@
           # Phase 08 Stream B (X3): /persist (node/cluster durable state)
           # backed up and restored via restic, checksum-equal.
           backup-persist = mkTest "backup-persist" ./nix/tests/backup-persist.nix;
+
+          # Phase 08 Stream C (X4, X5): the generations store's own
+          # desired-state history, and cluster identity material under
+          # dataDir, both backed up, restored, and provably reconciled/
+          # rejoined for real.
+          backup-cluster-config = mkTest "backup-cluster-config" ./nix/tests/backup-cluster-config.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })

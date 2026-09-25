@@ -139,6 +139,22 @@ func newCtlCmd() *cobra.Command {
 		RunE:  func(cmd *cobra.Command, args []string) error { return ctlGenRollback(cmd, opts, args) },
 	}
 	gen.AddCommand(rb)
+	exp := &cobra.Command{
+		Use:   "export",
+		Short: "Print the current desired state as a canonical snapshot (Phase 8 X4: pipe into a backup tool's stdin)",
+		Args:  cobra.NoArgs,
+		RunE:  func(cmd *cobra.Command, args []string) error { return ctlGenExport(cmd, opts) },
+	}
+	gen.AddCommand(exp)
+	var importDesc string
+	imp := &cobra.Command{
+		Use:   "import",
+		Short: "Apply a snapshot (from `generation export`, e.g. restored from a backup) as a new generation of desired state",
+		Args:  cobra.NoArgs,
+		RunE:  func(cmd *cobra.Command, args []string) error { return ctlGenImport(cmd, opts, importDesc) },
+	}
+	imp.Flags().StringVar(&importDesc, "description", "", "generation description")
+	gen.AddCommand(imp)
 	cmd.AddCommand(gen)
 
 	rec := &cobra.Command{
@@ -504,6 +520,32 @@ func ctlGenRollback(cmd *cobra.Command, opts *ctlOpts, args []string) error {
 			return fmt.Errorf("RollbackGeneration: %w", err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "rolled back; new generation %d (history is append-only — roll forward by rolling back again)\n", res.NewGeneration)
+		return nil
+	})
+}
+
+func ctlGenExport(cmd *cobra.Command, opts *ctlOpts) error {
+	return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+		res, err := c.ExportGeneration(ctx, &pb.ExportGenerationRequest{})
+		if err != nil {
+			return fmt.Errorf("ExportGeneration: %w", err)
+		}
+		_, err = cmd.OutOrStdout().Write(res.Snapshot)
+		return err
+	})
+}
+
+func ctlGenImport(cmd *cobra.Command, opts *ctlOpts, description string) error {
+	snapshot, err := io.ReadAll(cmd.InOrStdin())
+	if err != nil {
+		return fmt.Errorf("read snapshot from stdin: %w", err)
+	}
+	return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+		res, err := c.ImportGeneration(ctx, &pb.ImportGenerationRequest{Snapshot: snapshot, Description: description})
+		if err != nil {
+			return fmt.Errorf("ImportGeneration: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "imported; new generation %d\n", res.NewGeneration)
 		return nil
 	})
 }

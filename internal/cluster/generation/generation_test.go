@@ -220,6 +220,113 @@ func TestRollbackClientSide(t *testing.T) {
 	}
 }
 
+// TestExportImportRoundTrip exercises Phase 8 X4's backup/restore seam:
+// Export dumps the live desired state, a later Import of those exact
+// bytes into a store that has since diverged must converge it back,
+// creating a new (never rewriting history) generation.
+func TestExportImportRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := boltAt(t)
+
+	writeGen(t, ctx, st, 1, map[store.Key][]byte{
+		store.Key("/blocks/a"): []byte("one"),
+		store.Key("/blocks/b"): []byte("two"),
+	})
+	for _, op := range []store.Op{
+		{Kind: store.OpPut, Key: store.Key("/blocks/a"), Value: []byte("one")},
+		{Kind: store.OpPut, Key: store.Key("/blocks/b"), Value: []byte("two")},
+	} {
+		if _, err := st.Txn(ctx, []store.Op{op}); err != nil {
+			t.Fatalf("seed state: %v", err)
+		}
+	}
+
+	snap, err := Export(ctx, st)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if dec, err := DecodeSnapshot(snap); err != nil || string(dec[store.Key("/blocks/a")]) != "one" {
+		t.Fatalf("Export snapshot = %s, %v; want /blocks/a=one", snap, err)
+	}
+
+	// Diverge live state: change one key, drop another, add a third —
+	// simulating desired-state churn between the backup and the restore.
+	for _, op := range []store.Op{
+		{Kind: store.OpPut, Key: store.Key("/blocks/a"), Value: []byte("mutated")},
+		{Kind: store.OpDelete, Key: store.Key("/blocks/b")},
+		{Kind: store.OpPut, Key: store.Key("/blocks/c"), Value: []byte("new")},
+	} {
+		if _, err := st.Txn(ctx, []store.Op{op}); err != nil {
+			t.Fatalf("diverge state: %v", err)
+		}
+	}
+
+	n, err := Import(ctx, st, snap, "test", "restore from backup")
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if n != 2 { // boltstore has no FSM hook (see writeGen); Rollback's own test asserts the same cur+1 shape
+		t.Errorf("Import returned generation %d, want 2", n)
+	}
+
+	a, err := st.Get(ctx, store.Key("/blocks/a"))
+	if err != nil || string(a.Value) != "one" {
+		t.Errorf("/blocks/a = %v, %v; want one (restored)", a, err)
+	}
+	b, err := st.Get(ctx, store.Key("/blocks/b"))
+	if err != nil || string(b.Value) != "two" {
+		t.Errorf("/blocks/b = %v, %v; want two (restored)", b, err)
+	}
+	if _, err := st.Get(ctx, store.Key("/blocks/c")); err == nil {
+		t.Error("/blocks/c still exists after import (should have been removed, absent from the snapshot)")
+	}
+
+	// Importing the same snapshot again, now that state already matches,
+	// is a no-op: it returns Current() unchanged rather than minting a
+	// new generation. boltstore has no FSM hook (see writeGen), so
+	// Current() here still reads back 1 rather than the 2 Import's first
+	// call would have produced against a real raftstore — the same
+	// documented limitation Rollback's own client-side test lives with.
+	n2, err := Import(ctx, st, snap, "test", "")
+	if err != nil {
+		t.Fatalf("second Import: %v", err)
+	}
+	if n2 != 1 {
+		t.Errorf("no-op Import returned %d, want 1 (Current(), unadvanced without an FSM)", n2)
+	}
+}
+
+// TestExportEmptyStore covers Export against a store with no generations
+// recorded yet (a pre-Phase-03-init store, or a fresh test fixture).
+func TestExportEmptyStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := boltAt(t)
+
+	snap, err := Export(ctx, st)
+	if err != nil {
+		t.Fatalf("Export on empty store: %v", err)
+	}
+	dec, err := DecodeSnapshot(snap)
+	if err != nil {
+		t.Fatalf("DecodeSnapshot: %v", err)
+	}
+	if len(dec) != 0 {
+		t.Errorf("empty-store export decoded to %d keys, want 0", len(dec))
+	}
+}
+
+// TestImportInvalidSnapshot covers Import's error path on garbage input.
+func TestImportInvalidSnapshot(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := boltAt(t)
+	if _, err := Import(ctx, st, []byte("not json"), "test", ""); err == nil {
+		t.Error("Import accepted garbage snapshot bytes")
+	}
+}
+
 // TestGetAndDiffEmpty covers generation metadata reads and the empty
 // diff shape.
 func TestGetAndDiffEmpty(t *testing.T) {

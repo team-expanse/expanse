@@ -521,6 +521,31 @@ func (s *Server) RollbackGeneration(ctx context.Context, req *pb.RollbackGenerat
 	return &pb.RollbackGenerationResponse{NewGeneration: n}, nil
 }
 
+// ExportGeneration returns the current desired state as a canonical
+// snapshot (Phase 8 X4), for a CLI caller to write to a backup tool's
+// stdin.
+func (s *Server) ExportGeneration(ctx context.Context, req *pb.ExportGenerationRequest) (*pb.ExportGenerationResponse, error) {
+	cur, err := generation.Current(ctx, s.store)
+	if err != nil {
+		return nil, mapErr("ExportGeneration", err)
+	}
+	snap, err := generation.Export(ctx, s.store)
+	if err != nil {
+		return nil, mapErr("ExportGeneration", err)
+	}
+	return &pb.ExportGenerationResponse{Snapshot: snap, Generation: cur}, nil
+}
+
+// ImportGeneration applies a snapshot produced by ExportGeneration (e.g.
+// decoded from a restored backup) as the new desired state (Phase 8 X4).
+func (s *Server) ImportGeneration(ctx context.Context, req *pb.ImportGenerationRequest) (*pb.ImportGenerationResponse, error) {
+	n, err := generation.Import(ctx, s.store, req.Snapshot, "user", req.Description)
+	if err != nil {
+		return nil, mapErr("ImportGeneration", err)
+	}
+	return &pb.ImportGenerationResponse{NewGeneration: n}, nil
+}
+
 // mapErr converts typed errors to gRPC codes; unknown errors become
 // Internal with the original message.
 func mapErr(op string, err error) error {
