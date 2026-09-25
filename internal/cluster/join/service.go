@@ -32,10 +32,19 @@ type Service struct {
 	Secret     []byte // 32 bytes
 	ThisNodeID string
 
+	// CASource, when set, supplies the CA new joiners are signed under
+	// on every call, overriding the static CA field — so a leader
+	// mid-rotation (Phase 10 X2) signs joiners with the current
+	// primary CA, not whatever was loaded at startup. CA remains the
+	// fallback (and the only source SealedCAKey caching applies to).
+	CASource func() (*ca.CA, error)
+
 	// SealedCAKey is the CA private key age-sealed to the cluster
 	// secret (§4.4 layout: every node stores it so any node can serve
 	// the join endpoint when it becomes leader). Computed lazily from
-	// CA.Priv + Secret when nil.
+	// CA.Priv + Secret when nil. Only used for the static CA field;
+	// CASource callers reseal on every call, since the key can change
+	// across rotation.
 	SealedCAKey []byte
 
 	// LeaderJoinAddr maps a leader raft address to the :7446 join
@@ -71,6 +80,15 @@ func ServerTLSConfig(cert tls.Certificate, caBundle *ca.Bundle) *tls.Config {
 
 func joinErr(c codes.Code, err error) error {
 	return status.Error(c, err.Error())
+}
+
+// activeCA resolves the CA new joiners are signed under: CASource when
+// set (the live, possibly-rotated primary), else the static CA field.
+func (s *Service) activeCA() (*ca.CA, error) {
+	if s.CASource != nil {
+		return s.CASource()
+	}
+	return s.CA, nil
 }
 
 // Join implements the §4.5 protocol:
@@ -235,8 +253,15 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 
 	// 6. Sign the joiner's CSR (key generated and kept by the joiner;
 	// only the public key travels). Re-join deliberately re-signs: the
-	// interrupted joiner may have lost its key material.
-	cert, err := s.CA.IssueCSR(csr, time.Now())
+	// interrupted joiner may have lost its key material. Signs under
+	// the current primary CA (activeCA), which moves mid-rotation
+	// (Phase 10 X2) so new joiners never land on a CA about to be
+	// retired.
+	activeCA, err := s.activeCA()
+	if err != nil {
+		return nil, joinErr(codes.Unavailable, errors.Wrap(err, errors.KindUnavailable, "join.Join", "load signing CA: "+err.Error()))
+	}
+	cert, err := activeCA.IssueCSR(csr, time.Now())
 	if err != nil {
 		return nil, joinErr(codes.Internal, errors.Wrap(err, errors.KindInternal, "join.Join", "sign CSR: "+err.Error()))
 	}
@@ -248,14 +273,14 @@ func (s *Service) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRespon
 		return nil, joinErr(codes.Internal, err)
 	}
 	return &pb.JoinResponse{
-		CaCert:         ca.MarshalCert(s.CA.Cert),
+		CaCert:         ca.MarshalCert(activeCA.Cert),
 		NodeCert:       certPEM,
 		ClusterId:      s.ClusterID,
 		ClusterSecret:  append([]byte(nil), s.Secret...),
 		Peers:          peers,
 		RaftConfig:     `{"heartbeat":1000,"election":1000}`, // ms, matches raftstore defaults
 		LeaderRaftAddr: s.St.Leader(),
-		SealedCaKey:    s.sealedCAKey(),
+		SealedCaKey:    s.sealedCAKey(activeCA),
 	}, nil
 }
 
@@ -310,9 +335,19 @@ func hexEncode(b []byte) string {
 }
 
 // sealedCAKey returns the age-sealed CA private key (sealed to the
-// cluster secret), sealing on first use. The joiner stores it verbatim;
-// its exposure equals the cluster secret it is sealed to.
-func (s *Service) sealedCAKey() []byte {
+// cluster secret) for activeCA, sealing on first use when CASource is
+// unset (the static, non-rotating case). With CASource set, the CA can
+// change across calls, so the cache is bypassed and every call reseals.
+// The joiner stores it verbatim; its exposure equals the cluster secret
+// it is sealed to.
+func (s *Service) sealedCAKey(activeCA *ca.CA) []byte {
+	if s.CASource != nil {
+		sealed, err := ca.SealKey(activeCA.Priv, s.Secret)
+		if err != nil {
+			return nil
+		}
+		return sealed
+	}
 	if len(s.SealedCAKey) == 0 {
 		sealed, err := ca.SealKey(s.CA.Priv, s.Secret)
 		if err != nil {

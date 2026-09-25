@@ -476,3 +476,110 @@ func TestJoinRevokedNodeRejected(t *testing.T) {
 		t.Errorf("node record exists after revoked join: %v", err)
 	}
 }
+
+// TestJoinSignsUnderCASourceWhenSet covers Phase 10 X2's fix for a
+// stale in-memory signing CA: when CASource is set, new joiners are
+// signed (and the sealed key returned) under whatever CA it currently
+// returns — CA (the static field, from before this leader's process
+// started) is never used, even though it's still what presents the
+// join endpoint's own TLS identity.
+func TestJoinSignsUnderCASourceWhenSet(t *testing.T) {
+	port := freeJoinPort(t)
+	st, err := raftstore.Open(raftstore.Config{
+		NodeID: "n0", BindAddr: fmt.Sprintf("127.0.0.1:%d", port), DataDir: t.TempDir(), Bootstrap: true,
+	})
+	if err != nil {
+		t.Fatalf("open leader: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	waitJoinLeader(t, st, 10*time.Second)
+
+	staleCA, err := ca.Generate(testClusterID, time.Now())
+	if err != nil {
+		t.Fatalf("stale CA: %v", err)
+	}
+	liveCA, err := ca.Generate(testClusterID, time.Now())
+	if err != nil {
+		t.Fatalf("live CA: %v", err)
+	}
+	secret := make([]byte, 32)
+	copy(secret, []byte("0123456789abcdef0123456789abcdef"))
+
+	// The endpoint's own TLS identity still comes from staleCA — only
+	// the SIGNING CA (CASource) has moved. The test client is TOFU, so
+	// this doesn't need to be trusted for the handshake to succeed.
+	leaderCert, priv, err := staleCA.IssueNode("n0", "localhost", []net.IP{net.IPv4(127, 0, 0, 1)}, time.Now())
+	if err != nil {
+		t.Fatalf("issue leader cert: %v", err)
+	}
+	tlsCert := tls.Certificate{Certificate: [][]byte{leaderCert.Raw, staleCA.Cert.Raw}, PrivateKey: priv}
+	bundle, err := ca.NewBundle(staleCA.Cert)
+	if err != nil {
+		t.Fatalf("bundle: %v", err)
+	}
+	svc := &join.Service{
+		St: st, CA: staleCA, CASource: func() (*ca.CA, error) { return liveCA, nil },
+		ClusterID: testClusterID, Secret: secret, ThisNodeID: "n0",
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", freeJoinPort(t)))
+	if err != nil {
+		t.Fatalf("join listen: %v", err)
+	}
+	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(join.ServerTLSConfig(tlsCert, bundle))))
+	svc.Register(srv)
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(srv.Stop)
+
+	// A real, listening (if unbootstrapped) raft node for the joiner --
+	// AddVoter needs an address that actually answers, or the leader
+	// loses quorum trying to commit the membership change.
+	joinerPort := freeJoinPort(t)
+	joinerSt, err := raftstore.Open(raftstore.Config{
+		NodeID: "n9", BindAddr: fmt.Sprintf("127.0.0.1:%d", joinerPort), DataDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("open joiner: %v", err)
+	}
+	t.Cleanup(func() { _ = joinerSt.Close() })
+	joinerAddr := fmt.Sprintf("127.0.0.1:%d", joinerPort)
+
+	tok, _, err := join.CreateToken(context.Background(), st, testClusterID, secret, time.Minute, 1, "n0", "")
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	csrDER, err := makeCSR(t, "n9")
+	if err != nil {
+		t.Fatalf("makeCSR: %v", err)
+	}
+	resp, err := (&join.Client{}).Join(context.Background(), ln.Addr().String(), &pb.JoinRequest{
+		NodeId: "n9", Csr: csrDER, Token: tok, AdvertiseAddr: joinerAddr, ApiAddr: "127.0.0.1:1", Role: "voter",
+	})
+	if err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+
+	gotCA, err := ca.UnmarshalCert(resp.GetCaCert())
+	if err != nil {
+		t.Fatalf("unmarshal returned CA cert: %v", err)
+	}
+	if gotCA.SerialNumber.Cmp(liveCA.Cert.SerialNumber) != 0 {
+		t.Error("JoinResponse.CaCert did not come from CASource")
+	}
+	nodeCert, err := ca.UnmarshalCert(resp.GetNodeCert())
+	if err != nil {
+		t.Fatalf("unmarshal node cert: %v", err)
+	}
+	if err := nodeCert.CheckSignatureFrom(liveCA.Cert); err != nil {
+		t.Errorf("node cert not signed by CASource's CA: %v", err)
+	}
+	if err := nodeCert.CheckSignatureFrom(staleCA.Cert); err == nil {
+		t.Error("node cert was signed by the static/stale CA field instead of CASource")
+	}
+	unsealed, err := ca.UnsealKey(resp.GetSealedCaKey(), secret)
+	if err != nil {
+		t.Fatalf("unseal returned CA key: %v", err)
+	}
+	if unsealed.Equal(staleCA.Priv) {
+		t.Error("sealed CA key is the static/stale CA's key, not CASource's")
+	}
+}

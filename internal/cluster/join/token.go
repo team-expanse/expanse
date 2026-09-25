@@ -114,6 +114,14 @@ type NodeRecord struct {
 	// its new CSR's key fingerprints match; otherwise it is a different
 	// actor claiming someone else's identity and must be refused.
 	PubKeyFingerprint string `json:"pubkey_fp,omitempty"`
+
+	// CAFingerprint (ca.Fingerprint of the CA that most recently signed
+	// this node's cert) is stamped by internal/cluster/control's
+	// renewal loop after every reissue. CA rotation (Phase 10 X2) reads
+	// it across every node to know whether the outgoing CA can be
+	// retired yet: not until every node's fingerprint matches the new
+	// primary.
+	CAFingerprint string `json:"ca_fp,omitempty"`
 }
 
 // PubKeyFingerprint returns a stable, comparable fingerprint of a

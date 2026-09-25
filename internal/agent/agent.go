@@ -69,7 +69,11 @@ type Config struct {
 	// ControllerPeriod is the block placement controller's backstop pass
 	// interval (§4.3 retry timer, default 30s). Shorter in tests.
 	ControllerPeriod time.Duration
-	DryRun           bool
+	// RenewalPeriod is the cert-renewal/CA-rotation loop's tick
+	// interval (Phase 10 X2, default control.RenewalInterval). Shorter
+	// in tests, which can't wait out real 30-day cert validity.
+	RenewalPeriod time.Duration
+	DryRun        bool
 	// EnableTCP enables the :7443 listener — disabled in Phase 02 (no
 	// mTLS yet); Phase 03 enables it with mTLS.
 	EnableTCP  bool
@@ -824,6 +828,15 @@ func (a *Agent) Run(ctx context.Context) error {
 				a.logger.Error("internal endpoint failed", "err", err)
 			}
 		}()
+
+		// Cert renewal and CA rotation catch-up (Phase 10 X2). Every
+		// node runs it, including witnesses: they still hold their own
+		// TLS identity and serve the :7443 mTLS endpoint above, so
+		// their cert would silently expire without this. Not gated on
+		// leadership — any node may become leader before it next
+		// renews, and rotation needs every node caught up, not just
+		// the leader.
+		go control.RunRenewalLoop(ctx, a.ctl.store, a.ctl.dataDir, a.cfg.NodeID, a.ctl.secret, a.cfg.RenewalPeriod, a.logger)
 		defer func() { _ = a.ctl.fwd.Close() }()
 	}
 

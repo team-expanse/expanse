@@ -17,6 +17,7 @@ func newAgentCmd() *cobra.Command {
 		socket      string
 		period      string
 		ctlPeriod   string
+		renewPeriod string
 		dryRun      bool
 		enableTCP   bool
 		role        string
@@ -78,6 +79,13 @@ func newAgentCmd() *cobra.Command {
 				}
 				cfg.ControllerPeriod = d
 			}
+			if renewPeriod != "" {
+				d, err := parseDuration(renewPeriod)
+				if err != nil {
+					return fmt.Errorf("--renewal-period: %w", err)
+				}
+				cfg.RenewalPeriod = d
+			}
 			if lostAfter != "" {
 				d, err := parseDuration(lostAfter)
 				if err != nil {
@@ -96,6 +104,7 @@ func newAgentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&socket, "socket", "/run/expanse/agent.sock", "gRPC unix socket path")
 	cmd.Flags().StringVar(&period, "period", "30s", "reconcile tick period")
 	cmd.Flags().StringVar(&ctlPeriod, "controller-period", "", "block placement controller pass interval (default 30s)")
+	cmd.Flags().StringVar(&renewPeriod, "renewal-period", "", "cert renewal / CA rotation catch-up pass interval (Phase 10 X2, default 6h)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "plan but never apply changes")
 	cmd.Flags().BoolVar(&enableTCP, "enable-tcp", false, "enable the TCP gRPC listener (no mTLS yet; off by default)")
 	cmd.Flags().StringVar(&role, "role", "", "cluster role override (§4.9: voter | witness; default: from the node record)")

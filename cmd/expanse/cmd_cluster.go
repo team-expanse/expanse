@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/expanse/expanse/internal/cluster/control"
@@ -34,6 +35,7 @@ func newClusterCmd() *cobra.Command {
 	cmd.AddCommand(newClusterLeaveCmd())
 	cmd.AddCommand(newClusterTokenCmd())
 	cmd.AddCommand(newClusterDiscoverCmd())
+	cmd.AddCommand(newClusterCACmd())
 	return cmd
 }
 
@@ -257,6 +259,28 @@ func openClusterStore(dataDir, nodeID string) (*raftstore.Store, func(), error) 
 	if err != nil {
 		return nil, nil, fmt.Errorf("open store (is the daemon running? it holds the lock): %w", err)
 	}
+	// Write/read forwarding to the leader (mirrors agent.go's cluster
+	// wiring exactly): without it, any command run from a non-leader
+	// node fails outright — a linearizable read/write only works
+	// locally on whichever node happens to be leader. CLI commands
+	// (token, ca, leave) must work from any enrolled node.
+	if _, _, clusterCA, err := control.LoadCluster(dataDir); err == nil {
+		fwd := raftstore.NewGRPCForwarder(
+			func() string { return st.Leader() },
+			func(raftAddr string) (string, bool) {
+				host, _, err := net.SplitHostPort(raftAddr)
+				if err != nil {
+					return "", false
+				}
+				return net.JoinHostPort(host, fmt.Sprintf("%d", config.PortAPI)), true
+			},
+		)
+		if tlsCfg, err := control.InternalClientTLS(context.Background(), st, clusterCA, dataDir); err == nil {
+			fwd.SetDialCreds(credentials.NewTLS(tlsCfg))
+			st.SetForwarder(fwd.Forward)
+			st.SetReadForwarder(fwd)
+		}
+	}
 	return st, func() { _ = st.Close() }, nil
 }
 
@@ -343,6 +367,124 @@ func newClusterLeaveCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID of the local node")
+	return cmd
+}
+
+// newClusterCACmd groups CA rotation commands (Phase 10 X2). Like
+// `token create`, these reopen the local raft store directly
+// (openClusterStore) rather than going through the running daemon, so
+// — exactly as documented for `token create` — the invoking node's own
+// daemon must not be holding the raft port when the command runs; the
+// other nodes of the cluster are unaffected and stay up throughout.
+func newClusterCACmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "ca", Short: "Cluster CA rotation (Phase 10 X2)"}
+	cmd.AddCommand(newClusterCARotateCmd(), newClusterCAStatusCmd(), newClusterCACompleteCmd())
+	return cmd
+}
+
+func newClusterCARotateCmd() *cobra.Command {
+	var dataDir, nodeID string
+	cmd := &cobra.Command{
+		Use:   "rotate",
+		Short: "Generate a fresh CA and start rotation (old CA stays trusted until `ca complete`)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, cleanup, err := openClusterStore(dataDir, nodeID)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			_, secret, _, err := control.LoadCluster(dataDir)
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
+			defer cancel()
+			// Reopening the raft store just now means this node is a
+			// rejoining follower with no idea yet who's leader; give it
+			// a real chance to hear from one before the actual op,
+			// rather than a short-lived CAS failing outright (mirrors
+			// `cluster status`'s own WaitForLeader use).
+			if !control.WaitForLeader(ctx, st, 30*time.Second) {
+				return fmt.Errorf("no leader reachable within 30s")
+			}
+			if _, err := control.RotateCA(ctx, st, secret, time.Now()); err != nil {
+				return err
+			}
+			fmt.Println("CA rotation started: the new CA is now primary; the old CA stays trusted. " +
+				"Every node reissues its own cert onto the new CA the next time its renewal loop ticks " +
+				"(no restart needed). Check progress with `cluster ca status`; once every node has " +
+				"caught up, run `cluster ca complete` to retire the old CA.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
+	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
+	return cmd
+}
+
+func newClusterCAStatusCmd() *cobra.Command {
+	var dataDir, nodeID string
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show CA rotation progress",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, cleanup, err := openClusterStore(dataDir, nodeID)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
+			defer cancel()
+			if !control.WaitForLeader(ctx, st, 30*time.Second) {
+				return fmt.Errorf("no leader reachable within 30s")
+			}
+			status, err := control.CARotationStatus(ctx, st)
+			if err != nil {
+				return err
+			}
+			if !status.Rotating {
+				fmt.Println("no rotation in progress")
+				return nil
+			}
+			fmt.Printf("rotating: primary CA fingerprint %s\n", status.Fingerprint)
+			if len(status.Pending) == 0 {
+				fmt.Println("every node has renewed onto the new CA; safe to run `cluster ca complete`")
+			} else {
+				fmt.Printf("pending nodes (not yet renewed): %v\n", status.Pending)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
+	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
+	return cmd
+}
+
+func newClusterCACompleteCmd() *cobra.Command {
+	var dataDir, nodeID string
+	cmd := &cobra.Command{
+		Use:   "complete",
+		Short: "Retire the outgoing CA once every node has renewed onto the new one",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, cleanup, err := openClusterStore(dataDir, nodeID)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
+			defer cancel()
+			if !control.WaitForLeader(ctx, st, 30*time.Second) {
+				return fmt.Errorf("no leader reachable within 30s")
+			}
+			if err := control.CompleteCARotation(ctx, st); err != nil {
+				return err
+			}
+			fmt.Println("CA rotation complete: outgoing CA retired.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
+	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
 	return cmd
 }
 

@@ -44,6 +44,7 @@ type EnrollOptions struct {
 // EnrollResult is what a successful join produced.
 type EnrollResult struct {
 	NodeID    string
+	DataDir   string // where enrollment state (certs, secret, CA) was persisted
 	RaftAddr  string
 	ClusterID string
 	Secret    []byte
@@ -195,7 +196,7 @@ func Enroll(ctx context.Context, opts EnrollOptions) (*EnrollResult, error) {
 	}
 
 	return &EnrollResult{
-		NodeID: nodeID, RaftAddr: adv, ClusterID: resp.GetClusterId(),
+		NodeID: nodeID, DataDir: opts.DataDir, RaftAddr: adv, ClusterID: resp.GetClusterId(),
 		Secret: resp.GetClusterSecret(), Store: st, Cert: cert, CACert: caCert, Peers: resp.GetPeers(),
 	}, nil
 }

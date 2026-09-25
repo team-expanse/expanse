@@ -29,6 +29,12 @@ in
       description = "Block placement controller pass interval. Empty = daemon default (30s).";
     };
 
+    renewalPeriod = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Cert renewal / CA rotation catch-up pass interval (Phase 10 X2). Empty = daemon default (6h).";
+    };
+
     blocksCatalog = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -298,6 +304,7 @@ in
         ExecStart = with lib;
           "${pkgs.expanse}/bin/expanse agent --data-dir ${cfg.persistDir}/expanse --period ${cfg.period}" +
           optionalString (cfg.controllerPeriod != "") " --controller-period ${cfg.controllerPeriod}" +
+          optionalString (cfg.renewalPeriod != "") " --renewal-period ${cfg.renewalPeriod}" +
           optionalString (cfg.blocksCatalog != null) " --blocks-catalog ${cfg.blocksCatalog}" +
           optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}" +
           optionalString (cfg.externalVIPPool != "") " --external-vip-pool ${cfg.externalVIPPool}" +

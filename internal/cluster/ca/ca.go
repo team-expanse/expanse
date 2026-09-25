@@ -1,17 +1,24 @@
 // Package ca implements the cluster certificate authority: an Ed25519 root
 // CA, node certificate issuance and renewal, mTLS configuration builders for
 // all internal listeners, and a trust bundle that supports two simultaneously
-// active CAs (for CA rotation, exercised in Phase 14).
+// active CAs (for CA rotation, Phase 10 X2 — internal/cluster/control's
+// renewal loop and castate.go drive it over this bundle).
 //
 // Certificate layout:
 //   - CA:  Ed25519, self-signed, CN "Expanse Cluster CA <cluster-id>",
-//     validity 10 years, stored at /cluster/ca/cert in Raft; the private key
-//     is sealed at /persist/expanse/secrets/ca.key (age-encrypted with a key
-//     derived from the cluster secret; TPM-sealed in Phase 14).
+//     validity 10 years. Each node caches it at
+//     /persist/expanse/ca/ca.pem, with the private key sealed alongside at
+//     ca/ca.key.sealed (age-encrypted with a key derived from the cluster
+//     secret; TPM-sealed is a deferred future feature, ARCHITECTURE.md —
+//     no TPM hardware to test against). The authoritative copy — needed so
+//     every node agrees during rotation, not just whichever CA a node's own
+//     disk cache happens to hold — lives in the Raft store at
+//     /cluster/ca/trust (internal/cluster/control's CATrust record).
 //   - Node: Ed25519, CN = node ID, SANs = node ID, hostname, all node IPs,
 //     validity 30 days, auto-renewed when 10 days remain (i.e. at 20 days of
-//     a 30-day cert). A node whose cert fully expires (offline > 30 days)
-//     must re-join with a fresh token.
+//     a 30-day cert) by internal/cluster/control's renewal loop. A node
+//     whose cert fully expires (offline > 30 days) must re-join with a
+//     fresh token.
 package ca
 
 import (
@@ -212,6 +219,15 @@ func UnmarshalCert(b []byte) (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
+// Fingerprint returns a stable, comparable identifier for a CA
+// certificate: SHA-256 of its raw DER, hex encoded. Used during CA
+// rotation to tell which CA issued a given node cert, and which CA a
+// node has already renewed onto.
+func Fingerprint(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(sum[:])
+}
+
 // KeyPEM PEM-encodes a private key (PKCS8).
 func KeyPEM(priv ed25519.PrivateKey) ([]byte, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
@@ -322,6 +338,76 @@ func TLSConfig(bundle *Bundle, ownCert tls.Certificate, knownNodes func() []stri
 		RootCAs:               bundle.Pool(),
 		Certificates:          []tls.Certificate{ownCert},
 		VerifyPeerCertificate: VerifyPeerCN(knownNodes),
+	}
+}
+
+// CertSource returns this node's current TLS identity. Callers re-invoke
+// it on every handshake (via GetCertificate/GetClientCertificate) so a
+// cert renewed on disk takes effect without restarting the listener.
+type CertSource func() (*tls.Certificate, error)
+
+// BundleSource returns the currently trusted CA set. Callers re-invoke
+// it on every handshake so a CA rotation's bundle change (or its later
+// retirement of the outgoing CA) takes effect without restarting the
+// listener — mirrors VerifyPeerCN's existing "membership changes take
+// effect on the next handshake" design, extended to trust itself.
+type BundleSource func() (*Bundle, error)
+
+// TLSConfigDynamic is TLSConfig, but the identity certificate and trust
+// bundle are re-read on every handshake instead of fixed at config-build
+// time (Phase 10 X2: CA rotation and cert renewal must not require
+// restarting the internal :7443/:7446 listeners).
+func TLSConfigDynamic(bundle BundleSource, cert CertSource, knownNodes func() []string) *tls.Config {
+	base := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ClientAuth: tls.RequireAndVerifyClientCert,
+	}
+	base.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return cert() }
+	base.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		b, err := bundle()
+		if err != nil {
+			return nil, err
+		}
+		cfg := base.Clone()
+		cfg.ClientCAs = b.Pool()
+		cfg.RootCAs = b.Pool()
+		cfg.VerifyPeerCertificate = VerifyPeerCN(knownNodes)
+		return cfg, nil
+	}
+	return base
+}
+
+// PeerTLSConfigDynamic is PeerTLSConfig with the same live re-read of
+// identity and trust bundle as TLSConfigDynamic (see its doc).
+func PeerTLSConfigDynamic(bundle BundleSource, cert CertSource, knownNodes func() []string) *tls.Config {
+	return &tls.Config{
+		MinVersion:            tls.VersionTLS13,
+		GetClientCertificate:  func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return cert() },
+		InsecureSkipVerify:    true,
+		VerifyPeerCertificate: verifyPeerChainAndCNDynamic(bundle, knownNodes),
+	}
+}
+
+// verifyPeerChainAndCNDynamic is VerifyPeerChainAndCN with a live bundle
+// re-read instead of a fixed one.
+func verifyPeerChainAndCNDynamic(bundle BundleSource, knownNodes func() []string) func([][]byte, [][]*x509.Certificate) error {
+	cnCheck := VerifyPeerCN(knownNodes)
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return errors.New("ca: no peer certificate presented")
+		}
+		cert, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return fmt.Errorf("ca: parse peer cert: %w", err)
+		}
+		b, err := bundle()
+		if err != nil {
+			return fmt.Errorf("ca: load trust bundle: %w", err)
+		}
+		if err := b.VerifyNode(cert, time.Now()); err != nil {
+			return err
+		}
+		return cnCheck(rawCerts, nil)
 	}
 }
 

@@ -144,6 +144,13 @@ func Init(ctx context.Context, opts InitOptions) (*InitResult, error) {
 		_ = st.Close()
 		return nil, err
 	}
+	// The Raft-replicated CA trust record (Phase 10 X2): the
+	// authoritative source rotation and every node's renewal loop read,
+	// not the disk cache above (which is a bootstrap convenience only).
+	if err := InitCATrust(ctx, st, secret, clusterCA); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	// The init node needs its own TLS identity too: the join endpoint
 	// (:7446) presents it, and Phase 03+ mTLS uses it. Same layout as
 	// Enroll persists for joiners (tls/node-cert.pem, tls/node-key.pem).
