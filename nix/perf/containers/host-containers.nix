@@ -136,6 +136,18 @@ let
       # if inert, declaration. Found live via `nix eval` against this exact module, not
       # assumed (a stock, minimal container example never hits this because it doesn't
       # import this much of the real module tree).
+      # `noauto` on all three: found live that omitting it actually breaks the boot,
+      # not just leaves harmless dead config as assumed. neededForBoot = false only
+      # keeps a fileSystems entry out of the *early* boot path; without noauto it is
+      # still pulled into local-fs.target as an ordinary REQUIRED mount, and since
+      # "rootfs" isn't a real, mountable device, that mount fails ("nix.mount ...
+      # failed") and -- being required -- escalates the whole boot into
+      # `systemctl is-system-running` = maintenance (confirmed via `systemctl
+      # --failed` inside a real running container). noauto means systemd never
+      # attempts to mount these at all, which is correct: nspawn already provides
+      # the real "/", "/nix" and "/persist" from outside before the container's own
+      # systemd even starts: these entries exist only to satisfy the NixOS module
+      # system's own eval-time fsType/device requirements (see above), nothing more.
       fileSystems."/" = {
         # "/" specifically (unlike /nix, /persist) hard-requires a device string --
         # found live via `nix eval`: "No device specified for mount point '/'." This
@@ -144,9 +156,10 @@ let
         device = lib.mkForce "rootfs";
         fsType = lib.mkForce "none";
         neededForBoot = lib.mkForce false;
+        options = [ "noauto" ];
       };
-      fileSystems."/nix" = { device = lib.mkForce "rootfs"; fsType = lib.mkForce "none"; neededForBoot = lib.mkForce false; };
-      fileSystems."/persist" = { device = lib.mkForce "rootfs"; fsType = lib.mkForce "none"; neededForBoot = lib.mkForce false; };
+      fileSystems."/nix" = { device = lib.mkForce "rootfs"; fsType = lib.mkForce "none"; neededForBoot = lib.mkForce false; options = [ "noauto" ]; };
+      fileSystems."/persist" = { device = lib.mkForce "rootfs"; fsType = lib.mkForce "none"; neededForBoot = lib.mkForce false; options = [ "noauto" ]; };
 
       # impermanence.nix's own root-wipe mechanism is an initrd-stage unit
       # (expanse-impermanence-rollback / expanse-persist-init) -- a container
