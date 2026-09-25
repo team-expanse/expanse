@@ -139,8 +139,25 @@ in
 
   # Isolated bridge, no physical uplink: containers reach each other over it
   # directly (matching the nixosTest VM tests' own single-vlan eth1 model),
-  # never touching the host's real LAN.
-  networking.bridges.br-expanse.interfaces = [ ];
+  # never touching the host's real LAN. Plain `ip link`, not
+  # networking.bridges.<name>: that option is part of NixOS's classic scripted
+  # networking backend, a no-op on a NetworkManager-managed host (this one) --
+  # found live ("Failed to add interface vb-n1 to bridge br-expanse: No such
+  # device"), not assumed. A kernel bridge created this way exists and is
+  # usable by nspawn's --network-bridge= regardless of which stack manages
+  # every other interface on the host.
+  systemd.services.expanse-perf-bridge = {
+    description = "Create the isolated bridge for the X1 perf containers";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "container@n1.service" "container@n2.service" "container@n3.service" ];
+    path = [ pkgs.iproute2 ];
+    serviceConfig.Type = "oneshot";
+    serviceConfig.RemainAfterExit = true;
+    script = ''
+      ip link show br-expanse >/dev/null 2>&1 || ip link add br-expanse type bridge
+      ip link set br-expanse up
+    '';
+  };
 
   containers.n1 = mkContainer 1;
   containers.n2 = mkContainer 2;
