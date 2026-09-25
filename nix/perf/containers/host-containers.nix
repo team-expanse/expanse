@@ -134,11 +134,16 @@ let
         serviceConfig.RemainAfterExit = true;
         script = ''
           vgchange -ay expanse >/dev/null 2>&1 || true
-          if vgs expanse >/dev/null 2>&1; then
-            echo "expanse-scratch-vg: volume group expanse already exists"
+          # Check the POOL, not just the VG: a real prior run on this exact host got
+          # partway (VG created) before the thin-pool step itself failed (missing
+          # CAP_MKNOD, fixed separately) -- checking only `vgs expanse` would have
+          # treated that half-built state as "already done" and never retried the
+          # pool, found live rather than assumed.
+          if lvs expanse/pool >/dev/null 2>&1; then
+            echo "expanse-scratch-vg: volume group + thin pool already exist"
             exit 0
           fi
-          vgcreate expanse ${disk}
+          vgs expanse >/dev/null 2>&1 || vgcreate expanse ${disk}
           lvcreate --yes --type thin-pool -l 80%FREE -n pool expanse
         '';
       };
