@@ -253,6 +253,12 @@
           # throughout -- ARCHITECTURE.md §8's own bar, now measured under compound
           # rather than isolated fault load.
           chaos-soak = mkTest "chaos-soak" ./nix/tests/chaos-soak.nix;
+
+          # Phase 11 Stream C (X3): a live 3-node cluster upgraded one node at a time via
+          # the real switch-to-configuration binary, under continuous KV and volume load,
+          # zero acked-write loss and continuous availability throughout -- this project's
+          # first-ever mixed-version-cluster test.
+          cluster-rolling-upgrade = mkTest "cluster-rolling-upgrade" ./nix/tests/cluster-rolling-upgrade.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
