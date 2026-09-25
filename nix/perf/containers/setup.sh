@@ -62,18 +62,22 @@ echo "== 2/6: deactivating any stale VG and wiping signatures on the three disks
 for n in "${NAMES[@]}"; do
     systemctl stop "container@$n.service" 2>/dev/null || true
 done
+# `vgchange -an <uuid>` doesn't work -- vgchange takes a VG name/tag, not a bare UUID
+# ("Volume group '<uuid>' not found"), found live. And the *name* is ambiguous here (3
+# disks each carrying a VG literally named "expanse" from before per-container VG
+# naming existed -- "WARNING: VG name expanse is used by VGs <uuid1> and <uuid2>").
+# Simplest reliable fix: remove the DM devices directly by their actual names
+# (confirmed via `dmsetup ls`: <vg>-pool / <vg>-pool_tdata / <vg>-pool_tmeta, LVM's own
+# thin-pool naming convention), bypassing VG-name resolution entirely. Pool before its
+# two backing linear devices, since pool depends on them. Tries every VG name this
+# harness has ever used (old shared "expanse", current per-container "expanse-n<N>"),
+# ignoring failures for combinations that don't exist.
+for vg in expanse expanse-n1 expanse-n2 expanse-n3; do
+    dmsetup remove "$vg-pool" 2>/dev/null || true
+    dmsetup remove "$vg-pool_tdata" 2>/dev/null || true
+    dmsetup remove "$vg-pool_tmeta" 2>/dev/null || true
+done
 for d in "${DISKS[@]}"; do
-    # By UUID, not name: 3 disks each carrying a VG literally named "expanse" (from
-    # before this VG-per-container naming existed) makes the *name* ambiguous across
-    # different UUIDs -- confirmed live ("WARNING: VG name expanse is used by VGs
-    # <uuid1> and <uuid2>. Fix duplicate VG names with vgrename uuid..."), which is
-    # almost certainly why `vgchange -an "$vg"` by name alone silently missed the one
-    # actually active, leaving wipefs still failing "Device or resource busy". A UUID
-    # is unambiguous regardless of how many VGs elsewhere share the same name string.
-    vguuid="$(pvs --noheadings -o vg_uuid "$d" 2>/dev/null | tr -d ' ')"
-    if [[ -n "$vguuid" ]]; then
-        vgchange -an "$vguuid" 2>/dev/null || true
-    fi
     wipefs -a "$d"
 done
 
