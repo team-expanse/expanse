@@ -196,6 +196,15 @@
           # adopted (D1), basic backup/restore round-trip against a real
           # in-VM S3-compatible target (garage, not minio -- no insecure flag).
           backup-basic = mkTest "backup-basic" ./nix/tests/backup-basic.nix;
+
+          # Phase 08 Stream B (X2): opaque LVM-thin volume snapshot backed up
+          # and restored via restic, checksum-equal, isolated from a
+          # concurrent live write (R1/D5).
+          backup-volume-snapshot = mkTest "backup-volume-snapshot" ./nix/tests/backup-volume-snapshot.nix;
+
+          # Phase 08 Stream B (X3): /persist (node/cluster durable state)
+          # backed up and restored via restic, checksum-equal.
+          backup-persist = mkTest "backup-persist" ./nix/tests/backup-persist.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
