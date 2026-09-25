@@ -66,24 +66,35 @@ done
 # ("Volume group '<uuid>' not found"), found live. And the *name* is ambiguous here (3
 # disks each carrying a VG literally named "expanse" from before per-container VG
 # naming existed -- "WARNING: VG name expanse is used by VGs <uuid1> and <uuid2>").
-# Simplest reliable fix: remove the DM devices directly by their actual names
-# (confirmed via `dmsetup ls`: <vg>-pool / <vg>-pool_tdata / <vg>-pool_tmeta, LVM's own
-# thin-pool naming convention), bypassing VG-name resolution entirely. Pool before its
-# two backing linear devices, since pool depends on them. Tries every VG name this
-# harness has ever used (old shared "expanse", current per-container "expanse-n<N>"),
-# ignoring failures for combinations that don't exist.
+# Simplest reliable fix: remove the DM devices directly by name, bypassing VG-name
+# resolution entirely. Tries every VG name this harness has ever used (old shared
+# "expanse", current per-container "expanse-n<N>"), ignoring failures for combinations
+# that don't exist.
 #
 # dmsetup escapes literal "-" in VG/LV names as "--" (single "-" is reserved as the
 # VG/LV separator in the mapper name) -- confirmed live via `dmsetup info -c`: VG
-# "expanse-n1" produces device "expanse--n1-pool", not "expanse-n1-pool". Without this,
-# removal silently no-oped (`|| true`) for every per-container VG, leaving the pool
-# devices active and open on the disk -- exactly why `wipefs` then failed "Device or
-# resource busy" despite this loop appearing to run cleanly.
+# "expanse-n1" produces device "expanse--n1-pool", not "expanse-n1-pool".
+#
+# Rather than hardcode the pool/tdata/tmeta device names, enumerate whatever DM devices
+# actually exist under each VG's prefix and remove them in repeated passes -- found live
+# that the exact set is NOT fixed: once a real thin LV is created on the pool (this
+# harness's own measurement run does exactly that), LVM's on-disk representation grows
+# an additional "<pool>-tpool" internal target device plus one device per thin LV
+# (e.g. "expanse--n1-vol--8abccc7313e498e7"), none of which the old hardcoded 3-name
+# list knew about -- their pool was still open/busy, so wipefs kept failing "Device or
+# resource busy" even after this loop "succeeded". A device with active dependents
+# fails to remove and is silently skipped (`|| true`); each pass removes whatever was a
+# pure leaf, freeing up its dependencies for the next pass, so this converges regardless
+# of dependency depth or ordering without needing to know the exact device graph.
 for vg in expanse expanse-n1 expanse-n2 expanse-n3; do
     dmvg="${vg//-/--}"
-    dmsetup remove "$dmvg-pool" 2>/dev/null || true
-    dmsetup remove "$dmvg-pool_tdata" 2>/dev/null || true
-    dmsetup remove "$dmvg-pool_tmeta" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6; do
+        remaining="$(dmsetup ls 2>/dev/null | awk -v p="^${dmvg}-" '$1 ~ p {print $1}')"
+        [[ -z "$remaining" ]] && break
+        while IFS= read -r dev; do
+            [[ -n "$dev" ]] && dmsetup remove "$dev" 2>/dev/null || true
+        done <<< "$remaining"
+    done
 done
 for d in "${DISKS[@]}"; do
     wipefs -a "$d"
