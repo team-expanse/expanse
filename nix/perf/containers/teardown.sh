@@ -40,7 +40,16 @@ echo "== 3/5: nixos-rebuild switch =="
 # See setup.sh: root's nixos-rebuild doesn't inherit the invoking user's flakes config.
 NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
 
-echo "== 4/5: wiping the three disks =="
+echo "== 4/5: deactivating leftover DM devices and wiping the three disks =="
+# Same fix as setup.sh's step 2: dmsetup escapes "-" in VG/LV names as "--", so the
+# per-container VG "expanse-n1" maps to device "expanse--n1-pool" etc. Without
+# deactivating these first, wipefs fails "Device or resource busy" -- found live.
+for vg in expanse expanse-n1 expanse-n2 expanse-n3; do
+    dmvg="${vg//-/--}"
+    dmsetup remove "$dmvg-pool" 2>/dev/null || true
+    dmsetup remove "$dmvg-pool_tdata" 2>/dev/null || true
+    dmsetup remove "$dmvg-pool_tmeta" 2>/dev/null || true
+done
 for d in "${DISKS[@]}"; do
     wipefs -a "$d" || true
 done

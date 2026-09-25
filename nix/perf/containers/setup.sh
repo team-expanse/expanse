@@ -72,10 +72,18 @@ done
 # two backing linear devices, since pool depends on them. Tries every VG name this
 # harness has ever used (old shared "expanse", current per-container "expanse-n<N>"),
 # ignoring failures for combinations that don't exist.
+#
+# dmsetup escapes literal "-" in VG/LV names as "--" (single "-" is reserved as the
+# VG/LV separator in the mapper name) -- confirmed live via `dmsetup info -c`: VG
+# "expanse-n1" produces device "expanse--n1-pool", not "expanse-n1-pool". Without this,
+# removal silently no-oped (`|| true`) for every per-container VG, leaving the pool
+# devices active and open on the disk -- exactly why `wipefs` then failed "Device or
+# resource busy" despite this loop appearing to run cleanly.
 for vg in expanse expanse-n1 expanse-n2 expanse-n3; do
-    dmsetup remove "$vg-pool" 2>/dev/null || true
-    dmsetup remove "$vg-pool_tdata" 2>/dev/null || true
-    dmsetup remove "$vg-pool_tmeta" 2>/dev/null || true
+    dmvg="${vg//-/--}"
+    dmsetup remove "$dmvg-pool" 2>/dev/null || true
+    dmsetup remove "$dmvg-pool_tdata" 2>/dev/null || true
+    dmsetup remove "$dmvg-pool_tmeta" 2>/dev/null || true
 done
 for d in "${DISKS[@]}"; do
     wipefs -a "$d"
