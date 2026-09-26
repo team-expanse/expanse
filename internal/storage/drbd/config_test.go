@@ -184,3 +184,17 @@ func TestRenderRejectsBadInput(t *testing.T) {
 		})
 	}
 }
+
+// The default 250 KiB/s floor stalled a full resync under a busy writer; 4 MiB/s finished it
+// in 33s at a 3% writer cost (vol-resync-rate probe, ARCHITECTURE A51).
+func TestRenderRaisesTheResyncFloor(t *testing.T) {
+	for _, n := range []int{1, 2, 3, 5} {
+		got, err := resource(n).Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, "  disk {\n    c-min-rate 4M;\n  }\n") {
+			t.Errorf("%d replicas: c-min-rate 4M missing in:\n%s", n, got)
+		}
+	}
+}

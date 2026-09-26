@@ -7,6 +7,15 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## Unreleased
+
+### Changed
+
+- DRBD resources set `c-min-rate 4M`: a new or rebuilt replica on a busy
+  volume now syncs at 4 MiB/s or more instead of being throttled toward
+  250 KiB/s. Existing volumes pick it up on upgrade through the agent's
+  normal `drbdadm adjust`. This fixes the 1.1.0 known issue.
+
 ## 1.1.0 - 2026-09-26
 
 ### Added

@@ -20,6 +20,9 @@ const (
 	// A majority quorum is only meaningful with three or more replicas: with
 	// two, losing either one would stop the survivor.
 	minQuorumReplicas = 3
+	// The resync floor under application I/O; DRBD's 250k default stalls a rebuild on a busy
+	// volume, 4M finished one in 33s for a 3% writer cost (vol-resync-rate, ARCHITECTURE A51).
+	resyncMinRate = "4M"
 )
 
 var (
@@ -58,6 +61,7 @@ func (r Resource) Render() (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "resource %s {\n", r.Name)
 	fmt.Fprintf(&b, "  device /dev/drbd%d minor %d;\n  disk %s;\n  meta-disk internal;\n", r.Minor, r.Minor, r.Disk)
+	fmt.Fprintf(&b, "  disk {\n    c-min-rate %s;\n  }\n", resyncMinRate)
 	b.WriteString("  net {\n    protocol C;\n    verify-alg sha1;\n")
 	b.WriteString("    after-sb-0pri disconnect;\n    after-sb-1pri disconnect;\n    after-sb-2pri disconnect;\n")
 	b.WriteString("    rr-conflict disconnect;\n  }\n")

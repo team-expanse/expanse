@@ -99,6 +99,7 @@
           vol-drbd-config = mkTest "vol-drbd-config" ./nix/tests/vol-drbd-config.nix;
           vol-lvm = mkTest "vol-lvm" ./nix/tests/vol-lvm.nix;
           vol-drbd-probe = mkTest "vol-drbd-probe" ./nix/tests/vol-drbd-probe.nix;
+          vol-resync-rate = mkTest "vol-resync-rate" ./nix/tests/vol-resync-rate.nix;
           vol-drbd-verify-probe = mkTest "vol-drbd-verify-probe" ./nix/tests/vol-drbd-verify-probe.nix;
           vol-verify = mkTest "vol-verify" ./nix/tests/vol-verify.nix;
           vol-runtime = mkTest "vol-runtime" ./nix/tests/vol-runtime.nix;

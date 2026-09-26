@@ -13,10 +13,10 @@ recorder in the store, REC where it is copied on each node.
 SIZE_MIB = 256  # > WRITE_LIMIT (60000) x 4 KiB records, so the writer never runs off the end
 LEDGER_PORT = 9440
 LEDGER = "/root/ledger-grow"
-# DRBD throttles resync toward c-min-rate (250 KiB/s) under app I/O; a lighter writer lets a
-# full first-peer sync finish in minutes (found live: at 2 ms, 256 MiB took over 5 min to 87%).
-WRITER_PAUSE_MS = 20
-SYNC_BUDGET_S = 600
+# The pace that stalled a full first-peer sync at DRBD's default c-min-rate (87% in 5 min);
+# Expanse's 4M floor must finish it well inside the budget (ARCHITECTURE A51).
+WRITER_PAUSE_MS = 2
+SYNC_BUDGET_S = 180
 MIN_ACKED = 20
 
 

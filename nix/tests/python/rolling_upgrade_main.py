@@ -212,6 +212,14 @@ with subtest("final state: zero acked-write loss, cluster fully upgraded, load s
 
     versions = {m.name: running_version(m) for m in NODES}
     assert len(set(versions.values())) == 1, f"nodes disagree after the rolling upgrade: {versions}"
+    # The upgrade's rendered resync floor (ARCHITECTURE A53) reaches a live volume via the agent's adjust.
+    for m in NODES:
+        show = lambda: m.succeed(f"drbdsetup show --show-defaults {res}")
+        try:
+            wait_for(lambda: re.search(r"c-min-rate\s+4096", show()), f"{m.name} to run c-min-rate 4M", 120)
+        except Exception:
+            print(show())
+            raise
 
     total_fails = sum(kv_failures(m) for m in NODES)
     print(

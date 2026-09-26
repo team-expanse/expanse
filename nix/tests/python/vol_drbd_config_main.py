@@ -31,5 +31,6 @@ for count in REPLICAS:
             assert banned not in dumped, f"destructive policy {banned} in dump"
         quorum = "majority" if count >= 3 else "off"
         assert re.search(rf"quorum\s+{quorum};", dumped), f"quorum {quorum} not parsed"
+        assert re.search(r"c-min-rate\s+4M;", dumped), "the resync floor (c-min-rate 4M) not parsed"
 
 print("VOL-DRBD-CONFIG COMPLETED")

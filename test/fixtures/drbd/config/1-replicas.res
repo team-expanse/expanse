@@ -2,6 +2,9 @@ resource vol-a1 {
   device /dev/drbd3 minor 3;
   disk /dev/vg0/vol-a1;
   meta-disk internal;
+  disk {
+    c-min-rate 4M;
+  }
   net {
     protocol C;
     verify-alg sha1;

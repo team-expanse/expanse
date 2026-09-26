@@ -177,7 +177,8 @@ waits, and `volume list` says why:
 
 It is placed as soon as enough nodes join.
 
-**Resync on a busy volume is slow.** DRBD throttles a new replica's initial sync toward its
-`c-min-rate` (250 KiB/s) while the application is writing, and Expanse does not yet tune it; a
-volume under heavy fsync load can take a long time to gain its second replica. Join nodes while
-the volume is quiet if you can.
+**Resync under load.** While the application writes, DRBD slows a new replica's sync down to a
+floor, `c-min-rate`, to keep application latency low. Expanse sets that floor to 4 MiB/s (DRBD's
+default of 250 KiB/s could stall a rebuild on a busy volume indefinitely). Measured on VMs, a
+256 MiB volume under a heavy fsync writer gained a replica in 33 s while the writer lost 3% of its
+throughput. An idle volume syncs at full speed.
