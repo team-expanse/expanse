@@ -23,6 +23,16 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Full output also goes to a logfile, so a long or failed run doesn't have to be
+# pasted from terminal scrollback -- `tee` keeps it live on the terminal too. Deliberately
+# NOT under $PERSIST_ROOT: teardown.sh rm -rf's that, which would erase the very log it's
+# writing to (and every setup.sh log before it).
+LOG_DIR=/var/log/expanse-perf
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/setup-$(date +%Y%m%dT%H%M%S).log"
+exec > >(tee -a "$LOG") 2>&1
+echo "logging full output to $LOG"
+
 if [[ -e /etc/nixos/.configuration.nix.swp && $FORCE -ne 1 ]]; then
     echo "refusing to proceed: /etc/nixos/.configuration.nix.swp exists (a vim session may" >&2
     echo "be mid-edit on configuration.nix). Close it, or re-run with FORCE=1 if it's stale." >&2

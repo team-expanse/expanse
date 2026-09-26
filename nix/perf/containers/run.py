@@ -15,6 +15,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]  # repo root
@@ -25,6 +26,18 @@ TESTS = ROOT / "nix" / "tests"
 # same fix as setup.sh's NIX_CONFIG, scoped to this process's own subprocess calls
 # rather than written to any file.
 os.environ["NIX_CONFIG"] = "experimental-features = nix-command flakes"
+
+
+def start_logging():
+    """Tee our fds 1 and 2 into a logfile, same as setup.sh/teardown.sh, so a long or
+    failed run doesn't have to be pasted from terminal scrollback."""
+    log_dir = pathlib.Path("/var/log/expanse-perf")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"run-{time.strftime('%Y%m%dT%H%M%S')}.log"
+    tee = subprocess.Popen(["tee", "-a", str(log_path)], stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
+    print(f"logging full output to {log_path}")
 
 
 def budgets_json():
@@ -38,6 +51,7 @@ def budgets_json():
 
 
 def main():
+    start_logging()
     src = "\n".join([
         (HERE / "container_adapter.py").read_text(),
         (TESTS / "cluster-common.py").read_text(),

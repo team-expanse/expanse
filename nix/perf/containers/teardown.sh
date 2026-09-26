@@ -13,6 +13,14 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Full output also goes to a logfile (see setup.sh for why this isn't under
+# $PERSIST_ROOT, which this script itself rm -rf's).
+LOG_DIR=/var/log/expanse-perf
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/teardown-$(date +%Y%m%dT%H%M%S).log"
+exec > >(tee -a "$LOG") 2>&1
+echo "logging full output to $LOG"
+
 echo "== 1/5: stopping containers =="
 for n in "${NAMES[@]}"; do
     systemctl stop "container@$n.service" 2>/dev/null || true
