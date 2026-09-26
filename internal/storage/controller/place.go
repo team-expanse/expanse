@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -48,12 +49,24 @@ func (c *Controller) placeRequest(ctx context.Context, e *store.Entry, meshed ma
 	}
 	if err := c.place(ctx, &req, id, c.storageNodes(ctx, meshed)); err != nil {
 		c.log.Warn("volume placement failed; will retry", "vol", req.GetName(), "err", err)
-		c.recordPlacementReason(ctx, req.GetName(), err.Error())
+		c.recordPlacementReason(ctx, req.GetName(), placementReason(err))
 		return false
 	}
 	c.log.Info("volume placed", "vol", req.GetName(), "id", id)
 	_ = c.opts.St.Delete(ctx, storage.PlacementReasonKey(req.GetName()), 0)
 	return true
+}
+
+// placementReason is err's messages alone, without the kind and op prefixes meant for logs.
+func placementReason(err error) string {
+	var e *experrors.Error
+	if !errors.As(err, &e) {
+		return err.Error()
+	}
+	if e.Err == nil {
+		return e.Message
+	}
+	return e.Message + ": " + placementReason(e.Err)
 }
 
 // recordPlacementReason stores why a request is still pending, writing only on change

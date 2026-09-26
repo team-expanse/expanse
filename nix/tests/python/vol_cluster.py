@@ -38,7 +38,7 @@ def volume_row(m, name):
     """The controller's row for the named volume as m sees it, or None."""
     for line in m.execute("expanse ctl volume list 2>&1")[1].splitlines():
         cols = line.split()
-        if len(cols) >= 6 and cols[1] == name:
+        if len(cols) >= 6 and cols[1] == name and cols[0] != "-":  # "-" marks a pending request
             return {"id": cols[0], "state": cols[3].lower().removeprefix("volume_state_"), "nodes": sorted(cols[5].split(","))}
     return None
 

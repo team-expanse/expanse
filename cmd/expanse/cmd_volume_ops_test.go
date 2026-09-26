@@ -596,7 +596,7 @@ func runVolumeOut(t *testing.T, fs *fakeStore, args ...string) string {
 
 func TestListShowsMembersOfTargetAndWhyRequestsArePending(t *testing.T) {
 	out := runVolumeOut(t, soloStore(t), "list")
-	for _, want := range []string{"solo", "UnderReplicated", "1 of 3 (no redundancy)", "big", "pending", "needs 3 nodes, 1 eligible"} {
+	for _, want := range []string{"solo", "UnderReplicated", "1/3", "n1 (n1)  no redundancy", "big", "pending", "needs 3 nodes, 1 eligible"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output missing %q:\n%s", want, out)
 		}

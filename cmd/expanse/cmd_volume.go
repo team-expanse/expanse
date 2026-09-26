@@ -136,15 +136,21 @@ func printVolumeList(w io.Writer, vols map[string]*volEntry, pending map[string]
 		fmt.Fprintln(w, "no volumes")
 		return
 	}
-	fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-24s %s\n", "ID", "NAME", "SIZE", "STATE", "REPLICAS", "NODES (PRIMARY)")
+	// Columns stay space-free up to NODES: VM tests split rows on whitespace.
+	fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-8s %s\n", "ID", "NAME", "SIZE", "STATE", "REPLICAS", "NODES (PRIMARY)")
 	for _, name := range slices.Sorted(maps.Keys(vols)) {
 		v := vols[name]
 		var nodes []string
 		for _, p := range v.st.GetPlacement() {
 			nodes = append(nodes, p.GetNodeId())
 		}
-		fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-24s %s (%s)\n", v.id, name, humanBytes(v.spec.GetSizeBytes()),
-			stateStr(v.st.GetState()), replicaSummary(v), strings.Join(nodes, ","), v.st.GetPrimary())
+		note := ""
+		if v.st.GetState() == pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED {
+			note = "  no redundancy"
+		}
+		fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-8s %s (%s)%s\n", v.id, name, humanBytes(v.spec.GetSizeBytes()),
+			stateStr(v.st.GetState()), fmt.Sprintf("%d/%d", len(nodes), v.spec.GetReplication()),
+			strings.Join(nodes, ","), v.st.GetPrimary(), note)
 	}
 	for _, name := range slices.Sorted(maps.Keys(pending)) {
 		reason := pending[name]

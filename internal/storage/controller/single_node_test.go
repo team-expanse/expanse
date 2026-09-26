@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -58,8 +57,8 @@ func TestUnplaceableExplicitRequestRecordsWhyUntilItPlaces(t *testing.T) {
 	request(t, st, "data", 3)
 	c.processPending(ctx, meshed(t, c))
 	e, err := st.Get(ctx, storage.PlacementReasonKey("data"))
-	if err != nil || !strings.Contains(string(e.Value), "needs 3") || !strings.Contains(string(e.Value), "1 eligible") {
-		t.Fatalf("reason = %q, %v; want it to name the 3 needed and 1 eligible", e.Value, err)
+	if err != nil || string(e.Value) != "needs 3 nodes, 1 eligible" {
+		t.Fatalf("reason = %q, %v; want the plain message, no kind or op prefix", e.Value, err)
 	}
 	seedMesh(st, "n2", "n3")
 	c.processPending(ctx, meshed(t, c))

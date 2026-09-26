@@ -260,6 +260,11 @@
           # zero acked-write loss and continuous availability throughout -- this project's
           # first-ever mixed-version-cluster test.
           cluster-rolling-upgrade = mkTest "cluster-rolling-upgrade" ./nix/tests/cluster-rolling-upgrade.nix;
+
+          # Phase 12 C1: a one-node cluster -- default volume 1/3, block storage, a VIP, reboot.
+          cluster-single-node = mkTest "cluster-single-node" ./nix/tests/cluster-single-node.nix;
+          # Phase 12 B3: 1 -> 3 growth under acked writes, zero loss, DRBD quorum on at 3.
+          cluster-single-node-grow = mkTest "cluster-single-node-grow" ./nix/tests/cluster-single-node-grow.nix;
         };
         formatter = pkgs.nixpkgs-fmt;
       })
