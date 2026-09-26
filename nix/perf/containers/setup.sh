@@ -172,22 +172,31 @@ done
 failed=0
 for n in "${NAMES[@]}"; do
     ok=0
-    for _ in $(seq 1 180); do
+    for i in $(seq 1 180); do
         # Re-fetch the leader PID every iteration, not just once before the loop --
         # found live: querying it immediately after `restart` can race the container's
         # own startup (leader not registered with machinectl yet), leaving it empty for
         # the whole 180s wait even though the container comes up fine seconds later.
         leader="$(machinectl show "$n" -p Leader --value 2>/dev/null)"
-        if [[ -n "$leader" ]] && nsenter --target "$leader" --all -- systemctl is-system-running 2>/dev/null | grep -qE "running|degraded"; then
+        status="$(nsenter --target "$leader" --all -- systemctl is-system-running 2>&1)"
+        rc=$?
+        # Temporary instrumentation: external checks (from a separate shell) have shown
+        # "degraded" reached well within this window while this exact loop still reports
+        # NOT ready -- printing what THIS process actually sees every 10s to find the
+        # discrepancy live, since the two checks look identical but disagree.
+        if (( i % 10 == 0 )); then
+            echo "  $n: [$(date +%T)] leader='$leader' rc=$rc status='$status'" >&2
+        fi
+        if [[ -n "$leader" ]] && [[ "$status" =~ running|degraded ]]; then
             ok=1
             break
         fi
         sleep 1
     done
     if [[ $ok -eq 1 ]]; then
-        echo "  $n: up ($(nsenter --target "$leader" --all -- systemctl is-system-running 2>/dev/null))"
+        echo "  $n: up ($status)"
     else
-        echo "  $n: NOT ready after 180s -- check: sudo journalctl -M $n -b --no-pager" >&2
+        echo "  $n: NOT ready after 180s -- last seen: leader='$leader' rc=$rc status='$status'" >&2
         failed=1
     fi
 done
