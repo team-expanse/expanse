@@ -268,7 +268,22 @@ in
     serviceConfig.RemainAfterExit = true;
     script = ''
       modprobe dm_thin_pool
-      modprobe drbd
+
+      # modprobe's default search path is /run/booted-system's tree, which stays
+      # stale until a reboot -- found live: it kept resolving "drbd" to the kernel's
+      # own ancient in-tree 8.4.11 driver instead of the out-of-tree 9.3.3 module this
+      # generation actually built (extraModulePackages), even though
+      # /run/current-system's tree already has the right one merged in. Force that
+      # path explicitly; unload first if some earlier activation already loaded the
+      # wrong one (modprobe is a no-op once any same-named module is resident).
+      if [[ -e /proc/drbd ]] && ! grep -q '^version: 9\.' /proc/drbd; then
+        modprobe -r drbd || true
+      fi
+      modprobe -d /run/current-system/kernel-modules drbd
+      if [[ -e /proc/drbd ]] && ! grep -q '^version: 9\.' /proc/drbd; then
+        echo "expanse-perf-kmods: drbd loaded but not version 9.x (still in use from a stale load?)" >&2
+        exit 1
+      fi
     '';
   };
 
