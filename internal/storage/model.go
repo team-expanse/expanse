@@ -31,6 +31,9 @@ const (
 	// StateNeedsManualRecovery marks split-brain divergence (§9):
 	// automatic recovery refused, all copies preserved.
 	StateNeedsManualRecovery VolumeState = "NeedsManualRecovery"
+	// StateUnderReplicated: every replica healthy, but fewer than the target
+	// because the cluster had too few nodes. Writable, no redundancy.
+	StateUnderReplicated VolumeState = "UnderReplicated"
 )
 
 func (s VolumeState) proto() pb.VolumeState {
@@ -51,6 +54,8 @@ func (s VolumeState) proto() pb.VolumeState {
 		return pb.VolumeState_VOLUME_STATE_DELETING
 	case StateNeedsManualRecovery:
 		return pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY
+	case StateUnderReplicated:
+		return pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED
 	}
 	return pb.VolumeState_VOLUME_STATE_UNSPECIFIED
 }
@@ -73,6 +78,8 @@ func stateFromProto(p pb.VolumeState) VolumeState {
 		return StateDeleting
 	case pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY:
 		return StateNeedsManualRecovery
+	case pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED:
+		return StateUnderReplicated
 	}
 	return ""
 }
@@ -193,6 +200,16 @@ const PendingPrefix = VolumePrefix + "_pending/"
 // PendingCreateKey is the store key for a named creation request. The
 // value is a marshaled pb.VolumeSpec.
 func PendingCreateKey(name string) store.Key { return store.Key(PendingPrefix + name) }
+
+// PlacementReasonPrefix holds, per pending request name, why the leader could not
+// place it yet. Outside VolumePrefix so it never reads as a volume.
+const PlacementReasonPrefix = "/volume-placement-reasons/"
+
+// PlacementReasonKey is the store key for one pending request's reason.
+func PlacementReasonKey(name string) store.Key { return store.Key(PlacementReasonPrefix + name) }
+
+// StorageClassesKey holds the cluster's `storageClasses:` YAML (ParseStorageClasses).
+const StorageClassesKey store.Key = "/config/storage-classes"
 
 // BlockVolumeName is the cluster volume name auto-provisioned for a
 // block's storage entry (blocks attach to volumes by this composite name,

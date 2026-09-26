@@ -48,10 +48,22 @@ func (c *Controller) placeRequest(ctx context.Context, e *store.Entry, meshed ma
 	}
 	if err := c.place(ctx, &req, id, c.storageNodes(ctx, meshed)); err != nil {
 		c.log.Warn("volume placement failed; will retry", "vol", req.GetName(), "err", err)
+		c.recordPlacementReason(ctx, req.GetName(), err.Error())
 		return false
 	}
 	c.log.Info("volume placed", "vol", req.GetName(), "id", id)
+	_ = c.opts.St.Delete(ctx, storage.PlacementReasonKey(req.GetName()), 0)
 	return true
+}
+
+// recordPlacementReason stores why a request is still pending, writing only on change
+// since placement retries every round.
+func (c *Controller) recordPlacementReason(ctx context.Context, name, reason string) {
+	key := storage.PlacementReasonKey(name)
+	if e, err := c.opts.St.Get(ctx, key); err == nil && string(e.Value) == reason {
+		return
+	}
+	_, _ = c.opts.St.Put(ctx, key, []byte(reason))
 }
 
 // volumeID names one create request. It is stable across retries of that request,
@@ -82,11 +94,15 @@ func (c *Controller) nameTaken(ctx context.Context, name, id string) (bool, erro
 // place allocates the DRBD identity, then writes status and finally the spec: the
 // spec is what nodes discover volumes by, so it commits the placement.
 func (c *Controller) place(ctx context.Context, req *pb.VolumeSpec, id string, nodes []storage.NodeInfo) error {
+	class, err := c.resolveClass(ctx, req)
+	if err != nil {
+		return err
+	}
 	al, err := c.opts.Alloc.Allocate(ctx, id)
 	if err != nil {
 		return err
 	}
-	hosts, err := replicaHosts(al.NodeIDs, req, nodes)
+	hosts, err := replicaHosts(al.NodeIDs, req, class, nodes)
 	if err != nil {
 		return err
 	}
@@ -104,13 +120,42 @@ func (c *Controller) place(ctx context.Context, req *pb.VolumeSpec, id string, n
 	}
 	return storage.SaveSpec(ctx, c.opts.St, storage.Spec{
 		ID: id, Name: req.GetName(), Namespace: "default", SizeBytes: req.GetSizeBytes(),
-		Class: req.GetClass(), Replication: len(hosts),
+		Class: req.GetClass(), Replication: class.Replication,
 	})
 }
 
+// resolveClass is the request's storage class from the cluster catalog, with an
+// explicit replication overriding the class's own. The spec stores this as the target.
+func (c *Controller) resolveClass(ctx context.Context, req *pb.VolumeSpec) (storage.StorageClass, error) {
+	var raw []byte
+	if e, err := c.opts.St.Get(ctx, storage.StorageClassesKey); err == nil {
+		raw = e.Value
+	}
+	classes, err := storage.ParseStorageClasses(raw)
+	if err != nil {
+		return storage.StorageClass{}, err
+	}
+	name := req.GetClass()
+	if name == "" {
+		name = "default"
+	}
+	class, ok := storage.GetClass(classes, name)
+	switch {
+	case !ok && name == "default":
+		class = storage.DefaultStorageClass()
+	case !ok:
+		return storage.StorageClass{}, experrors.New(experrors.KindInvalid, "controller.place", "unknown storage class "+name)
+	}
+	if n := int(req.GetReplication()); n > 0 {
+		class.Replication = n
+	}
+	return class, nil
+}
+
 // replicaHosts keeps the hosts a crashed earlier attempt already gave node-ids, and
-// otherwise selects them.
-func replicaHosts(assigned map[string]int, req *pb.VolumeSpec, nodes []storage.NodeInfo) ([]string, error) {
+// otherwise selects them: as many as the class's target when replication is explicit,
+// else up to the target on the nodes there are (rebuild grows the rest later).
+func replicaHosts(assigned map[string]int, req *pb.VolumeSpec, class storage.StorageClass, nodes []storage.NodeInfo) ([]string, error) {
 	if len(assigned) > 0 {
 		hosts := make([]string, 0, len(assigned))
 		for h := range assigned {
@@ -119,10 +164,12 @@ func replicaHosts(assigned map[string]int, req *pb.VolumeSpec, nodes []storage.N
 		slices.SortFunc(hosts, func(a, b string) int { return assigned[a] - assigned[b] })
 		return hosts, nil
 	}
-	class := storage.DefaultStorageClass()
-	if n := int(req.GetReplication()); n > 0 {
-		class.Replication = n
+	eligible := storage.EligibleCount(class, nodes)
+	if req.GetReplication() > 0 && eligible < class.Replication {
+		return nil, experrors.New(experrors.KindResourceExhausted, "controller.place",
+			fmt.Sprintf("needs %d nodes, %d eligible", class.Replication, eligible))
 	}
+	class.Replication = max(1, min(class.Replication, eligible))
 	// A per-replica volume (D3) must land on its owning block replica's
 	// own node, not wherever SelectNodes' capacity ranking would
 	// otherwise pick — that ranking has no idea a block replica exists

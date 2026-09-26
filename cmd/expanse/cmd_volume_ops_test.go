@@ -564,3 +564,84 @@ func TestPrintInspectShowsSyncProgressVerifyStateAndWhatAVerifyFound(t *testing.
 		t.Errorf("no columns for progress:\n%s", out)
 	}
 }
+
+func soloStore(t *testing.T) *fakeStore {
+	t.Helper()
+	return &fakeStore{kv: map[string][]byte{
+		"/volumes/vol-solo/spec": mustProto(t, &pb.VolumeSpec{Name: "solo", SizeBytes: 1 << 30, Replication: 3}),
+		"/volumes/vol-solo/status": mustProto(t, &pb.VolumeStatus{
+			State: pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED, Primary: "n1",
+			Placement: []*pb.Replica{{NodeId: "n1", Role: pb.ReplicaRole_REPLICA_ROLE_PRIMARY, Healthy: true}},
+		}),
+		"/volumes/_pending/big":           mustProto(t, &pb.VolumeSpec{Name: "big", Replication: 3}),
+		"/volume-placement-reasons/big":   []byte("needs 3 nodes, 1 eligible"),
+		"/volume-placement-reasons/stale": []byte("left over from a placed volume"),
+	}}
+}
+
+func runVolumeOut(t *testing.T, fs *fakeStore, args ...string) string {
+	t.Helper()
+	opts, stop := serveCLI(t, fs)
+	defer stop()
+	var out bytes.Buffer
+	cmd := newVolumeCmd(opts)
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+func TestListShowsMembersOfTargetAndWhyRequestsArePending(t *testing.T) {
+	out := runVolumeOut(t, soloStore(t), "list")
+	for _, want := range []string{"solo", "UnderReplicated", "1 of 3 (no redundancy)", "big", "pending", "needs 3 nodes, 1 eligible"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "stale") {
+		t.Errorf("list shows a reason with no pending request:\n%s", out)
+	}
+}
+
+func TestInspectSaysAnUnderReplicatedVolumeHasNoRedundancy(t *testing.T) {
+	out := runVolumeOut(t, soloStore(t), "inspect", "solo")
+	if !strings.Contains(out, "replicas: 1 of 3 (no redundancy)") {
+		t.Errorf("inspect output lacks the replica summary:\n%s", out)
+	}
+}
+
+func TestCreateLeavesReplicationToTheClassUnlessGiven(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want int32
+	}{
+		{[]string{"create", "a", "--size", "1Gi"}, 0},
+		{[]string{"create", "a", "--size", "1Gi", "--replication", "2"}, 2},
+	} {
+		fs := &fakeStore{kv: map[string][]byte{}}
+		runVolumeOut(t, fs, tc.args...)
+		var spec pb.VolumeSpec
+		if err := pbproto.Unmarshal(fs.kv["/volumes/_pending/a"], &spec); err != nil || spec.GetReplication() != tc.want {
+			t.Errorf("%v: replication = %d, %v; want %d", tc.args, spec.GetReplication(), err, tc.want)
+		}
+	}
+}
+
+func TestCLIKeyPrefixesMatchTheStorageModel(t *testing.T) {
+	if volumePendingKeyPrefix != storage.PendingPrefix || placementReasonPrefix != storage.PlacementReasonPrefix {
+		t.Fatalf("CLI prefixes %q, %q drifted from storage's %q, %q",
+			volumePendingKeyPrefix, placementReasonPrefix, storage.PendingPrefix, storage.PlacementReasonPrefix)
+	}
+}
+
+func TestTwoInSyncReplicasOfThreeCanBeVerified(t *testing.T) {
+	v := fixtureVolume(t)
+	v.st.State = pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED
+	v.st.Placement = v.st.Placement[:2]
+	if err := checkInSync(v); err != nil {
+		t.Fatalf("checkInSync = %v; two in-sync replicas are enough to compare", err)
+	}
+}

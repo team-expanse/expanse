@@ -326,7 +326,7 @@ func TestDerivedStateByReplicationFactor(t *testing.T) {
 		{3, 5, storage.StateDegraded},
 		{2, 5, storage.StateReadOnly},
 	} {
-		if got := derivedState(tc.healthy, tc.replication); got != tc.want {
+		if got := derivedState(tc.healthy, tc.replication, tc.replication); got != tc.want {
 			t.Errorf("derivedState(%d of %d) = %s, want %s", tc.healthy, tc.replication, got, tc.want)
 		}
 	}

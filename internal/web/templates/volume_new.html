@@ -19,7 +19,7 @@
     <form method="post" action="/volumes">
       <p><label>Name <input type="text" name="name" value="{{.Name}}" required></label></p>
       <p><label>Size (e.g. 10Gi) <input type="text" name="size" value="{{.Size}}" placeholder="10Gi" required></label></p>
-      <p><label>Replication <input type="number" name="replication" min="1" max="5" value="{{.Replication}}"></label></p>
+      <p><label>Replication <input type="number" name="replication" min="1" max="5" value="{{.Replication}}" placeholder="class default"></label></p>
       <p><label>Class <input type="text" name="class" value="{{.Class}}"></label></p>
       <button type="submit">Create</button>
     </form>

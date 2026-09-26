@@ -333,7 +333,7 @@ func v11(b *pb.Block) []ValidationError {
 	return errs
 }
 
-// --- V12: storage sizes parse; replication 1-5; <= cluster node count ---
+// --- V12: storage sizes parse; replication 1-5 or unset; <= cluster node count ---
 
 func v12(b *pb.Block, ctx Context) []ValidationError {
 	var errs []ValidationError
@@ -342,9 +342,9 @@ func v12(b *pb.Block, ctx Context) []ValidationError {
 			errs = append(errs, verr("V12",
 				"storage volume %q: invalid size: %v", s.GetName(), err))
 		}
-		if r := s.GetReplication(); r < 1 || r > 5 {
+		if r := s.GetReplication(); r < 0 || r > 5 {
 			errs = append(errs, verr("V12",
-				"storage volume %q has replication %d, must be 1-5", s.GetName(), r))
+				"storage volume %q has replication %d, must be 1-5 (or unset for the class default)", s.GetName(), r))
 		}
 		if ctx.NodeCount > 0 && s.GetReplication() > int32(ctx.NodeCount) {
 			errs = append(errs, verr("V12",

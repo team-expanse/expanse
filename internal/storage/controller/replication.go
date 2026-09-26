@@ -8,22 +8,25 @@ import (
 )
 
 // writeQuorum is how many healthy replicas keep a volume writable. DRBD runs with
-// quorum off below three replicas, so a lone survivor keeps writing; from three up
+// quorum off below three members, so a lone survivor keeps writing; from three up
 // it needs a majority.
-func writeQuorum(replication int) int {
-	if replication < 3 {
+func writeQuorum(members int) int {
+	if members < 3 {
 		return 1
 	}
-	return replication/2 + 1
+	return members/2 + 1
 }
 
-// derivedState is the volume state its healthy replica count implies.
-func derivedState(healthy, replication int) storage.VolumeState {
+// derivedState is the volume state its healthy count implies, given its current
+// members and target. Quorum follows the members, as DRBD's does.
+func derivedState(healthy, members, target int) storage.VolumeState {
 	switch {
-	case healthy < writeQuorum(replication):
+	case healthy < writeQuorum(members):
 		return storage.StateReadOnly
-	case healthy < replication:
+	case healthy < members:
 		return storage.StateDegraded
+	case members < target:
+		return storage.StateUnderReplicated
 	}
 	return storage.StateHealthy
 }
@@ -38,17 +41,17 @@ func (c *Controller) enforceReplication(ctx context.Context, volID string, spec 
 			healthy++
 		}
 	}
-	want := derivedState(healthy, spec.Replication)
-	if want != storage.StateHealthy && status.State != storage.StateCreating {
+	want := derivedState(healthy, len(status.Placement), spec.Replication)
+	if c.shouldAlert(ctx, want, status, meshed) {
 		c.emitAlert(AlertEvent{
 			VolID: volID, Kind: "under-replication", Have: healthy, Want: spec.Replication,
 			Detail: "replication factor cannot be met",
 		})
 	}
 	switch status.State {
-	case storage.StateHealthy, storage.StateDegraded, storage.StateReadOnly:
+	case storage.StateHealthy, storage.StateDegraded, storage.StateReadOnly, storage.StateUnderReplicated:
 	case storage.StateCreating:
-		if want != storage.StateHealthy {
+		if want != storage.StateHealthy && want != storage.StateUnderReplicated {
 			return
 		}
 	default:
@@ -58,4 +61,16 @@ func (c *Controller) enforceReplication(ctx context.Context, volID string, spec 
 		status.State = want
 		_ = storage.CompareAndSwapStatus(ctx, c.opts.St, volID, rev, *status)
 	}
+}
+
+// shouldAlert: a short volume alerts once out of Creating, except when it is short
+// only by design and no spare node exists to grow it.
+func (c *Controller) shouldAlert(ctx context.Context, want storage.VolumeState, status *storage.Status, meshed map[string]bool) bool {
+	switch {
+	case want == storage.StateHealthy:
+		return false
+	case want == storage.StateUnderReplicated:
+		return c.spareNode(ctx, meshed, status.Placement) != ""
+	}
+	return status.State != storage.StateCreating
 }

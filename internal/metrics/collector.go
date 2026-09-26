@@ -28,7 +28,7 @@ var (
 		[]string{"type", "id", "status"}, nil)
 	volumeHealthDesc = prometheus.NewDesc(
 		"expanse_volume_health",
-		"A volume's lifecycle state (pb.VolumeState ordinal: 2=healthy 3=degraded 4=readonly 5=resyncing 6=failed 8=needs-manual-recovery).",
+		"A volume's lifecycle state (pb.VolumeState ordinal: 2=healthy 3=degraded 4=readonly 5=resyncing 6=failed 8=needs-manual-recovery 9=under-replicated).",
 		[]string{"volume", "state"}, nil)
 	quorumVotersDesc       = prometheus.NewDesc("expanse_quorum_voters", "Raft voters this node currently sees.", nil, nil)
 	quorumNeedDesc         = prometheus.NewDesc("expanse_quorum_need", "Raft voters required for quorum.", nil, nil)
@@ -185,6 +185,8 @@ func volumeStateOrdinal(s storage.VolumeState) int32 {
 		return 7
 	case storage.StateNeedsManualRecovery:
 		return 8
+	case storage.StateUnderReplicated:
+		return 9
 	default:
 		return 0
 	}

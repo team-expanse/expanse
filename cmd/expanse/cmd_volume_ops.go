@@ -317,6 +317,7 @@ func checkRestoreRequest(v *volEntry, name string) error {
 func printInspect(w io.Writer, v *volEntry) {
 	fmt.Fprintf(w, "volume %s (%s)\n", nameOf(v), v.id)
 	fmt.Fprintf(w, "  state:    %s\n", stateStr(v.st.GetState()))
+	fmt.Fprintf(w, "  replicas: %s\n", replicaSummary(v))
 	fmt.Fprintf(w, "  primary:  %s\n", v.st.GetPrimary())
 	fmt.Fprintf(w, "  size:     %s\n", humanBytes(v.spec.GetSizeBytes()))
 	fmt.Fprintf(w, "  %-16s %-12s %-8s %-10s %-12s %s\n", "REPLICA", "ROLE", "HEALTHY", "SYNC", "OUT OF SYNC", "LAST SEEN")
@@ -455,6 +456,8 @@ func stateStr(vs pb.VolumeState) string {
 		return "Deleting"
 	case pb.VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY:
 		return "NeedsManualRecovery"
+	case pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED:
+		return "UnderReplicated"
 	default:
 		return "Unspecified"
 	}

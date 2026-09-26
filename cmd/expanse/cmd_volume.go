@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -55,65 +58,29 @@ func newVolumeCmd(opts *ctlOpts) *cobra.Command {
 				}); err != nil {
 					return err
 				}
-				fmt.Printf("volume %q create requested — poll `expanse ctl volume list`\n", args[0])
+				fmt.Fprintf(c.OutOrStdout(), "volume %q create requested — poll `expanse ctl volume list`\n", args[0])
 				return nil
 			})
 		},
 	}
 	create.Flags().StringVar(&sizeStr, "size", "", "volume size (e.g. 10Gi)")
-	create.Flags().IntVar(&repl, "replication", 3, "replication factor (1..5)")
+	create.Flags().IntVar(&repl, "replication", 0, "replication factor (1..5); unset uses the class's, on as many nodes as exist up to it")
 	create.Flags().StringVar(&class, "class", "default", "storage class")
 
 	list := &cobra.Command{
 		Use:   "list",
-		Short: "List volumes with state, primary, and placement",
+		Short: "List volumes with state, primary, and placement, then pending requests",
 		RunE: func(c *cobra.Command, args []string) error {
 			return withClient(c, opts, func(ctx context.Context, cl pb.NodeServiceClient) error {
-				res, err := cl.ListKeyValue(ctx, &pb.ListKeyValueRequest{Prefix: "/volumes/"})
+				vols, err := loadVolumes(ctx, cl)
 				if err != nil {
 					return err
 				}
-				rows := map[string]*volumeRow{}
-				var order []string
-				for _, e := range res.GetEntries() {
-					id, suffix, ok := splitVolumeKey(e.GetKey())
-					if !ok {
-						continue
-					}
-					r := rows[id]
-					if r == nil {
-						r = &volumeRow{id: id}
-						rows[id] = r
-						order = append(order, id)
-					}
-					if suffix == "spec" {
-						var s pb.VolumeSpec
-						if pbproto.Unmarshal(e.GetValue(), &s) == nil {
-							r.name = s.GetName()
-							r.size = s.GetSizeBytes()
-							r.repl = s.GetReplication()
-						}
-					} else if suffix == "status" {
-						var st pb.VolumeStatus
-						if pbproto.Unmarshal(e.GetValue(), &st) == nil {
-							r.state = st.GetState().String()
-							r.primary = st.GetPrimary()
-							for _, p := range st.GetPlacement() {
-								r.nodes = append(r.nodes, p.GetNodeId())
-							}
-						}
-					}
+				pending, err := loadPending(ctx, cl)
+				if err != nil {
+					return err
 				}
-				if len(order) == 0 {
-					fmt.Println("no volumes")
-					return nil
-				}
-				fmt.Printf("%-24s %-14s %-12s %-10s %-3s %s\n", "ID", "NAME", "SIZE", "STATE", "R", "REPLICAS (PRIMARY)")
-				for _, id := range order {
-					r := rows[id]
-					fmt.Printf("%-24s %-14s %-12d %-10s %-3d %s (%s)\n",
-						id, r.name, r.size, r.state, r.repl, strings.Join(r.nodes, ","), r.primary)
-				}
+				printVolumeList(c.OutOrStdout(), vols, pending)
 				return nil
 			})
 		},
@@ -121,16 +88,6 @@ func newVolumeCmd(opts *ctlOpts) *cobra.Command {
 
 	cmd.AddCommand(append([]*cobra.Command{create, list}, newVolumeOpsCmds(opts)...)...)
 	return cmd
-}
-
-type volumeRow struct {
-	id      string
-	name    string
-	size    uint64
-	repl    int32
-	state   string
-	primary string
-	nodes   []string
 }
 
 // splitVolumeKey breaks /volumes/<id>/spec|status into (id, suffix).
@@ -145,4 +102,64 @@ func splitVolumeKey(key string) (id, suffix string, ok bool) {
 		return "", "", false
 	}
 	return rest[:i], rest[i+1:], true
+}
+
+// placementReasonPrefix must match storage.PlacementReasonPrefix.
+const placementReasonPrefix = "/volume-placement-reasons/"
+
+// loadPending maps each queued create request's name to why it isn't placed yet ("" if unknown).
+func loadPending(ctx context.Context, cl pb.NodeServiceClient) (map[string]string, error) {
+	reqs, err := cl.ListKeyValue(ctx, &pb.ListKeyValueRequest{Prefix: volumePendingKeyPrefix, Stale: true})
+	if err != nil {
+		return nil, err
+	}
+	reasons, err := cl.ListKeyValue(ctx, &pb.ListKeyValueRequest{Prefix: placementReasonPrefix, Stale: true})
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, e := range reqs.GetEntries() {
+		out[strings.TrimPrefix(e.GetKey(), volumePendingKeyPrefix)] = ""
+	}
+	for _, e := range reasons.GetEntries() {
+		if name := strings.TrimPrefix(e.GetKey(), placementReasonPrefix); out[name] == "" {
+			if _, queued := out[name]; queued {
+				out[name] = string(e.GetValue())
+			}
+		}
+	}
+	return out, nil
+}
+
+func printVolumeList(w io.Writer, vols map[string]*volEntry, pending map[string]string) {
+	if len(vols) == 0 && len(pending) == 0 {
+		fmt.Fprintln(w, "no volumes")
+		return
+	}
+	fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-24s %s\n", "ID", "NAME", "SIZE", "STATE", "REPLICAS", "NODES (PRIMARY)")
+	for _, name := range slices.Sorted(maps.Keys(vols)) {
+		v := vols[name]
+		var nodes []string
+		for _, p := range v.st.GetPlacement() {
+			nodes = append(nodes, p.GetNodeId())
+		}
+		fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-24s %s (%s)\n", v.id, name, humanBytes(v.spec.GetSizeBytes()),
+			stateStr(v.st.GetState()), replicaSummary(v), strings.Join(nodes, ","), v.st.GetPrimary())
+	}
+	for _, name := range slices.Sorted(maps.Keys(pending)) {
+		reason := pending[name]
+		if reason == "" {
+			reason = "waiting for the leader"
+		}
+		fmt.Fprintf(w, "%-24s %-14s pending: %s\n", "-", name, reason)
+	}
+}
+
+// replicaSummary is "members of target", flagging a volume with no redundancy.
+func replicaSummary(v *volEntry) string {
+	s := fmt.Sprintf("%d of %d", len(v.st.GetPlacement()), v.spec.GetReplication())
+	if v.st.GetState() == pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED {
+		s += " (no redundancy)"
+	}
+	return s
 }

@@ -382,6 +382,13 @@ func TestV12Storage(t *testing.T) {
 		t.Errorf("V12 replication range check failed: %v", e)
 	}
 
+	// Unset replication means "the class's, clamped to the nodes there are".
+	b = validBlock()
+	b.Spec.Storage[0].Replication = 0
+	if e := byRule(Validate(b, ctx), "V12"); e != nil {
+		t.Errorf("unset replication rejected: %v", e)
+	}
+
 	// replication <= node count: NodeCount 3 < replication 4 names the count
 	// (4 is inside the valid 1-5 range, so the range check doesn't fire first).
 	ctx = baseCtx()

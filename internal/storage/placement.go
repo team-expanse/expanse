@@ -75,6 +75,17 @@ func SelectNodes(class StorageClass, nodes []NodeInfo, existing []string) ([]Nod
 	return eligible[:count], nil
 }
 
+// EligibleCount is how many nodes match the class's selector.
+func EligibleCount(class StorageClass, nodes []NodeInfo) int {
+	n := 0
+	for _, node := range nodes {
+		if matchesSelector(node.Labels, class.NodeSelector) {
+			n++
+		}
+	}
+	return n
+}
+
 // matchesSelector reports whether every selector key/value is present in
 // the node's labels. An empty selector matches everything.
 func matchesSelector(labels map[string]string, selector map[string]string) bool {

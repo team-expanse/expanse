@@ -23,6 +23,9 @@ enum VolumeState {
   // two replicas. Automatic recovery refused; an operator must choose
   // (`expanse ctl volume diverged`). All copies are preserved.
   VOLUME_STATE_NEEDS_MANUAL_RECOVERY = 8;
+  // Every replica is healthy but there are fewer than the target, because
+  // the cluster had too few nodes at placement: writable, no redundancy.
+  VOLUME_STATE_UNDER_REPLICATED = 9;
 }
 
 // ReplicaRole is one replica's position in the replication protocol (§4.3).

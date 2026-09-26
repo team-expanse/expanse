@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -56,6 +57,15 @@ type volumeView struct {
 	Primary     string
 	Placement   []storage.Replica
 	Snapshots   []storage.SnapshotRecord
+}
+
+// ReplicaSummary is "members of target", flagging a volume that has no redundancy.
+func (v volumeView) ReplicaSummary() string {
+	s := fmt.Sprintf("%d of %d", len(v.Placement), v.Replication)
+	if v.State == storage.StateUnderReplicated {
+		s += " (no redundancy)"
+	}
+	return s
 }
 
 func humanBytes(n uint64) string {
@@ -151,7 +161,7 @@ type volumeNewData struct {
 func (s *Server) handleVolumeNew(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "volume_new.html", volumeNewData{
 		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken,
-		Class: "default", Replication: "3",
+		Class: "default",
 	})
 }
 
@@ -181,10 +191,12 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		fail("--size: " + err.Error())
 		return
 	}
-	repl, err := strconv.Atoi(replStr)
-	if err != nil {
-		fail("replication must be an integer")
-		return
+	repl := 0
+	if replStr != "" {
+		if repl, err = strconv.Atoi(replStr); err != nil {
+			fail("replication must be an integer")
+			return
+		}
 	}
 	raw, err := proto.Marshal(&pb.VolumeSpec{Name: name, SizeBytes: uint64(size.N), Class: class, Replication: int32(repl)})
 	if err != nil {

@@ -12,7 +12,7 @@ import (
 // checkInSync refuses a volume that cannot be verified or resynced safely: both
 // need at least two replicas, all of them in sync.
 func checkInSync(v *volEntry) error {
-	if v.st.GetState() != pb.VolumeState_VOLUME_STATE_HEALTHY {
+	if st := v.st.GetState(); st != pb.VolumeState_VOLUME_STATE_HEALTHY && st != pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED {
 		return fmt.Errorf("volume %q is %s; every replica must be in sync first", nameOf(v), stateStr(v.st.GetState()))
 	}
 	if len(v.st.GetPlacement()) < 2 {

@@ -37,6 +37,9 @@ const (
 	// two replicas. Automatic recovery refused; an operator must choose
 	// (`expanse ctl volume diverged`). All copies are preserved.
 	VolumeState_VOLUME_STATE_NEEDS_MANUAL_RECOVERY VolumeState = 8
+	// Every replica is healthy but there are fewer than the target, because
+	// the cluster had too few nodes at placement: writable, no redundancy.
+	VolumeState_VOLUME_STATE_UNDER_REPLICATED VolumeState = 9
 )
 
 // Enum value maps for VolumeState.
@@ -51,6 +54,7 @@ var (
 		6: "VOLUME_STATE_FAILED",
 		7: "VOLUME_STATE_DELETING",
 		8: "VOLUME_STATE_NEEDS_MANUAL_RECOVERY",
+		9: "VOLUME_STATE_UNDER_REPLICATED",
 	}
 	VolumeState_value = map[string]int32{
 		"VOLUME_STATE_UNSPECIFIED":           0,
@@ -62,6 +66,7 @@ var (
 		"VOLUME_STATE_FAILED":                6,
 		"VOLUME_STATE_DELETING":              7,
 		"VOLUME_STATE_NEEDS_MANUAL_RECOVERY": 8,
+		"VOLUME_STATE_UNDER_REPLICATED":      9,
 	}
 )
 
@@ -454,7 +459,7 @@ const file_proto_storage_proto_rawDesc = "" +
 	"generation\x125\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1f.expanse.storage.v1.VolumeStateR\x05state\x12\x18\n" +
 	"\aprimary\x18\x03 \x01(\tR\aprimary\x129\n" +
-	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacementJ\x04\b\x04\x10\x05J\x04\b\x06\x10\aR\bsequenceR\x10manual_recovered*\x8e\x02\n" +
+	"\tplacement\x18\x05 \x03(\v2\x1b.expanse.storage.v1.ReplicaR\tplacementJ\x04\b\x04\x10\x05J\x04\b\x06\x10\aR\bsequenceR\x10manual_recovered*\xb1\x02\n" +
 	"\vVolumeState\x12\x1c\n" +
 	"\x18VOLUME_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15VOLUME_STATE_CREATING\x10\x01\x12\x18\n" +
@@ -464,7 +469,8 @@ const file_proto_storage_proto_rawDesc = "" +
 	"\x16VOLUME_STATE_RESYNCING\x10\x05\x12\x17\n" +
 	"\x13VOLUME_STATE_FAILED\x10\x06\x12\x19\n" +
 	"\x15VOLUME_STATE_DELETING\x10\a\x12&\n" +
-	"\"VOLUME_STATE_NEEDS_MANUAL_RECOVERY\x10\b*\x95\x01\n" +
+	"\"VOLUME_STATE_NEEDS_MANUAL_RECOVERY\x10\b\x12!\n" +
+	"\x1dVOLUME_STATE_UNDER_REPLICATED\x10\t*\x95\x01\n" +
 	"\vReplicaRole\x12\x1c\n" +
 	"\x18REPLICA_ROLE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14REPLICA_ROLE_PRIMARY\x10\x01\x12\x1a\n" +

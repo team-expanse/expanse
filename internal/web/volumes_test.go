@@ -111,6 +111,43 @@ func TestVolumeCreateWritesPendingSpecAndDetailShowsCreating(t *testing.T) {
 	}
 }
 
+func TestVolumeCreateWithBlankReplicationLeavesItToTheClass(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, csrf := loggedInClient(t, srv, pw)
+	resp := postVolumeForm(t, client, csrf, srv.URL+"/volumes", url.Values{
+		"name": {"newvol"}, "size": {"5Gi"}, "class": {"default"}, "replication": {""},
+	})
+	resp.Body.Close()
+	e, err := st.Get(context.Background(), storage.PendingCreateKey("newvol"))
+	if err != nil {
+		t.Fatalf("pending key missing (status %d): %v", resp.StatusCode, err)
+	}
+	var spec pb.VolumeSpec
+	if err := proto.Unmarshal(e.Value, &spec); err != nil || spec.GetReplication() != 0 {
+		t.Fatalf("pending spec = %+v, %v; want replication unset", &spec, err)
+	}
+}
+
+func TestUnderReplicatedVolumeSaysNoRedundancy(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+	putTestVolume(t, st,
+		storage.Spec{ID: "vol-solo", Name: "solo", SizeBytes: 1 << 30, Class: "default", Replication: 3},
+		storage.Status{State: storage.StateUnderReplicated, Primary: "n1", Placement: []storage.Replica{{NodeID: "n1", Healthy: true}}},
+	)
+	for _, path := range []string{"/volumes", "/volumes/solo"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(body), "1 of 3") || !strings.Contains(string(body), "no redundancy") {
+			t.Errorf("%s does not say 1 of 3 / no redundancy: %s", path, body)
+		}
+	}
+}
+
 func TestVolumeCreateRejectsBadSize(t *testing.T) {
 	srv, pw, _ := newClusterTestServer(t)
 	client, csrf := loggedInClient(t, srv, pw)

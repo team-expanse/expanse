@@ -32,7 +32,7 @@ func (c *Controller) rebuildReplicas(ctx context.Context, id string, spec *stora
 	}
 	lost := c.lostHosts(status.Placement, meshed)
 	switch status.State {
-	case storage.StateHealthy, storage.StateDegraded, storage.StateReadOnly:
+	case storage.StateHealthy, storage.StateDegraded, storage.StateReadOnly, storage.StateUnderReplicated:
 	default:
 		return
 	}
@@ -51,7 +51,7 @@ func (c *Controller) rebuildReplicas(ctx context.Context, id string, spec *stora
 		return
 	}
 	switch {
-	case len(al.NodeIDs) < spec.Replication:
+	case len(al.NodeIDs) < spec.Replication && liveMembersHealthy(status.Placement, meshed):
 		c.addReplica(ctx, id, spare)
 	case len(lost) > 0:
 		c.retireReplica(ctx, id, lost[0])
@@ -111,6 +111,12 @@ func matchMembers(status *storage.Status, al drbd.Allocation) bool {
 		}
 	}
 	return changed
+}
+
+// liveMembersHealthy: every reachable member is in sync, so the next one can join
+// without a 2-to-3 quorum flip landing while one is still syncing.
+func liveMembersHealthy(placement []storage.Replica, meshed map[string]bool) bool {
+	return !slices.ContainsFunc(placement, func(r storage.Replica) bool { return meshed[r.NodeID] && !r.Healthy })
 }
 
 func hasHealthyReplica(placement []storage.Replica, meshed map[string]bool) bool {
