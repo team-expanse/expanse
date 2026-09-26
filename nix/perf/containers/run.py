@@ -6,7 +6,8 @@ node_control_plane_cpu_percent known_gap for the question this is actually answe
 
 Splices the same cluster-forming and measurement files nix/tests/vol-constrained.nix
 splices via readFile, unmodified: only container_adapter.py (a container backend for
-n1/n2/n3/subtest()/start_all()) and idle_main.py (the idle-only scenario) are new. This must
+n1/n2/n3/subtest()/start_all()) is new;
+the scenario is nix/tests/python/idle_main.py, shared with nix/tests/node-idle.nix. This must
 run as root (nsenter --all into a container's namespaces needs CAP_SYS_ADMIN); setup.sh
 invokes it that way.
 """
@@ -58,7 +59,7 @@ def main():
         (TESTS / "python" / "vol_perf_lib.py").read_text(),
         (TESTS / "python" / "node_overhead.py").read_text(),
         f"BUDGETS = {budgets_json()}\n",
-        (HERE / "idle_main.py").read_text(),
+        (TESTS / "python" / "idle_main.py").read_text(),
     ])
     exec(compile(src, "container-constrained", "exec"), {"__name__": "__main__"})
 

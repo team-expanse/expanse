@@ -1,10 +1,9 @@
-"""X1 container scenario: expansed's idle CPU/RSS on bare metal, no hypervisor.
+"""X1 A/B scenario: expansed's idle CPU/RSS on a volume-free 3-node cluster.
 
-Answers only the open question behind node_control_plane_cpu_percent's known_gap: is
-vol-constrained's 25-27% idle CPU a VM tax or a real cost? Volumes/DRBD are out of scope
-here (containers share one kernel, so DRBD resources collide) -- see ./README.md.
+Run unchanged on bare metal (nix/perf/containers/run.py) and in VMs (nix/tests/node-idle.nix)
+to separate the VM clock tax from real cost behind node_control_plane_cpu_percent's known_gap.
 
-Runs after container_adapter.py, cluster-common.py, vol_perf_lib.py, node_overhead.py and BUDGETS.
+Runs after cluster-common.py, vol_perf_lib.py, node_overhead.py and BUDGETS.
 """
 
 SETTLE_S = 30
@@ -17,8 +16,8 @@ print(f"settling {SETTLE_S}s before measuring")
 time.sleep(SETTLE_S)
 
 per_node = {}
-with subtest("each agent's own idle overhead, no volumes, no hypervisor"):
-    for m in NODES:
+with subtest("each agent's own idle overhead, no volumes"):
+    for m in (n1, n2, n3):
         rss, cpu = idle_control_plane_overhead(m)
         per_node[m.name] = (rss, cpu)
         print(f"{m.name} idle overhead: {rss / 1048576:.1f} MiB RSS, {cpu:.2f}% of one core")
@@ -33,4 +32,5 @@ for line in waived:
     print("OVER BUDGET (known_gap on record) " + line)
 for line in problems:
     print("OVER BUDGET " + line)
-print("X1 IDLE: " + ("within budget" if not problems and not waived else "over budget") + f" on {', '.join(IDLE_BUDGETS)}")
+over = sorted(name for name in IDLE_BUDGETS if any(line.startswith(name + " ") for line in problems + waived))
+print("X1 IDLE: " + (f"over budget on {', '.join(over)}" if over else f"within budget on {', '.join(IDLE_BUDGETS)}"))

@@ -57,8 +57,9 @@ impermanence's reboot-wipe, or firmware/NIC compatibility — `docs/HARDWARE.md`
 - `container_adapter.py` — gives the nixosTest-driver-shaped calls
   (`m.succeed`/`execute`/`wait_for_unit`, `start_all()`, `subtest()`) a container
   backend via `nsenter`/`machinectl`.
-- `idle_main.py` — the scenario: form the cluster, settle, measure every node's idle
-  overhead, check the worst node against the two budgets.
+- `nix/tests/python/idle_main.py` — the scenario: form the cluster, settle, measure
+  every node's idle overhead, check the worst node against the two budgets. Shared
+  unchanged with `nix/tests/node-idle.nix`, the VM twin, for a same-workload A/B.
 - `run.py` — splices `container_adapter.py`, `cluster-common.py`, `vol_perf_lib.py`,
   `node_overhead.py`, the budgets and `idle_main.py`, and executes the result.
 - `setup.sh` / `teardown.sh` — the privileged half (root required). Nothing they touch

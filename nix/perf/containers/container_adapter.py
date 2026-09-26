@@ -1,4 +1,4 @@
-"""Adapter giving cluster-common.py's / idle_main.py's
+"""Adapter giving cluster-common.py's / nix/tests/python/idle_main.py's
 nixosTest-driver-shaped calls (m.succeed/execute/wait_for_unit, start_all(), subtest())
 a real backend on THIS host: systemd-nspawn containers managed via `nsenter`/`machinectl`,
 instead of a nixosTest driver's QEMU machines -- see run.py.
