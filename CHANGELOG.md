@@ -7,6 +7,41 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## 1.1.0 - 2026-09-26
+
+### Added
+
+- Single-node clusters: `cluster init --expect 1` forms a working cluster on
+  one machine, and default volumes, blocks with storage, and VIPs run there
+  ([`docs/CLUSTERING.md`](docs/CLUSTERING.md)).
+- Volumes grow to their replication target automatically as nodes join, one
+  fully synced replica at a time; DRBD quorum turns on live at three
+  replicas ([`docs/STORAGE.md`](docs/STORAGE.md) §8).
+- A new `UnderReplicated` volume state: every replica is healthy but there
+  are fewer than the target. `volume list`, `volume inspect` and the web UI
+  show "1 of 3 (no redundancy)".
+- `volume list` shows volumes still waiting for placement, with the reason
+  (for example `pending: needs 3 nodes, 1 eligible`).
+
+### Changed
+
+- A volume or block storage entry without an explicit replication takes its
+  storage class's target and is placed on as many eligible nodes as exist, up
+  to that target. It used to wait for three nodes. An explicit
+  `--replication N` still waits for N nodes.
+- `volume create --replication` defaults to unset (the class default)
+  instead of 3; the web UI's create form does the same.
+
+### Known issues
+
+- A new replica's initial sync is throttled toward DRBD's `c-min-rate`
+  (250 KiB/s) while the application writes heavily, so gaining a replica on
+  a busy volume can be slow. This affects rebuilds in 1.0.0 too.
+- The web UI's VIP takes one address from the external VIP pool; size the
+  pool one larger than the block VIPs you need
+  ([`docs/NETWORKING.md`](docs/NETWORKING.md)).
+- Everything listed under 1.0.0 still applies.
+
 ## 1.0.0 - 2026-09-26
 
 First release. Everything listed under "What works today" in

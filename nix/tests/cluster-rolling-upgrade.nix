@@ -12,12 +12,8 @@
 { self }:
 { pkgs, lib, ... }:
 let
-  # Phase 10 Stream B (CA rotation): the last commit that touched nix/modules/agent.nix or
-  # cmd/expanse's node-facing CLI surface -- everything since (OIDC, the chaos soak) is a
-  # real Go-level diff from HEAD while staying wire- and CLI-compatible with the current
-  # NixOS module, so the switch below exercises a genuine version skew, not a same-binary
-  # no-op, without an unrelated config-contract mismatch muddying the result.
-  oldRev = "32277abb3284d8c6a6d0ec4e9ce0e41ecd222ae0";
+  # The v1.0.0 release tag: every release since is checked as an upgrade from it (Phase 12 R2).
+  oldRev = "f2e4a02012f77c54f2838d2905a53ee09f4e89e9";
   # "." (relative to the invoking shell's cwd, i.e. the repo root) rather than
   # `toString ../..`: toString on a Nix path value copies it into the store first (losing
   # .git), which fetchGit then can't clone from. Nix warns this relative form is slated

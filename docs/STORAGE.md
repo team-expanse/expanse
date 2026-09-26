@@ -10,7 +10,7 @@ rationale; this document is the operator-facing companion.
 GPT ─┬─ ESP (FAT32)             → /boot
      ├─ btrfs partition          → subvolumes @root @nix @persist @log
      └─ LVM PV → VG "expanse"    → thin pool → thin LVs
-                                     └─ DRBD 9 (protocol C, quorum majority)
+                                     └─ DRBD 9 (protocol C, quorum majority at ≥3)
                                           └─ filesystem or raw (block replica)
 ```
 
@@ -143,3 +143,41 @@ replica, not for split-brain recovery.
 without waiting for `--storage-lost-after` (default 10m) to elapse — for a node that is down and
 not coming back. The controller refuses a node that is still alive, and a volume with no other
 reachable replica; a spare node takes over the freed replica slot if one exists.
+
+## 8. Replication targets and single-node clusters
+
+A volume's replication is a **target**, not a precondition. A volume created without
+`--replication` takes its class's target (the built-in `default` class is 3; `expanse ctl storage
+classes` lists the catalog) and is placed on as many eligible nodes as exist, up to that target.
+On a one-node cluster it lands on that node alone:
+
+```
+$ expanse ctl volume list
+ID      NAME  SIZE    STATE            REPLICAS  NODES (PRIMARY)
+vol-…   solo  64Mi    underreplicated  1/3       n1 (n1)  no redundancy
+```
+
+`UnderReplicated` means every replica it has is healthy and writable, but it has fewer than its
+target. **With one replica there is no redundancy at all: losing that node's disk loses the
+data.** Back such volumes up (`docs/BACKUP.md`).
+
+As nodes join, the controller adds replicas one at a time — each new replica fully syncs before
+the next is added — until the target is met and the volume turns `Healthy`. DRBD quorum is off
+below three replicas and turns on (`majority`) at three; the switch happens live, without
+interrupting I/O (VM-tested under continuous acked writes: `cluster-single-node-grow`). The
+alert for under-replication fires only while a spare eligible node exists, since nothing can fix it
+before then.
+
+An explicit `--replication N` stays strict: if fewer than N eligible nodes exist, the volume
+waits, and `volume list` says why:
+
+```
+-       strict  pending: needs 3 nodes, 1 eligible
+```
+
+It is placed as soon as enough nodes join.
+
+**Resync on a busy volume is slow.** DRBD throttles a new replica's initial sync toward its
+`c-min-rate` (250 KiB/s) while the application is writing, and Expanse does not yet tune it; a
+volume under heavy fsync load can take a long time to gain its second replica. Join nodes while
+the volume is quiet if you can.

@@ -14,7 +14,8 @@ LVM, WireGuard, nftables). See `.plan/PREMISE.md` for the full vision and
   `/persist`). [`docs/INSTALL.md`](docs/INSTALL.md), [`docs/HARDWARE.md`](docs/HARDWARE.md).
 - **Clustering** — mDNS discovery, HMAC join tokens, a Raft-replicated,
   mTLS-secured control plane, generations with rollback, cordon/drain/remove
-  node lifecycle, witness nodes. [`docs/CLUSTERING.md`](docs/CLUSTERING.md).
+  node lifecycle, witness nodes. Starts on a single node and grows as nodes
+  join. [`docs/CLUSTERING.md`](docs/CLUSTERING.md).
 - **Storage** — DRBD-replicated volumes on LVM thin pools: create, resize,
   snapshot/restore, online repair, split-brain recovery, losing a node for
   good. [`docs/STORAGE.md`](docs/STORAGE.md).

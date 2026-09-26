@@ -26,7 +26,7 @@ clustering machinery underneath (Raft, leases), see
 |---|---|
 | `10.42.0.0/16` | WireGuard overlay (`exp0`). Node N gets `10.42.N.0/24`; the node itself is `.1`. MTU 1420 (WireGuard overhead). |
 | `10.43.0.0/16` | Internal service VIPs (cluster-only). |
-| LAN subnet | External VIPs, allocated from a user-declared pool (e.g. `192.168.1.100-192.168.1.150`). |
+| LAN subnet | External VIPs, allocated from a user-declared pool (e.g. `192.168.1.100-192.168.1.150`). The web UI's own VIP (`docs/WEB-UI.md`) takes one address from this pool at agent start, so size it one larger than the block VIPs you need. |
 | `10.44.0.0/16` | Block-internal addresses (microvms/containers, Phase 09). |
 
 Constants live in `internal/network/addrplan`; ports in

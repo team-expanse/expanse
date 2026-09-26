@@ -172,7 +172,7 @@ configuration both verify.
 - Volumes grow to their target automatically as nodes join; one node says "no redundancy".
 - Optional: an installed node usable as a dev workstation (persisted `/home`, local config).
 
-**Exit:** single-node and grow-on-join VM tests green, zero acked-write loss across 1 → 3, 1.1.0.
+**Exit:** single-node and grow-on-join VM tests green, zero acked-write loss across 1 → 3, 1.1.0 — met, see `PHASE-12-TASKS.md` (the dev-workstation option deferred).
 
 ---
 

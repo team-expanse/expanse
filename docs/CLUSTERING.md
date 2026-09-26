@@ -171,3 +171,9 @@ the full five minutes each.
   ties in a 2+1 topology without ever running workloads.
 - **Generations** are FSM-side state with retention (last 50 / 30 days),
   hash-addressed, rollback-checked (VM-tested: rollback hash equality).
+- **Single-node clusters**: `expanse cluster init ... --expect 1` forms a
+  working cluster on one machine (quorum `1/1`). Volumes and blocks run
+  there with no redundancy (`docs/STORAGE.md` §8) and grow to their
+  replication target as nodes join with `cluster token create` /
+  `cluster join`. One node gives no tolerance to node loss; raft needs
+  three voters (or two plus a witness) to survive one failure.
