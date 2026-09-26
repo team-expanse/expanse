@@ -99,6 +99,24 @@ let
       # this needs mkForce to win.
       services.lvm.enable = lib.mkForce true;
 
+      # dbus-broker inside this unprivileged nspawn container hits a real, repeating
+      # failure -- "ERROR launcher_run_child: No medium found" / "ERROR service_add:
+      # Transport endpoint is not connected", "Exiting due to fatal error: -107" --
+      # found live. Unlike its earlier, single, terminal failure (which left the
+      # container at a healthy `degraded` state), this is dbus.socket's own socket
+      # activation re-triggering dbus-broker.service on every fresh connection
+      # attempt, forever, since the underlying error never clears -- this keeps the
+      # container's own systemd permanently mid-boot (new jobs perpetually queued),
+      # which is why it never signals readiness to nspawn regardless of how high
+      # TimeoutStartSec is set (found live: still timed out even at 180s). A known
+      # class of dbus-broker/unprivileged-nspawn incompatibility, not something
+      # specific to this config. expansed itself has no D-Bus dependency, and
+      # avahi/chronyd (dbus's only real consumers in this minimal container) are
+      # already non-functional here (isolated network, no CAP_SYS_TIME) -- disabling
+      # the whole D-Bus stack sidesteps the loop rather than chasing an upstream bug.
+      services.dbus.enable = lib.mkForce false;
+      services.avahi.enable = lib.mkForce false;
+
       # udevd doesn't run inside this container ("Rule-based Manager for Device Events
       # and Files skipped, unmet condition check ConditionPathIsReadWrite=/sys" -- /sys
       # is read-only in an unprivileged container), so nothing ever creates
