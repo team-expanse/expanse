@@ -15,8 +15,18 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        version = "1.1.1";
+        inherit (nixpkgs) lib;
+        version = import ./nix/version.nix;
         rev = self.rev or self.dirtyRev or "dirty";
+
+        isoSystem = nixpkgs.lib.nixosSystem {
+          inherit system;
+          specialArgs = { inherit self nixpkgs; };
+          modules = [
+            ({ nixpkgs.hostPlatform = system; })
+            ./nix/installer/iso.nix
+          ];
+        };
 
         mkTest = name: path:
           pkgs.testers.nixosTest (import path { inherit self; });
@@ -26,14 +36,7 @@
         packages.default = self.packages.${system}.expanse;
 
         # Installer ISO: `nix build .#iso`
-        packages.iso = (nixpkgs.lib.nixosSystem {
-          inherit system;
-          specialArgs = { inherit self nixpkgs; };
-          modules = [
-            ({ nixpkgs.hostPlatform = system; })
-            ./nix/installer/iso.nix
-          ];
-        }).config.system.build.isoImage;
+        packages.iso = isoSystem.config.system.build.isoImage;
 
         devShells.default = pkgs.callPackage ./nix/devshell.nix { };
 
@@ -53,6 +56,21 @@
             cd src
             go test -race -coverprofile=coverage.out ./... > $out 2>&1 || { cat $out; exit 1; }
           '';
+          # The installer's expanse, an installed node's and the ISO's file name carry the release version.
+          iso-version =
+            let
+              iso = isoSystem.config;
+              want = self.packages.${system}.expanse.version;
+              node = (nixpkgs.lib.nixosSystem {
+                modules = [ { nixpkgs.hostPlatform = system; } ./nix/modules/expanse-node.nix ];
+              }).pkgs.expanse.version;
+            in
+            assert lib.assertMsg (node == want) "installed node expanse is ${node}, want ${want}";
+            assert lib.assertMsg (isoSystem.pkgs.expanse.version == want)
+              "installer expanse is ${isoSystem.pkgs.expanse.version}, want ${want}";
+            assert lib.assertMsg (lib.hasPrefix "expanse-${want}-" iso.image.fileName)
+              "ISO file is ${iso.image.fileName}, want expanse-${want}-*";
+            pkgs.writeText "iso-version" want;
           smoke = mkTest "smoke" ./nix/tests/smoke.nix;
           install-unattended = mkTest "install-unattended" ./nix/tests/install-unattended.nix;
           install-refuses-dirty-disk =

@@ -8,7 +8,7 @@
   nixpkgs.overlays = [
     (final: prev: {
       expanse = final.callPackage ../package.nix {
-        version = "0.0.1";
+        version = import ../version.nix;
         rev = "installer";
       };
     })

@@ -7,6 +7,15 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## 1.1.2 - 2026-09-26
+
+### Fixed
+
+- `expanse version` on the installer and on installed nodes reported
+  `0.0.1 (installer)`; both now report the release. The release version
+  lives in `nix/version.nix`, and the ISO is named
+  `expanse-<version>-<system>.iso`.
+
 ## 1.1.1 - 2026-09-26
 
 ### Changed

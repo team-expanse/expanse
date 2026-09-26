@@ -15,14 +15,11 @@ in
 
   expanse.node.enable = lib.mkForce false; # base node modules are for installed systems
 
+  # The installer runs the flake's own expanse, so it reports the release it installs.
   nixpkgs.overlays = [
-    (final: prev: {
-      expanse = final.callPackage ../package.nix {
-        version = "0.0.1";
-        rev = "installer";
-      };
-    })
+    (final: prev: { expanse = self.packages.${final.stdenv.hostPlatform.system}.expanse; })
   ];
+  image.baseName = lib.mkForce "expanse-${pkgs.expanse.version}-${pkgs.stdenv.hostPlatform.system}";
 
   environment.systemPackages = with pkgs; [
     expanse
