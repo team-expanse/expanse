@@ -15,7 +15,7 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        version = "0.0.1";
+        version = "1.0.0";
         rev = self.rev or self.dirtyRev or "dirty";
 
         mkTest = name: path:

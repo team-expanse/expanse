@@ -102,8 +102,8 @@ components; build the control plane) new code is held to.
 
 ## Status
 
-Expanse is pre-1.0 (`.plan/ROADMAP.md`, Phase 11 of 11). Every feature listed
+Expanse 1.0.0 (`.plan/ROADMAP.md`, all 11 phases shipped). Every feature listed
 above under "What works today" has NixOS VM-test coverage exercising real
 node kills, partitions, and restarts — not just unit tests. See
-`.plan/ARCHITECTURE.md` §9 for the project's decision record and
-`.plan/PHASE-11-TASKS.md` for what's left before 1.0.
+[`CHANGELOG.md`](CHANGELOG.md) for the release and its known issues, and
+`.plan/ARCHITECTURE.md` §9 for the project's decision record.
