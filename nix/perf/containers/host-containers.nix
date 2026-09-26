@@ -276,7 +276,20 @@ in
   # The whole-node budget this stream is measuring (ARCHITECTURE.md §8):
   # 2 vCPU, 4 GB RAM per node, enforced as a hard systemd resource cap on
   # each container's own service, not just declared informationally.
-  systemd.services."container@n1".serviceConfig = { CPUQuota = "200%"; MemoryMax = "4G"; };
-  systemd.services."container@n2".serviceConfig = { CPUQuota = "200%"; MemoryMax = "4G"; };
-  systemd.services."container@n3".serviceConfig = { CPUQuota = "200%"; MemoryMax = "4G"; };
+  #
+  # TimeoutStartSec: systemd's unmodified 1min default -- found live, "Job for
+  # container@n1.service failed because a timeout was exceeded" -- is tighter than
+  # setup.sh's own readiness poll already tolerates (up to 180s *after* the unit
+  # reports started). Several known-benign unit failures inside the container
+  # (chronyd: no CAP_SYS_TIME; dbus-broker; systemd-machine-id-commit) restart-loop
+  # during boot and burn real wall-clock time, and 3 containers plus their LVM setup
+  # starting at once under the CPUQuota cap adds contention on top of that -- 60s is
+  # simply too tight for what this harness already accepts as a healthy boot.
+  # Matching setup.sh's own 180s budget here instead of leaving this as an
+  # intermittent flake.
+  # nixos-containers.nix itself already sets TimeoutStartSec = "1min" as a plain
+  # definition, not a mkDefault -- found live via `nix eval`, needs mkForce to win.
+  systemd.services."container@n1".serviceConfig = { CPUQuota = "200%"; MemoryMax = "4G"; TimeoutStartSec = lib.mkForce "180s"; };
+  systemd.services."container@n2".serviceConfig = { CPUQuota = "200%"; MemoryMax = "4G"; TimeoutStartSec = lib.mkForce "180s"; };
+  systemd.services."container@n3".serviceConfig = { CPUQuota = "200%"; MemoryMax = "4G"; TimeoutStartSec = lib.mkForce "180s"; };
 }
