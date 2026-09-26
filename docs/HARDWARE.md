@@ -23,6 +23,9 @@ See `nix/perf/containers/README.md`.
 | Xeon E5-2630 v3, bare metal | containers | 2.5% | 1.1–1.2% | 35–39 MiB | 3% / 200 MiB |
 | same host | QEMU/KVM VMs | 16.4% | 7.4–7.5% | 29–97 MiB | 3% / 200 MiB |
 
+Not yet measured on real hardware: idle CPU with a replicated volume attached (projected
+~4% for the leader from the VM ratio), which needs a real install to confirm.
+
 ## Recording a result
 
 Add a row per exact model with: ISO version, result (pass/fail), boot
