@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Host-side runner for the X1 real-hardware(-adjacent) CPU/RSS/failover measurement,
+"""Host-side runner for the X1 real-hardware(-adjacent) idle CPU/RSS measurement,
 against 3 systemd-nspawn containers on this bare-metal host instead of the nixosTest VM
 harness's QEMU nodes -- see ./README.md for why, and ../../.plan/ARCHITECTURE.md §8's
 node_control_plane_cpu_percent known_gap for the question this is actually answering.
 
-Splices the SAME files nix/tests/vol-constrained.nix splices via readFile, completely
-unmodified, in the same order: only container_adapter.py (giving n1/n2/n3/subtest()/
-start_all() a real container backend instead of a nixosTest driver) is new. This must
+Splices the same cluster-forming and measurement files nix/tests/vol-constrained.nix
+splices via readFile, unmodified: only container_adapter.py (a container backend for
+n1/n2/n3/subtest()/start_all()) and idle_main.py (the idle-only scenario) are new. This must
 run as root (nsenter --all into a container's namespaces needs CAP_SYS_ADMIN); setup.sh
 invokes it that way.
 """
@@ -55,10 +55,10 @@ def main():
     src = "\n".join([
         (HERE / "container_adapter.py").read_text(),
         (TESTS / "cluster-common.py").read_text(),
-        (TESTS / "python" / "vol_cluster.py").read_text(),
         (TESTS / "python" / "vol_perf_lib.py").read_text(),
+        (TESTS / "python" / "node_overhead.py").read_text(),
         f"BUDGETS = {budgets_json()}\n",
-        (TESTS / "python" / "vol_constrained_main.py").read_text(),
+        (HERE / "idle_main.py").read_text(),
     ])
     exec(compile(src, "container-constrained", "exec"), {"__name__": "__main__"})
 

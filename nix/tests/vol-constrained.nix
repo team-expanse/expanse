@@ -12,7 +12,7 @@ let
   lint = pkgs.runCommand "vol-constrained-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
     cd ${./python}
-    { cat ${./cluster-common.py} vol_cluster.py vol_perf_lib.py; printf '%s\n' ${lib.escapeShellArg budgetsPy}; cat vol_constrained_main.py; } \
+    { cat ${./cluster-common.py} vol_cluster.py vol_perf_lib.py node_overhead.py; printf '%s\n' ${lib.escapeShellArg budgetsPy}; cat vol_constrained_main.py; } \
       | python3 -c 'import sys; compile(sys.stdin.read(), "testscript", "exec")'
     touch $out
   '';
@@ -53,6 +53,7 @@ in
     ${builtins.readFile ./cluster-common.py}
     ${builtins.readFile ./python/vol_cluster.py}
     ${builtins.readFile ./python/vol_perf_lib.py}
+    ${builtins.readFile ./python/node_overhead.py}
     ${budgetsPy}
     ${builtins.readFile ./python/vol_constrained_main.py}
   '';

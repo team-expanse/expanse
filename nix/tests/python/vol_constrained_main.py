@@ -7,11 +7,10 @@ replicated volume still goes healthy, the agent's own idle overhead with that vo
 stays under node_control_plane_rss_bytes/node_control_plane_cpu_percent, and a hard-killed
 primary still fails over inside vol_failover_worst_ms.
 
-Runs after cluster-common.py, vol_cluster.py, vol_perf_lib.py and BUDGETS.
+Runs after cluster-common.py, vol_cluster.py, vol_perf_lib.py, node_overhead.py and BUDGETS.
 """
 
 SIZE_MIB = 512
-IDLE_WINDOW_S = 30
 
 
 def healthy(name):
@@ -28,38 +27,6 @@ def replicated_id(name, replication):
     wait_for(lambda: len(primaries(res)) == 1, f"one primary of {name}")
     wait_for(lambda: fully_replicated(primaries(res)[0], res), f"{name}'s replicas to be UpToDate", 180)
     return res
-
-
-def agent_pid(m):
-    return m.succeed("systemctl show -p MainPID --value expansed.service").strip()
-
-
-def proc_cpu_ticks(m, pid):
-    """utime+stime (clock ticks) of pid, from /proc/<pid>/stat (fields 14 and 15)."""
-    fields = m.succeed(f"cat /proc/{pid}/stat").split()
-    return int(fields[13]) + int(fields[14])
-
-
-def proc_rss_bytes(m, pid):
-    for line in m.succeed(f"cat /proc/{pid}/status").splitlines():
-        if line.startswith("VmRSS:"):
-            return int(line.split()[1]) * 1024
-    raise ValueError(f"no VmRSS for pid {pid} on {m.name}")
-
-
-def idle_control_plane_overhead(m, window_s=IDLE_WINDOW_S):
-    """expansed's own RSS and %CPU (of one core) over an idle window: what our software
-    costs on top of the kernel's own DRBD/LVM work, which ARCHITECTURE.md §8 budgets
-    separately (the kernel side is not ours to shrink)."""
-    pid = agent_pid(m)
-    hz = int(m.succeed("getconf CLK_TCK").strip())
-    before = proc_cpu_ticks(m, pid)
-    m.succeed(f"rm -f /tmp/top-h.txt; (top -bH -d {window_s} -n 2 -p {pid} > /tmp/top-h.txt 2>&1 &)")
-    time.sleep(window_s + 2)
-    after = proc_cpu_ticks(m, pid)
-    cpu_percent = 100 * (after - before) / hz / window_s
-    print(f"per-thread breakdown on {m.name}:\n" + m.succeed("cat /tmp/top-h.txt"))
-    return proc_rss_bytes(m, pid), cpu_percent
 
 
 def crash_and_time_failover(res):

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Reverses setup.sh: stops and destroys the 3 containers, removes the config-nix wiring,
-# rebuilds, and wipes the three disks back to empty. Run as root: `sudo ./teardown.sh`.
+# and rebuilds. Run as root: `sudo ./teardown.sh`.
 set -euo pipefail
 
 CONF=/etc/nixos/configuration.nix
-DISKS=(/dev/sdb /dev/sdc /dev/sdd)
 NAMES=(n1 n2 n3)
 PERSIST_ROOT=/var/lib/expanse-perf
 
@@ -21,13 +20,13 @@ LOG="$LOG_DIR/teardown-$(date +%Y%m%dT%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
 echo "logging full output to $LOG"
 
-echo "== 1/5: stopping containers =="
+echo "== 1/4: stopping containers =="
 for n in "${NAMES[@]}"; do
     systemctl stop "container@$n.service" 2>/dev/null || true
     machinectl terminate "$n" 2>/dev/null || true  # belt-and-suspenders if still registered
 done
 
-echo "== 2/5: removing config-nix wiring =="
+echo "== 2/4: removing config-nix wiring =="
 MARK="# >>> expanse X1 perf containers (nix/perf/containers/setup.sh) >>>"
 if grep -qF "$MARK" "$CONF"; then
     cp "$CONF" "$CONF.bak-teardown-$(date +%s)"
@@ -44,34 +43,12 @@ PYEOF
 fi
 rm -f /etc/nixos/expanse-perf-persist-mounts.nix
 
-echo "== 3/5: nixos-rebuild switch =="
+echo "== 3/4: nixos-rebuild switch =="
 # See setup.sh: root's nixos-rebuild doesn't inherit the invoking user's flakes config.
 NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
 
-echo "== 4/5: deactivating leftover DM devices and wiping the three disks =="
-# Same fix as setup.sh's step 2: dmsetup escapes "-" in VG/LV names as "--", so the
-# per-container VG "expanse-n1" maps to device "expanse--n1-pool" etc. Without
-# deactivating these first, wipefs fails "Device or resource busy" -- found live.
-# Enumerate and remove in repeated passes rather than a hardcoded name list: a real
-# thin LV created on the pool (this harness's own measurement does exactly that) adds
-# devices (the pool's own "-tpool" internal target, one per thin LV) that a fixed
-# pool/tdata/tmeta list doesn't know about -- found live, see setup.sh for detail.
-for vg in expanse expanse-n1 expanse-n2 expanse-n3; do
-    dmvg="${vg//-/--}"
-    for _ in 1 2 3 4 5 6; do
-        remaining="$(dmsetup ls 2>/dev/null | awk -v p="^${dmvg}-" '$1 ~ p {print $1}')"
-        [[ -z "$remaining" ]] && break
-        while IFS= read -r dev; do
-            [[ -n "$dev" ]] && dmsetup remove "$dev" 2>/dev/null || true
-        done <<< "$remaining"
-    done
-done
-for d in "${DISKS[@]}"; do
-    wipefs -a "$d" || true
-done
-
-echo "== 5/5: removing host-side persist directories =="
+echo "== 4/4: removing host-side persist directories =="
 rm -rf "$PERSIST_ROOT"
 
-echo "Done. Containers destroyed, config rewired back, disks wiped clean."
+echo "Done. Containers destroyed, config rewired back."
 echo "(configuration.nix backups are kept at $CONF.bak-* -- delete manually if not wanted.)"

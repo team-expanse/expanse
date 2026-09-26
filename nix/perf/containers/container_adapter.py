@@ -1,8 +1,7 @@
-"""Adapter giving cluster-common.py's / vol_cluster.py's / vol_constrained_main.py's
+"""Adapter giving cluster-common.py's / idle_main.py's
 nixosTest-driver-shaped calls (m.succeed/execute/wait_for_unit, start_all(), subtest())
 a real backend on THIS host: systemd-nspawn containers managed via `nsenter`/`machinectl`,
-instead of a nixosTest driver's QEMU machines. Everything downstream of this file is the
-SAME test code the VM harness runs, unmodified -- see run.py.
+instead of a nixosTest driver's QEMU machines -- see run.py.
 """
 import contextlib
 import subprocess
@@ -55,16 +54,6 @@ class Container:
             capture_output=True, text=True,
         ).stdout.strip()
         return int(out) if out.isdigit() else None
-
-    def crash(self):
-        """SIGKILL the container's own PID1 -- no ExecStopPost/graceful shutdown hooks
-        fire, the closest real analog to a nixosTest VM's crash() (which pulls power on
-        the whole QEMU process). machinectl terminate is a best-effort follow-up to reap
-        anything SIGKILL alone didn't, not the primary mechanism."""
-        pid = self._leader_pid()
-        if pid:
-            subprocess.run(["kill", "-9", str(pid)])
-        subprocess.run(["machinectl", "terminate", self.name])
 
     def start(self):
         """`systemctl start container@<name>.service`, not `machinectl start <name>`:
