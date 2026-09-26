@@ -113,6 +113,11 @@ done
 echo "== 3/6: pre-creating each container's /persist (host-side) =="
 for n in "${NAMES[@]}"; do
     p="$PERSIST_ROOT/$n-persist"
+    # Wipe first: this directory is fully owned by this script, and re-running setup.sh
+    # (e.g. between measurement attempts, same as the disk wipe above) should give a
+    # truly clean node -- found live: a stale cluster-id from an earlier run.py attempt
+    # left over here made a fresh `expanse cluster init` fail with "already a cluster node".
+    rm -rf "$p"
     mkdir -p "$p"/{etc,var/lib/nixos,var/lib/systemd,root/.ssh}
     touch "$p/etc/machine-id"
     chmod 0700 "$p/root/.ssh"
