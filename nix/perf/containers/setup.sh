@@ -171,9 +171,13 @@ done
 # uses, proven to work against a running container regardless of D-Bus state).
 failed=0
 for n in "${NAMES[@]}"; do
-    leader="$(machinectl show "$n" -p Leader --value)"
     ok=0
     for _ in $(seq 1 180); do
+        # Re-fetch the leader PID every iteration, not just once before the loop --
+        # found live: querying it immediately after `restart` can race the container's
+        # own startup (leader not registered with machinectl yet), leaving it empty for
+        # the whole 180s wait even though the container comes up fine seconds later.
+        leader="$(machinectl show "$n" -p Leader --value 2>/dev/null)"
         if [[ -n "$leader" ]] && nsenter --target "$leader" --all -- systemctl is-system-running 2>/dev/null | grep -qE "running|degraded"; then
             ok=1
             break
