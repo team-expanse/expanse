@@ -102,20 +102,27 @@ let
       # dbus-broker inside this unprivileged nspawn container hits a real, repeating
       # failure -- "ERROR launcher_run_child: No medium found" / "ERROR service_add:
       # Transport endpoint is not connected", "Exiting due to fatal error: -107" --
-      # found live. Unlike its earlier, single, terminal failure (which left the
-      # container at a healthy `degraded` state), this is dbus.socket's own socket
-      # activation re-triggering dbus-broker.service on every fresh connection
-      # attempt, forever, since the underlying error never clears -- this keeps the
-      # container's own systemd permanently mid-boot (new jobs perpetually queued),
-      # which is why it never signals readiness to nspawn regardless of how high
-      # TimeoutStartSec is set (found live: still timed out even at 180s). A known
-      # class of dbus-broker/unprivileged-nspawn incompatibility, not something
-      # specific to this config. expansed itself has no D-Bus dependency, and
-      # avahi/chronyd (dbus's only real consumers in this minimal container) are
-      # already non-functional here (isolated network, no CAP_SYS_TIME) -- disabling
-      # the whole D-Bus stack sidesteps the loop rather than chasing an upstream bug.
-      services.dbus.enable = lib.mkForce false;
-      services.avahi.enable = lib.mkForce false;
+      # found live. dbus.socket's own socket activation re-triggers dbus-broker.service
+      # on every fresh connection attempt, forever, since the underlying error never
+      # clears -- this keeps the container's own systemd permanently mid-boot (new jobs
+      # perpetually queued), which is why it never signals readiness to nspawn
+      # regardless of how high TimeoutStartSec is set (found live: still timed out even
+      # at 180s). A known class of dbus-broker/unprivileged-nspawn incompatibility, not
+      # something specific to this config.
+      #
+      # First tried disabling D-Bus entirely (services.dbus.enable = false) on the
+      # assumption expansed has no D-Bus dependency -- true, but systemd-logind DOES
+      # actually need it at runtime despite only Wants=-ing it: found live,
+      # "Failed to connect to system bus: No such file or directory" / "Failed to fully
+      # start up daemon", looping exactly like dbus-broker had. Wants= only means
+      # systemd will still try to start logind even if dbus never starts; it does not
+      # mean logind tolerates dbus's absence once running.
+      #
+      # Switching to the classic dbus-daemon implementation instead of disabling D-Bus
+      # outright: the ENOMEDIUM failure is in dbus-broker's own launcher_run_child code
+      # path specifically, which classic dbus-daemon doesn't share, so this keeps D-Bus
+      # (and logind) actually functional while sidestepping dbus-broker's bug.
+      services.dbus.implementation = "dbus";
 
       # udevd doesn't run inside this container ("Rule-based Manager for Device Events
       # and Files skipped, unmet condition check ConditionPathIsReadWrite=/sys" -- /sys
