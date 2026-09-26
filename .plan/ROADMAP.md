@@ -165,6 +165,15 @@ configuration both verify.
 
 **Exit:** budgets met on target hardware, chaos suite green over a long soak, 1.0.
 
+## Phase 12 — Single-node clusters (1.1)
+
+- Default volumes and blocks work on one node; replication clamps to the nodes available and
+  records its target.
+- Volumes grow to their target automatically as nodes join; one node says "no redundancy".
+- Optional: an installed node usable as a dev workstation (persisted `/home`, local config).
+
+**Exit:** single-node and grow-on-join VM tests green, zero acked-write loss across 1 → 3, 1.1.0.
+
 ---
 
 ## Cross-cutting items
