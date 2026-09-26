@@ -178,20 +178,15 @@ for n in "${NAMES[@]}"; do
         # own startup (leader not registered with machinectl yet), leaving it empty for
         # the whole 180s wait even though the container comes up fine seconds later.
         leader="$(machinectl show "$n" -p Leader --value 2>/dev/null)"
-        # `is-system-running` exits non-zero for "degraded" (0 only means "running") --
-        # under `set -e`, a bare `status="$(...)"` assignment with that command dies the
-        # whole script right here. Keeping it as the condition of an if (as before) is
-        # exempt from errexit; found live after the plain-assignment form silently killed
-        # the script immediately after "== 6/6 ==" with no further output at all.
+        # is-system-running exits non-zero for "degraded" (0 means only "running"), so
+        # this must stay an if-condition rather than a bare assignment to stay exempt
+        # from set -e.
         if status="$(nsenter --target "$leader" --all -- systemctl is-system-running 2>&1)"; then
             rc=0
         else
             rc=$?
         fi
-        # Temporary instrumentation: external checks (from a separate shell) have shown
-        # "degraded" reached well within this window while this exact loop still reports
-        # NOT ready -- printing what THIS process actually sees every 10s to find the
-        # discrepancy live, since the two checks look identical but disagree.
+        # Progress breadcrumb for a slow or stuck boot, without spamming every second.
         if (( i % 10 == 0 )); then
             echo "  $n: [$(date +%T)] leader='$leader' rc=$rc status='$status'" >&2
         fi
