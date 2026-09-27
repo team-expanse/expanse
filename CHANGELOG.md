@@ -7,6 +7,30 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## 1.1.4 - 2026-09-27
+
+### Changed
+
+- The mirror layout boots from either disk alone. The ESP and the system
+  partition are now md RAID1 arrays across the first two disks (the ESP with
+  metadata 1.0, so firmware reads each half as FAT), with btrfs on the md
+  array; before, `/boot` lived only on the first disk and the btrfs RAID1
+  root would not mount with a member missing. Verified in QEMU: install,
+  boot with each disk removed, and a replacement disk rebuilt and booted
+  alone. btrfs on md detects but no longer repairs system-volume corruption
+  (`.plan/ARCHITECTURE.md` §3.4). Existing mirror installs keep the old
+  layout until reinstalled; single-disk installs are unchanged. Also confirmed
+  in a separate test run: a node with a removed drive still boots.
+- On an md ESP, systemd-boot is installed with relaxed ESP checks and without
+  an NVRAM entry; each disk boots through its `\EFI\BOOT\BOOTX64.EFI`.
+- Mirror nodes ship `sgdisk` and log md events (a degraded array) to the
+  journal. `docs/STORAGE.md` §4 has the disk-replacement runbook.
+- Reinstalling the mirror layout over a previous mirror install formats
+  fresh filesystems: a recreated md array exposes the old array's data, which
+  disko would otherwise have kept (new `install-mirror` VM test).
+- `expanse doctor storage` reads the md array under the system btrfs: PASS
+  for a healthy md RAID1, WARN when degraded.
+
 ## 1.1.3 - 2026-09-27
 
 ### Fixed
