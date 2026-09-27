@@ -7,6 +7,49 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## 1.1.3 - 2026-09-27
+
+### Fixed
+
+An install from the ISO now works end to end: verified in QEMU through the
+interactive installer, `nixos-install`, first boot, a one-node cluster running
+a block, and a reboot that wipes root and keeps the cluster.
+
+- Installer TUI: ENTER on the welcome screen did nothing (and other keys
+  quit); a pasted SSH key was dropped; it ran as a service without the tools
+  or `EXPANSE_FLAKE` it needs. It now starts from root's tty1 login, logs to
+  `/tmp/expanse-install.log`, and warns when no SSH key is given. Static
+  addressing moves to `expanse install --config`.
+- The ISO's `<nixpkgs>` needed flakes, so disko failed.
+- An installed node's configuration did not evaluate (`attribute 'disks'
+  missing`): the disko layout is now applied through disko's own mapping.
+- Installed nodes had no hardware configuration (the initrd could not find a
+  virtio disk); the installer now runs `nixos-generate-config`.
+- `/etc/nixos` was on the wiped root; it now lives in `/persist/etc/nixos`.
+- The impermanence rollback raced the system disk and mounted it without
+  `-t btrfs`, so root was never wiped on a real install.
+- Installed nodes did not run the agent (`expanse.agent.enable` was only set
+  by tests).
+- `systemd-machine-id-commit` failed on every boot (the ID is persisted by its
+  bind mount).
+- `expanse cluster init` while `expansed` ran left the agent outside the new
+  cluster; it now refuses and prints the stop/init/start steps.
+- `expanse ctl block get` and `catalog get` crashed without `-o`.
+- The web UI could not be opened in any browser (`SSL_ERROR_NO_CYPHER_OVERLAP`):
+  it served the cluster CA's Ed25519 certificates, which browsers reject. It
+  now has its own ECDSA P-256 CA, created once per cluster; import
+  `/persist/expanse/ca/ui-ca.pem` (not `ca.pem`) into the browser. Node-to-node
+  TLS and the metrics endpoint keep the cluster CA.
+- An installed node's firewall blocked the web UI (8443) and the metrics
+  endpoint (7447) from other machines; both are now open (TLS-authenticated).
+- The ISO and installed nodes log to the serial console too (`ttyS0`), with a
+  login there.
+
+### Known issues
+
+- Binary-backed block types (nginx, redis, ...) need their program on the
+  node's `PATH`, which an installed node does not ship; `util/echo` runs.
+
 ## 1.1.2 - 2026-09-26
 
 ### Fixed
