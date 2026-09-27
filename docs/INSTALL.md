@@ -41,8 +41,9 @@ SSH (`ssh root@<ip>`, the installer advertises itself over mDNS as
 1. **Welcome** — a hardware summary.
 2. **Disks** — select target disks with space. 1 disk = single (a btrfs
    system partition + the remainder as LVM); 2+ = mirror (the first two
-   disks carry a btrfs RAID1 system partition, every disk's remainder —
-   including theirs — joins the LVM data pool as a plain, unmirrored PV).
+   disks each carry an ESP and a system partition, mirrored as md RAID1 so
+   either disk alone boots; every disk's remainder — including theirs —
+   joins the LVM data pool as a plain, unmirrored PV).
    Disks holding data are marked `CONTAINS DATA` and require explicit
    confirmation.
 3. **Network** — DHCP (recommended) or static.

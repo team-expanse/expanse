@@ -76,18 +76,20 @@ GPT ─┬─ ESP (FAT32)                → /boot
 **Multi-disk server:**
 
 ```
-system   : btrfs RAID1 across 2 disks   (self-healing; see 3.4)
+boot     : ESP on md RAID1 (metadata 1.0) across 2 disks
+system   : btrfs on md RAID1 across 2 disks   (boots from either disk; see 3.4)
 data     : remaining disks as LVM PVs in VG "expanse"; vgextend as disks are added
 ```
 
 The system volume is a **plain partition, not an LV**. This keeps LVM out of initrd entirely —
-early boot needs btrfs and nothing else, which removes a class of failure from the hardest place
+early boot needs btrfs (and md, on a mirror) and nothing else, which removes a class of failure from the hardest place
 to debug. LVM activates later, in normal userspace, and only for the data pool.
 
 ### 3.2 Why btrfs for the system
 
 In-tree (no kernel gate), checksums on the data that matters most (configs, secrets, Raft log),
-subvolume snapshots for impermanence, transparent compression, and — with RAID1 — **self-healing**.
+subvolume snapshots for impermanence and transparent compression. (btrfs RAID1 would add
+self-healing, but see 3.4 for why the mirror is md.)
 Never use btrfs RAID5/6.
 
 **Impermanence** is implemented by wiping the `@root` subvolume at boot. Anything that survives a
@@ -121,10 +123,16 @@ oldest target hardware; the trade is losing block-level snapshots for opaque vol
 **Mirror the system volume on servers; do not add local RAID for data by default.** Once volumes
 are replicated three ways across nodes by DRBD, local RAID under the data PV buys MTBF, not
 correctness — losing a node's pool means that node resyncs from peers, a case that must work
-regardless. Prefer JBOD/HBA passthrough so btrfs owns the system mirror: hardware RAID hides the
-second copy from btrfs, leaving it able to *detect* corruption but not *repair* it. mdadm RAID1 has
-the same limitation for the opposite reason — no checksums, so a scrub cannot tell which mirror is
-right.
+regardless.
+
+The system mirror is **md RAID1 under a single-device btrfs**, for both the system partition and
+the ESP (1.1.4; earlier releases used btrfs RAID1 with the ESP on one disk). The deciding
+requirement is that the node boots unattended from either disk alone: a btrfs RAID1 member
+missing blocks the mount until an operator adds `-o degraded`, and systemd-boot's ESP lives on
+one disk. The cost is self-healing: btrfs still *detects* corruption by checksum, but md holds
+the second copy, so btrfs cannot *repair* from it (and md alone cannot tell which copy is right).
+DRBD replicas and the reproducible `/nix` bound what that loss can reach. Prefer JBOD/HBA
+passthrough over hardware RAID.
 
 ### 3.5 Volume stack
 

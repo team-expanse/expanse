@@ -99,7 +99,20 @@
                   "installed ${layout} node's firewall blocks the web UI (8443) or metrics (7447)";
                 assert lib.assertMsg (lib.elem "console=ttyS0,115200n8" c.boot.kernelParams)
                   "installed ${layout} node does not log to the serial console";
+                assert lib.assertMsg (layout != "mirror" || mirrorBootsDegraded c)
+                  "installed mirror node keeps /boot or / on a single disk, or cannot install systemd-boot onto md";
                 builtins.unsafeDiscardStringContext c.system.build.toplevel.drvPath;
+              # Either disk alone boots: ESP and system both md RAID1, and bootctl accepts the md ESP.
+              mirrorBootsDegraded = c:
+                c.fileSystems."/".device == "/dev/md/system"
+                && c.fileSystems."/boot".device == "/dev/md/esp"
+                && c.expanse.node.rootDevice == "/dev/md/system"
+                && c.boot.swraid.enable
+                && lib.hasInfix "relaxed-esp" c.system.build.installBootLoader.name
+                # bootctl cannot name an md ESP in an NVRAM entry; each disk boots via \EFI\BOOT\BOOTX64.EFI.
+                && !c.boot.loader.efi.canTouchEfiVariables
+                # sgdisk copies the survivor's partition table onto a replacement disk.
+                && lib.any (p: (p.pname or "") == "gptfdisk") c.environment.systemPackages;
             in
             pkgs.writeText "node-config-eval" (lib.concatMapStringsSep "\n" evalNode [ "single" "mirror" ]);
           smoke = mkTest "smoke" ./nix/tests/smoke.nix;
@@ -107,6 +120,7 @@
           install-refuses-dirty-disk =
             mkTest "install-refuses-dirty-disk" ./nix/tests/install-refuses-dirty-disk.nix;
           install-tui = mkTest "install-tui" ./nix/tests/install-tui.nix;
+          install-mirror = mkTest "install-mirror" ./nix/tests/install-mirror.nix;
           impermanence = mkTest "impermanence" ./nix/tests/impermanence.nix;
           identity = mkTest "identity" ./nix/tests/identity.nix;
           boot-time = mkTest "boot-time" ./nix/tests/boot-time.nix;

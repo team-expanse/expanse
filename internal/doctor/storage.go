@@ -13,7 +13,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/expanse/expanse/internal/storage/drbd"
@@ -49,7 +51,8 @@ type StorageInput struct {
 
 	// 4: the system btrfs volume's device count (1 = unmirrored) and RAID profile.
 	SystemDevices     int
-	SystemRAIDProfile string // "RAID5"/"RAID6" if in use (R8); "" otherwise
+	SystemRAIDProfile string   // "RAID5"/"RAID6" if in use (R8); "" otherwise
+	SystemMD          *MDArray // the md array under a single-device btrfs, if any (the mirror layout)
 	SystemErr         string
 
 	// 5: every configured DRBD resource.
@@ -63,7 +66,7 @@ func RunStorage(in StorageInput) []Result {
 		checkDRBDModule(in.ModuleLoaded, in.ModuleVersion),
 		checkVolumeGroup(in.VGRequested, in.VG, in.VGErr),
 		checkThinPools(in.Pools),
-		checkSystemMirror(in.SystemDevices, in.SystemRAIDProfile, in.SystemErr),
+		checkSystemMirror(in.SystemDevices, in.SystemRAIDProfile, in.SystemMD, in.SystemErr),
 		checkDRBDResources(in.Resources, in.ResourcesErr),
 	}
 }
@@ -140,7 +143,7 @@ func checkThinPools(pools []ThinPoolUsage) Result {
 // (ARCHITECTURE.md §3.4): raidProfile != "" (R8) is checked first because it is
 // the more urgent mistake — RAID5/6 has an unfixed write hole and is never offered
 // by any disko layout, so seeing it means someone reconfigured the volume by hand.
-func checkSystemMirror(devices int, raidProfile, errStr string) Result {
+func checkSystemMirror(devices int, raidProfile string, md *MDArray, errStr string) Result {
 	if errStr != "" || devices == 0 {
 		return Result{"system-mirror", Warn, "could not determine: " + errStr, "check `btrfs filesystem show`/`df` on the system volume"}
 	}
@@ -150,6 +153,9 @@ func checkSystemMirror(devices int, raidProfile, errStr string) Result {
 			"btrfs RAID5/6 has an unfixed write hole — never use it (ARCHITECTURE.md §3.2); recreate as RAID1 or single",
 		}
 	}
+	if devices == 1 && md != nil {
+		return checkMDMirror(*md)
+	}
 	if devices == 1 {
 		return Result{
 			"system-mirror", Warn, "single device",
@@ -157,6 +163,28 @@ func checkSystemMirror(devices int, raidProfile, errStr string) Result {
 		}
 	}
 	return Result{"system-mirror", Pass, fmt.Sprintf("mirrored across %d devices", devices), ""}
+}
+
+// MDArray is an md RAID array's state from sysfs.
+type MDArray struct {
+	Name      string // e.g. "md127"
+	Level     string // e.g. "raid1"
+	RaidDisks int
+	Degraded  int // members missing
+}
+
+// checkMDMirror judges a system volume mirrored by md RAID1: btrfs detects corruption, md keeps a second copy.
+func checkMDMirror(md MDArray) Result {
+	if md.Level != "raid1" {
+		return Result{"system-mirror", Warn, fmt.Sprintf("on md %s (%s), not a mirror", md.Name, md.Level), "the mirror layout uses md RAID1 (docs/STORAGE.md §4)"}
+	}
+	if md.Degraded > 0 {
+		return Result{
+			"system-mirror", Warn, fmt.Sprintf("md %s RAID1 degraded: %d of %d members missing", md.Name, md.Degraded, md.RaidDisks),
+			"replace the failed disk and re-add its partitions (docs/STORAGE.md §4, replacing a system disk)",
+		}
+	}
+	return Result{"system-mirror", Pass, fmt.Sprintf("md %s RAID1 across %d devices", md.Name, md.RaidDisks), ""}
 }
 
 func checkDRBDResources(res []drbd.Status, errStr string) Result {
@@ -218,6 +246,7 @@ func CollectStorageLive(ctx context.Context, vg, systemMount string) StorageInpu
 	}
 
 	in.SystemDevices, in.SystemErr = collectSystemDevices(systemMount)
+	in.SystemMD = collectSystemMD(systemMount)
 	in.SystemRAIDProfile = collectSystemRAIDProfile(systemMount)
 
 	if res, err := drbd.New().StatusAll(ctx); err != nil {
@@ -246,6 +275,62 @@ func collectSystemDevices(mount string) (int, string) {
 		return 0, firstLine(out)
 	}
 	return strings.Count(out, "devid"), ""
+}
+
+// btrfsDevicePaths lists the member device paths in `btrfs filesystem show` output.
+func btrfsDevicePaths(out string) []string {
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) >= 3 && f[0] == "devid" && f[len(f)-2] == "path" {
+			paths = append(paths, f[len(f)-1])
+		}
+	}
+	return paths
+}
+
+// collectSystemMD returns the md array a single-device system btrfs sits on, or nil.
+func collectSystemMD(mount string) *MDArray {
+	out, err := runCheck("btrfs", "filesystem", "show", mount)
+	if err != nil {
+		return nil
+	}
+	paths := btrfsDevicePaths(out)
+	if len(paths) != 1 {
+		return nil
+	}
+	dev, err := filepath.EvalSymlinks(paths[0])
+	if err != nil {
+		return nil
+	}
+	md, err := readMDArray("/sys/block", filepath.Base(dev))
+	if err != nil {
+		return nil
+	}
+	return md
+}
+
+// readMDArray reads an md array's level, member count and degraded count from sysBlock/<name>/md.
+func readMDArray(sysBlock, name string) (*MDArray, error) {
+	dir := filepath.Join(sysBlock, name, "md")
+	read := func(f string) (string, error) {
+		b, err := os.ReadFile(filepath.Join(dir, f))
+		return strings.TrimSpace(string(b)), err
+	}
+	md := &MDArray{Name: name}
+	var err error
+	if md.Level, err = read("level"); err != nil {
+		return nil, err
+	}
+	for f, dst := range map[string]*int{"raid_disks": &md.RaidDisks, "degraded": &md.Degraded} {
+		v, err := read(f)
+		if err != nil {
+			return nil, err
+		}
+		if *dst, err = strconv.Atoi(v); err != nil {
+			return nil, fmt.Errorf("md %s %s: %w", name, f, err)
+		}
+	}
+	return md, nil
 }
 
 // collectSystemRAIDProfile reports "RAID5"/"RAID6" if either is in use on the

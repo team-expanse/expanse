@@ -1,27 +1,17 @@
-# Multi-disk Expanse layout (A1, D8): btrfs RAID1 system partition
-# mirrored across the first two disks, and the remainder of every disk
-# -- including the mirrored pair's own remainder -- as plain LVM PVs in
-# VG "expanse". No local RAID for data: cluster replication (DRBD) covers
-# redundancy there, so extra disks are JBOD (see ARCHITECTURE.md §3.4).
-# This replaces the old raidz1.nix; raidz1 was a ZFS concept with no
-# in-tree equivalent worth reproducing.
+# Multi-disk Expanse layout (A1, D8): the first two disks each carry an ESP
+# and a system partition, mirrored as md RAID1 arrays "esp" (/boot) and
+# "system" (btrfs), so either disk alone boots. The remainder of every disk
+# is a plain LVM PV in VG "expanse": DRBD replicates data across nodes, so
+# extra disks are JBOD (see ARCHITECTURE.md §3.4).
 #
-# "system-b" is the side disko actually runs mkfs.btrfs on: disko
-# partitions and formats disks in attribute-name order, so "system-a"'s
-# raw partition already exists by the time "system-b" mkfs's the raid1
-# pair into it. internal/install/plan.go (systemDevice) reads
-# /dev/disk/by-partlabel/disk-system-b-root for the blank-snapshot and
-# verify stages; keep the attribute names in sync with it if they change.
+# The ESP array uses metadata 1.0 (superblock at the end), so firmware reads
+# each half as a plain FAT filesystem; nix/modules/md-boot.nix lets bootctl
+# install onto it. internal/install/plan.go (systemDevice) snapshots
+# /dev/md/system; keep the array names in sync with it.
 { disks ? [ "/dev/sda" "/dev/sdb" ], ... }@args:
 let
   systemSize = "8G";
   nDisks = builtins.length disks;
-  subvolumes = {
-    "@root" = { mountpoint = "/"; mountOptions = [ "compress=zstd" "noatime" ]; };
-    "@nix" = { mountpoint = "/nix"; mountOptions = [ "compress=zstd" "noatime" ]; };
-    "@persist" = { mountpoint = "/persist"; mountOptions = [ "compress=zstd" ]; };
-    "@log" = { mountpoint = "/var/log"; mountOptions = [ "compress=zstd" ]; };
-  };
   dataPartition = {
     size = "100%";
     content = {
@@ -30,47 +20,65 @@ let
     };
   };
 
-  systemDisks = {
-    system-a = {
-      type = "disk";
-      device = builtins.elemAt disks 0;
-      content = {
-        type = "gpt";
-        partitions = {
-          esp = {
-            size = "1G";
-            type = "EF00";
-            content = {
-              type = "filesystem";
-              format = "vfat";
-              mountpoint = "/boot";
-              mountOptions = [ "umask=0077" ];
-            };
-          };
-          # No content: left raw, contributing space to system-b's
-          # mkfs.btrfs -d raid1 below.
-          root = {
-            size = systemSize;
-          };
-          data = dataPartition;
+  systemDisk = device: {
+    type = "disk";
+    inherit device;
+    content = {
+      type = "gpt";
+      partitions = {
+        esp = {
+          size = "1G";
+          type = "EF00";
+          content = { type = "mdraid"; name = "esp"; };
         };
+        system = {
+          size = systemSize;
+          type = "FD00";
+          content = { type = "mdraid"; name = "system"; };
+        };
+        data = dataPartition;
       };
     };
-    system-b = {
-      type = "disk";
-      device = builtins.elemAt disks 1;
+  };
+  systemDisks = {
+    system-a = systemDisk (builtins.elemAt disks 0);
+    system-b = systemDisk (builtins.elemAt disks 1);
+  };
+
+  # A newly created array still exposes the data of any array its partitions held before, and
+  # disko formats only blank devices: wipe a new array so a reinstall gets fresh filesystems.
+  freshArray = name: {
+    type = "mdadm";
+    level = 1;
+    preCreateHook = ''
+      test -e /dev/md/${name} || touch "$disko_devices_dir/new-md-${name}"
+    '';
+  };
+  wipeIfNew = name: ''
+    if [ -e "$disko_devices_dir/new-md-${name}" ]; then wipefs --all /dev/md/${name}; fi
+  '';
+
+  mdArrays = {
+    esp = freshArray "esp" // {
+      metadata = "1.0";
       content = {
-        type = "gpt";
-        partitions = {
-          root = {
-            size = systemSize;
-            content = {
-              type = "btrfs";
-              extraArgs = [ "-f" "-d" "raid1" "/dev/disk/by-partlabel/disk-system-a-root" ];
-              inherit subvolumes;
-            };
-          };
-          data = dataPartition;
+        preCreateHook = wipeIfNew "esp";
+        type = "filesystem";
+        format = "vfat";
+        mountpoint = "/boot";
+        mountOptions = [ "umask=0077" ];
+      };
+    };
+    system = freshArray "system" // {
+      content = {
+        preCreateHook = wipeIfNew "system";
+        type = "btrfs";
+        extraArgs = [ "-f" ];
+        subvolumes = {
+          "@root" = { mountpoint = "/"; mountOptions = [ "compress=zstd" "noatime" ]; };
+          "@nix" = { mountpoint = "/nix"; mountOptions = [ "compress=zstd" "noatime" ]; };
+          "@persist" = { mountpoint = "/persist"; mountOptions = [ "compress=zstd" ]; };
+          "@log" = { mountpoint = "/var/log"; mountOptions = [ "compress=zstd" ]; };
         };
       };
     };
@@ -96,6 +104,7 @@ in
 {
   disko.devices = {
     disk = systemDisks // extraDataDisks;
+    mdadm = mdArrays;
     lvm_vg.expanse = {
       type = "lvm_vg";
       lvs = { };

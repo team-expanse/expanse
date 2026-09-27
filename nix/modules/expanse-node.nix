@@ -3,7 +3,7 @@
 # source baked into the installer) and enables the node module set.
 { lib, ... }:
 {
-  imports = [ ./expanse.nix ];
+  imports = [ ./expanse.nix ./md-boot.nix ];
 
   nixpkgs.overlays = [
     (final: prev: {

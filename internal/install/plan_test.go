@@ -99,3 +99,15 @@ func TestStageInstallUsesThePersistedConfig(t *testing.T) {
 		t.Fatalf("ran %q, want [%q]", ran, want)
 	}
 }
+
+// The blank snapshot is taken on the device the node's rollback mounts: the md array for a mirror.
+func TestSystemDeviceMatchesLayout(t *testing.T) {
+	for layout, want := range map[DiskLayout]string{
+		LayoutSingle: "/dev/disk/by-partlabel/disk-system-root",
+		LayoutMirror: "/dev/md/system",
+	} {
+		if got := systemDevice(layout); got != want {
+			t.Errorf("systemDevice(%s) = %q, want %q", layout, got, want)
+		}
+	}
+}

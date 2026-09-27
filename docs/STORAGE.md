@@ -15,8 +15,8 @@ GPT ─┬─ ESP (FAT32)             → /boot
 ```
 
 The installer (`docs/INSTALL.md`) lays down the btrfs system partition and creates VG `expanse`
-from the remainder of the disk(s); on a multi-disk server the system partition is btrfs RAID1
-across the first two disks and every disk's remainder — including theirs — joins the VG as a plain
+from the remainder of the disk(s); on a multi-disk server the ESP and the system partition are each
+md RAID1 across the first two disks (btrfs sits on the md array) and every disk's remainder — including theirs — joins the VG as a plain
 PV (JBOD; see §4). Nothing above the VG is created at install time: the thin pool and DRBD wiring
 are an explicit opt-in, because they need `--storage-vg`/`--storage-pool` set and a kernel module
 DRBD alone requires.
@@ -69,14 +69,44 @@ opaque volumes.
 
 ## 4. Local redundancy
 
-**Mirror the system volume on servers (btrfs RAID1); do not add local RAID for the data VG by
+**Mirror the system volume on servers (md RAID1); do not add local RAID for the data VG by
 default.** Volumes are already replicated three ways across nodes by DRBD — local RAID under the
 data PV buys MTBF, not correctness, since a node's pool being lost and resyncing from peers is a
-case that has to work regardless. Prefer JBOD/HBA passthrough so btrfs owns the system mirror:
-hardware RAID hides the second copy from btrfs, leaving it able to *detect* corruption but not
-*repair* it. Never use btrfs RAID5/6 — it has an unfixed write hole. `expanse doctor storage`
-flags both a single-device system volume (WARN: detected, not self-healing) and RAID5/6 (FAIL: a
-hand-edited layout, since no installer layout ever offers it).
+case that has to work regardless. Never use btrfs RAID5/6 — it has an unfixed write hole.
+`expanse doctor storage` flags a single-device system volume and a degraded md mirror (WARN) and
+RAID5/6 (FAIL: a hand-edited layout, since no installer layout ever offers it).
+
+The mirror layout puts both the ESP and the system partition on md RAID1 arrays (`/dev/md/esp`,
+metadata 1.0 so firmware reads each half as plain FAT; `/dev/md/system`, holding the btrfs
+subvolumes), so the node boots from either disk alone. A missing member delays boot by about 30s
+(mdadm's last-resort timer) before the arrays start degraded. The trade against btrfs RAID1: btrfs
+still *detects* corruption on the system volume (checksums), but md, not btrfs, holds the second
+copy, so btrfs cannot *repair* data from it. btrfs RAID1 could, but it will not mount with a
+member missing without manual intervention, which defeats the point of mirroring the boot disk.
+Prefer JBOD/HBA passthrough over hardware RAID either way. systemd-boot is installed without
+touching EFI variables here, since an NVRAM entry cannot name an md ESP; each disk boots through
+its `\EFI\BOOT\BOOTX64.EFI` fallback, so keep both disks in the firmware boot order.
+
+### Replacing a system disk
+
+With the node running degraded on the surviving disk (`cat /proc/mdstat` shows `[U_]` or `[_U]`;
+mdmonitor logs `DegradedArray` to the journal under `mdadm`), fit the new disk, then — `SURVIVOR`
+and `NEW` being the whole-disk devices, e.g. `/dev/sda` and `/dev/sdb`:
+
+```sh
+sgdisk --replicate=$NEW $SURVIVOR     # copy the partition table: ESP, system, data
+sgdisk --randomize-guids $NEW         # give the copy its own disk and partition GUIDs
+mdadm /dev/md/esp --add ${NEW}1       # use ${NEW}p1 etc. for NVMe names
+mdadm /dev/md/system --add ${NEW}2
+vgreduce --removemissing expanse      # drop the dead disk's PV (its replicas resync from peers)
+pvcreate ${NEW}3 && vgextend expanse ${NEW}3
+mdadm --wait /dev/md/esp /dev/md/system   # until /proc/mdstat shows [UU]
+```
+
+The rebuilt ESP half carries the bootloader as soon as the resync finishes; no reinstall is
+needed. `vgreduce --removemissing` refuses while LVs still sit on the missing PV; see §7 for
+retiring a node's replicas first. Nodes installed with the mirror layout before 1.1.4 (ESP on the
+first disk only, btrfs RAID1) must be reinstalled to get this.
 
 ## 5. `expanse doctor storage`
 
@@ -91,7 +121,7 @@ Five checks, PASS/WARN/FAIL, each with a remediation hint on anything short of P
 | `drbd-module` | `/sys/module/drbd/version` | loaded, version unknown | not loaded, or not 9.x |
 | `volume-group` | the `--vg` VG's free space | ≤10% free | VG not found |
 | `thin-pools` | every thin pool's `Data%`/`Meta%` | ≥80% | ≥90% |
-| `system-mirror` | `btrfs filesystem show`/`df` on `--system-mount` | single device | RAID5/6 in use |
+| `system-mirror` | `btrfs filesystem show`/`df` on `--system-mount`, and the md array under it | single device, or md mirror degraded | RAID5/6 in use |
 | `drbd-resources` | every configured resource's disk state, quorum, peer connection | none configured | no quorum, degraded disk, or a standalone (disconnected/split-brained) peer |
 
 `--vg` empty skips the volume-group and thin-pool checks (degraded to WARN, not FAIL) — the

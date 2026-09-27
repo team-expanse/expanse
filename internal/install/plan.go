@@ -208,15 +208,13 @@ func (rc *RunContext) runDisko(disks []Disk) error {
 	return rc.run(name, args...)
 }
 
-// systemDevice returns the by-partlabel path of the layout's btrfs system
-// partition -- the side disko actually formats, which for a mirror is
-// "system-b" (see nix/installer/disko/{single,mirror}.nix).
+// systemDevice returns the layout's btrfs system device: the single disk's partition, or the
+// mirror's md RAID1 array (see nix/installer/disko/{single,mirror}.nix).
 func systemDevice(layout DiskLayout) string {
-	disk := "system"
 	if layout == LayoutMirror {
-		disk = "system-b"
+		return "/dev/md/system"
 	}
-	return "/dev/disk/by-partlabel/disk-" + disk + "-root"
+	return "/dev/disk/by-partlabel/disk-system-root"
 }
 
 // blankSnapshot is impermanence's rollback target: a top-level sibling of
