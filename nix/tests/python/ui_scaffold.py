@@ -14,7 +14,7 @@ and unknown-path subtests below log in first, matching that design
 rather than the pre-auth behavior this test originally asserted.
 """
 
-CAFILE = "/persist/expanse/ca/ca.pem"
+CAFILE = "/persist/expanse/ca/ui-ca.pem"
 PASSWORD = "ui-scaffold-test-password"
 
 form("test")

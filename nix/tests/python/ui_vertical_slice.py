@@ -63,7 +63,7 @@ with subtest("exactly one node holds the UI VIP"):
     assert holder is not None, "no node holds the UI VIP"
 
 with subtest("provision the cluster CA onto the external client"):
-    ca_pem = n1.succeed("cat /persist/expanse/ca/ca.pem")
+    ca_pem = n1.succeed("cat /persist/expanse/ca/ui-ca.pem")
     CLIENT.succeed("cat > /root/ca.pem << 'EOF'\n" + ca_pem + "EOF\n")
 
 with subtest("client logs in through the VIP (X1's interface, X3's auth gate)"):

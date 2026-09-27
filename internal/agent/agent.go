@@ -865,7 +865,8 @@ func (a *Agent) Run(ctx context.Context) error {
 			// back. Never persisted in plaintext anywhere else.
 			a.logger.Warn("generated initial web UI admin password — save it now, it will not be shown again", "username", webauth.AdminUsername, "password", pw)
 		}
-		if tlsCfg, err := control.UIServerTLS(a.ctl.dataDir); err != nil {
+		// The UI's own ECDSA chain: browsers reject the cluster CA's Ed25519 certificates.
+		if tlsCfg, err := control.WebUITLS(ctx, a.ctl.store, a.ctl.secret, a.ctl.dataDir, a.cfg.NodeID, a.ctl.id); err != nil {
 			a.logger.Error("web UI TLS setup failed", "err", err)
 		} else if webSrv, err := web.New(a.cfg.NodeID, a.store, a.blocks, a.blockCatalog, srv, a.ctl.secret); err != nil {
 			a.logger.Error("web UI init failed", "err", err)

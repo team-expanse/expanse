@@ -11,7 +11,7 @@ oidc-login.nix (a real store path and a build-time-computed bcrypt hash,
 not hand-typed).
 """
 
-CAFILE = "/persist/expanse/ca/ca.pem"
+CAFILE = "/persist/expanse/ca/ui-ca.pem"
 COOKIES = "/root/oidc-cookies.txt"
 CLIENT_SECRET = "vm-test-oidc-client-secret-do-not-log-me"
 REDIRECT_URL = "https://n1:8443/login/oidc/callback"

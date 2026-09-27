@@ -7,7 +7,7 @@ the same "two readers of one truth" pattern ui_blocks.py uses for its
 own deploy.
 """
 
-CAFILE = "/persist/expanse/ca/ca.pem"
+CAFILE = "/persist/expanse/ca/ui-ca.pem"
 PASSWORD = "ui-volumes-test-password"
 VOLNAME = "uivol"
 NODES = [n1, n2, n3]

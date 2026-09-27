@@ -16,7 +16,7 @@ let
     nixpkgs.overlays = [
       (final: prev: { expanse = self.packages.${prev.system}.expanse; })
     ];
-    environment.systemPackages = [ pkgs.curl ];
+    environment.systemPackages = [ pkgs.curl pkgs.openssl ];
     expanse.node.enable = true;
     expanse.agent.enable = true;
     expanse.hostId = "0000000${toString idx}";

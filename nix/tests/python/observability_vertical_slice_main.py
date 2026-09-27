@@ -32,7 +32,7 @@ import json
 
 TOKEN = "vm-test-vslice-token-do-not-log-me"
 CAFILE = "/root/expanse-ca.pem"
-UI_CAFILE = "/persist/expanse/ca/ca.pem"  # n1 already owns this; no copy needed for its own curl calls
+UI_CAFILE = "/persist/expanse/ca/ui-ca.pem"  # the web UI's own CA (ECDSA; browsers reject the cluster CA's Ed25519)
 PROM = "http://127.0.0.1:9090"
 GRAFANA = "http://127.0.0.1:3000"
 DS_UID = "expanse-prometheus"

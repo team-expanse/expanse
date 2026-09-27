@@ -11,7 +11,7 @@ below is proven already by net-vip-basic.nix's own nginx deploy.
 
 # base64 comes from block-common.py, spliced in before this file.
 
-CAFILE = "/persist/expanse/ca/ca.pem"
+CAFILE = "/persist/expanse/ca/ui-ca.pem"
 PASSWORD = "ui-blocks-test-password"
 
 NGINX_YAML = (

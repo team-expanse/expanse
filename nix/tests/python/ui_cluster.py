@@ -7,7 +7,7 @@ form()/status() helpers as an independent cross-check.
 # base64 comes from block-common.py in ui_blocks.py, not spliced here --
 # this test needs no manifest encoding, so no extra import is needed.
 
-CAFILE = "/persist/expanse/ca/ca.pem"
+CAFILE = "/persist/expanse/ca/ui-ca.pem"
 PASSWORD = "ui-cluster-test-password"
 
 

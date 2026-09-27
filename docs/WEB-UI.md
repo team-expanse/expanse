@@ -19,10 +19,23 @@ address is reachable regardless of which node currently holds it, and survives l
 DNS entry, or `/etc/hosts`, or curl's `--resolve`) and the hostname check passes no matter which
 node answers.
 
-The certificate itself is issued by the cluster's own CA (D5 — no operator action needed at
-install), not a public one, so a browser will show it as untrusted until the CA certificate
-(`/persist/expanse/ca/ca.pem` on any node) is imported into the browser's or OS's trust store. For
-scripting/`curl`, pass `--cacert /persist/expanse/ca/ca.pem` instead.
+The certificate is issued by the cluster's own **web UI CA**: ECDSA P-256, created once per cluster
+and shared through the store. It is separate from the cluster CA because browsers do not accept
+the cluster CA's Ed25519 certificates for TLS (they fail with `SSL_ERROR_NO_CYPHER_OVERLAP`);
+node-to-node mTLS still uses the cluster CA. The certificate names `expanse-ui`, the node's ID and
+hostname, `localhost`, and the node's addresses, so `https://<node-ip>:8443/` verifies directly.
+
+A browser shows it as untrusted until the UI CA (`/persist/expanse/ca/ui-ca.pem` on any node) is
+imported as a trusted authority:
+
+```sh
+scp root@<node>:/persist/expanse/ca/ui-ca.pem .
+# Firefox: Settings → Privacy & Security → Certificates → View Certificates → Authorities → Import
+#          (tick "Trust this CA to identify websites")
+# Chrome/OS: import into the system trust store, e.g. on NixOS security.pki.certificateFiles
+```
+
+For scripting/`curl`, pass `--cacert /persist/expanse/ca/ui-ca.pem` instead.
 
 ## 2. The initial admin credential
 
