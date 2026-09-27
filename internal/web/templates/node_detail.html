@@ -1,0 +1,162 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">{{.Node.ID}} {{template "pill" .Node.State}}{{if .Node.Leader}} <span class="tag tag-leader">Leader</span>{{end}}</h1>
+    <p class="page-sub">{{role .Node.Role}} · joined {{ago .Node.JoinedAt}}{{if .Node.Serving}} · this node is serving you{{end}}</p>
+  </div>
+  <div class="page-actions">
+    {{if and (not .Node.Serving) .Node.UIURL}}<a class="btn btn-ghost" href="{{.Node.UIURL}}"><svg class="icon"><use href="#i-external"/></svg>Open on {{.Node.ID}}</a>{{end}}
+  </div>
+</div>
+
+<section class="kv-cards">
+  <div class="kv-card"><div class="kv-label">Reported health</div><div class="kv-value">{{template "pill" .Node.Health}}</div><div class="kv-sub">{{if eq .Node.Health.Label "Stale"}}unreachable; last heartbeat not current{{else}}from its 10s heartbeat{{end}}</div></div>
+  <div class="kv-card"><div class="kv-label">Raft</div><div class="kv-value"><code>{{.Node.RaftAddr}}</code></div><div class="kv-sub">{{.Node.NodeStatus.State}}</div></div>
+  <div class="kv-card"><div class="kv-label">API</div><div class="kv-value"><code>{{.Node.APIAddr}}</code></div><div class="kv-sub">gRPC, mTLS</div></div>
+  <div class="kv-card"><div class="kv-label">Self-reported</div><div class="kv-value">{{if .Node.Degraded}}<span class="text-warn">degraded</span>{{else}}ok{{end}}</div><div class="kv-sub">{{if .Node.Lifecycle}}lifecycle: {{.Node.Lifecycle}}{{else}}lifecycle: healthy{{end}}</div></div>
+</section>
+
+{{if not .Node.Serving}}
+<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeID}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{.Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
+{{else}}
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>System</h2></div>
+    {{if .Inventory}}
+    <dl class="dl">
+      <dt>Hostname</dt><dd>{{.Inventory.Hostname}}</dd>
+      <dt>OS</dt><dd>{{.Inventory.Os.GetName}} {{.Inventory.Os.GetVersion}}</dd>
+      <dt>Kernel</dt><dd>{{.Inventory.Os.GetKernel}}</dd>
+      {{with .Inventory.Os.GetSystemClosurePath}}<dt>System closure</dt><dd><code class="wrap">{{.}}</code></dd>{{end}}
+      <dt>Virtualization</dt><dd>{{if .Inventory.Virtualization}}{{.Inventory.Virtualization}}{{else}}none detected{{end}}</dd>
+      <dt>TPM</dt><dd>{{if .Inventory.Tpm.GetPresent}}present{{with .Inventory.Tpm.GetVersion}} ({{.}}){{end}}{{else}}absent{{end}}</dd>
+      {{if .Inventory.Capabilities}}<dt>Capabilities</dt><dd>{{range .Inventory.Capabilities}}<span class="tag">{{.}}</span> {{end}}</dd>{{end}}
+    </dl>
+    {{else}}
+    {{template "empty" .InventoryError}}
+    {{end}}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Reconciler</h2>{{if .Status}}{{template "pill" .StatusPill}}{{end}}</div>
+    {{if .Status}}
+    <dl class="dl">
+      <dt>Resources</dt><dd>{{.Status.ResourcesTotal}}</dd>
+      <dt>Ticks</dt><dd>{{.Status.TickCount}}</dd>
+      <dt>Last tick</dt><dd>{{ago (nanos .Status.LastTickUnixNs)}}{{if .Status.LastTickDurationMs}} · {{printf "%.1f" .Status.LastTickDurationMs}} ms{{end}}</dd>
+      <dt>Changes applied</dt><dd>{{.Status.ChangesApplied}}</dd>
+      <dt>Failures</dt><dd>{{if .Status.Failures}}<span class="text-crit">{{.Status.Failures}}</span>{{else}}0{{end}}</dd>
+    </dl>
+    {{else}}
+    {{template "empty" "Reconciler status is not available."}}
+    {{end}}
+  </section>
+</div>
+
+{{if .Inventory}}
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2><svg class="icon"><use href="#i-cpu"/></svg>CPU</h2></div>
+    <dl class="dl">
+      <dt>Model</dt><dd>{{.Inventory.Cpu.GetModel}}</dd>
+      <dt>Topology</dt><dd>{{.Inventory.Cpu.GetCores}} cores · {{.Inventory.Cpu.GetThreads}} threads{{if .Inventory.Cpu.GetMhz}} · {{printf "%.0f" .Inventory.Cpu.GetMhz}} MHz{{end}}</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2><svg class="icon"><use href="#i-memory"/></svg>Memory</h2></div>
+    <dl class="dl">
+      <dt>Total</dt><dd>{{bytes .Inventory.Memory.GetTotal}}</dd>
+      <dt>Available</dt><dd>{{bytes .Inventory.Memory.GetAvailable}}</dd>
+      {{if .Inventory.Memory.GetSwapTotal}}<dt>Swap</dt><dd>{{bytes .Inventory.Memory.GetSwapTotal}}</dd>{{end}}
+    </dl>
+    {{if .Inventory.Memory.GetTotal}}
+    <label class="meter-label">In use <span>{{pct (sub64 .Inventory.Memory.GetTotal .Inventory.Memory.GetAvailable) .Inventory.Memory.GetTotal}}%</span></label>
+    <progress class="meter" max="{{.Inventory.Memory.GetTotal}}" value="{{sub64 .Inventory.Memory.GetTotal .Inventory.Memory.GetAvailable}}"></progress>
+    {{end}}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-disk"/></svg>Disks</h2><span class="muted">{{len .Inventory.Disks}}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Device</th><th>Model</th><th>Serial</th><th>Size</th><th>Type</th></tr></thead>
+      <tbody>
+        {{range .Inventory.Disks}}
+        <tr><td><code>{{.Path}}</code></td><td>{{.Model}}</td><td><code>{{.Serial}}</code></td><td>{{bytes .Size}}</td><td>{{if .Rotational}}HDD{{else}}SSD / NVMe{{end}}</td></tr>
+        {{else}}
+        <tr><td colspan="5">{{template "empty" "No disks reported."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>Network interfaces</h2><span class="muted">{{len .Inventory.Nics}}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Interface</th><th>Link</th><th>MAC</th><th>Speed</th><th>Addresses</th></tr></thead>
+      <tbody>
+        {{range .Inventory.Nics}}
+        <tr><td><code>{{.Name}}</code></td><td>{{if .Up}}<span class="pill pill-ok"><span class="dot"></span>Up</span>{{else}}<span class="pill pill-neutral"><span class="dot"></span>Down</span>{{end}}</td><td><code>{{.Mac}}</code></td><td>{{if .Speed}}{{.Speed}} Mb/s{{else}}—{{end}}</td><td>{{range .Addresses}}<code>{{.}}</code> {{end}}</td></tr>
+        {{else}}
+        <tr><td colspan="5">{{template "empty" "No interfaces reported."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{{if .Inventory.Gpus}}
+<section class="card">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-gpu"/></svg>GPUs</h2><span class="muted">{{len .Inventory.Gpus}}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Vendor</th><th>Model</th><th>VRAM</th><th>Driver</th><th>PCI</th></tr></thead>
+      <tbody>
+        {{range .Inventory.Gpus}}
+        <tr><td>{{.Vendor}}</td><td>{{.Model}}</td><td>{{if .Vram}}{{mib .Vram}}{{else}}—{{end}}</td><td>{{.Driver}}</td><td><code>{{.PciId}}</code></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}
+{{end}}
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Health checks</h2></div>
+    {{if .Checks}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+        <tbody>
+          {{range .Checks}}<tr><td class="nowrap">{{.Name}}</td><td>{{template "pill" .Status}}</td><td class="muted">{{.Message}}</td></tr>{{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    {{template "empty" (or .ChecksError "No checks collected yet.")}}
+    {{end}}
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Managed resources</h2><span class="muted">{{len .Resources}}</span></div>
+    {{if .Resources}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Type</th><th>ID</th><th>Health</th></tr></thead>
+        <tbody>
+          {{range .Resources}}<tr><td>{{.Type}}</td><td><code class="wrap">{{.ID}}</code></td><td>{{template "pill" .Status}}</td></tr>{{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    {{template "empty" "This node manages no resources."}}
+    {{end}}
+  </section>
+</div>
+{{end}}
+{{end}}

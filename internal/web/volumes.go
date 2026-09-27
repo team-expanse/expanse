@@ -32,14 +32,14 @@ import (
 const volumeOpsPrefix = "/volumes/_ops/"
 
 func (s *Server) registerVolumeRoutes() {
-	s.mux.Handle("GET /volumes", s.requireAuth(http.HandlerFunc(s.handleVolumesList)))
-	s.mux.Handle("GET /volumes/new", s.requireAuth(http.HandlerFunc(s.handleVolumeNew)))
-	s.mux.Handle("POST /volumes", s.requireAuth(http.HandlerFunc(s.handleVolumeCreate)))
-	s.mux.Handle("GET /volumes/{name}", s.requireAuth(http.HandlerFunc(s.handleVolumeDetail)))
-	s.mux.Handle("GET /volumes/{name}/events", s.requireAuth(http.HandlerFunc(s.handleVolumeEvents)))
-	s.mux.Handle("POST /volumes/{name}/resize", s.requireAuth(http.HandlerFunc(s.handleVolumeResize)))
-	s.mux.Handle("POST /volumes/{name}/snapshot", s.requireAuth(http.HandlerFunc(s.handleVolumeSnapshot)))
-	s.mux.Handle("POST /volumes/{name}/delete", s.requireAuth(http.HandlerFunc(s.handleVolumeDelete)))
+	s.routes.Handle("GET /volumes", s.requireAuth(http.HandlerFunc(s.handleVolumesList)))
+	s.routes.Handle("GET /volumes/new", s.requireAuth(http.HandlerFunc(s.handleVolumeNew)))
+	s.routes.Handle("POST /volumes", s.requireAuth(http.HandlerFunc(s.handleVolumeCreate)))
+	s.routes.Handle("GET /volumes/{name}", s.requireAuth(http.HandlerFunc(s.handleVolumeDetail)))
+	s.routes.Handle("GET /volumes/{name}/events", s.requireAuth(http.HandlerFunc(s.handleVolumeEvents)))
+	s.routes.Handle("POST /volumes/{name}/resize", s.requireAuth(http.HandlerFunc(s.handleVolumeResize)))
+	s.routes.Handle("POST /volumes/{name}/snapshot", s.requireAuth(http.HandlerFunc(s.handleVolumeSnapshot)))
+	s.routes.Handle("POST /volumes/{name}/delete", s.requireAuth(http.HandlerFunc(s.handleVolumeDelete)))
 }
 
 // volumeView is one volume's spec + status + snapshots, the same three
@@ -127,15 +127,15 @@ func (s *Server) putVolumeOp(ctx context.Context, kind, volID string, val any) e
 }
 
 type volumesListData struct {
-	NodeID    string
-	CSRFToken string
-	Volumes   []*volumeView
+	Page    page
+	Volumes []*volumeView
+	Counts  volumeCounts
 }
 
 func (s *Server) handleVolumesList(w http.ResponseWriter, r *http.Request) {
 	ids, err := storage.ListVolumeIDs(r.Context(), s.store)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, errText(err), http.StatusInternalServerError)
 		return
 	}
 	var views []*volumeView
@@ -148,21 +148,24 @@ func (s *Server) handleVolumesList(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].Name < views[j].Name })
 	s.render(w, http.StatusOK, "volumes_list.html", volumesListData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken, Volumes: views,
+		Page: s.newPage(w, r, "Volumes", "volumes", crumb{Label: "Volumes"}), Volumes: views, Counts: countVolumes(views),
 	})
 }
 
 type volumeNewData struct {
-	NodeID, CSRFToken              string
+	Page                           page
 	Name, Size, Class, Replication string
 	Error                          string
+	// Field names the Error refers to, for inline highlighting.
+	Field string
+}
+
+func (s *Server) volumeNewPage(w http.ResponseWriter, r *http.Request) page {
+	return s.newPage(w, r, "Create a volume", "volumes", crumb{Label: "Volumes", Href: "/volumes"}, crumb{Label: "Create"})
 }
 
 func (s *Server) handleVolumeNew(w http.ResponseWriter, r *http.Request) {
-	s.render(w, http.StatusOK, "volume_new.html", volumeNewData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken,
-		Class: "default",
-	})
+	s.render(w, http.StatusOK, "volume_new.html", volumeNewData{Page: s.volumeNewPage(w, r), Class: "default"})
 }
 
 func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
@@ -175,45 +178,44 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 	class := r.PostForm.Get("class")
 	replStr := r.PostForm.Get("replication")
 
-	fail := func(msg string) {
+	fail := func(field, msg string) {
 		s.render(w, http.StatusBadRequest, "volume_new.html", volumeNewData{
-			NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken,
-			Name: name, Size: sizeStr, Class: class, Replication: replStr, Error: msg,
+			Page: s.volumeNewPage(w, r),
+			Name: name, Size: sizeStr, Class: class, Replication: replStr, Error: msg, Field: field,
 		})
 	}
 
 	if name == "" {
-		fail("name is required")
+		fail("name", "A name is required.")
 		return
 	}
 	size, err := quantity.ParseBytes(sizeStr)
 	if err != nil {
-		fail("--size: " + err.Error())
+		fail("size", "Size: "+errText(err))
 		return
 	}
 	repl := 0
 	if replStr != "" {
 		if repl, err = strconv.Atoi(replStr); err != nil {
-			fail("replication must be an integer")
+			fail("replication", "Replication must be a whole number.")
 			return
 		}
 	}
 	raw, err := proto.Marshal(&pb.VolumeSpec{Name: name, SizeBytes: uint64(size.N), Class: class, Replication: int32(repl)})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, errText(err), http.StatusInternalServerError)
 		return
 	}
 	if _, err := s.store.Put(r.Context(), storage.PendingCreateKey(name), raw); err != nil {
-		fail(err.Error())
+		fail("", errText(err))
 		return
 	}
-	http.Redirect(w, r, "/volumes/"+name, http.StatusSeeOther)
+	s.done(w, r, "success", "Volume "+name+" requested; it appears once the controller places it", "/volumes/"+name)
 }
 
 type volumeDetailData struct {
-	NodeID    string
-	CSRFToken string
-	Name      string
+	Page page
+	Name string
 	// Volume is nil while the creation request is still pending (or, on
 	// a stale render, while it has not appeared yet), rendered as a
 	// "creating" placeholder rather than a 404.
@@ -225,17 +227,17 @@ func (s *Server) handleVolumeDetail(w http.ResponseWriter, r *http.Request) {
 	v, err := s.findVolumeByName(r.Context(), name)
 	if err != nil {
 		if errors.KindOf(err) != errors.KindNotFound {
-			http.Error(w, err.Error(), httpStatus(err))
+			s.renderError(w, r, httpStatus(err), errText(err))
 			return
 		}
 		if !s.volumePending(r.Context(), name) {
-			http.Error(w, "no such volume", http.StatusNotFound)
+			s.renderError(w, r, http.StatusNotFound, "There is no volume named "+name+".")
 			return
 		}
 		v = nil
 	}
 	s.render(w, http.StatusOK, "volume_detail.html", volumeDetailData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken, Name: name, Volume: v,
+		Page: s.newPage(w, r, name, "volumes", crumb{Label: "Volumes", Href: "/volumes"}, crumb{Label: name}), Name: name, Volume: v,
 	})
 }
 
@@ -268,7 +270,7 @@ func (s *Server) handleVolumeEvents(w http.ResponseWriter, r *http.Request) {
 			return nil // transient read error; the next event retries
 		}
 		var buf bytes.Buffer
-		if err := s.tmpl.ExecuteTemplate(&buf, "volume-fragment", data); err != nil {
+		if err := s.renderFragment(&buf, "volume-fragment", data); err != nil {
 			return err
 		}
 		if err := writeSSE(w, "volume", buf.String()); err != nil {
@@ -307,12 +309,12 @@ func (s *Server) handleVolumeResize(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.findVolumeByName(r.Context(), name)
 	if err != nil {
-		http.Error(w, err.Error(), httpStatus(err))
+		http.Error(w, errText(err), httpStatus(err))
 		return
 	}
 	size, err := quantity.ParseBytes(r.PostForm.Get("size"))
 	if err != nil {
-		http.Error(w, "--size: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Size: "+errText(err), http.StatusBadRequest)
 		return
 	}
 	if uint64(size.N) <= v.SizeBytes {
@@ -320,12 +322,12 @@ func (s *Server) handleVolumeResize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.putVolumeOp(r.Context(), "resize", v.ID, map[string]any{"target": name, "sizeBytes": size.N}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, errText(err), http.StatusInternalServerError)
 		return
 	}
 	// Resize is applied asynchronously by the leader's controller; the
 	// open SSE connection (or a follow-up GET) shows it once it lands.
-	http.Redirect(w, r, "/volumes/"+name, http.StatusSeeOther)
+	s.done(w, r, "success", "Resize of "+name+" to "+size.String()+" queued", "/volumes/"+name)
 }
 
 func (s *Server) handleVolumeSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -336,12 +338,12 @@ func (s *Server) handleVolumeSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.findVolumeByName(r.Context(), name)
 	if err != nil {
-		http.Error(w, err.Error(), httpStatus(err))
+		http.Error(w, errText(err), httpStatus(err))
 		return
 	}
 	snapName := r.PostForm.Get("name")
 	if err := storage.ValidSnapshotName(snapName); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, errText(err), http.StatusBadRequest)
 		return
 	}
 	for _, existing := range v.Snapshots {
@@ -351,23 +353,46 @@ func (s *Server) handleVolumeSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.putVolumeOp(r.Context(), "snapshot", v.ID, map[string]string{"name": snapName}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, errText(err), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/volumes/"+name, http.StatusSeeOther)
+	s.done(w, r, "success", "Snapshot "+snapName+" of "+name+" queued", "/volumes/"+name)
 }
 
 func (s *Server) handleVolumeDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	v, err := s.findVolumeByName(r.Context(), name)
 	if err != nil {
-		http.Error(w, err.Error(), httpStatus(err))
+		http.Error(w, errText(err), httpStatus(err))
 		return
 	}
 	if err := s.putVolumeOp(r.Context(), "delete", v.ID, map[string]any{"target": name}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, errText(err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", "/volumes")
-	http.Redirect(w, r, "/volumes", http.StatusSeeOther)
+	s.done(w, r, "success", "Volume "+name+" queued for deletion", "/volumes")
+}
+
+// volumeCounts is the volumes-by-state summary the list header and the
+// dashboard both show.
+type volumeCounts struct {
+	Total, Healthy, Busy, Degraded, Failed int
+}
+
+func countVolumes(vs []*volumeView) volumeCounts {
+	var c volumeCounts
+	for _, v := range vs {
+		c.Total++
+		switch volumePill(v.State).Tone {
+		case "ok":
+			c.Healthy++
+		case "info":
+			c.Busy++
+		case "warn":
+			c.Degraded++
+		case "crit":
+			c.Failed++
+		}
+	}
+	return c
 }

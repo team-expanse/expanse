@@ -29,11 +29,12 @@ type fakeAgent struct {
 	nodeID string
 	report *health.Report
 	recon  *reconcile.Reconciler
+	inv    *inventory.Inventory
 }
 
 func (f *fakeAgent) NodeID() string                                         { return f.nodeID }
-func (f *fakeAgent) Snapshot() api.Snapshot                                 { return api.Snapshot{} }
-func (f *fakeAgent) Inventory() *inventory.Inventory                        { return nil }
+func (f *fakeAgent) Snapshot() api.Snapshot                                 { return api.Snapshot{Status: "idle"} }
+func (f *fakeAgent) Inventory() *inventory.Inventory                        { return f.inv }
 func (f *fakeAgent) Health(context.Context) *health.Report                  { return f.report }
 func (f *fakeAgent) Reconciler() *reconcile.Reconciler                      { return f.recon }
 func (f *fakeAgent) ApplySpec(context.Context, []byte) (int, int, []string) { return 0, 0, nil }
@@ -46,6 +47,13 @@ func (f *fakeAgent) Shutdown(string)                                        {}
 // ListResources/GetClusterStatus all exercise their real implementations,
 // not a mock of this package's own handlers.
 func newHealthTestServer(t *testing.T, checks ...health.Result) (*httptest.Server, string, store.Store) {
+	t.Helper()
+	return newHealthTestServerWithInventory(t, nil, checks...)
+}
+
+// newHealthTestServerWithInventory is newHealthTestServer with a canned
+// inventory, for the node detail page.
+func newHealthTestServerWithInventory(t *testing.T, inv *inventory.Inventory, checks ...health.Result) (*httptest.Server, string, store.Store) {
 	t.Helper()
 	dir := t.TempDir()
 	res, err := control.Init(context.Background(), control.InitOptions{
@@ -66,12 +74,14 @@ func newHealthTestServer(t *testing.T, checks ...health.Result) (*httptest.Serve
 		nodeID: "n1",
 		report: &health.Report{Overall: health.Overall(checks), Checks: checks, At: time.Now()},
 		recon:  reconcile.New(res.Store, reconcile.Options{NodeID: "n1"}),
+		inv:    inv,
 	}
 	apiSrv := api.NewServer(agent, res.Store, slog.Default())
 	s, err := New("n1", res.Store, nil, nil, apiSrv, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	startEventLog(t, s)
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
 	return srv, pw, res.Store

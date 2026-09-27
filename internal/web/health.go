@@ -24,16 +24,18 @@ import (
 )
 
 func (s *Server) registerHealthRoutes() {
-	s.mux.Handle("GET /health", s.requireAuth(http.HandlerFunc(s.handleHealthOverview)))
-	s.mux.Handle("GET /health/events", s.requireAuth(http.HandlerFunc(s.handleHealthEvents)))
+	s.routes.Handle("GET /health", s.requireAuth(http.HandlerFunc(s.handleHealthOverview)))
+	s.routes.Handle("GET /health/events", s.requireAuth(http.HandlerFunc(s.handleHealthEvents)))
 }
 
 type nodeCheckView struct {
-	Name, Status, Message string
+	Name, Message string
+	Status        pill
 }
 
 type resourceView struct {
-	Type, ID, Status string
+	Type, ID string
+	Status   pill
 }
 
 // alertView is one currently-firing critical condition, named after the
@@ -44,30 +46,13 @@ type alertView struct {
 }
 
 type healthOverviewData struct {
-	NodeID     string
-	CSRFToken  string
+	Page       page
 	NodeChecks []nodeCheckView
 	Resources  []resourceView
 	Volumes    []*volumeView
 	Report     *control.Report
 	Alerts     []alertView
 	Error      string
-}
-
-// healthLabel renders a pb.Health ordinal the way every other page in
-// this UI already renders its own status enums (e.g. volumeView's
-// State) -- a plain human word, not the wire constant's HEALTH_ prefix.
-func healthLabel(h pb.Health) string {
-	switch h {
-	case pb.Health_HEALTH_HEALTHY:
-		return "Healthy"
-	case pb.Health_HEALTH_DEGRADED:
-		return "Degraded"
-	case pb.Health_HEALTH_UNHEALTHY:
-		return "Unhealthy"
-	default:
-		return "Unknown"
-	}
 }
 
 // loadHealthOverview gathers the same four signal categories
@@ -87,7 +72,7 @@ func (s *Server) loadHealthOverview(ctx context.Context) (healthOverviewData, er
 	// condition collectNodeHealth already tolerates.
 	for _, c := range checks {
 		data.NodeChecks = append(data.NodeChecks, nodeCheckView{
-			Name: c.GetName(), Status: healthLabel(c.GetStatus()), Message: c.GetMessage(),
+			Name: c.GetName(), Status: healthPill(c.GetStatus()), Message: c.GetMessage(),
 		})
 	}
 
@@ -98,7 +83,7 @@ func (s *Server) loadHealthOverview(ctx context.Context) (healthOverviewData, er
 	var resources []*pb.Resource
 	for _, r := range resResp.GetResources() {
 		resources = append(resources, r)
-		data.Resources = append(data.Resources, resourceView{Type: r.GetType(), ID: r.GetId(), Status: healthLabel(r.GetHealth())})
+		data.Resources = append(data.Resources, resourceView{Type: r.GetType(), ID: r.GetId(), Status: healthPill(r.GetHealth())})
 	}
 
 	ids, err := storage.ListVolumeIDs(store.WithStale(ctx), s.store)
@@ -133,7 +118,11 @@ func buildAlerts(checks []*pb.CheckResult, resources []*pb.Resource, volumes []*
 	var alerts []alertView
 	for _, c := range checks {
 		if c.GetStatus() == pb.Health_HEALTH_UNHEALTHY {
-			alerts = append(alerts, alertView{Name: "ExpanseNodeUnhealthy", Summary: "check " + c.GetName() + " is unhealthy"})
+			summary := "check " + c.GetName() + " is unhealthy"
+			if m := c.GetMessage(); m != "" {
+				summary += ": " + m
+			}
+			alerts = append(alerts, alertView{Name: "ExpanseNodeUnhealthy", Summary: summary})
 		}
 	}
 	for _, r := range resources {
@@ -169,13 +158,13 @@ func buildAlerts(checks []*pb.CheckResult, resources []*pb.Resource, volumes []*
 }
 
 func (s *Server) handleHealthOverview(w http.ResponseWriter, r *http.Request) {
-	if s.clusterUnavailable(w) {
+	if s.clusterUnavailable(w, r) {
 		return
 	}
 	data, err := s.loadHealthOverview(r.Context())
-	data.NodeID, data.CSRFToken = s.NodeID, sessionFromContext(r.Context()).CSRFToken
+	data.Page = s.newPage(w, r, "Health & alerts", "health", crumb{Label: "Health"})
 	if err != nil {
-		data.Error = err.Error()
+		data.Error = errText(err)
 	}
 	s.render(w, http.StatusOK, "health_overview.html", data)
 }
@@ -190,7 +179,7 @@ func (s *Server) handleHealthOverview(w http.ResponseWriter, r *http.Request) {
 // scrape-interval target (10-15s), so it cannot itself threaten the 30s
 // alert-visibility budget.
 func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
-	if s.clusterUnavailable(w) {
+	if s.clusterUnavailable(w, r) {
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -210,7 +199,7 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 			return nil // transient read error; the next tick/event retries
 		}
 		var buf bytes.Buffer
-		if err := s.tmpl.ExecuteTemplate(&buf, "health-fragment", data); err != nil {
+		if err := s.renderFragment(&buf, "health-fragment", data); err != nil {
 			return err
 		}
 		if err := writeSSE(w, "health", buf.String()); err != nil {

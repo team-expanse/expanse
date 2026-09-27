@@ -71,10 +71,10 @@ with subtest("the volume is placed on all 3 nodes, observed live over SSE (X6)")
         page = ""
         while time.time() < deadline:
             page = detail_page(n1, csrf)
-            if all(f"<td>{m.name}</td>" in page for m in NODES):
+            if all(f"<strong>{m.name}</strong></a></td>" in page for m in NODES):
                 break
             time.sleep(2)
-        assert all(f"<td>{m.name}</td>" in page for m in NODES), f"not all nodes placed within 60s: {page}"
+        assert all(f"<strong>{m.name}</strong></a></td>" in page for m in NODES), f"not all nodes placed within 60s: {page}"
 
 with subtest("the CLI's own inspect view agrees with what the UI shows"):
     page = detail_page(n1, csrf)
@@ -82,7 +82,7 @@ with subtest("the CLI's own inspect view agrees with what the UI shows"):
     assert VOLNAME in text and "vol-" in text, f"ctl inspect missing volume: {text}"
     for m in NODES:
         assert m.name in text, f"ctl inspect missing {m.name}: {text}"
-        assert f"<td>{m.name}</td>" in page, f"UI detail page missing {m.name}: {page}"
+        assert f"<strong>{m.name}</strong></a></td>" in page, f"UI detail page missing {m.name}: {page}"
 
 with subtest("resize via the UI (grow-only)"):
     out = n1.succeed(

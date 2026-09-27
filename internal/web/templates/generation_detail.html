@@ -1,0 +1,43 @@
+{{define "content"}}
+{{$g := .Generation}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Generation {{$g.Number}}{{if eq $g.Number .Current}} <span class="tag tag-leader">Current</span>{{end}}</h1>
+    <p class="page-sub">{{if $g.Description}}{{$g.Description}} · {{end}}created {{stamp (nanos $g.CreatedAtUnixNs)}} by {{$g.CreatedBy}}</p>
+  </div>
+  <div class="page-actions">
+    {{if $g.Parent}}<a class="btn btn-ghost" href="/generations/diff?a={{$g.Parent}}&b={{$g.Number}}"><svg class="icon"><use href="#i-diff"/></svg>Diff with {{$g.Parent}}</a>{{end}}
+    {{if ne $g.Number .Current}}<button class="btn btn-primary" type="button" data-confirm="confirm-rollback"><svg class="icon"><use href="#i-rollback"/></svg>Roll back to this</button>{{end}}
+  </div>
+</div>
+
+<section class="kv-cards">
+  <div class="kv-card"><div class="kv-label">Store revision</div><div class="kv-value">{{$g.Revision}}</div><div class="kv-sub">at commit</div></div>
+  <div class="kv-card"><div class="kv-label">Parent</div><div class="kv-value">{{if $g.Parent}}<a href="/generations/{{$g.Parent}}">{{$g.Parent}}</a>{{else}}<span class="muted">bootstrap</span>{{end}}</div><div class="kv-sub">previous generation</div></div>
+  <div class="kv-card"><div class="kv-label">Keys</div><div class="kv-value">{{len $g.Keys}}</div><div class="kv-sub">desired-state entries</div></div>
+  <div class="kv-card"><div class="kv-label">Hash</div><div class="kv-value"><code title="{{$g.Hash}}">{{short $g.Hash 16}}</code></div><div class="kv-sub">sha256 of the snapshot</div></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Desired-state keys</h2></div>
+  {{if $g.Keys}}
+  <ul class="key-list">{{range $g.Keys}}<li><code>{{.}}</code></li>{{end}}</ul>
+  {{else}}
+  {{template "empty" "This generation holds no desired-state keys (an empty snapshot)."}}
+  {{end}}
+</section>
+
+{{if ne $g.Number .Current}}
+<form id="rollback-form" hx-post="/generations/{{$g.Number}}/rollback" hx-swap="none"></form>
+<dialog id="confirm-rollback" class="dialog" data-submit="#rollback-form">
+  <form method="dialog">
+    <h2>Roll back to generation {{$g.Number}}?</h2>
+    <p>The desired state from generation {{$g.Number}} is committed as a new generation and every node reconciles toward it.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" value="cancel">Cancel</button>
+      <button class="btn btn-primary" value="confirm">Roll back</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+{{end}}

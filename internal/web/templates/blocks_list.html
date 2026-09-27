@@ -1,40 +1,39 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — Blocks</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/htmx-sse.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/">&larr; Home</a></p>
-    <h2>Blocks</h2>
-    <p><a href="/blocks/new">Deploy a block</a></p>
-    <table>
-      <thead>
-        <tr><th>Name</th><th>Type</th><th>Replicas</th><th>Phase</th></tr>
-      </thead>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Blocks</h1>
+    <p class="page-sub">Deployed workloads and their replicas across the cluster.</p>
+  </div>
+  <div class="page-actions"><a class="btn btn-primary" href="/blocks/new"><svg class="icon"><use href="#i-plus"/></svg>Deploy block</a></div>
+</div>
+
+{{if .Blocks}}
+<section class="stats stats-compact" aria-label="Blocks by phase">
+  <div class="stat stat-ok"><div class="stat-label">Running</div><div class="stat-value">{{.Counts.Running}}</div></div>
+  <div class="stat {{if .Counts.Pending}}stat-info{{end}}"><div class="stat-label">Pending</div><div class="stat-value">{{.Counts.Pending}}</div></div>
+  <div class="stat {{if .Counts.Degraded}}stat-warn{{end}}"><div class="stat-label">Degraded</div><div class="stat-value">{{.Counts.Degraded}}</div></div>
+  <div class="stat {{if .Counts.Failed}}stat-crit{{end}}"><div class="stat-label">Failed</div><div class="stat-value">{{.Counts.Failed}}</div></div>
+</section>
+{{end}}
+
+<section class="card">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Block</th><th>Type</th><th>Replicas</th><th>Phase</th><th>Placement</th></tr></thead>
       <tbody>
         {{range .Blocks}}
         <tr>
-          <td><a href="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}">{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}</a></td>
-          <td>{{.Spec.GetType}}</td>
-          <td>{{.Spec.GetReplicas}}</td>
-          <td>{{.Status.GetPhase}}</td>
+          <td><a href="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}"><span class="muted">{{.Metadata.GetNamespace}}/</span><strong>{{.Metadata.GetName}}</strong></a></td>
+          <td><code>{{.Spec.GetType}}</code></td>
+          <td>{{.Status.GetReplicas.GetReady}}<span class="muted">/{{.Spec.GetReplicas}} ready</span></td>
+          <td>{{template "pill" (phase .Status.GetPhase)}}</td>
+          <td class="muted">{{range $i, $p := .Status.GetPlacements}}{{if $i}}, {{end}}{{$p.GetNodeId}}{{end}}</td>
         </tr>
         {{else}}
-        <tr><td colspan="4">No blocks deployed yet.</td></tr>
+        <tr><td colspan="5"><div class="empty"><svg class="icon"><use href="#i-blocks"/></svg><p>No blocks deployed yet.</p><a class="btn btn-primary" href="/blocks/new">Deploy your first block</a></div></td></tr>
         {{end}}
       </tbody>
     </table>
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+  </div>
+</section>
+{{end}}

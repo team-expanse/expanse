@@ -1,32 +1,35 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — Deploy a block</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/blocks">&larr; Blocks</a></p>
-    <h2>Deploy a block</h2>
-    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-    {{if .Types}}
-    <p>Available types:
-      {{range .Types}}<code>{{.Name}}</code> {{end}}
-    </p>
-    {{end}}
-    <form method="post" action="/blocks">
-      <label for="manifest">block.yaml (the same document <code>expanse ctl block apply -f</code> accepts)</label><br>
-      <textarea id="manifest" name="manifest" rows="16" cols="72">{{.Example}}</textarea><br>
-      <button type="submit">Deploy</button>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Deploy a block</h1>
+    <p class="page-sub">Paste a <code>block.yaml</code> — the same document <code>expanse ctl block apply -f</code> accepts.</p>
+  </div>
+</div>
+<div class="grid-form">
+  <section class="card">
+    <form method="post" action="/blocks" class="form">
+      {{template "csrf" .Page}}
+      {{if .Error}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>{{.Error}}</div>{{end}}
+      <label class="field">
+        <span class="field-label">Manifest</span>
+        <textarea class="input code" id="manifest" name="manifest" rows="18" spellcheck="false" required{{if .Error}} aria-invalid="true"{{end}}>{{.Example}}</textarea>
+        <span class="field-hint">Validated against the type's schema on submit; errors show here.</span>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Deploy</button>
+        <a class="btn btn-ghost" href="/blocks">Cancel</a>
+      </div>
     </form>
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+  </section>
+  <aside class="card">
+    <div class="card-head"><h2>Catalog types</h2></div>
+    {{if .Types}}
+    <ul class="type-list">
+      {{range .Types}}<li><code>{{.Name}}</code>{{with .Version}} <span class="muted">{{.}}</span>{{end}}{{with .Description}}<p>{{.}}</p>{{end}}</li>{{end}}
+    </ul>
+    {{else}}
+    {{template "empty" "The catalog is not available on this node."}}
+    {{end}}
+  </aside>
+</div>
+{{end}}

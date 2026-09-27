@@ -1,0 +1,30 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Generation {{.A}} → {{.B}}</h1>
+    <p class="page-sub">Keys whose desired state differs between the two snapshots.</p>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn-ghost" href="/generations/{{.A}}">View {{.A}}</a>
+    <a class="btn btn-ghost" href="/generations/{{.B}}">View {{.B}}</a>
+  </div>
+</div>
+{{if and (not .Diff.Added) (not .Diff.Removed) (not .Diff.Changed)}}
+<div class="empty empty-ok"><svg class="icon"><use href="#i-check"/></svg><p>Generations {{.A}} and {{.B}} hold identical desired state.</p></div>
+{{else}}
+<div class="grid-3">
+  <section class="card diff-added">
+    <div class="card-head"><h2>Added</h2><span class="pill pill-ok"><span class="dot"></span>{{len .Diff.Added}}</span></div>
+    {{if .Diff.Added}}<ul class="key-list">{{range .Diff.Added}}<li><code>+ {{.}}</code></li>{{end}}</ul>{{else}}<p class="muted">Nothing added.</p>{{end}}
+  </section>
+  <section class="card diff-removed">
+    <div class="card-head"><h2>Removed</h2><span class="pill pill-crit"><span class="dot"></span>{{len .Diff.Removed}}</span></div>
+    {{if .Diff.Removed}}<ul class="key-list">{{range .Diff.Removed}}<li><code>- {{.}}</code></li>{{end}}</ul>{{else}}<p class="muted">Nothing removed.</p>{{end}}
+  </section>
+  <section class="card diff-changed">
+    <div class="card-head"><h2>Changed</h2><span class="pill pill-warn"><span class="dot"></span>{{len .Diff.Changed}}</span></div>
+    {{if .Diff.Changed}}<ul class="key-list">{{range .Diff.Changed}}<li><code>~ {{.}}</code></li>{{end}}</ul>{{else}}<p class="muted">Nothing changed.</p>{{end}}
+  </section>
+</div>
+{{end}}
+{{end}}

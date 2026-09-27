@@ -23,24 +23,24 @@ import (
 // segment count, so "/blocks/new" (1 segment) never matches
 // "/blocks/{ns}/{name}" (2 segments).
 func (s *Server) registerBlockRoutes() {
-	s.mux.Handle("GET /blocks", s.requireAuth(http.HandlerFunc(s.handleBlocksList)))
-	s.mux.Handle("GET /blocks/new", s.requireAuth(http.HandlerFunc(s.handleBlockNew)))
-	s.mux.Handle("POST /blocks", s.requireAuth(http.HandlerFunc(s.handleBlockCreate)))
-	s.mux.Handle("GET /blocks/{ns}/{name}", s.requireAuth(http.HandlerFunc(s.handleBlockDetail)))
-	s.mux.Handle("GET /blocks/{ns}/{name}/events", s.requireAuth(http.HandlerFunc(s.handleBlockEvents)))
-	s.mux.Handle("POST /blocks/{ns}/{name}/scale", s.requireAuth(http.HandlerFunc(s.handleBlockScale)))
-	s.mux.Handle("POST /blocks/{ns}/{name}/delete", s.requireAuth(http.HandlerFunc(s.handleBlockDelete)))
-	s.mux.Handle("GET /blocks/{ns}/{name}/logs", s.requireAuth(http.HandlerFunc(s.handleBlockLogs)))
-	s.mux.Handle("GET /blocks/{ns}/{name}/logs/stream", s.requireAuth(http.HandlerFunc(s.handleBlockLogsStream)))
+	s.routes.Handle("GET /blocks", s.requireAuth(http.HandlerFunc(s.handleBlocksList)))
+	s.routes.Handle("GET /blocks/new", s.requireAuth(http.HandlerFunc(s.handleBlockNew)))
+	s.routes.Handle("POST /blocks", s.requireAuth(http.HandlerFunc(s.handleBlockCreate)))
+	s.routes.Handle("GET /blocks/{ns}/{name}", s.requireAuth(http.HandlerFunc(s.handleBlockDetail)))
+	s.routes.Handle("GET /blocks/{ns}/{name}/events", s.requireAuth(http.HandlerFunc(s.handleBlockEvents)))
+	s.routes.Handle("POST /blocks/{ns}/{name}/scale", s.requireAuth(http.HandlerFunc(s.handleBlockScale)))
+	s.routes.Handle("POST /blocks/{ns}/{name}/delete", s.requireAuth(http.HandlerFunc(s.handleBlockDelete)))
+	s.routes.Handle("GET /blocks/{ns}/{name}/logs", s.requireAuth(http.HandlerFunc(s.handleBlockLogs)))
+	s.routes.Handle("GET /blocks/{ns}/{name}/logs/stream", s.requireAuth(http.HandlerFunc(s.handleBlockLogsStream)))
 }
 
 // blocksUnavailable reports the block API being disabled on this node
 // (cfg.BlocksCatalog unset) rather than panicking on a nil s.blocks.
-func (s *Server) blocksUnavailable(w http.ResponseWriter) bool {
+func (s *Server) blocksUnavailable(w http.ResponseWriter, r *http.Request) bool {
 	if s.blocks != nil {
 		return false
 	}
-	http.Error(w, "block API not enabled on this node", http.StatusServiceUnavailable)
+	s.renderError(w, r, http.StatusServiceUnavailable, "The block API is not enabled on this node.")
 	return true
 }
 
@@ -63,31 +63,31 @@ func httpStatus(err error) int {
 }
 
 type blocksListData struct {
-	NodeID    string
-	CSRFToken string
-	Blocks    []*pb.Block
+	Page   page
+	Blocks []*pb.Block
+	Counts phaseCounts
 }
 
 func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	resp, err := s.blocks.List(r.Context(), &pb.ListBlocksRequest{})
 	if err != nil {
-		http.Error(w, err.Error(), httpStatus(err))
+		http.Error(w, errText(err), httpStatus(err))
 		return
 	}
 	s.render(w, http.StatusOK, "blocks_list.html", blocksListData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken, Blocks: resp.GetBlocks(),
+		Page:   s.newPage(w, r, "Blocks", "blocks", crumb{Label: "Blocks"}),
+		Blocks: resp.GetBlocks(), Counts: countPhases(resp.GetBlocks()),
 	})
 }
 
 type blockNewData struct {
-	NodeID    string
-	CSRFToken string
-	Types     []*pb.BlockType
-	Example   string
-	Error     string
+	Page    page
+	Types   []*pb.BlockType
+	Example string
+	Error   string
 }
 
 // exampleManifest is the deploy form's starting point: a minimal,
@@ -107,7 +107,7 @@ spec:
 `
 
 func (s *Server) handleBlockNew(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	var types []*pb.BlockType
@@ -117,13 +117,13 @@ func (s *Server) handleBlockNew(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, http.StatusOK, "block_new.html", blockNewData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken,
+		Page:  s.newPage(w, r, "Deploy a block", "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: "Deploy"}),
 		Types: types, Example: exampleManifest,
 	})
 }
 
 func (s *Server) handleBlockCreate(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -142,7 +142,7 @@ func (s *Server) handleBlockCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ns, name := created.GetMetadata().GetNamespace(), created.GetMetadata().GetName()
-	http.Redirect(w, r, "/blocks/"+ns+"/"+name, http.StatusSeeOther)
+	s.done(w, r, "success", "Block "+ns+"/"+name+" deployed", "/blocks/"+ns+"/"+name)
 }
 
 func (s *Server) renderBlockNewError(w http.ResponseWriter, r *http.Request, manifest string, err error) {
@@ -153,15 +153,14 @@ func (s *Server) renderBlockNewError(w http.ResponseWriter, r *http.Request, man
 		}
 	}
 	s.render(w, http.StatusBadRequest, "block_new.html", blockNewData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken,
-		Types: types, Example: manifest, Error: err.Error(),
+		Page:  s.newPage(w, r, "Deploy a block", "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: "Deploy"}),
+		Types: types, Example: manifest, Error: errText(err),
 	})
 }
 
 type blockDetailData struct {
-	NodeID    string
-	CSRFToken string
-	Block     *pb.Block
+	Page  page
+	Block *pb.Block
 }
 
 func (s *Server) getBlock(ctx context.Context, r *http.Request) (*pb.Block, error) {
@@ -169,16 +168,18 @@ func (s *Server) getBlock(ctx context.Context, r *http.Request) (*pb.Block, erro
 }
 
 func (s *Server) handleBlockDetail(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	b, err := s.getBlock(r.Context(), r)
 	if err != nil {
-		http.Error(w, err.Error(), httpStatus(err))
+		s.renderError(w, r, httpStatus(err), errText(err))
 		return
 	}
+	full := b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
 	s.render(w, http.StatusOK, "block_detail.html", blockDetailData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken, Block: b,
+		Page:  s.newPage(w, r, full, "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full}),
+		Block: b,
 	})
 }
 
@@ -187,7 +188,7 @@ func (s *Server) handleBlockDetail(w http.ResponseWriter, r *http.Request) {
 // swap — HTMX's SSE extension replaces the target element in place, no
 // client-side JS and no polling.
 func (s *Server) handleBlockEvents(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -203,7 +204,7 @@ func (s *Server) handleBlockEvents(w http.ResponseWriter, r *http.Request) {
 
 	send := func(b *pb.Block) error {
 		var buf bytes.Buffer
-		if err := s.tmpl.ExecuteTemplate(&buf, "block-fragment", b); err != nil {
+		if err := s.renderFragment(&buf, "block-fragment", b); err != nil {
 			return err
 		}
 		if err := writeSSE(w, "block", buf.String()); err != nil {
@@ -231,7 +232,7 @@ func (s *Server) handleBlockEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBlockScale(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -246,47 +247,52 @@ func (s *Server) handleBlockScale(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	b, err := s.blocks.Scale(r.Context(), &pb.ScaleRequest{Namespace: ns, Name: name, Replicas: int32(n)})
 	if err != nil {
-		http.Error(w, err.Error(), httpStatus(err))
+		http.Error(w, errText(err), httpStatus(err))
 		return
 	}
 	// hx-post with hx-target="#block-fragment": return just the updated
 	// fragment, not a redirect — the SSE connection covers the rest of
 	// this block's lifecycle, this is only the immediate acknowledgement.
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "block-fragment", b); err != nil {
-		http.Error(w, "render failed", http.StatusInternalServerError)
-	}
+	w.Header().Set("HX-Trigger", toastTrigger("success", fmt.Sprintf("Scaling %s/%s to %d", ns, name, n)))
+	s.render(w, http.StatusOK, "block-fragment", b)
 }
 
 func (s *Server) handleBlockDelete(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	if _, err := s.blocks.Delete(r.Context(), &pb.DeleteBlockRequest{Namespace: ns, Name: name}); err != nil {
-		http.Error(w, err.Error(), httpStatus(err))
+		http.Error(w, errText(err), httpStatus(err))
 		return
 	}
-	w.Header().Set("HX-Redirect", "/blocks")
-	http.Redirect(w, r, "/blocks", http.StatusSeeOther)
+	s.done(w, r, "success", "Block "+ns+"/"+name+" deleted", "/blocks")
 }
 
 type blockLogsData struct {
-	NodeID    string
-	CSRFToken string
+	Page      page
 	Namespace string
 	Name      string
 	Replica   int32
+	Replicas  []int32
 }
 
 func (s *Server) handleBlockLogs(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	replica, _ := strconv.ParseInt(r.URL.Query().Get("replica"), 10, 32)
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	full := ns + "/" + name
+	var replicas []int32
+	if b, err := s.getBlock(r.Context(), r); err == nil {
+		for _, p := range b.GetStatus().GetPlacements() {
+			replicas = append(replicas, p.GetReplicaIndex())
+		}
+	}
 	s.render(w, http.StatusOK, "block_logs.html", blockLogsData{
-		NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken,
-		Namespace: r.PathValue("ns"), Name: r.PathValue("name"), Replica: int32(replica),
+		Page:      s.newPage(w, r, full+" logs", "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full, Href: "/blocks/" + full}, crumb{Label: "Logs"}),
+		Namespace: ns, Name: name, Replica: int32(replica), Replicas: replicas,
 	})
 }
 
@@ -297,7 +303,7 @@ func (s *Server) handleBlockLogs(w http.ResponseWriter, r *http.Request) {
 // node than the one answering this request yields an empty stream, not
 // an error, matching the CLI's own current reach.
 func (s *Server) handleBlockLogsStream(w http.ResponseWriter, r *http.Request) {
-	if s.blocksUnavailable(w) {
+	if s.blocksUnavailable(w, r) {
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -340,4 +346,28 @@ func writeSSE(w http.ResponseWriter, event, data string) error {
 	buf.WriteString("\n")
 	_, err := w.Write(buf.Bytes())
 	return err
+}
+
+// phaseCounts is the blocks-by-phase summary the list header and the
+// dashboard both show.
+type phaseCounts struct {
+	Total, Running, Pending, Degraded, Failed int
+}
+
+func countPhases(blocks []*pb.Block) phaseCounts {
+	var c phaseCounts
+	for _, b := range blocks {
+		c.Total++
+		switch phasePill(b.GetStatus().GetPhase()).Tone {
+		case "ok":
+			c.Running++
+		case "info":
+			c.Pending++
+		case "warn":
+			c.Degraded++
+		case "crit":
+			c.Failed++
+		}
+	}
+	return c
 }

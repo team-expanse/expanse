@@ -18,18 +18,18 @@ import (
 )
 
 func (s *Server) registerClusterRoutes() {
-	s.mux.Handle("GET /cluster", s.requireAuth(http.HandlerFunc(s.handleClusterOverview)))
-	s.mux.Handle("GET /cluster/events", s.requireAuth(http.HandlerFunc(s.handleClusterEvents)))
+	s.routes.Handle("GET /cluster", s.requireAuth(http.HandlerFunc(s.handleClusterOverview)))
+	s.routes.Handle("GET /cluster/events", s.requireAuth(http.HandlerFunc(s.handleClusterEvents)))
 }
 
 // clusterUnavailable reports no NodeService being wired on this node
 // (e.g. a non-cluster agent, or a test server that didn't set one up)
 // rather than panicking on a nil s.cluster.
-func (s *Server) clusterUnavailable(w http.ResponseWriter) bool {
+func (s *Server) clusterUnavailable(w http.ResponseWriter, r *http.Request) bool {
 	if s.cluster != nil {
 		return false
 	}
-	http.Error(w, "cluster status not available on this node", http.StatusServiceUnavailable)
+	s.renderError(w, r, http.StatusServiceUnavailable, "Cluster status is not available on this node: it is not a cluster member.")
 	return true
 }
 
@@ -49,20 +49,19 @@ func (s *Server) getClusterReport(ctx context.Context) (*control.Report, error) 
 }
 
 type clusterOverviewData struct {
-	NodeID    string
-	CSRFToken string
-	Report    *control.Report
-	Error     string
+	Page   page
+	Report *control.Report
+	Error  string
 }
 
 func (s *Server) handleClusterOverview(w http.ResponseWriter, r *http.Request) {
-	if s.clusterUnavailable(w) {
+	if s.clusterUnavailable(w, r) {
 		return
 	}
-	data := clusterOverviewData{NodeID: s.NodeID, CSRFToken: sessionFromContext(r.Context()).CSRFToken}
+	data := clusterOverviewData{Page: s.newPage(w, r, "Cluster", "cluster", crumb{Label: "Cluster"})}
 	rep, err := s.getClusterReport(r.Context())
 	if err != nil {
-		data.Error = err.Error()
+		data.Error = errText(err)
 	} else {
 		data.Report = rep
 	}
@@ -74,7 +73,7 @@ func (s *Server) handleClusterOverview(w http.ResponseWriter, r *http.Request) {
 // cluster meta/generation) triggers a full re-render, pushed as one
 // "cluster-fragment" swap — no client polling.
 func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
-	if s.clusterUnavailable(w) {
+	if s.clusterUnavailable(w, r) {
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -93,7 +92,7 @@ func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
 			return nil // transient read error; the next event retries
 		}
 		var buf bytes.Buffer
-		if err := s.tmpl.ExecuteTemplate(&buf, "cluster-fragment", rep); err != nil {
+		if err := s.renderFragment(&buf, "cluster-fragment", rep); err != nil {
 			return err
 		}
 		if err := writeSSE(w, "cluster", buf.String()); err != nil {

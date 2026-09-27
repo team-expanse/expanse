@@ -7,6 +7,46 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## Unreleased
+
+### Changed
+
+- The web UI has a proper app shell and design system: one shared layout
+  with a sidebar, header (cluster name and quorum/health indicator, user
+  menu, light/dark toggle), breadcrumbs and a footer naming the serving node
+  and version; consistent status pills instead of raw enum constants;
+  styled tables, cards, forms with inline validation, empty states, toast
+  notifications for action results, and `<dialog>` confirmations for
+  destructive actions. Responsive down to phone width and keyboard
+  accessible. Hand-written CSS with tokens, an inline SVG icon sprite, no
+  build step, no CDN; pages now send a self-only Content-Security-Policy.
+- `/` is a live dashboard: nodes, quorum, blocks by phase, volumes by state,
+  firing alerts, the current generation, a "needs attention" list and recent
+  events.
+- Every existing page (cluster, blocks, volumes, health, login) is restyled
+  with no loss of function; SSE updates, CSRF and OIDC login are unchanged.
+
+### Added
+
+- Web UI pages for data the agent already served: **Nodes** (list with
+  membership state and reported health; a detail page with inventory, health
+  checks, reconciler status and resources for the serving node, clearly
+  labelled as local to it), **Generations** (history, detail, diff of any
+  two, rollback behind a confirm), **Events** (a live, type-filtered log of
+  store writes with session keys redacted) and **Settings** (change the admin
+  password, OIDC status, UI CA location and certificate download).
+- `docs/WEB-UI.md` §5 describes every page.
+
+### Fixed
+
+- Plain form posts from a browser (deploy a block, create a volume) were
+  always rejected with "CSRF token mismatch": the check read only the
+  `X-CSRF-Token` header, which a form cannot send. Forms now carry the token
+  in a `csrf_token` field, which the check also accepts.
+- A node's reported health read "unknown" permanently: the agent's service
+  PATH lacked `chronyc`, so the clock-sync check could never run. The agent
+  now has chrony on its PATH whenever chrony is enabled.
+
 ## 1.1.4 - 2026-09-27
 
 ### Changed

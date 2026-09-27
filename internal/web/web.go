@@ -13,17 +13,18 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
 	"embed"
 	"errors"
 	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 
 	"github.com/expanse/expanse/internal/store"
+	"github.com/expanse/expanse/internal/version"
 	"github.com/expanse/expanse/internal/web/auth"
 	"github.com/expanse/expanse/internal/web/oidc"
 	pb "github.com/expanse/expanse/proto"
@@ -47,6 +48,9 @@ const csrfCookie = "expanse_csrf"
 // csrfHeader is the header HTMX must echo the csrfCookie value back in.
 const csrfHeader = "X-CSRF-Token"
 
+// csrfField carries the same token in plain (non-HTMX) form posts, which cannot set headers.
+const csrfField = "csrf_token"
+
 // oidcStateCookie and oidcNonceCookie carry the authorization-code
 // flow's CSRF state and ID-token replay nonce (oidc.StartLogin) across
 // the redirect to the IdP and back. SameSiteLaxMode, not Strict: the
@@ -64,14 +68,19 @@ type Server struct {
 	// operator reaching the UI through the VIP can tell which node
 	// answered.
 	NodeID string
+	// DataDir is the agent's data directory, shown on the settings
+	// page as where the UI CA certificate lives on disk; optional.
+	DataDir string
 
 	store         store.Store
 	blocks        pb.BlockServiceServer
 	catalog       pb.CatalogServiceServer
 	cluster       pb.NodeServiceServer
 	clusterSecret []byte
-	tmpl          *template.Template
-	mux           *http.ServeMux
+	tmpl          *templates
+	events        *eventLog
+	routes        *http.ServeMux
+	mux           http.Handler
 }
 
 // New parses the embedded templates and registers routes. st is the
@@ -86,55 +95,67 @@ type Server struct {
 // (the SSO button never renders, /login/oidc/* 404) without otherwise
 // affecting a non-cluster agent's password login.
 func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb.CatalogServiceServer, cluster pb.NodeServiceServer, clusterSecret []byte) (*Server, error) {
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	tmpl, err := loadTemplates(templateFS)
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
-	s := &Server{NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, cluster: cluster, clusterSecret: clusterSecret, tmpl: tmpl}
+	s := &Server{
+		NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, cluster: cluster,
+		clusterSecret: clusterSecret, tmpl: tmpl, events: newEventLog(eventLogSize),
+	}
 
-	s.mux = http.NewServeMux()
-	s.mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
-	s.mux.HandleFunc("/login", s.handleLogin)
-	s.mux.HandleFunc("/login/oidc/start", s.handleOIDCStart)
-	s.mux.HandleFunc("/login/oidc/callback", s.handleOIDCCallback)
-	s.mux.Handle("/logout", s.requireAuth(http.HandlerFunc(s.handleLogout)))
-	s.mux.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
+	s.routes = http.NewServeMux()
+	s.mux = secureHeaders(s.routes)
+	s.routes.Handle("/static/", http.FileServer(http.FS(staticFS)))
+	s.routes.HandleFunc("/login", s.handleLogin)
+	s.routes.HandleFunc("/login/oidc/start", s.handleOIDCStart)
+	s.routes.HandleFunc("/login/oidc/callback", s.handleOIDCCallback)
+	s.routes.Handle("/logout", s.requireAuth(http.HandlerFunc(s.handleLogout)))
+	s.routes.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
+	s.registerDashboardRoutes()
 	s.registerBlockRoutes()
 	s.registerClusterRoutes()
+	s.registerNodeRoutes()
 	s.registerVolumeRoutes()
 	s.registerHealthRoutes()
+	s.registerGenerationRoutes()
+	s.registerEventRoutes()
+	s.registerSettingsRoutes()
 	return s, nil
 }
 
-// indexData is the template data for the placeholder page.
-type indexData struct {
-	NodeID    string
-	CSRFToken string
-}
-
+// handleIndex serves the dashboard at exactly "/" and a styled 404 for
+// any other unrouted path.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		s.renderError(w, r, http.StatusNotFound, "There is nothing at "+r.URL.Path+".")
 		return
 	}
-	sess := sessionFromContext(r.Context())
-	s.render(w, http.StatusOK, "index.html", indexData{NodeID: s.NodeID, CSRFToken: sess.CSRFToken})
+	s.handleDashboard(w, r)
 }
 
-// render executes a named template with the given status and data,
-// shared by every page handler (index/login handle their own bodies
-// pre-dating this helper; C1's block pages use it directly).
+// render executes a page (inside the shared layout) or a fragment with
+// the given status and data.
 func (s *Server) render(w http.ResponseWriter, status int, name string, data any) {
+	var buf bytes.Buffer
+	if err := s.tmpl.execute(&buf, name, data); err != nil {
+		http.Error(w, "render failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, "render failed", http.StatusInternalServerError)
-	}
+	_, _ = w.Write(buf.Bytes())
+}
+
+// renderFragment executes an SSE/HTMX fragment into buf.
+func (s *Server) renderFragment(buf *bytes.Buffer, name string, data any) error {
+	return s.tmpl.execute(buf, name, data)
 }
 
 type loginData struct {
 	Error      bool
 	SSOEnabled bool
+	Version    string
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -149,12 +170,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int, failed bool) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	data := loginData{Error: failed, SSOEnabled: oidc.IsConfigured(r.Context(), s.store)}
-	if err := s.tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
-		http.Error(w, "render failed", http.StatusInternalServerError)
-	}
+	s.render(w, status, "login.html", loginData{Error: failed, SSOEnabled: oidc.IsConfigured(r.Context(), s.store), Version: version.Get().Version})
 }
 
 func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -310,6 +326,9 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		if isMutating(r.Method) {
 			got := r.Header.Get(csrfHeader)
+			if got == "" {
+				got = r.PostFormValue(csrfField)
+			}
 			if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(sess.CSRFToken)) != 1 {
 				http.Error(w, "CSRF token mismatch", http.StatusForbidden)
 				return
@@ -329,12 +348,14 @@ func isMutating(method string) bool {
 	}
 }
 
-// Serve runs the TLS listener on addr until ctx is canceled.
+// Serve runs the TLS listener on addr until ctx is canceled, along with
+// the store-event recorder behind the dashboard and events pages.
 func (s *Server) Serve(ctx context.Context, addr string, tlsCfg *tls.Config) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("web: listen %s: %w", addr, err)
 	}
+	go s.events.run(ctx, s.store)
 	httpSrv := &http.Server{Handler: s.mux}
 	go func() {
 		<-ctx.Done()

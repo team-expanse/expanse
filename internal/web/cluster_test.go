@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/expanse/expanse/internal/agent/health"
 	"github.com/expanse/expanse/internal/api"
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
+	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/web/auth"
 )
@@ -22,9 +24,10 @@ import (
 // newClusterTestServer wires a real single-node raft cluster (control.Init,
 // the same bootstrap `expanse cluster init` runs) behind api.NewServer, so
 // GetClusterStatus exercises the real code path — not a mock — the same
-// way blocks_test.go tests against a real service.Server. Agent is nil:
-// GetClusterStatus never touches it. The store is returned too, so a test
-// can write directly to it (simulating a join) without a second RPC seam.
+// way blocks_test.go tests against a real service.Server. The agent is a
+// fakeAgent with no checks or inventory, enough for the dashboard's
+// health read. The store is returned too, so a test can write directly
+// to it (simulating a join) without a second RPC seam.
 func newClusterTestServer(t *testing.T) (*httptest.Server, string, store.Store) {
 	t.Helper()
 	dir := t.TempDir()
@@ -42,14 +45,25 @@ func newClusterTestServer(t *testing.T) (*httptest.Server, string, store.Store) 
 		t.Fatalf("EnsureAdmin: %v", err)
 	}
 
-	apiSrv := api.NewServer(nil, res.Store, slog.Default())
+	agent := &fakeAgent{nodeID: "n1", report: &health.Report{Overall: health.Healthy, At: time.Now()}, recon: reconcile.New(res.Store, reconcile.Options{NodeID: "n1"})}
+	apiSrv := api.NewServer(agent, res.Store, slog.Default())
 	s, err := New("n1", res.Store, nil, nil, apiSrv, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	startEventLog(t, s)
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
 	return srv, pw, res.Store
+}
+
+// startEventLog runs the event recorder Serve would start, for tests
+// that drive s.mux directly through httptest.
+func startEventLog(t *testing.T, s *Server) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go s.events.run(ctx, s.store)
 }
 
 func freeAddr(t *testing.T) string {

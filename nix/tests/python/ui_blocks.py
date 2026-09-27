@@ -70,9 +70,9 @@ with subtest("the block reaches RUNNING, observed live over SSE (X5)"):
     # even once a real match already printed.
     _, out = n1.execute(
         "timeout 30 curl -s -N -b /tmp/ui-cookies.txt --resolve n1:8443:127.0.0.1 "
-        f"--cacert {CAFILE} https://n1:8443/blocks/default/web/events | grep RUNNING || true"
+        f"--cacert {CAFILE} https://n1:8443/blocks/default/web/events | grep -i running || true"
     )
-    assert "RUNNING" in out, f"SSE stream never reported RUNNING within 30s: {out!r}"
+    assert "running" in out.lower(), f"SSE stream never reported RUNNING within 30s: {out!r}"
 
 with subtest("the CLI's own view agrees with what the UI wrote"):
     b = wait_phase(n1, "web", ["RUNNING"], 10)

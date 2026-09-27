@@ -3,23 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — Sign in</title>
+  <meta name="color-scheme" content="light dark">
+  <title>Sign in · Expanse</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
 </head>
-<body>
-  <main class="login">
-    <h1>Expanse</h1>
-    {{if .Error}}
-      <p class="error">Invalid username or password.</p>
-    {{end}}
-    <form method="post" action="/login">
-      <label>Username <input type="text" name="username" autocomplete="username" required></label>
-      <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
-      <button type="submit">Sign in</button>
+<body class="login-body">
+{{template "icons"}}
+<main class="login">
+  <div class="login-card">
+    <div class="login-brand"><svg class="icon brand-mark"><use href="#i-logo"/></svg><span>Expanse</span></div>
+    <h1>Sign in</h1>
+    <p class="muted">Cluster management interface</p>
+    {{if .Error}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>Invalid username or password.</div>{{end}}
+    <form method="post" action="/login" class="form">
+      <label class="field"><span class="field-label">Username</span><input class="input" type="text" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus></label>
+      <label class="field"><span class="field-label">Password</span><input class="input" type="password" name="password" autocomplete="current-password" required></label>
+      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
     </form>
     {{if .SSOEnabled}}
-      <p class="sso"><a href="/login/oidc/start">Sign in with SSO</a></p>
+    <div class="login-divider"><span>or</span></div>
+    <a class="btn btn-ghost btn-block" href="/login/oidc/start"><svg class="icon"><use href="#i-shield"/></svg>Sign in with SSO</a>
     {{end}}
-  </main>
+  </div>
+  <p class="login-foot">Expanse {{.Version}}</p>
+</main>
 </body>
 </html>

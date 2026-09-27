@@ -1,54 +1,50 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — Cluster</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/htmx-sse.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/">&larr; Home</a></p>
-    {{if .Error}}
-    <p class="error">Cluster status unavailable: {{.Error}}</p>
-    {{else}}
-    <div hx-ext="sse" sse-connect="/cluster/events">
-      <div id="cluster-fragment" sse-swap="cluster" hx-swap="innerHTML">
-        {{template "cluster-fragment" .Report}}
-      </div>
-    </div>
-    {{end}}
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Cluster</h1>
+    <p class="page-sub">Raft membership, quorum and the current generation.</p>
+  </div>
+  <div class="page-actions">{{template "live"}}</div>
+</div>
+{{if .Error}}
+<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Cluster status unavailable</strong><p>{{.Error}}</p></div></div>
+{{else}}
+<div hx-ext="sse" sse-connect="/cluster/events">
+  <div id="cluster-fragment" sse-swap="cluster" hx-swap="innerHTML">{{template "cluster-fragment" .Report}}</div>
+</div>
+{{end}}
+{{end}}
 
 {{define "cluster-fragment"}}
-<h2>{{.Name}} <small>({{.ClusterID}})</small></h2>
-{{if .Degraded}}<p class="error">DEGRADED: no quorum — serving stale reads only</p>{{end}}
-<dl>
-  <dt>Leader</dt><dd>{{if .Leader}}{{.Leader}}{{else}}(none){{end}}</dd>
-  <dt>Quorum</dt><dd>{{.QuorumHave}}/{{.QuorumNeed}}</dd>
-  <dt>Generation</dt><dd>{{.Generation}}</dd>
-</dl>
-<table>
-  <thead><tr><th>Node</th><th>Role</th><th>State</th><th>Raft addr</th><th>API addr</th><th>Degraded</th></tr></thead>
-  <tbody>
-    {{range .Nodes}}
-    <tr>
-      <td>{{.ID}}</td><td>{{.Role}}</td><td>{{.State}}</td>
-      <td>{{.RaftAddr}}</td><td>{{.APIAddr}}</td>
-      <td>{{if .Degraded}}yes{{else}}no{{end}}</td>
-    </tr>
-    {{else}}
-    <tr><td colspan="6">No nodes.</td></tr>
-    {{end}}
-  </tbody>
-</table>
+{{if .Degraded}}
+<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Degraded: no quorum</strong><p>This node cannot reach a Raft majority and is serving stale reads only. Writes fail until quorum returns.</p></div></div>
+{{end}}
+<section class="kv-cards">
+  <div class="kv-card"><div class="kv-label">Cluster</div><div class="kv-value">{{.Name}}</div><div class="kv-sub"><code>{{.ClusterID}}</code></div></div>
+  <div class="kv-card"><div class="kv-label">Leader</div><div class="kv-value">{{if .Leader}}<code>{{.Leader}}</code>{{else}}<span class="text-crit">none</span>{{end}}</div><div class="kv-sub">raft address</div></div>
+  <div class="kv-card"><div class="kv-label">Quorum</div><div class="kv-value">{{.QuorumHave}}<span class="stat-of">/{{.QuorumNeed}}</span></div><div class="kv-sub">{{if .Degraded}}<span class="text-crit">lost</span>{{else}}voters reachable / needed{{end}}</div></div>
+  <div class="kv-card"><div class="kv-label">Generation</div><div class="kv-value"><a href="/generations">{{.Generation}}</a></div><div class="kv-sub">{{if .Version}}version {{.Version}}{{else}}desired state{{end}}</div></div>
+</section>
+<section class="card">
+  <div class="card-head"><h2>Members</h2><span class="muted">{{len .Nodes}} node{{if ne (len .Nodes) 1}}s{{end}}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Node</th><th>Role</th><th>State</th><th>Raft address</th><th>API address</th><th>Self-reported</th></tr></thead>
+      <tbody>
+        {{range .Nodes}}
+        <tr>
+          <td><a href="/nodes/{{.ID}}"><strong>{{.ID}}</strong></a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
+          <td>{{role .Role}}</td>
+          <td>{{template "pill" (nodeState .)}}</td>
+          <td><code>{{.RaftAddr}}</code></td>
+          <td><code>{{.APIAddr}}</code></td>
+          <td>{{if .Degraded}}<span class="text-warn">degraded</span>{{else}}<span class="muted">ok</span>{{end}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6">{{template "empty" "No node records."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
 {{end}}

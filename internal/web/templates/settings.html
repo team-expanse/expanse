@@ -1,0 +1,72 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Settings</h1>
+    <p class="page-sub">Access to this interface. Cluster-wide: every node serves the same store.</p>
+  </div>
+</div>
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2><svg class="icon"><use href="#i-key"/></svg>Change password</h2></div>
+    {{if .SSOUser}}
+    <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><p>You signed in through SSO as <strong>{{.Page.User}}</strong>. This form changes the local <code>admin</code> account's password and needs its current password.</p></div></div>
+    {{end}}
+    <form method="post" action="/settings/password" class="form" novalidate>
+      {{template "csrf" .Page}}
+      {{if and .Error (not .Field)}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>{{.Error}}</div>{{end}}
+      <label class="field">
+        <span class="field-label">Current password</span>
+        <input class="input" type="password" name="current" autocomplete="current-password" required{{if eq .Field "current"}} aria-invalid="true" autofocus{{end}}>
+        {{if eq .Field "current"}}<span class="field-error">{{.Error}}</span>{{end}}
+      </label>
+      <label class="field">
+        <span class="field-label">New password</span>
+        <input class="input" type="password" name="password" autocomplete="new-password" minlength="12" required{{if eq .Field "password"}} aria-invalid="true" autofocus{{end}}>
+        {{if eq .Field "password"}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">At least 12 characters.</span>{{end}}
+      </label>
+      <label class="field">
+        <span class="field-label">Confirm new password</span>
+        <input class="input" type="password" name="confirm" autocomplete="new-password" required{{if eq .Field "confirm"}} aria-invalid="true" autofocus{{end}}>
+        {{if eq .Field "confirm"}}<span class="field-error">{{.Error}}</span>{{end}}
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Change password</button>
+      </div>
+      <p class="field-hint">Forgot it? Run <code>expanse ctl admin reset-password</code> on any node.</p>
+    </form>
+  </section>
+
+  <div class="stack">
+    <section class="card">
+      <div class="card-head"><h2><svg class="icon"><use href="#i-shield"/></svg>Single sign-on</h2>{{if .OIDC}}<span class="pill pill-ok"><span class="dot"></span>Configured</span>{{else}}<span class="pill pill-neutral"><span class="dot"></span>Not configured</span>{{end}}</div>
+      {{if .OIDC}}
+      <dl class="dl">
+        <dt>Issuer</dt><dd><code class="wrap">{{.OIDC.Issuer}}</code></dd>
+        <dt>Client ID</dt><dd><code>{{.OIDC.ClientID}}</code></dd>
+        <dt>Client secret</dt><dd><span class="muted">sealed to the cluster secret; never shown</span></dd>
+        <dt>Redirect URL</dt><dd><code class="wrap">{{.OIDC.RedirectURL}}</code></dd>
+        <dt>Allowed emails</dt><dd>{{range .OIDC.AllowedEmails}}<span class="tag">{{.}}</span> {{end}}</dd>
+        <dt>Configured</dt><dd>{{stamp (nanos .OIDC.CreatedAt)}}</dd>
+      </dl>
+      <p class="field-hint">Change it with <code>expanse ctl oidc configure</code>; the login page offers SSO while this is set.</p>
+      {{else}}
+      <p>Password login only. To add an OpenID Connect provider (Dex, Keycloak, Okta, Google Workspace), run <code>expanse ctl oidc configure</code> on a node with the issuer, client ID/secret, this cluster's callback URL and an allow-list of emails.</p>
+      {{end}}
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2><svg class="icon"><use href="#i-lock"/></svg>UI certificate authority</h2></div>
+      <p>Browsers trust this interface once the cluster's UI CA is imported. It is written on every node at:</p>
+      <p><code class="wrap">{{.CAPath}}</code></p>
+      {{if .CAAvailable}}
+      <div class="form-actions">
+        <a class="btn btn-primary" href="/settings/ui-ca.pem" download="ui-ca.pem"><svg class="icon"><use href="#i-download"/></svg>Download ui-ca.pem</a>
+      </div>
+      <p class="field-hint">The certificate only; the CA's private key stays sealed in the store. Import it as a trusted authority for websites.</p>
+      {{else}}
+      <p class="field-hint">The CA has not been created on this cluster yet; it appears once a cluster node serves the UI over TLS.</p>
+      {{end}}
+    </section>
+  </div>
+</div>
+{{end}}

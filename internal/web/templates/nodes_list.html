@@ -1,0 +1,41 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Nodes</h1>
+    <p class="page-sub">Every cluster member, its membership state and the health each agent last reported.</p>
+  </div>
+  <div class="page-actions">{{template "live"}}</div>
+</div>
+{{if .Error}}
+<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Node list unavailable</strong><p>{{.Error}}</p></div></div>
+{{else}}
+<div hx-ext="sse" sse-connect="/nodes/events">
+  <div id="nodes-fragment" sse-swap="nodes" hx-swap="innerHTML">{{template "nodes-fragment" .}}</div>
+</div>
+{{end}}
+{{end}}
+
+{{define "nodes-fragment"}}
+<section class="card">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Node</th><th>Role</th><th>Membership</th><th>Health</th><th>Raft address</th><th>API address</th><th>Joined</th></tr></thead>
+      <tbody>
+        {{range .Nodes}}
+        <tr>
+          <td><a href="/nodes/{{.ID}}"><strong>{{.ID}}</strong></a>{{if .Leader}} <span class="tag tag-leader">Leader</span>{{end}}{{if .Serving}} <span class="tag">serving you</span>{{end}}</td>
+          <td>{{role .Role}}</td>
+          <td>{{template "pill" .State}}</td>
+          <td>{{template "pill" .Health}}</td>
+          <td><code>{{.RaftAddr}}</code></td>
+          <td><code>{{.APIAddr}}</code></td>
+          <td class="muted" title="{{stamp .JoinedAt}}">{{ago .JoinedAt}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="7">{{template "empty" "No node records."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}

@@ -1,54 +1,84 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — {{.Block.Metadata.GetName}}</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/htmx-sse.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/blocks">&larr; Blocks</a></p>
-    <div hx-ext="sse" sse-connect="/blocks/{{.Block.Metadata.GetNamespace}}/{{.Block.Metadata.GetName}}/events">
-      <div id="block-fragment" sse-swap="block" hx-swap="innerHTML">
-        {{template "block-fragment" .Block}}
-      </div>
+{{define "content"}}
+{{$ns := .Block.Metadata.GetNamespace}}{{$name := .Block.Metadata.GetName}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title"><span><span class="muted">{{$ns}}/</span>{{$name}}</span></h1>
+    <p class="page-sub">Block of type <code>{{.Block.Spec.GetType}}</code>; status and placement update live.</p>
+  </div>
+  <div class="page-actions">
+    {{template "live"}}
+    <a class="btn btn-ghost" href="/blocks/{{$ns}}/{{$name}}/logs"><svg class="icon"><use href="#i-logs"/></svg>Logs</a>
+    <button class="btn btn-danger" type="button" data-confirm="confirm-delete"><svg class="icon"><use href="#i-trash"/></svg>Delete</button>
+  </div>
+</div>
+
+<div hx-ext="sse" sse-connect="/blocks/{{$ns}}/{{$name}}/events">
+  <div id="block-fragment" sse-swap="block" hx-swap="innerHTML">{{template "block-fragment" .Block}}</div>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>Scale</h2></div>
+  <form class="form-inline" hx-post="/blocks/{{$ns}}/{{$name}}/scale" hx-target="#block-fragment" hx-swap="innerHTML">
+    <label class="field"><span class="field-label">Replicas</span><input class="input input-sm" type="number" name="replicas" min="0" max="64" value="{{.Block.Spec.GetReplicas}}" required></label>
+    <button class="btn btn-primary" type="submit">Apply</button>
+  </form>
+</section>
+
+<form id="delete-form" hx-post="/blocks/{{$ns}}/{{$name}}/delete" hx-swap="none"></form>
+<dialog id="confirm-delete" class="dialog" data-submit="#delete-form">
+  <form method="dialog">
+    <h2>Delete {{$ns}}/{{$name}}?</h2>
+    <p>Every replica is stopped and removed. Volumes the block used are not deleted.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" value="cancel">Cancel</button>
+      <button class="btn btn-danger" value="confirm">Delete block</button>
     </div>
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+  </form>
+</dialog>
+{{end}}
 
 {{define "block-fragment"}}
-<h2>{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}</h2>
-<dl>
-  <dt>Type</dt><dd>{{.Spec.GetType}}</dd>
-  <dt>Replicas (ready/desired)</dt><dd>{{.Status.GetReplicas.GetReady}}/{{.Spec.GetReplicas}}</dd>
-  <dt>Phase</dt><dd>{{.Status.GetPhase}}</dd>
-</dl>
-<table>
-  <thead><tr><th>Replica</th><th>Node</th><th>Phase</th></tr></thead>
-  <tbody>
-    {{range .Status.GetPlacements}}
-    <tr><td>{{.GetReplicaIndex}}</td><td>{{.GetNodeId}}</td><td>{{.GetPhase}}</td></tr>
-    {{else}}
-    <tr><td colspan="3">No replicas placed yet.</td></tr>
-    {{end}}
-  </tbody>
-</table>
-<form hx-post="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}/scale"
-      hx-target="#block-fragment" hx-swap="innerHTML">
-  <label>Replicas <input type="number" name="replicas" min="0" value="{{.Spec.GetReplicas}}"></label>
-  <button type="submit">Scale</button>
-</form>
-<form hx-post="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}/delete" hx-confirm="Delete this block?">
-  <button type="submit">Delete</button>
-</form>
-<p><a href="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}/logs">View logs</a></p>
+<section class="kv-cards">
+  <div class="kv-card"><div class="kv-label">Phase</div><div class="kv-value">{{template "pill" (phase .Status.GetPhase)}}</div><div class="kv-sub">{{with .Status.GetMessage}}{{.}}{{else}}observed generation {{.Status.GetObservedGeneration}}{{end}}</div></div>
+  <div class="kv-card"><div class="kv-label">Replicas</div><div class="kv-value">{{.Status.GetReplicas.GetReady}}<span class="stat-of">/{{.Spec.GetReplicas}}</span></div><div class="kv-sub">ready / desired</div></div>
+  <div class="kv-card"><div class="kv-label">Type</div><div class="kv-value"><code>{{.Spec.GetType}}</code></div><div class="kv-sub">from the catalog</div></div>
+  <div class="kv-card"><div class="kv-label">Placed on</div><div class="kv-value">{{len .Status.GetPlacements}}</div><div class="kv-sub">replica slot{{if ne (len .Status.GetPlacements) 1}}s{{end}}</div></div>
+</section>
+{{with .Status.GetPendingReason}}
+<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Not fully placed: {{.GetCode}}</strong><p>{{.GetMessage}}</p>{{if .GetPerNode}}<ul class="plain">{{range $n, $why := .GetPerNode}}<li><code>{{$n}}</code>: {{$why}}</li>{{end}}</ul>{{end}}</div></div>
+{{end}}
+<section class="card">
+  <div class="card-head"><h2>Replicas</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Replica</th><th>Node</th><th>Phase</th><th>Generation</th><th></th></tr></thead>
+      <tbody>
+        {{range .Status.GetPlacements}}
+        <tr>
+          <td>#{{.GetReplicaIndex}}</td>
+          <td><a href="/nodes/{{.GetNodeId}}">{{.GetNodeId}}</a></td>
+          <td>{{template "pill" (phase .GetPhase)}}</td>
+          <td class="muted">{{.GetGeneration}}</td>
+          <td class="text-right"><a class="btn btn-ghost btn-sm" href="/blocks/{{$.Metadata.GetNamespace}}/{{$.Metadata.GetName}}/logs?replica={{.GetReplicaIndex}}">Logs</a></td>
+        </tr>
+        {{else}}
+        <tr><td colspan="5">{{template "empty" "No replicas placed yet."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{if .Status.GetConditions}}
+<section class="card">
+  <div class="card-head"><h2>Conditions</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Type</th><th>Status</th><th>Reason</th><th>Message</th></tr></thead>
+      <tbody>
+        {{range .Status.GetConditions}}<tr><td>{{.GetType}}</td><td>{{.GetStatus}}</td><td class="muted">{{.GetReason}}</td><td class="muted">{{.GetMessage}}</td></tr>{{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}
 {{end}}

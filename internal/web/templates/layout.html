@@ -1,0 +1,91 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="htmx-config" content='{"allowEval": false, "includeIndicatorStyles": false}'>
+  <title>{{.Page.Title}} · {{.Page.Cluster.Name}} · Expanse</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/htmx-sse.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{.Page.CSRFToken}}"}'>
+{{template "icons"}}
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="app">
+  <div class="scrim" data-nav-close hidden></div>
+  <aside class="app-sidebar" id="sidebar">
+    <div class="brand">
+      <a href="/" class="brand-link"><svg class="icon brand-mark"><use href="#i-logo"/></svg><span>Expanse</span></a>
+      <button class="icon-btn sidebar-close" type="button" data-nav-close aria-label="Close menu"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <nav class="nav" aria-label="Main">
+      {{range nav}}
+      <div class="nav-group">
+        <div class="nav-group-label">{{.Label}}</div>
+        {{range .Items}}
+        <a class="nav-item" href="{{.Href}}"{{if eq .Key $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{.Icon}}"/></svg><span>{{.Label}}</span></a>
+        {{end}}
+      </div>
+      {{end}}
+    </nav>
+    <div class="sidebar-foot">
+      <div class="sidebar-node"><svg class="icon"><use href="#i-nodes"/></svg><span>Node <strong>{{.Page.NodeID}}</strong></span></div>
+    </div>
+  </aside>
+
+  <div class="app-body">
+    <header class="app-header">
+      <button class="icon-btn menu-btn" type="button" data-nav-toggle aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button>
+      <div class="cluster-id">
+        <span class="cluster-name">{{.Page.Cluster.Name}}</span>
+        {{template "pill" .Page.Cluster.Pill}}
+        {{if .Page.Cluster.Quorum}}<span class="cluster-quorum">quorum {{.Page.Cluster.Quorum}}</span>{{end}}
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch theme" title="Switch theme"><svg class="icon icon-sun"><use href="#i-sun"/></svg><svg class="icon icon-moon"><use href="#i-moon"/></svg></button>
+        <details class="menu">
+          <summary class="menu-summary"><span class="avatar">{{short .Page.User 1}}</span><span class="menu-user">{{.Page.User}}</span><svg class="icon icon-chevron"><use href="#i-chevron"/></svg></summary>
+          <div class="menu-panel">
+            <a href="/settings"><svg class="icon"><use href="#i-settings"/></svg>Settings</a>
+            <button type="button" hx-post="/logout" hx-swap="none"><svg class="icon"><use href="#i-logout"/></svg>Sign out</button>
+          </div>
+        </details>
+      </div>
+    </header>
+
+    <main id="main" class="app-main">
+      <nav class="crumbs" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="/">Dashboard</a></li>
+          {{range .Page.Crumbs}}<li>{{if .Href}}<a href="{{.Href}}">{{.Label}}</a>{{else}}<span aria-current="page">{{.Label}}</span>{{end}}</li>{{end}}
+        </ol>
+      </nav>
+      {{template "content" .}}
+    </main>
+
+    <footer class="app-footer">
+      <span>Served by node <strong>{{.Page.NodeID}}</strong></span>
+      <span class="sep">·</span>
+      <span>Expanse {{.Page.Version}}</span>
+    </footer>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite">
+  {{if .Page.Flash}}<div class="toast toast-{{.Page.Flash.Kind}}" role="status"><span>{{.Page.Flash.Text}}</span><button class="toast-close" type="button" aria-label="Dismiss">×</button></div>{{end}}
+</div>
+</body>
+</html>{{end}}
+
+{{define "pill"}}<span class="pill pill-{{.Tone}}"><span class="dot"></span>{{.Label}}</span>{{end}}
+
+{{define "empty"}}<div class="empty"><svg class="icon"><use href="#i-inbox"/></svg><p>{{.}}</p></div>{{end}}
+
+{{define "live"}}<span class="live" data-live title="Updates arrive over a live connection"><span class="dot"></span>Live</span>{{end}}
+
+{{/* csrf is the token field for plain form posts; its name matches csrfField in web.go. */}}
+{{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">{{end}}

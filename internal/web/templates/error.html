@@ -1,0 +1,10 @@
+{{define "content"}}
+<div class="error-page">
+  <div class="error-code">{{.Status}}</div>
+  <h1 class="page-title">{{.Title}}</h1>
+  <p class="muted">{{.Message}}</p>
+  <div class="form-actions">
+    <a class="btn btn-primary" href="/">Go to the dashboard</a>
+  </div>
+</div>
+{{end}}

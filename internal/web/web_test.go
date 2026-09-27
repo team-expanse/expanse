@@ -253,3 +253,39 @@ func TestStaticAssetsServedWithoutAuth(t *testing.T) {
 		}
 	}
 }
+
+func TestCSRFTokenAcceptedFromAFormField(t *testing.T) {
+	srv, pw := newTestServer(t)
+	for _, wrong := range []bool{false, true} {
+		client, csrf := loggedInClient(t, srv, pw)
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		if wrong {
+			csrf = "wrong-token"
+		}
+		resp, err := client.PostForm(srv.URL+"/logout", url.Values{csrfField: {csrf}})
+		if err != nil {
+			t.Fatalf("POST /logout with form token: %v", err)
+		}
+		resp.Body.Close()
+		if got403 := resp.StatusCode == http.StatusForbidden; got403 != wrong {
+			t.Errorf("wrong token = %v: status = %d", wrong, resp.StatusCode)
+		}
+	}
+}
+
+func TestPlainPostFormsCarryTheCSRFField(t *testing.T) {
+	srv, pw := newTestServer(t)
+	client, csrf := loggedInClient(t, srv, pw)
+	want := `name="` + csrfField + `" value="` + csrf + `"`
+	for _, path := range []string{"/blocks/new", "/settings"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(body), want) {
+			t.Errorf("GET %s: form has no %s", path, want)
+		}
+	}
+}

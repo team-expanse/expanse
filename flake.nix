@@ -99,6 +99,8 @@
                   "installed ${layout} node's firewall blocks the web UI (8443) or metrics (7447)";
                 assert lib.assertMsg (lib.elem "console=ttyS0,115200n8" c.boot.kernelParams)
                   "installed ${layout} node does not log to the serial console";
+                assert lib.assertMsg (lib.any (p: (p.pname or "") == "chrony") c.systemd.services.expansed.path)
+                  "installed ${layout} node's agent cannot run chronyc, so its clock-sync check (and node health) reads unknown";
                 assert lib.assertMsg (layout != "mirror" || mirrorBootsDegraded c)
                   "installed mirror node keeps /boot or / on a single disk, or cannot install systemd-boot onto md";
                 builtins.unsafeDiscardStringContext c.system.build.toplevel.drvPath;

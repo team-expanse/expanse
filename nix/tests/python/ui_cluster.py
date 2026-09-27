@@ -67,14 +67,14 @@ with subtest("failing a node is reflected live, no manual refresh (X4)"):
     out = ""
     while time.time() < deadline:
         out = n1.succeed("cat /tmp/cluster-sse.log")
-        if "unreachable" in out:
+        if "unreachable" in out.lower():
             break
         time.sleep(2)
-    assert "unreachable" in out, f"SSE stream never reflected n3 going unreachable: {out!r}"
+    assert "unreachable" in out.lower(), f"SSE stream never reflected n3 going unreachable: {out!r}"
 
 with subtest("a generation change is reflected live, no manual refresh (X4)"):
     before = n1.succeed("cat /tmp/cluster-sse.log")
-    gens_before = re.findall(r"Generation</dt><dd>(\d+)</dd>", before)
+    gens_before = re.findall(r"Generation</div><div class=\"kv-value\">(?:<a [^>]*>)?(\d+)", before)
     gen_before = int(gens_before[-1]) if gens_before else 0
     n1.succeed("expanse ctl kv put /cluster/config/uitest ui-value --socket /run/expanse/agent.sock")
     deadline = time.time() + 20
@@ -82,7 +82,7 @@ with subtest("a generation change is reflected live, no manual refresh (X4)"):
     out = before
     while time.time() < deadline:
         out = n1.succeed("cat /tmp/cluster-sse.log")
-        gens = re.findall(r"Generation</dt><dd>(\d+)</dd>", out)
+        gens = re.findall(r"Generation</div><div class=\"kv-value\">(?:<a [^>]*>)?(\d+)", out)
         gen_after = int(gens[-1]) if gens else gen_before
         if gen_after > gen_before:
             break

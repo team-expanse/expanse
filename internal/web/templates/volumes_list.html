@@ -1,40 +1,40 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — Volumes</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/">&larr; Home</a></p>
-    <h2>Volumes</h2>
-    <p><a href="/volumes/new">Create a volume</a></p>
-    <table>
-      <thead>
-        <tr><th>Name</th><th>Size</th><th>Replication</th><th>State</th><th>Primary</th></tr>
-      </thead>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Volumes</h1>
+    <p class="page-sub">Replicated block storage and where each replica lives.</p>
+  </div>
+  <div class="page-actions"><a class="btn btn-primary" href="/volumes/new"><svg class="icon"><use href="#i-plus"/></svg>Create volume</a></div>
+</div>
+
+{{if .Volumes}}
+<section class="stats stats-compact" aria-label="Volumes by state">
+  <div class="stat stat-ok"><div class="stat-label">Healthy</div><div class="stat-value">{{.Counts.Healthy}}</div></div>
+  <div class="stat {{if .Counts.Busy}}stat-info{{end}}"><div class="stat-label">Busy</div><div class="stat-value">{{.Counts.Busy}}</div></div>
+  <div class="stat {{if .Counts.Degraded}}stat-warn{{end}}"><div class="stat-label">Degraded</div><div class="stat-value">{{.Counts.Degraded}}</div></div>
+  <div class="stat {{if .Counts.Failed}}stat-crit{{end}}"><div class="stat-label">Failed</div><div class="stat-value">{{.Counts.Failed}}</div></div>
+</section>
+{{end}}
+
+<section class="card">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Volume</th><th>Size</th><th>Class</th><th>Replicas</th><th>State</th><th>Primary</th></tr></thead>
       <tbody>
         {{range .Volumes}}
         <tr>
-          <td><a href="/volumes/{{.Name}}">{{.Name}}</a></td>
+          <td><a href="/volumes/{{.Name}}"><strong>{{.Name}}</strong></a></td>
           <td>{{.Size}}</td>
+          <td class="muted">{{.Class}}</td>
           <td>{{.ReplicaSummary}}</td>
-          <td>{{.State}}</td>
-          <td>{{.Primary}}</td>
+          <td>{{template "pill" (volstate .State)}}</td>
+          <td>{{if .Primary}}<a href="/nodes/{{.Primary}}">{{.Primary}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
         </tr>
         {{else}}
-        <tr><td colspan="5">No volumes yet.</td></tr>
+        <tr><td colspan="6"><div class="empty"><svg class="icon"><use href="#i-volumes"/></svg><p>No volumes yet.</p><a class="btn btn-primary" href="/volumes/new">Create your first volume</a></div></td></tr>
         {{end}}
       </tbody>
     </table>
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+  </div>
+</section>
+{{end}}

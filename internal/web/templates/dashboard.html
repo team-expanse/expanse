@@ -1,0 +1,118 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-sub">{{if .Standalone}}This agent is not a cluster member; only the block and volume views apply.{{else}}Cluster <strong>{{.Page.Cluster.Name}}</strong> at a glance.{{end}}</p>
+  </div>
+  <div class="page-actions">{{if not .Standalone}}{{template "live"}}{{end}}</div>
+</div>
+{{if .Standalone}}
+<div id="dashboard-fragment">{{template "dashboard-fragment" .}}</div>
+{{else}}
+<div hx-ext="sse" sse-connect="/dashboard/events">
+  <div id="dashboard-fragment" sse-swap="dashboard" hx-swap="innerHTML">{{template "dashboard-fragment" .}}</div>
+</div>
+{{end}}
+{{end}}
+
+{{define "dashboard-fragment"}}
+<section class="stats" aria-label="Summary">
+  {{if .Report}}
+  <a class="stat {{if .NodesDown}}stat-warn{{else}}stat-ok{{end}}" href="/nodes">
+    <div class="stat-label"><svg class="icon"><use href="#i-nodes"/></svg>Nodes</div>
+    <div class="stat-value">{{.NodesUp}}<span class="stat-of">/{{.NodesTotal}}</span></div>
+    <div class="stat-sub">{{if .NodesDown}}{{len .NodesDown}} unreachable{{else}}all reachable{{end}}</div>
+  </a>
+  <a class="stat {{if not .Report.Leader}}stat-crit{{else if .Report.Degraded}}stat-warn{{else}}stat-ok{{end}}" href="/cluster">
+    <div class="stat-label"><svg class="icon"><use href="#i-cluster"/></svg>Quorum</div>
+    <div class="stat-value">{{.Report.QuorumHave}}<span class="stat-of">/{{.Report.QuorumNeed}}</span></div>
+    <div class="stat-sub">{{if .Report.Leader}}leader {{.Report.Leader}}{{else}}no leader — read-only{{end}}</div>
+  </a>
+  {{end}}
+  {{if .BlocksAPI}}
+  <a class="stat {{if .Blocks.Failed}}stat-crit{{else if .Blocks.Degraded}}stat-warn{{else if .Blocks.Total}}stat-ok{{end}}" href="/blocks">
+    <div class="stat-label"><svg class="icon"><use href="#i-blocks"/></svg>Blocks</div>
+    <div class="stat-value">{{.Blocks.Running}}<span class="stat-of">/{{.Blocks.Total}} running</span></div>
+    <div class="stat-sub">{{if .Blocks.Total}}{{.Blocks.Pending}} pending · {{.Blocks.Degraded}} degraded · {{.Blocks.Failed}} failed{{else}}none deployed{{end}}</div>
+  </a>
+  {{end}}
+  <a class="stat {{if .Volumes.Failed}}stat-crit{{else if .Volumes.Degraded}}stat-warn{{else if .Volumes.Total}}stat-ok{{end}}" href="/volumes">
+    <div class="stat-label"><svg class="icon"><use href="#i-volumes"/></svg>Volumes</div>
+    <div class="stat-value">{{.Volumes.Healthy}}<span class="stat-of">/{{.Volumes.Total}} healthy</span></div>
+    <div class="stat-sub">{{if .Volumes.Total}}{{.Volumes.Busy}} busy · {{.Volumes.Degraded}} degraded · {{.Volumes.Failed}} failed{{else}}none created{{end}}</div>
+  </a>
+  {{if .Report}}
+  <a class="stat {{if .Alerts}}stat-crit{{else}}stat-ok{{end}}" href="/health">
+    <div class="stat-label"><svg class="icon"><use href="#i-alert"/></svg>Alerts</div>
+    <div class="stat-value">{{len .Alerts}}</div>
+    <div class="stat-sub">{{if .Alerts}}firing now{{else}}none firing{{end}}</div>
+  </a>
+  {{if .Report.Generation}}
+  <a class="stat" href="/generations">
+    <div class="stat-label"><svg class="icon"><use href="#i-generations"/></svg>Generation</div>
+    <div class="stat-value">{{.Report.Generation}}</div>
+    <div class="stat-sub">current desired state</div>
+  </a>
+  {{end}}
+  {{end}}
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Needs attention</h2></div>
+    {{if or .Alerts .NodesDown .Degraded .Unhealthy}}
+    <ul class="attention">
+      {{range .Alerts}}
+      <li class="attention-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>{{.Name}}</strong><span>{{.Summary}}</span></div></li>
+      {{end}}
+      {{range .NodesDown}}
+      <li class="attention-{{(nodeState .).Tone}}"><svg class="icon"><use href="#i-nodes"/></svg><div><a href="/nodes/{{.ID}}">Node {{.ID}}</a><span>{{.Lifecycle}} — {{.RaftAddr}}</span></div>{{template "pill" (nodeState .)}}</li>
+      {{end}}
+      {{range .Degraded}}
+      <li class="attention-{{(volstate .State).Tone}}"><svg class="icon"><use href="#i-volumes"/></svg><div><a href="/volumes/{{.Name}}">Volume {{.Name}}</a><span>{{.ReplicaSummary}} replicas · {{.Size}}</span></div>{{template "pill" (volstate .State)}}</li>
+      {{end}}
+      {{range .Unhealthy}}
+      <li class="attention-{{(phase .Status.GetPhase).Tone}}"><svg class="icon"><use href="#i-blocks"/></svg><div><a href="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}">Block {{.Metadata.GetNamespace}}/{{.Metadata.GetName}}</a><span>{{.Status.GetReplicas.GetReady}}/{{.Spec.GetReplicas}} ready{{with .Status.GetMessage}} — {{.}}{{end}}</span></div>{{template "pill" (phase .Status.GetPhase)}}</li>
+      {{end}}
+    </ul>
+    {{else}}
+    <div class="empty empty-ok"><svg class="icon"><use href="#i-check"/></svg><p>All clear — nothing is degraded, unreachable or failing.</p></div>
+    {{end}}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Recent events</h2><a class="btn btn-ghost btn-sm" href="/events">All events</a></div>
+    {{if .Events}}
+    <ul class="event-list">
+      {{range .Events}}
+      <li><span class="event-time">{{.At.Format "15:04:05"}}</span><span class="tag tag-{{.Kind}}">{{.Kind}}</span><code class="event-key">{{.Key}}</code><span class="event-verb">{{.Verb}}</span></li>
+      {{end}}
+    </ul>
+    {{else}}
+    {{template "empty" "No store writes recorded since this node started serving."}}
+    {{end}}
+  </section>
+</div>
+
+{{if .Report}}
+<section class="card">
+  <div class="card-head"><h2>Nodes</h2><a class="btn btn-ghost btn-sm" href="/nodes">Details</a></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Node</th><th>Role</th><th>State</th><th>Raft address</th><th>API address</th></tr></thead>
+      <tbody>
+        {{range .Report.Nodes}}
+        <tr>
+          <td><a href="/nodes/{{.ID}}"><strong>{{.ID}}</strong></a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
+          <td>{{role .Role}}</td>
+          <td>{{template "pill" (nodeState .)}}</td>
+          <td><code>{{.RaftAddr}}</code></td>
+          <td><code>{{.APIAddr}}</code></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}
+{{end}}

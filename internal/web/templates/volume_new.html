@@ -1,29 +1,50 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — Create a volume</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/volumes">&larr; Volumes</a></p>
-    <h2>Create a volume</h2>
-    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-    <form method="post" action="/volumes">
-      <p><label>Name <input type="text" name="name" value="{{.Name}}" required></label></p>
-      <p><label>Size (e.g. 10Gi) <input type="text" name="size" value="{{.Size}}" placeholder="10Gi" required></label></p>
-      <p><label>Replication <input type="number" name="replication" min="1" max="5" value="{{.Replication}}" placeholder="class default"></label></p>
-      <p><label>Class <input type="text" name="class" value="{{.Class}}"></label></p>
-      <button type="submit">Create</button>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Create a volume</h1>
+    <p class="page-sub">The leader's controller places replicas after you submit; the volume page shows progress live.</p>
+  </div>
+</div>
+<div class="grid-form">
+  <section class="card">
+    <form method="post" action="/volumes" class="form" novalidate>
+      {{template "csrf" .Page}}
+      {{if and .Error (not .Field)}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>{{.Error}}</div>{{end}}
+      <label class="field">
+        <span class="field-label">Name</span>
+        <input class="input" type="text" name="name" value="{{.Name}}" placeholder="data" autocomplete="off" required{{if eq .Field "name"}} aria-invalid="true" autofocus{{end}}>
+        {{if eq .Field "name"}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">Unique across the cluster; used in mount paths.</span>{{end}}
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Size</span>
+          <input class="input" type="text" name="size" value="{{.Size}}" placeholder="10Gi" required{{if eq .Field "size"}} aria-invalid="true" autofocus{{end}}>
+          {{if eq .Field "size"}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">Binary units: <code>Mi</code>, <code>Gi</code>, <code>Ti</code>.</span>{{end}}
+        </label>
+        <label class="field">
+          <span class="field-label">Replication</span>
+          <input class="input" type="number" name="replication" min="1" max="5" value="{{.Replication}}" placeholder="class default"{{if eq .Field "replication"}} aria-invalid="true" autofocus{{end}}>
+          {{if eq .Field "replication"}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">Leave blank to use the class default.</span>{{end}}
+        </label>
+      </div>
+      <label class="field">
+        <span class="field-label">Class</span>
+        <input class="input" type="text" name="class" value="{{.Class}}">
+        <span class="field-hint">Storage class name; <code>default</code> unless you defined others.</span>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Create volume</button>
+        <a class="btn btn-ghost" href="/volumes">Cancel</a>
+      </div>
     </form>
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+  </section>
+  <aside class="card card-muted">
+    <div class="card-head"><h2>What happens next</h2></div>
+    <ol class="steps">
+      <li>The request is written to the store as pending.</li>
+      <li>The leader's volume controller picks nodes for each replica.</li>
+      <li>Replicas sync; the volume turns <span class="pill pill-ok"><span class="dot"></span>Healthy</span> once all are in sync.</li>
+    </ol>
+  </aside>
+</div>
+{{end}}

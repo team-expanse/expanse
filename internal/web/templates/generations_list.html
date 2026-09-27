@@ -1,0 +1,65 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Generations</h1>
+    <p class="page-sub">Every committed desired-state snapshot. Rolling back appends a new generation; history is never rewritten.</p>
+  </div>
+</div>
+{{if .Error}}
+<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Generation history unavailable</strong><p>{{.Error}}</p></div></div>
+{{end}}
+
+{{if gt (len .Generations) 1}}
+<section class="card">
+  <div class="card-head"><h2>Compare</h2></div>
+  <form method="get" action="/generations/diff" class="form-inline">
+    <label class="field"><span class="field-label">From</span>
+      <select class="input input-sm" name="a">{{range $i, $g := .Generations}}<option value="{{$g.Number}}"{{if eq $i 1}} selected{{end}}>{{$g.Number}}</option>{{end}}</select>
+    </label>
+    <label class="field"><span class="field-label">To</span>
+      <select class="input input-sm" name="b">{{range $i, $g := .Generations}}<option value="{{$g.Number}}"{{if eq $i 0}} selected{{end}}>{{$g.Number}}</option>{{end}}</select>
+    </label>
+    <button class="btn btn-primary" type="submit"><svg class="icon"><use href="#i-diff"/></svg>Diff</button>
+  </form>
+</section>
+{{end}}
+
+<section class="card">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Generation</th><th>Created</th><th>By</th><th>Description</th><th>Parent</th><th>Hash</th><th></th></tr></thead>
+      <tbody>
+        {{range .Generations}}
+        <tr>
+          <td><a href="/generations/{{.Number}}"><strong>{{.Number}}</strong></a>{{if eq .Number $.Current}} <span class="tag tag-leader">Current</span>{{end}}</td>
+          <td class="muted" title="{{stamp (nanos .CreatedAtUnixNs)}}">{{stamp (nanos .CreatedAtUnixNs)}}</td>
+          <td>{{.CreatedBy}}</td>
+          <td>{{if .Description}}{{.Description}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td class="muted">{{if .Parent}}<a href="/generations/diff?a={{.Parent}}&b={{.Number}}">{{.Parent}} → {{.Number}}</a>{{else}}bootstrap{{end}}</td>
+          <td><code title="{{.Hash}}">{{short .Hash 12}}</code></td>
+          <td class="text-right">
+            {{if ne .Number $.Current}}<button class="btn btn-ghost btn-sm" type="button" data-confirm="confirm-rollback-{{.Number}}"><svg class="icon"><use href="#i-rollback"/></svg>Roll back</button>{{end}}
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="7">{{template "empty" "No generations recorded."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{{range .Generations}}{{if ne .Number $.Current}}
+<form id="rollback-form-{{.Number}}" hx-post="/generations/{{.Number}}/rollback" hx-swap="none"></form>
+<dialog id="confirm-rollback-{{.Number}}" class="dialog" data-submit="#rollback-form-{{.Number}}">
+  <form method="dialog">
+    <h2>Roll back to generation {{.Number}}?</h2>
+    <p>The desired state from generation {{.Number}} is committed as a new generation and every node reconciles toward it. Nothing is deleted from history.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" value="cancel">Cancel</button>
+      <button class="btn btn-primary" value="confirm">Roll back</button>
+    </div>
+  </form>
+</dialog>
+{{end}}{{end}}
+{{end}}

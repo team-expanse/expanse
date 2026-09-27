@@ -296,8 +296,9 @@ in
       # The volume runtime shells out to lvm and drbdadm/drbdsetup, and the mount
       # manager to util-linux, e2fsprogs and cmp; pgha's promotion seam (Stream B,
       # X2) shells out to psql over a db/postgres replica's own local unix socket --
-      # the unit's own PATH is otherwise minimal.
-      path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils postgresql_18 ];
+      # the unit's own PATH is otherwise minimal. The clock-sync health check runs chronyc.
+      path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils postgresql_18 ]
+        ++ lib.optional config.services.chrony.enable config.services.chrony.package;
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";

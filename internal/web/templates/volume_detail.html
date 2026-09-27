@@ -1,85 +1,99 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — {{.Name}}</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/htmx-sse.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/volumes">&larr; Volumes</a></p>
-    <div hx-ext="sse" sse-connect="/volumes/{{.Name}}/events">
-      <div id="volume-fragment" sse-swap="volume" hx-swap="innerHTML">
-        {{template "volume-fragment" .}}
-      </div>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">{{.Name}}</h1>
+    <p class="page-sub">Replica placement, sync state and snapshots, live over SSE.</p>
+  </div>
+  <div class="page-actions">
+    {{template "live"}}
+    {{if .Volume}}<button class="btn btn-danger" type="button" data-confirm="confirm-delete"><svg class="icon"><use href="#i-trash"/></svg>Delete</button>{{end}}
+  </div>
+</div>
+
+<div hx-ext="sse" sse-connect="/volumes/{{.Name}}/events">
+  <div id="volume-fragment" sse-swap="volume" hx-swap="innerHTML">{{template "volume-fragment" .}}</div>
+</div>
+
+{{if .Volume}}
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Snapshot</h2></div>
+    <form class="form-inline" hx-post="/volumes/{{.Name}}/snapshot" hx-swap="none" data-reset>
+      <label class="field"><span class="field-label">Name</span><input class="input input-sm" type="text" name="name" placeholder="before-upgrade" pattern="[a-z0-9][a-z0-9-]{0,62}" required></label>
+      <button class="btn btn-primary" type="submit">Take snapshot</button>
+    </form>
+    <p class="field-hint">Lower-case letters, digits and dashes. Taken on the primary, asynchronously.</p>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Resize</h2></div>
+    <form class="form-inline" hx-post="/volumes/{{.Name}}/resize" hx-swap="none" data-reset>
+      <label class="field"><span class="field-label">New size</span><input class="input input-sm" type="text" name="size" placeholder="e.g. 20Gi" required></label>
+      <button class="btn btn-primary" type="submit">Grow</button>
+    </form>
+    <p class="field-hint">Volumes only grow; the new size must exceed {{.Volume.Size}}.</p>
+  </section>
+</div>
+
+<form id="delete-form" hx-post="/volumes/{{.Name}}/delete" hx-swap="none"></form>
+<dialog id="confirm-delete" class="dialog" data-submit="#delete-form">
+  <form method="dialog">
+    <h2>Delete volume {{.Name}}?</h2>
+    <p>Every replica's data on every node is removed, including its snapshots. This cannot be undone.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" value="cancel">Cancel</button>
+      <button class="btn btn-danger" value="confirm">Delete volume</button>
     </div>
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+  </form>
+</dialog>
+{{end}}
+{{end}}
 
 {{define "volume-fragment"}}
-<h2>{{.Name}}</h2>
 {{if not .Volume}}
-<p>Creating&hellip; placement has not been assigned yet.</p>
+<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Creating…</strong><p>The request is queued; the leader's controller assigns placement shortly and this page updates on its own.</p></div></div>
 {{else}}
-<dl>
-  <dt>ID</dt><dd>{{.Volume.ID}}</dd>
-  <dt>Size</dt><dd>{{.Volume.Size}}</dd>
-  <dt>Class</dt><dd>{{.Volume.Class}}</dd>
-  <dt>Replication</dt><dd>{{.Volume.ReplicaSummary}}</dd>
-  <dt>State</dt><dd>{{.Volume.State}}</dd>
-  <dt>Primary</dt><dd>{{.Volume.Primary}}</dd>
-</dl>
-<table>
-  <thead><tr><th>Replica</th><th>Role</th><th>Healthy</th><th>Sync</th><th>Out of sync</th><th>Last seen</th></tr></thead>
-  <tbody>
-    {{range .Volume.Placement}}
-    <tr>
-      <td>{{.NodeID}}</td>
-      <td>{{.Role}}</td>
-      <td>{{if .Healthy}}yes{{else}}no{{end}}</td>
-      <td>{{if .SyncPercent}}{{.SyncPercent}}%{{else}}-{{end}}</td>
-      <td>{{if .OutOfSyncKiB}}{{.OutOfSyncKiB}} KiB{{else}}-{{end}}</td>
-      <td>{{if .LastSeen.IsZero}}never{{else}}{{.LastSeen.Format "2006-01-02 15:04:05"}}{{end}}</td>
-    </tr>
-    {{else}}
-    <tr><td colspan="6">No replicas placed yet.</td></tr>
-    {{end}}
-  </tbody>
-</table>
-
-<h3>Snapshots</h3>
-<table>
-  <thead><tr><th>Name</th><th>Held by</th><th>Taken</th></tr></thead>
-  <tbody>
-    {{range .Volume.Snapshots}}
-    <tr><td>{{.Name}}</td><td>{{.Node}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td></tr>
-    {{else}}
-    <tr><td colspan="3">No snapshots.</td></tr>
-    {{end}}
-  </tbody>
-</table>
-<form method="post" action="/volumes/{{$.Name}}/snapshot">
-  <label>Snapshot name <input type="text" name="name" placeholder="before-upgrade" required></label>
-  <button type="submit">Snapshot</button>
-</form>
-
-<h3>Resize</h3>
-<form method="post" action="/volumes/{{$.Name}}/resize">
-  <label>New size (grow-only) <input type="text" name="size" placeholder="20Gi" required></label>
-  <button type="submit">Resize</button>
-</form>
-
-<form method="post" action="/volumes/{{$.Name}}/delete" hx-confirm="Delete this volume? Every replica's data is removed.">
-  <button type="submit">Delete</button>
-</form>
+<section class="kv-cards">
+  <div class="kv-card"><div class="kv-label">State</div><div class="kv-value">{{template "pill" (volstate .Volume.State)}}</div><div class="kv-sub"><code>{{.Volume.ID}}</code></div></div>
+  <div class="kv-card"><div class="kv-label">Size</div><div class="kv-value">{{.Volume.Size}}</div><div class="kv-sub">class {{.Volume.Class}}</div></div>
+  <div class="kv-card"><div class="kv-label">Replicas</div><div class="kv-value">{{len .Volume.Placement}}<span class="stat-of">/{{.Volume.Replication}}</span></div><div class="kv-sub">{{if eq .Volume.State "UnderReplicated"}}<span class="text-warn">{{.Volume.ReplicaSummary}}</span>{{else}}{{.Volume.ReplicaSummary}} placed{{end}}</div></div>
+  <div class="kv-card"><div class="kv-label">Primary</div><div class="kv-value">{{if .Volume.Primary}}<a href="/nodes/{{.Volume.Primary}}">{{.Volume.Primary}}</a>{{else}}<span class="muted">none</span>{{end}}</div><div class="kv-sub">serves I/O</div></div>
+</section>
+<section class="card">
+  <div class="card-head"><h2>Replicas</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Node</th><th>Role</th><th>Health</th><th>Sync</th><th>Out of sync</th><th>Last seen</th></tr></thead>
+      <tbody>
+        {{range .Volume.Placement}}
+        <tr>
+          <td><a href="/nodes/{{.NodeID}}"><strong>{{.NodeID}}</strong></a></td>
+          <td>{{.Role}}</td>
+          <td>{{if .Healthy}}<span class="pill pill-ok"><span class="dot"></span>Healthy</span>{{else}}<span class="pill pill-crit"><span class="dot"></span>Unhealthy</span>{{end}}</td>
+          <td>{{if .SyncPercent}}<span class="sync"><progress class="meter meter-sm" max="100" value="{{printf "%.0f" .SyncPercent}}"></progress> {{printf "%.0f" .SyncPercent}}%</span>{{else if .Verifying}}<span class="muted">verifying</span>{{else}}<span class="muted">in sync</span>{{end}}</td>
+          <td>{{if .OutOfSyncKiB}}<span class="text-warn">{{kib .OutOfSyncKiB}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+          <td class="muted" title="{{stamp .LastSeen}}">{{ago .LastSeen}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6">{{template "empty" "No replicas placed yet."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="card">
+  <div class="card-head"><h2>Snapshots</h2><span class="muted">{{len .Volume.Snapshots}}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Name</th><th>Held by</th><th>Taken</th></tr></thead>
+      <tbody>
+        {{range .Volume.Snapshots}}
+        <tr><td><strong>{{.Name}}</strong></td><td><a href="/nodes/{{.Node}}">{{.Node}}</a></td><td class="muted" title="{{stamp .CreatedAt}}">{{stamp .CreatedAt}}</td></tr>
+        {{else}}
+        <tr><td colspan="3">{{template "empty" "No snapshots."}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
 {{end}}
 {{end}}

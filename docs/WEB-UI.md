@@ -81,22 +81,62 @@ revoke existing sessions).
 Logging in issues a session cookie (`HttpOnly`, `Secure`, `SameSite`) backed by a store record
 (`/ui/sessions/<id>` → user, expiry), not an in-memory map — the reason a session, and the CSRF
 token bound to it, both keep working after the UI VIP fails over to a different node (X7). Every
-mutating request (HTMX's POST/PUT/DELETE) must carry the session's CSRF token in an
-`X-CSRF-Token` header (HTMX's `hx-headers` sends this automatically from the page; a raw `curl`
-POST must set it explicitly, reading it back from the `expanse_csrf` cookie the login response
-sets).
+mutating request (POST/PUT/DELETE) must carry the session's CSRF token, either in an
+`X-CSRF-Token` header (HTMX's `hx-headers` sends this automatically from the page) or, for a plain
+HTML form post, in a `csrf_token` form field (every such form includes it). A raw `curl` POST must
+set one of them explicitly, reading the token back from the `expanse_csrf` cookie the login
+response sets.
 
 ## 5. What's there
 
-- **Cluster overview** (`/cluster`) — nodes, health, quorum, generations, and the event feed, live
-  over Server-Sent Events, not polled.
-- **Blocks** (`/blocks`) — list, deploy (a pasted or uploaded manifest), scale, delete, and tail
-  live logs, live placement/phase over SSE.
-- **Volumes** (`/volumes`) — create, resize (grow-only), snapshot, delete, and the replica table
-  (state, role, per-node placement), live over SSE. Volume creation is asynchronous — the detail
-  page reads "Creating…" until the controller places it, then flips to the full view without a
-  page reload.
+Every page renders inside one shared shell: a sidebar (active item highlighted), a header with
+the cluster name and a quorum/health indicator, breadcrumbs, the signed-in user menu (sign out),
+a light/dark toggle (follows the system by default; the choice is kept in the browser) and a
+footer naming the node that served the page and the Expanse version. Status values are shown as
+labelled pills (Running, Degraded, Under-replicated, Unreachable…), never raw enum constants.
+Actions confirm through a dialog and report their result as a toast. Pages marked *live* update
+over Server-Sent Events, never by polling.
+
+- **Dashboard** (`/`, live) — nodes up/total, quorum and leader, blocks by phase, volumes by
+  state, firing alerts and the current generation as summary tiles; a "needs attention" list of
+  every alert, unreachable node, degraded/failed volume and unhealthy block; recent store events;
+  and the node table.
+- **Cluster** (`/cluster`, live) — cluster ID, leader, quorum, generation and the Raft member
+  table.
+- **Nodes** (`/nodes`, live; `/nodes/<id>`) — every member with its role, membership state
+  (Online / Unreachable / Failed / Cordoned / Degraded), the health its agent last reported
+  through its 10s heartbeat, addresses and join time. The detail page adds hardware inventory
+  (system, CPU, memory, disks, NICs, GPUs), health checks, reconciler status and managed
+  resources — **for the node serving the page only**: agents do not publish inventory or check
+  results cluster-wide, so another node's page says so and links to that node's own UI.
+- **Health & alerts** (`/health`, live) — firing critical alerts (the same rules as
+  `deploy/prometheus/expanse-alerts.rules.yml`), quorum, node checks, resource health and volume
+  health.
+- **Blocks** (`/blocks`, `/blocks/new`, `/blocks/<ns>/<name>` live, `/blocks/<ns>/<name>/logs`
+  live) — list with phase counts, deploy from a pasted manifest (schema errors shown inline, the
+  catalog listed alongside), a detail page with replica placement, pending-placement reasons and
+  conditions, scale, delete (confirmed), and a live log tail per replica.
+- **Volumes** (`/volumes`, `/volumes/new`, `/volumes/<name>` live) — list with state counts,
+  create (field-level validation), a detail page with the replica table (role, health, resync
+  progress, out-of-sync bytes, last seen), snapshots, snapshot/resize (grow-only) forms and
+  delete (confirmed). Creation is asynchronous — the page reads "Creating…" until the controller
+  places it, then flips to the full view without a reload.
+- **Generations** (`/generations`, `/generations/<n>`, `/generations/diff?a=<n>&b=<m>`) — the
+  desired-state history newest first with the current one marked, a detail page listing the
+  snapshot's keys, a diff of any two generations (added / removed / changed keys), and rollback
+  behind a confirm dialog (append-only, like `expanse ctl generation rollback`).
+- **Events** (`/events`, live) — store writes as they happen, recorded in memory since the
+  serving node started, filterable by type (block, volume, node, cluster, resource, lease, auth,
+  other). Session keys are redacted; values are never shown.
+- **Settings** (`/settings`) — change the admin password (requires the current one; the
+  `expanse ctl admin reset-password` path in §3 remains the recovery route), the OIDC
+  configuration as stored (issuer, client ID, redirect URL, allow-list — never the secret), and
+  the UI CA: where `ui-ca.pem` lives on disk and a download of the certificate
+  (`/settings/ui-ca.pem`).
 
 All of the above are thin `html/template` + HTMX layers directly over control-plane operations the
-CLI already exercises (`internal/blocks`, `internal/storage`) — the UI does not add a second
-implementation of anything, only a second way to reach the first one.
+CLI already exercises (`internal/blocks`, `internal/storage`, the in-process `NodeService`) — the
+UI does not add a second implementation of anything, only a second way to reach the first one.
+Everything is served from the binary (embedded templates, hand-written CSS, vendored htmx); the
+page sets a `Content-Security-Policy` that allows no inline script and no third-party origin, so
+it works on an offline install.

@@ -1,89 +1,80 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — Health</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/htmx-sse.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/">&larr; Home</a></p>
-    {{if .Error}}
-    <p class="error">Health status unavailable: {{.Error}}</p>
-    {{else}}
-    <div hx-ext="sse" sse-connect="/health/events">
-      <div id="health-fragment" sse-swap="health" hx-swap="innerHTML">
-        {{template "health-fragment" .}}
-      </div>
-    </div>
-    {{end}}
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Health &amp; alerts</h1>
+    <p class="page-sub">The same signals the Prometheus exporter serves; critical rules fire here without any external monitoring.</p>
+  </div>
+  <div class="page-actions">{{template "live"}}</div>
+</div>
+{{if .Error}}
+<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Health status unavailable</strong><p>{{.Error}}</p></div></div>
+{{else}}
+<div hx-ext="sse" sse-connect="/health/events">
+  <div id="health-fragment" sse-swap="health" hx-swap="innerHTML">{{template "health-fragment" .}}</div>
+</div>
+{{end}}
+{{end}}
 
 {{define "health-fragment"}}
-<h2>Alerts</h2>
-{{if .Alerts}}
-<ul class="alerts">
-  {{range .Alerts}}
-  <li class="badge-critical"><strong>{{.Name}}</strong>: {{.Summary}}</li>
+<section class="card {{if .Alerts}}card-crit{{end}}">
+  <div class="card-head"><h2>Alerts</h2>{{if .Alerts}}<span class="pill pill-crit"><span class="dot"></span>{{len .Alerts}} firing</span>{{else}}<span class="pill pill-ok"><span class="dot"></span>None firing</span>{{end}}</div>
+  {{if .Alerts}}
+  <ul class="attention">
+    {{range .Alerts}}<li class="attention-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>{{.Name}}</strong><span>{{.Summary}}</span></div></li>{{end}}
+  </ul>
+  {{else}}
+  <div class="empty empty-ok"><svg class="icon"><use href="#i-check"/></svg><p>No critical condition is active.</p></div>
   {{end}}
-</ul>
-{{else}}
-<p>No alerts firing.</p>
-{{end}}
+</section>
 
-<h2>Quorum</h2>
-{{if .Report}}
-<dl>
-  <dt>Leader</dt><dd>{{if .Report.Leader}}{{.Report.Leader}}{{else}}(none){{end}}</dd>
-  <dt>Quorum</dt><dd>{{.Report.QuorumHave}}/{{.Report.QuorumNeed}}{{if .Report.Degraded}} (degraded){{end}}</dd>
-</dl>
-{{else}}
-<p>Quorum status unavailable.</p>
-{{end}}
+<section class="kv-cards">
+  {{if .Report}}
+  <div class="kv-card"><div class="kv-label">Leader</div><div class="kv-value">{{if .Report.Leader}}<code>{{.Report.Leader}}</code>{{else}}<span class="text-crit">none</span>{{end}}</div><div class="kv-sub">raft address</div></div>
+  <div class="kv-card"><div class="kv-label">Quorum</div><div class="kv-value">{{.Report.QuorumHave}}<span class="stat-of">/{{.Report.QuorumNeed}}</span></div><div class="kv-sub">{{if .Report.Degraded}}<span class="text-crit">degraded</span>{{else}}voters reachable / needed{{end}}</div></div>
+  {{else}}
+  <div class="kv-card"><div class="kv-label">Quorum</div><div class="kv-value muted">—</div><div class="kv-sub">status unavailable</div></div>
+  {{end}}
+  <div class="kv-card"><div class="kv-label">Node checks</div><div class="kv-value">{{len .NodeChecks}}</div><div class="kv-sub">on the serving node</div></div>
+  <div class="kv-card"><div class="kv-label">Resources</div><div class="kv-value">{{len .Resources}}</div><div class="kv-sub">managed by the serving node</div></div>
+</section>
 
-<h2>Node checks</h2>
-<table>
-  <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
-  <tbody>
-    {{range .NodeChecks}}
-    <tr><td>{{.Name}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>
-    {{else}}
-    <tr><td colspan="3">No checks collected yet.</td></tr>
-    {{end}}
-  </tbody>
-</table>
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Node checks</h2><span class="muted">{{$.Page.NodeID}}</span></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+        <tbody>
+          {{range .NodeChecks}}<tr><td class="nowrap">{{.Name}}</td><td>{{template "pill" .Status}}</td><td class="muted">{{.Message}}</td></tr>
+          {{else}}<tr><td colspan="3">{{template "empty" "No checks collected yet."}}</td></tr>{{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Resource health</h2></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Type</th><th>ID</th><th>Status</th></tr></thead>
+        <tbody>
+          {{range .Resources}}<tr><td>{{.Type}}</td><td><code class="wrap">{{.ID}}</code></td><td>{{template "pill" .Status}}</td></tr>
+          {{else}}<tr><td colspan="3">{{template "empty" "No resources."}}</td></tr>{{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
 
-<h2>Resource health</h2>
-<table>
-  <thead><tr><th>Type</th><th>ID</th><th>Status</th></tr></thead>
-  <tbody>
-    {{range .Resources}}
-    <tr><td>{{.Type}}</td><td>{{.ID}}</td><td>{{.Status}}</td></tr>
-    {{else}}
-    <tr><td colspan="3">No resources.</td></tr>
-    {{end}}
-  </tbody>
-</table>
-
-<h2>Volume health</h2>
-<table>
-  <thead><tr><th>Volume</th><th>State</th></tr></thead>
-  <tbody>
-    {{range .Volumes}}
-    <tr><td>{{.Name}}</td><td>{{.State}}</td></tr>
-    {{else}}
-    <tr><td colspan="2">No volumes.</td></tr>
-    {{end}}
-  </tbody>
-</table>
+<section class="card">
+  <div class="card-head"><h2>Volume health</h2><span class="muted">{{len .Volumes}}</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Volume</th><th>State</th><th>Replicas</th><th>Primary</th></tr></thead>
+      <tbody>
+        {{range .Volumes}}<tr><td><a href="/volumes/{{.Name}}"><strong>{{.Name}}</strong></a></td><td>{{template "pill" (volstate .State)}}</td><td>{{.ReplicaSummary}}</td><td>{{.Primary}}</td></tr>
+        {{else}}<tr><td colspan="4">{{template "empty" "No volumes."}}</td></tr>{{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
 {{end}}

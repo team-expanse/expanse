@@ -1,25 +1,25 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expanse — {{.Name}} logs</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="/static/htmx-sse.min.js"></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRFToken}}"}'>
-  <header>
-    <h1>Expanse</h1>
-    <button hx-post="/logout">Sign out</button>
-  </header>
-  <main>
-    <p><a href="/blocks/{{.Namespace}}/{{.Name}}">&larr; {{.Namespace}}/{{.Name}}</a></p>
-    <h2>Logs — replica {{.Replica}}</h2>
-    <div hx-ext="sse" sse-connect="/blocks/{{.Namespace}}/{{.Name}}/logs/stream?replica={{.Replica}}">
-      <pre id="log-lines" class="log-view" sse-swap="line" hx-swap="beforeend"></pre>
-    </div>
-    <p class="node-id">Served by node <strong>{{.NodeID}}</strong>.</p>
-  </main>
-</body>
-</html>
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title"><span><span class="muted">{{.Namespace}}/</span>{{.Name}}</span><span class="muted">logs</span></h1>
+    <p class="page-sub">Replica #{{.Replica}}, last 50 lines then live. Lines only reach here when the replica runs on the node serving this page.</p>
+  </div>
+  <div class="page-actions">
+    {{template "live"}}
+    {{if .Replicas}}
+    <form method="get" class="form-inline">
+      <label class="field"><span class="field-label">Replica</span>
+        <select class="input input-sm" name="replica" data-autosubmit>
+          {{range .Replicas}}<option value="{{.}}"{{if eq . $.Replica}} selected{{end}}>#{{.}}</option>{{end}}
+        </select>
+      </label>
+    </form>
+    {{end}}
+  </div>
+</div>
+<section class="card card-flush">
+  <div hx-ext="sse" sse-connect="/blocks/{{.Namespace}}/{{.Name}}/logs/stream?replica={{.Replica}}">
+    <pre id="log-lines" class="log-view" sse-swap="line" hx-swap="beforeend" data-autoscroll tabindex="0"></pre>
+  </div>
+</section>
+{{end}}

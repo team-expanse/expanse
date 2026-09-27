@@ -1,0 +1,33 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Events</h1>
+    <p class="page-sub">Store writes as they happen, recorded since this node started serving. Session keys are redacted.</p>
+  </div>
+  <div class="page-actions">
+    {{template "live"}}
+    <form method="get" action="/events" class="form-inline">
+      <label class="field"><span class="field-label">Type</span>
+        <select class="input input-sm" name="type" data-autosubmit>
+          <option value=""{{if not .Kind}} selected{{end}}>All</option>
+          {{range .Kinds}}<option value="{{.}}"{{if eq . $.Kind}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </label>
+    </form>
+  </div>
+</div>
+<section class="card">
+  <div class="table-wrap" hx-ext="sse" sse-connect="/events/stream{{if .Kind}}?type={{.Kind}}{{end}}">
+    <table class="table table-events">
+      <thead><tr><th>Time</th><th>Type</th><th>Key</th><th>Op</th></tr></thead>
+      <tbody id="event-rows" sse-swap="entry" hx-swap="afterbegin">
+        {{range .Events}}{{template "event-row" .}}{{end}}
+      </tbody>
+    </table>
+    {{if not .Events}}<div class="empty" data-hide-on-rows><svg class="icon"><use href="#i-events"/></svg><p>No {{if .Kind}}{{.Kind}} {{end}}events yet; new ones appear here as they happen.</p></div>{{end}}
+  </div>
+</section>
+{{end}}
+
+{{define "event-row"}}<tr><td class="muted nowrap" title="{{stamp .At}}">{{.At.Format "15:04:05"}}</td><td><span class="tag tag-{{.Kind}}">{{.Kind}}</span></td><td><code class="wrap">{{.Key}}</code></td><td class="muted">{{.Verb}}</td></tr>
+{{end}}

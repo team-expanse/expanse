@@ -871,6 +871,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		} else if webSrv, err := web.New(a.cfg.NodeID, a.store, a.blocks, a.blockCatalog, srv, a.ctl.secret); err != nil {
 			a.logger.Error("web UI init failed", "err", err)
 		} else {
+			webSrv.DataDir = a.ctl.dataDir // where the UI CA certificate is written, shown on the settings page
 			go func() {
 				addr := fmt.Sprintf("0.0.0.0:%d", config.PortUI)
 				if err := webSrv.Serve(ctx, addr, tlsCfg); err != nil {
