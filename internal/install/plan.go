@@ -2,6 +2,7 @@ package install
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,7 @@ type RunContext struct {
 	Identity          *Identity
 	Logger            func(format string, args ...any)
 	Exec              func(name string, args ...string) error // overridable for tests
+	Out               io.Writer                               // commands' stdout and stderr; nil = os.Stdout/os.Stderr
 }
 
 func (rc *RunContext) run(name string, args ...string) error {
@@ -37,8 +39,10 @@ func (rc *RunContext) run(name string, args ...string) error {
 		return rc.Exec(name, args...)
 	}
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if rc.Out != nil {
+		cmd.Stdout, cmd.Stderr = rc.Out, rc.Out
+	}
 	return cmd.Run()
 }
 
@@ -49,6 +53,7 @@ type Options struct {
 	Force       bool
 	TargetFlake string
 	Logger      func(format string, args ...any)
+	Out         io.Writer // commands' output; nil = os.Stdout/os.Stderr
 	// SkipSystemInstall runs every stage except nixos-install (used by the
 	// VM test: partition, snapshot, identity, config; system evaluation
 	// is exercised by the two-VM ISO harness instead).
@@ -87,11 +92,11 @@ func Stages() []Stage {
 		},
 		{
 			Name: "config", Desc: "generate system configuration under /mnt", Run: stageConfig,
-			DryRun: "write /mnt/etc/nixos/configuration.nix; write /mnt/persist/expanse/install-config.yaml",
+			DryRun: "write /mnt/persist/expanse/install-config.yaml; nixos-generate-config --root /mnt --no-filesystems --dir /mnt/persist/etc/nixos; write /mnt/persist/etc/nixos/configuration.nix",
 		},
 		{
 			Name: "install", Desc: "nixos-install onto /mnt", Run: stageInstall,
-			DryRun: "nixos-install --root /mnt --no-root-password",
+			DryRun: "env NIXOS_CONFIG=/mnt/persist/etc/nixos/configuration.nix nixos-install --root /mnt --no-root-password",
 		},
 		{
 			Name: "verify", Desc: "verify bootloader, subvolumes, blank snapshot, identity", Run: stageVerify,
@@ -108,7 +113,7 @@ func Run(opts Options) error {
 		logf = func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
 	}
 
-	rc := &RunContext{TargetFlake: opts.TargetFlake, Logger: logf, Mount: "/mnt"}
+	rc := &RunContext{TargetFlake: opts.TargetFlake, Logger: logf, Mount: "/mnt", Out: opts.Out}
 	if rc.TargetFlake == "" {
 		rc.TargetFlake = DefaultTargetFlake
 	}
@@ -236,14 +241,22 @@ func stageSnapshot(rc *RunContext) error {
 	return rc.run("btrfs", "subvolume", "snapshot", "-r", filepath.Join(top, "@root"), filepath.Join(top, blankSnapshot))
 }
 
+// nixosConfigDir holds the node's NixOS config under /persist; impermanence binds it to /etc/nixos.
+const nixosConfigDir = "persist/etc/nixos"
+
 func stageConfig(rc *RunContext) error {
-	if err := os.MkdirAll(filepath.Join(rc.Mount, "etc/nixos"), 0o750); err != nil {
+	dir := filepath.Join(rc.Mount, nixosConfigDir)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	if err := rc.Config.WriteYAML(filepath.Join(rc.Mount, "persist/expanse/install-config.yaml")); err != nil {
 		return err
 	}
-	return writeConfiguration(rc, filepath.Join(rc.Mount, "etc/nixos/configuration.nix"))
+	// hardware-configuration.nix: the initrd's drivers for this machine's disks; disko owns the mounts.
+	if err := rc.run("nixos-generate-config", "--root", rc.Mount, "--no-filesystems", "--dir", dir); err != nil {
+		return err
+	}
+	return writeConfiguration(rc, filepath.Join(dir, "configuration.nix"))
 }
 
 func stageInstall(rc *RunContext) error {
@@ -251,7 +264,8 @@ func stageInstall(rc *RunContext) error {
 		rc.Logger("skipping nixos-install (testing)")
 		return nil
 	}
-	return rc.run("nixos-install", "--root", rc.Mount, "--no-root-password")
+	config := "NIXOS_CONFIG=" + filepath.Join(rc.Mount, nixosConfigDir, "configuration.nix")
+	return rc.run("env", config, "nixos-install", "--root", rc.Mount, "--no-root-password")
 }
 
 func stageIdentity(rc *RunContext) error {
@@ -298,11 +312,14 @@ func writeConfiguration(rc *RunContext, path string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "{ config, pkgs, ... }:\n")
 	fmt.Fprintf(&b, "{\n")
-	fmt.Fprintf(&b, "  # Partitioning was done by disko at install time; import the\n")
-	fmt.Fprintf(&b, "  # matching layout so fileSystems are declared consistently.\n")
+	fmt.Fprintf(&b, "  # Partitioning was done by disko at install time; the same layout declares the mounts.\n")
 	fmt.Fprintf(&b, "  imports = [\n")
+	fmt.Fprintf(&b, "    ./hardware-configuration.nix\n")
 	fmt.Fprintf(&b, "    %s/nix/modules/expanse-node.nix\n", rc.TargetFlake)
-	fmt.Fprintf(&b, "    (%s/nix/installer/disko/%s.nix)\n", rc.TargetFlake, rc.Layout)
+	fmt.Fprintf(&b, "    (import %s/nix/modules/disk-layout.nix {\n", rc.TargetFlake)
+	fmt.Fprintf(&b, "      layout = %s/nix/installer/disko/%s.nix;\n", rc.TargetFlake, rc.Layout)
+	fmt.Fprintf(&b, "      disks = [ %s ];\n", strings.Join(quoted(rc.Config.Disks.Devices), " "))
+	fmt.Fprintf(&b, "    })\n")
 	fmt.Fprintf(&b, "  ];\n")
 	fmt.Fprintf(&b, "  expanse.hostId = %q;\n", hostID)
 	fmt.Fprintf(&b, "  expanse.hostname = %q;\n", hostname)

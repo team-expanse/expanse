@@ -46,11 +46,15 @@ func newClusterInitCmd() *cobra.Command {
 		nodeID    string
 		advertise string
 		expect    int
+		socket    string
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Bootstrap a new cluster (self as first voter)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := refuseIfAgentRunning(socket); err != nil {
+				return err
+			}
 			res, err := control.Init(cmd.Context(), control.InitOptions{
 				DataDir: dataDir, NodeID: nodeID, Name: name,
 				AdvertiseAddr: advertise, Expect: expect,
@@ -71,7 +75,20 @@ func newClusterInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
 	cmd.Flags().StringVar(&advertise, "advertise-addr", defaultAdvertise(), "raft advertise address (IP:7444)")
 	cmd.Flags().IntVar(&expect, "expect", 3, "expected number of cluster nodes")
+	cmd.Flags().StringVar(&socket, "socket", "/run/expanse/agent.sock", "agent unix socket; init refuses while it answers")
 	return cmd
+}
+
+// refuseIfAgentRunning stops init while expansed runs: the daemon would stay in standalone mode
+// and never serve the new cluster (anything written meanwhile is lost at its next start).
+func refuseIfAgentRunning(socket string) error {
+	conn, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		return nil
+	}
+	_ = conn.Close()
+	return fmt.Errorf("expansed is running (%s answers); stop it, init, then start it:\n"+
+		"  systemctl stop expansed && expanse cluster init ... && systemctl start expansed", socket)
 }
 
 func defaultAdvertise() string {

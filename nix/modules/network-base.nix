@@ -16,9 +16,8 @@
     };
 
     networking.firewall.allowedUDPPorts = [ 5353 ];
-    # Expanse well-known ports (internal/config/ports.go): API, raft
-    # transport, leases, join endpoint. Cluster traffic must flow
-    # between nodes.
-    networking.firewall.allowedTCPPorts = [ 7443 7444 7445 7446 ];
+    # Expanse well-known ports (internal/config/ports.go): API, raft transport, leases and join
+    # between nodes; metrics (7447) and the web UI (8443) for operators. All are TLS-authenticated.
+    networking.firewall.allowedTCPPorts = [ 7443 7444 7445 7446 7447 8443 ];
   };
 }

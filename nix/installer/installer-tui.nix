@@ -1,20 +1,21 @@
-# Launch the interactive installer TUI on tty1 of the live ISO.
-{ pkgs, lib, ... }:
+# Launch the interactive installer TUI from root's autologin shell on tty1 of the live ISO.
+# A login shell has the PATH and EXPANSE_FLAKE the installer needs; quitting leaves that shell.
+{ config, lib, ... }:
 {
-  services.getty.autologinUser = lib.mkForce "root";
-  systemd.services.expanse-installer-tui = {
-    description = "Expanse installer TUI";
-    after = [ "getty@tty1.service" ];
-    wantedBy = [ "multi-user.target" ];
-    unitConfig.ConditionPathExists = "/dev/tty1";
-    serviceConfig = {
-      StandardInput = "tty";
-      StandardOutput = "tty";
-      StandardError = "tty";
-      TTYPath = "/dev/tty1";
-      TTYReset = true;
-      TTYVHangup = true;
-      ExecStart = "${pkgs.expanse}/bin/expanse install --tui";
-    };
+  options.expanse.installer.tuiArgs = lib.mkOption {
+    type = lib.types.str;
+    default = "";
+    description = "Extra `expanse install --tui` flags (the install-tui VM test passes --skip-system-install).";
+  };
+
+  config = {
+    services.getty.autologinUser = lib.mkForce "root";
+    programs.bash.loginShellInit = ''
+      if [ "$(tty)" = /dev/tty1 ] && [ ! -e /run/expanse-tui-started ]; then
+        touch /run/expanse-tui-started
+        expanse install --tui ${config.expanse.installer.tuiArgs}
+        echo "Installer exited. Run 'expanse install --tui' to start it again."
+      fi
+    '';
   };
 }

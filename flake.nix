@@ -56,7 +56,8 @@
             cd src
             go test -race -coverprofile=coverage.out ./... > $out 2>&1 || { cat $out; exit 1; }
           '';
-          # The installer's expanse, an installed node's and the ISO's file name carry the release version.
+          # The installer's expanse, an installed node's and the ISO's file name carry the release version;
+          # the ISO's NIX_PATH works without flakes (disko and nixos-install evaluate <nixpkgs>).
           iso-version =
             let
               iso = isoSystem.config;
@@ -70,11 +71,42 @@
               "installer expanse is ${isoSystem.pkgs.expanse.version}, want ${want}";
             assert lib.assertMsg (lib.hasPrefix "expanse-${want}-" iso.image.fileName)
               "ISO file is ${iso.image.fileName}, want expanse-${want}-*";
+            assert lib.assertMsg (!lib.any (lib.hasInfix "flake:") iso.nix.nixPath)
+              "ISO NIX_PATH ${toString iso.nix.nixPath} needs flakes, which the installer does not enable";
+            assert lib.assertMsg (lib.elem "console=ttyS0,115200n8" iso.boot.kernelParams)
+              "the ISO does not log to the serial console";
             pkgs.writeText "iso-version" want;
+          # The configuration.nix the installer writes (Go goldens) evaluates to a system, as nixos-install needs.
+          node-config-eval =
+            let
+              evalNode = layout:
+                let
+                  text = builtins.replaceStrings
+                    [ "@flake@" "./hardware-configuration.nix" ]
+                    [ "${self}" "${./test/fixtures/install/hardware-configuration.nix}" ]
+                    (builtins.readFile ./test/fixtures/install/configuration-${layout}.nix);
+                  node = import "${nixpkgs}/nixos" {
+                    inherit system;
+                    configuration = builtins.toFile "configuration-${layout}.nix" text;
+                  };
+                  c = node.config;
+                in
+                assert lib.assertMsg (c.systemd.services ? expansed) "installed ${layout} node has no expansed service";
+                assert lib.assertMsg (c.expanse.agent.blocksCatalog != null) "installed ${layout} node has no block catalog";
+                assert lib.assertMsg (lib.elem "systemd-machine-id-commit.service" c.systemd.suppressedSystemUnits)
+                  "installed ${layout} node runs machine-id-commit, which fails on its bind-mounted /etc/machine-id";
+                assert lib.assertMsg (lib.all (p: lib.elem p c.networking.firewall.allowedTCPPorts) [ 8443 7447 ])
+                  "installed ${layout} node's firewall blocks the web UI (8443) or metrics (7447)";
+                assert lib.assertMsg (lib.elem "console=ttyS0,115200n8" c.boot.kernelParams)
+                  "installed ${layout} node does not log to the serial console";
+                builtins.unsafeDiscardStringContext c.system.build.toplevel.drvPath;
+            in
+            pkgs.writeText "node-config-eval" (lib.concatMapStringsSep "\n" evalNode [ "single" "mirror" ]);
           smoke = mkTest "smoke" ./nix/tests/smoke.nix;
           install-unattended = mkTest "install-unattended" ./nix/tests/install-unattended.nix;
           install-refuses-dirty-disk =
             mkTest "install-refuses-dirty-disk" ./nix/tests/install-refuses-dirty-disk.nix;
+          install-tui = mkTest "install-tui" ./nix/tests/install-tui.nix;
           impermanence = mkTest "impermanence" ./nix/tests/impermanence.nix;
           identity = mkTest "identity" ./nix/tests/identity.nix;
           boot-time = mkTest "boot-time" ./nix/tests/boot-time.nix;

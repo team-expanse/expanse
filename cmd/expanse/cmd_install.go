@@ -40,15 +40,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			targetFlake = v
 		}
 	}
+	skip, _ := cmd.Flags().GetBool("skip-system-install")
 	if tui || (configPath == "" && !dryRun) {
-		return runTUI()
+		return runTUI(tuiOptions{TargetFlake: targetFlake, SkipSystemInstall: skip})
 	}
 
 	if configPath == "" && dryRun {
 		return fmt.Errorf("--dry-run requires --config (no assumptions about target disks)")
 	}
-
-	skip, _ := cmd.Flags().GetBool("skip-system-install")
 
 	return install.Run(install.Options{
 		ConfigPath:        configPath,

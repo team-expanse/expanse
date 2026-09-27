@@ -87,7 +87,7 @@ in
         machine.succeed("test -s /mnt/persist/expanse/install-config.yaml")
 
     with subtest("generated configuration.nix imports the module set"):
-        conf = machine.succeed("cat /mnt/etc/nixos/configuration.nix")
+        conf = machine.succeed("cat /mnt/persist/etc/nixos/configuration.nix")
         assert "expanse-node.nix" in conf, conf
         assert "expanse.hostId" in conf, conf
 

@@ -23,3 +23,10 @@ func parseDuration(s string) (time.Duration, error) {
 func marshalYAML(v any) ([]byte, error) {
 	return yaml.Marshal(v)
 }
+
+func orDash(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
+}

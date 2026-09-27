@@ -455,7 +455,11 @@ func withClient(cmd *cobra.Command, opts *ctlOpts, fn func(ctx context.Context, 
 // emit prints v according to the output format. JSON is stable and
 // scriptable; table output is for humans and may change.
 func emit(opts *ctlOpts, table func(), v any) error {
-	switch opts.output {
+	output := opts.output
+	if (output == "" || output == "table") && table == nil {
+		output = "yaml" // single-object commands have no table form
+	}
+	switch output {
 	case "json":
 		// protojson (lowerCamelCase proto field names) makes the output
 		// stable and scriptable; std json is the fallback for non-proto

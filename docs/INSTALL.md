@@ -104,8 +104,17 @@ vgs expanse                # the LVM data pool DRBD volumes are backed by
 The VG exists but is otherwise empty: replicated volumes (the thin pool, DRBD) are an explicit
 opt-in, not part of a fresh install. See `docs/STORAGE.md` to enable and operate them.
 
-One installed node is already a usable cluster: `expanse cluster init --expect 1` on it, and
-volumes and blocks run there. Everything on a single node has **no redundancy** until more nodes
+One installed node is already a usable cluster. Form it with the agent stopped (`cluster init`
+refuses while `expansed` runs, since the running agent would never join the new cluster):
+
+```sh
+systemctl stop expansed
+expanse cluster init --expect 1
+systemctl start expansed
+expanse cluster status     # quorum: 1/1
+```
+
+Volumes and blocks then run there. Everything on a single node has **no redundancy** until more nodes
 join (`docs/CLUSTERING.md`, `docs/STORAGE.md` §8).
 
 ## Re-installing / recovery

@@ -10,7 +10,7 @@ in
   imports = [
     "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
     ../modules/expanse.nix
-    ./installer-tui.nix
+    (import ./live.nix { inherit self; })
   ];
 
   expanse.node.enable = lib.mkForce false; # base node modules are for installed systems
@@ -36,8 +36,6 @@ in
   # ModemManager, libqmi, ...). We use plain DHCP — size discipline.
   networking.networkmanager.enable = lib.mkForce false;
   networking.wireless.enable = lib.mkForce false;
-
-  # Interactive installer TUI (installer-tui.nix, imported above).
 
   # SSH for headless installs: random root password printed on console.
   services.openssh = {
@@ -87,10 +85,6 @@ in
 
   # Bake the flake source into the store for offline evaluation.
   isoImage.storeContents = [ flakeSource ];
-
-  # Make the flake source reachable at a stable path for the installer.
-  environment.etc."expanse/flake".source = "${flakeSource}";
-  environment.variables.EXPANSE_FLAKE = "/etc/expanse/flake";
 
   # Size control.
   isoImage.squashfsCompression = "zstd -Xcompression-level 19";

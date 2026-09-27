@@ -48,3 +48,54 @@ func TestRunDryRunTouchesNothing(t *testing.T) {
 		t.Errorf("dry-run wrote files into config dir: %v", entries)
 	}
 }
+
+func TestRunCommandOutputGoesToOut(t *testing.T) {
+	var out bytes.Buffer
+	rc := &RunContext{Out: &out}
+	if err := rc.run("sh", "-c", "echo to-stdout; echo to-stderr >&2"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "to-stdout") || !strings.Contains(out.String(), "to-stderr") {
+		t.Fatalf("command output %q, want both streams", out.String())
+	}
+}
+
+func TestStageConfigWritesToPersistWithHardwareConfig(t *testing.T) {
+	mnt := t.TempDir()
+	var ran []string
+	rc := &RunContext{Config: DefaultConfig(), Layout: LayoutSingle, TargetFlake: "/flake", Mount: mnt,
+		Exec: func(name string, args ...string) error {
+			ran = append(ran, name+" "+strings.Join(args, " "))
+			return nil
+		}}
+	if err := os.MkdirAll(filepath.Join(mnt, "persist/expanse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageConfig(rc); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(mnt, "persist/etc/nixos")
+	want := "nixos-generate-config --root " + mnt + " --no-filesystems --dir " + dir
+	if len(ran) != 1 || ran[0] != want {
+		t.Fatalf("ran %q, want [%q]", ran, want)
+	}
+	conf, err := os.ReadFile(filepath.Join(dir, "configuration.nix"))
+	if err != nil || !strings.Contains(string(conf), "./hardware-configuration.nix") {
+		t.Fatalf("configuration.nix (err %v) does not import the hardware config:\n%s", err, conf)
+	}
+}
+
+func TestStageInstallUsesThePersistedConfig(t *testing.T) {
+	var ran []string
+	rc := &RunContext{Mount: "/mnt", Exec: func(name string, args ...string) error {
+		ran = append(ran, name+" "+strings.Join(args, " "))
+		return nil
+	}}
+	if err := stageInstall(rc); err != nil {
+		t.Fatal(err)
+	}
+	want := "env NIXOS_CONFIG=/mnt/persist/etc/nixos/configuration.nix nixos-install --root /mnt --no-root-password"
+	if len(ran) != 1 || ran[0] != want {
+		t.Fatalf("ran %q, want [%q]", ran, want)
+	}
+}

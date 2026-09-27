@@ -5,7 +5,7 @@
 # the running system needs comes from the untouched @nix subvolume and
 # the current generation's activation script). Anything that must survive
 # a reboot lives in /persist (bind-mounted here) or in the Nix config.
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, utils, ... }:
 let
   cfg = config.expanse.node;
   persistPath = "/persist";
@@ -16,6 +16,7 @@ let
     "/var/lib/nixos"
     "/var/lib/systemd"
     "/root/.ssh"
+    "/etc/nixos" # the installer writes the node's config here (internal/install/plan.go)
   ];
 
   # systemd-escape -p equivalent for mount unit names.
@@ -30,6 +31,7 @@ let
     lib.stringAsChars esc (lib.removePrefix "/" p) + ".mount";
 
   bindMountUnits = map (p: "sysroot-" + escapePath p) bindPaths;
+  rootDeviceUnit = "${utils.escapeSystemdPath config.expanse.node.rootDevice}.device";
 in
 {
   options.expanse.node.rootDevice = lib.mkOption {
@@ -52,14 +54,16 @@ in
     boot.initrd.systemd.services.expanse-impermanence-rollback = {
       description = "Recreate @root from the @root-blank snapshot";
       wantedBy = [ "initrd.target" ];
-      after = [ "systemd-udev-settle.service" ];
+      # Wait for the system disk itself; a slow controller can appear after this unit would otherwise run.
+      requires = [ rootDeviceUnit ];
+      after = [ rootDeviceUnit ];
       before = [ "sysroot.mount" ];
       unitConfig.DefaultDependencies = "no";
       serviceConfig.Type = "oneshot";
       path = [ pkgs.btrfs-progs pkgs.util-linux pkgs.coreutils ];
       script = ''
         mkdir -p /btrfs-top
-        mount -o subvolid=5 "${config.expanse.node.rootDevice}" /btrfs-top
+        mount -t btrfs -o subvolid=5 "${config.expanse.node.rootDevice}" /btrfs-top
         if [ -d /btrfs-top/@root-blank ]; then
           echo "expanse: recreating @root from @root-blank (impermanence)"
           btrfs subvolume delete -R /btrfs-top/@root
@@ -70,6 +74,9 @@ in
         umount /btrfs-top
       '';
     };
+
+    # /etc/machine-id is persisted by its bind mount; the commit unit only handles a tmpfs one and fails here.
+    systemd.suppressedSystemUnits = [ "systemd-machine-id-commit.service" ];
 
     # Bind mounts from /persist. machine-id must exist before systemd
     # reads it; sources are pre-created by expanse-persist-init below.
@@ -105,7 +112,7 @@ in
         mkdir -p /sysroot${persistPath}/var/lib/nixos \
                  /sysroot${persistPath}/var/lib/systemd \
                  /sysroot${persistPath}/root/.ssh \
-                 /sysroot${persistPath}/etc
+                 /sysroot${persistPath}/etc/nixos
         touch /sysroot${persistPath}/etc/machine-id
         chmod 0700 /sysroot${persistPath}/root/.ssh
       '';
