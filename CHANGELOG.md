@@ -7,7 +7,7 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
-## Unreleased
+## 1.1.5 - 2026-09-27
 
 ### Changed
 
