@@ -7,8 +7,8 @@ buildGoModule {
   env.CGO_ENABLED = "0";
   ldflags = [
     "-s" "-w"
-    "-X main.buildVersion=${version}"
-    "-X main.buildCommit=${rev}"
+    "-X github.com/expanse/expanse/internal/version.Version=${version}"
+    "-X github.com/expanse/expanse/internal/version.Commit=${rev}"
   ];
   # The block runtime helper (Phase 04) builds alongside expanse and is
   # installed next to it at /run/current-system/sw/bin.

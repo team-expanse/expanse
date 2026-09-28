@@ -29,7 +29,10 @@ let
     inherit src;
     vendorHash = null; # deps are vendored in ./vendor, same as nix/package.nix
     env.CGO_ENABLED = "0";
-    ldflags = [ "-s" "-w" "-X main.buildVersion=${rev}" "-X main.buildCommit=${rev}" ];
+    # Releases before 1.1.5 read main.*, later ones internal/version; -X on a missing variable is a no-op.
+    ldflags = [ "-s" "-w" "-X main.buildVersion=${rev}" "-X main.buildCommit=${rev}"
+      "-X github.com/expanse/expanse/internal/version.Version=${rev}"
+      "-X github.com/expanse/expanse/internal/version.Commit=${rev}" ];
     subPackages = [ "cmd/expanse" "cmd/expanse-block-run" ];
     meta.mainProgram = "expanse";
   };

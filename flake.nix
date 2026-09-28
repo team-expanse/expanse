@@ -75,7 +75,12 @@
               "ISO NIX_PATH ${toString iso.nix.nixPath} needs flakes, which the installer does not enable";
             assert lib.assertMsg (lib.elem "console=ttyS0,115200n8" iso.boot.kernelParams)
               "the ISO does not log to the serial console";
-            pkgs.writeText "iso-version" want;
+            # The binary itself reports the release (the CLI and the web UI footer read the same stamp).
+            pkgs.runCommand "iso-version" { } ''
+              got=$(${self.packages.${system}.expanse}/bin/expanse version)
+              case "$got" in "expanse ${want} "*) ;; *) echo "expanse version printed: $got, want ${want}"; exit 1 ;; esac
+              echo ${want} > $out
+            '';
           # The configuration.nix the installer writes (Go goldens) evaluates to a system, as nixos-install needs.
           node-config-eval =
             let

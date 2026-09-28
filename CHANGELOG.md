@@ -46,6 +46,9 @@ through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 - A node's reported health read "unknown" permanently: the agent's service
   PATH lacked `chronyc`, so the clock-sync check could never run. The agent
   now has chrony on its PATH whenever chrony is enabled.
+- The web UI footer read "Expanse dev" on installed nodes: the build stamped
+  the release only into the CLI's own variables. `expanse version` and the
+  UI now read the one version the package build stamps.
 
 ## 1.1.4 - 2026-09-27
 
