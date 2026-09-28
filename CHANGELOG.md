@@ -7,7 +7,7 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
-## Unreleased
+## 1.1.6 - 2026-09-28
 
 ### Changed
 
@@ -39,6 +39,16 @@ through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
   every refresh; an unreachable agent reads "not running", a slow one does
   not. `--once` prints one screen to stdout. The `node-console`
   VM test reads tty1 through `/dev/vcs1` and checks tty2 and serial logins.
+
+### Fixed
+
+- Every node reported UNHEALTHY (and fired `ExpanseNodeUnhealthy`) for the
+  minute or so after each boot while chrony was still synchronising. For the
+  first 10 minutes after boot an unsynchronised clock now reads "unknown"
+  ("synchronising since boot"); after that it is unhealthy as before.
+- The clock-sync check's large-offset warning (> 100 ms, degraded) could
+  never fire: it failed to parse chronyc's "+0.25 seconds" and the leap-status
+  line then overwrote it.
 
 ## 1.1.5 - 2026-09-27
 
