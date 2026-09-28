@@ -104,6 +104,11 @@
                   "installed ${layout} node's firewall blocks the web UI (8443) or metrics (7447)";
                 assert lib.assertMsg (lib.elem "console=ttyS0,115200n8" c.boot.kernelParams)
                   "installed ${layout} node does not log to the serial console";
+                # tty1 shows the host console; tty2+ and the serial port keep their gettys.
+                assert lib.assertMsg (c.systemd.services ? expanse-console && !c.systemd.services."getty@tty1".enable)
+                  "installed ${layout} node has no host console on tty1, or still runs a getty there";
+                assert lib.assertMsg (!(c.systemd.services ? "serial-getty@ttyS0") || c.systemd.services."serial-getty@ttyS0".enable)
+                  "installed ${layout} node disables the serial login";
                 assert lib.assertMsg (lib.any (p: (p.pname or "") == "chrony") c.systemd.services.expansed.path)
                   "installed ${layout} node's agent cannot run chronyc, so its clock-sync check (and node health) reads unknown";
                 assert lib.assertMsg (layout != "mirror" || mirrorBootsDegraded c)
@@ -128,6 +133,7 @@
             mkTest "install-refuses-dirty-disk" ./nix/tests/install-refuses-dirty-disk.nix;
           install-tui = mkTest "install-tui" ./nix/tests/install-tui.nix;
           install-mirror = mkTest "install-mirror" ./nix/tests/install-mirror.nix;
+          node-console = mkTest "node-console" ./nix/tests/node-console.nix;
           impermanence = mkTest "impermanence" ./nix/tests/impermanence.nix;
           identity = mkTest "identity" ./nix/tests/identity.nix;
           boot-time = mkTest "boot-time" ./nix/tests/boot-time.nix;

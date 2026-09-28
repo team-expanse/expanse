@@ -9,6 +9,7 @@
     ./network-base.nix
     ./hardening.nix
     ./agent.nix
+    ./console.nix
   ];
 
   options = {

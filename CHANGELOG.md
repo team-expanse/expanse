@@ -7,6 +7,39 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## Unreleased
+
+### Changed
+
+- The installer TUI has a proper console layout: a framed, centred page that
+  fits the terminal (80x25 upwards, redrawn on resize), a "Step n of 6"
+  indicator, a disk table with model, size, type and current contents, a
+  reverse-video selection cursor, a red destructive list on review, a real
+  progress view (current stage, a progress bar, elapsed time and a scrolling
+  tail of the log instead of raw `set -x` output) and a done screen with the
+  node's addresses and the next steps: the web UI URL, `expanse cluster init
+  --expect 1` and where the admin password is logged. Colours are the VT's
+  16, box drawing falls back to ASCII with `EXPANSE_TUI_ASCII=1`, and the
+  keys and flow are unchanged (typing the last `L` of `INSTALL` still starts
+  the install). Terminal handling moved to the shared `internal/tuikit`.
+
+### Added
+
+- `expanse console`: a read-only host information screen, like ESXi's DCUI,
+  that every installed node shows on tty1 in place of a login
+  (`expanse-console.service`, restarted on failure; `getty@tty1` is masked
+  while tty2+ and the serial console keep their gettys). It shows the
+  version, hostname and node ID, the addresses and web UI URL, the cluster
+  name, role and quorum (or how to form a cluster), health, CPU, memory,
+  disks, md mirror state (arrays named after their `/dev/md/<name>` links;
+  a degraded `[U_]` array is called out in red) and uptime, refreshing every
+  3 s and on resize. Health comes from the agent's 10 s heartbeat key and
+  the failing checks' names from `GetHealth` at most once a minute, so the
+  console never re-runs the checks (or the store's Raft write probe) on
+  every refresh; an unreachable agent reads "not running", a slow one does
+  not. `--once` prints one screen to stdout. The `node-console`
+  VM test reads tty1 through `/dev/vcs1` and checks tty2 and serial logins.
+
 ## 1.1.5 - 2026-09-27
 
 ### Changed

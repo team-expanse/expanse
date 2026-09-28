@@ -48,11 +48,14 @@ SSH (`ssh root@<ip>`, the installer advertises itself over mDNS as
    confirmation.
 3. **Network** — DHCP (recommended) or static.
 4. **SSH key** — paste a key, or `gh:<username>` to fetch from GitHub.
-5. **Review** — the full plan. Type `INSTALL` to proceed.
-6. **Progress** — live per-stage log. Takes under 10 minutes.
+5. **Review** — the full plan, with a red list of what will be destroyed.
+   Type `INSTALL` to proceed (the install starts on the last letter).
+6. **Progress** — the current stage, elapsed time and a tail of the log
+   (the whole log is in `/tmp/expanse-install.log`). Takes under 10 minutes.
 
-When it finishes you get your **node ID** (a UUID). Reboot and remove the
-USB stick.
+When it finishes you get your **node ID** (a UUID), the machine's addresses
+and the next steps: the web UI URL, where the admin password is logged and
+how to form a one-node cluster. Reboot and remove the USB stick.
 
 ## Unattended install (no TUI)
 
@@ -87,7 +90,18 @@ expanse install --config /tmp/expanse-install.yaml --force
 
 The node boots to `multi-user.target`, generates its identity (UUID +
 Ed25519 keypair) in `/persist/expanse/identity`, and comes up on the
-network via DHCP + mDNS. Log in with your SSH key:
+network via DHCP + mDNS.
+
+The screen (tty1) shows the **host console**: the Expanse version, hostname
+and node ID, every address with the web UI URL (`https://<ip>:8443`), the
+cluster name, role and quorum (or "not in a cluster yet"), the node's
+health, CPU, memory, disks and md mirror state, and the uptime. It refreshes
+every few seconds and is read-only: it never offers a shell or shows a
+secret. Press **Alt+F2** for a login shell (tty2), or use the serial console;
+`expanse console --once` prints the same screen over SSH. It runs as
+`expanse-console.service` and takes the place of the tty1 login.
+
+Log in with your SSH key:
 
 ```sh
 ssh root@expanse-<node-id-prefix>.local
