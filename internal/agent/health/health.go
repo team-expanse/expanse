@@ -366,51 +366,59 @@ func (c *NixStoreCheck) Run(ctx context.Context) Result {
 
 // ---- clock-sync ----
 
-// ClockSyncCheck: Degraded if offset > 100 ms; Unhealthy if chrony not
-// synced. Reads chronyc's tracking output (the structured source; there is
-// no sysfs clock-status file).
+// ClockSyncGrace is how long after boot chrony may still be synchronising before an
+// unsynchronised clock counts as unhealthy (and fires ExpanseNodeUnhealthy).
+const ClockSyncGrace = 10 * time.Minute
+
+// ClockSyncCheck: Degraded if offset > 100 ms; Unhealthy if chrony is not synced,
+// except within ClockSyncGrace of boot, when it is still Unknown. Reads chronyc tracking.
 type ClockSyncCheck struct{}
 
 func (c *ClockSyncCheck) Name() string { return "clock-sync" }
 
 func (c *ClockSyncCheck) Run(ctx context.Context) Result {
 	start := time.Now()
-	res := Result{Name: c.Name(), Status: Unknown, Details: map[string]string{}, Took: 0}
 	out, err := runCommand(ctx, "chronyc", "tracking")
-	res.Took = time.Since(start)
 	if err != nil {
 		// chrony absent: unknown rather than unhealthy (VMs, minimal hosts).
-		res.Message = "chrony not available"
-		return res
+		return Result{Name: c.Name(), Status: Unknown, Message: "chrony not available", Details: map[string]string{}, Took: time.Since(start)}
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "Leap status") {
-			status := strings.TrimSpace(strings.TrimPrefix(line, "Leap status"))
-			status = strings.TrimPrefix(status, ":")
-			status = strings.TrimSpace(status)
-			res.Details["leap_status"] = status
-			if status == "Normal" {
-				res.Status = Healthy
-			} else {
-				res.Status = Unhealthy
-				res.Message = "chrony leap status: " + status
-			}
-			return res
-		}
+	res := judgeClockSync(string(out), systemUptime())
+	res.Took = time.Since(start)
+	return res
+}
+
+// judgeClockSync turns chronyc tracking output into a result, given the time since boot.
+func judgeClockSync(tracking string, uptime time.Duration) Result {
+	res := Result{Name: "clock-sync", Status: Unknown, Details: map[string]string{}}
+	for _, line := range strings.Split(tracking, "\n") {
 		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "Last offset" {
 			offset := strings.TrimSpace(v)
 			res.Details["last_offset"] = offset
 			// +0.000001 seconds style; parse leading float.
-			secs, perr := strconv.ParseFloat(strings.TrimSpace(offset), 64)
+			secs, perr := strconv.ParseFloat(strings.Fields(offset + " x")[0], 64)
 			if perr == nil && (secs > 0.100 || secs < -0.100) {
 				res.Status = Worst(res.Status, Degraded)
 				res.Message = "offset " + offset
 			}
 		}
+		if status, ok := strings.CutPrefix(line, "Leap status"); ok {
+			status = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(status), ":"))
+			res.Details["leap_status"] = status
+			switch {
+			case status == "Normal" && res.Status == Unknown:
+				res.Status, res.Message = Healthy, "clock synced"
+			case status == "Normal":
+			case uptime < ClockSyncGrace:
+				res.Status, res.Message = Unknown, "synchronising since boot"
+			default:
+				res.Status, res.Message = Unhealthy, "chrony leap status: "+status
+			}
+			return res
+		}
 	}
 	if res.Status == Unknown {
-		res.Status = Healthy
-		res.Message = "clock synced"
+		res.Status, res.Message = Healthy, "clock synced"
 	}
 	return res
 }

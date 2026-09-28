@@ -181,3 +181,25 @@ func TestRunnerAggregatesWorst(t *testing.T) {
 		t.Errorf("checks = %d", len(rep.Checks))
 	}
 }
+
+func TestClockSyncGraceAfterBoot(t *testing.T) {
+	const synced = "Reference ID    : 8192C1C8 (ntp)\nLast offset     : +0.000001 seconds\nLeap status     : Normal\n"
+	const unsynced = "Reference ID    : 00000000 ()\nLeap status     : Not synchronised\n"
+	cases := []struct {
+		name     string
+		tracking string
+		uptime   time.Duration
+		want     Health
+	}{
+		{"synced", synced, time.Hour, Healthy},
+		{"synced but far off", "Last offset     : +0.250000 seconds\nLeap status     : Normal\n", time.Hour, Degraded},
+		{"still syncing just after boot", unsynced, 40 * time.Second, Unknown},
+		{"still syncing at the grace edge", unsynced, ClockSyncGrace - time.Second, Unknown},
+		{"never synced, long after boot", unsynced, ClockSyncGrace + time.Second, Unhealthy},
+	}
+	for _, c := range cases {
+		if got := judgeClockSync(c.tracking, c.uptime).Status; got != c.want {
+			t.Errorf("%s: status = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
