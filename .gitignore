@@ -8,3 +8,4 @@
 /session
 /.vmtmp
 __pycache__/
+/dist/
