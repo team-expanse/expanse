@@ -34,7 +34,6 @@ try:
         screen("EXPANSE")
         screen("console-node")
         screen(r"Alt\+F2 for a login shell")
-        screen(r"Node ID +[0-9a-f]{8}-")
         screen(r"https://[0-9.]+:8443")
         screen("not in a cluster yet")
         screen(r"expanse cluster init --expect 1")
@@ -42,6 +41,8 @@ try:
         screen(r"CPU +.*threads")
         screen(r"Memory +[0-9.]+ [KMG]iB free of")
         assert "login:" not in tty1(), tty1()
+        # The hostname names the node; its UUID is no use on a console.
+        assert "Node ID" not in tty1(), tty1()
         machine.screenshot("console-fresh")
 
     with subtest("a degraded md mirror is called out, under its /dev/md name"):

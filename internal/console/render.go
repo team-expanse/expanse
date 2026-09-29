@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/expanse/expanse/internal/tuikit"
 )
 
@@ -26,10 +28,11 @@ func Render(in Info, sz tuikit.Size, g tuikit.Glyphs) []string {
 	half := inner.Cols/2 - 1
 	body := []string{
 		pair(kv("Hostname", in.Hostname), kv("Uptime", humanDuration(in.Uptime)), half),
-		kv("Node ID", in.NodeID),
-		kv("Health", healthText(in)),
-		tuikit.Rule("Management"),
 	}
+	if shownNodeID(in) {
+		body = append(body, kv("Node ID", in.NodeID))
+	}
+	body = append(body, kv("Health", healthText(in)), tuikit.Rule("Management"))
 	body = append(body, addressRows(in.Addrs, half)...)
 	body = append(body, tuikit.Rule("Cluster"))
 	body = append(body, clusterRows(in, half)...)
@@ -49,6 +52,12 @@ func Render(in Info, sz tuikit.Size, g tuikit.Glyphs) []string {
 	}
 	f.Body = body
 	return f.Render(sz, g)
+}
+
+// shownNodeID: a clustered node's ID is its hostname, and a bare UUID is no help on a console.
+func shownNodeID(in Info) bool {
+	_, err := uuid.Parse(in.NodeID)
+	return in.NodeID != "" && in.NodeID != in.Hostname && err != nil
 }
 
 func kv(label, value string) string { return tuikit.KV(label, orUnknown(value), labelWidth) }

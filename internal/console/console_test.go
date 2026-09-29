@@ -102,7 +102,7 @@ func TestRenderHealthyClusteredNode(t *testing.T) {
 	for _, sz := range []tuikit.Size{tuikit.VT, {Cols: 160, Rows: 50}} {
 		got := render(t, healthyInfo(), sz)
 		for _, want := range []string{
-			"EXPANSE 1.1.5", "node-a", "0f3c1a2b-9c1d-4e2f-8a3b-5c6d7e8f9a0b", "192.168.1.10", "fd00::a",
+			"EXPANSE 1.1.5", "node-a", "192.168.1.10", "fd00::a",
 			"https://192.168.1.10:8443", "lab", "leader", "3/2", "HEALTHY", "Xeon", "8 threads", "12.0 GiB free of 16.0 GiB",
 			"system  md126 raid1 [UU]", "vda", "QEMU HARDDISK", "1d 2h 3m", "Alt+F2 for a login shell", "14:32:07",
 		} {
@@ -208,6 +208,25 @@ func TestLocalIPsSkipsLoopback(t *testing.T) {
 	for _, ip := range LocalIPs() {
 		if strings.HasPrefix(ip, "127.") || ip == "::1" {
 			t.Fatalf("loopback listed: %v", LocalIPs())
+		}
+	}
+}
+
+func TestRenderShowsNodeIDOnlyWhenItAddsSomething(t *testing.T) {
+	cases := []struct {
+		name, id string
+		want     bool
+	}{
+		{"pre-cluster uuid", "0f3c1a2b-9c1d-4e2f-8a3b-5c6d7e8f9a0b", false},
+		{"same as hostname", "node-a", false},
+		{"renamed host", "db-1", true},
+	}
+	for _, c := range cases {
+		in := healthyInfo()
+		in.NodeID = c.id
+		got := render(t, in, tuikit.VT)
+		if strings.Contains(got, "Node ID") != c.want || (c.want && !strings.Contains(got, c.id)) {
+			t.Errorf("%s: Node ID row shown = %v, want %v:\n%s", c.name, !c.want, c.want, got)
 		}
 	}
 }
