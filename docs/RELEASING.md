@@ -28,7 +28,7 @@ checkout, so the ISO that is published is the one that was tested.
    runs the website hook.
 
 `HEAD` must be the tag and the tree clean. GitHub caps release assets at 2 GiB
-each; the 1.1.6 ISO is 1.37 GiB.
+each; the 1.1.8 ISO is about 1.54 GiB.
 
 ## Website hook
 

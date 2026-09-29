@@ -6,6 +6,25 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.1.8 - 2026-09-29
+
+### Changed
+
+- Installs are about 2.5 times faster: the install step takes about two
+  minutes in QEMU, down from five, and downloads 18 MiB instead of 192 MiB.
+  The installed node now builds the installer's own `expanse`, so it is copied
+  off the ISO rather than compiled; the ISO carries a reference node for each
+  disk layout and the tools that disko and the node-specific parts build with;
+  and `nixos-install` copies NixOS's small local-only derivations off the ISO
+  instead of rebuilding them. The ISO grows from 1.47 GB to about 1.65 GB.
+- The tty1 host console drops its Node ID row when the ID is only the
+  hostname again (a clustered node) or a bare UUID.
+
+### Fixed
+
+- Installed nodes reported their commit as `installer`; they now report the
+  commit the ISO was built from.
+
 ## 1.1.7 - 2026-09-28
 
 ### Added
