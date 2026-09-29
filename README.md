@@ -109,6 +109,26 @@ node kills, partitions, and restarts — not just unit tests. See
 [`CHANGELOG.md`](CHANGELOG.md) for the release and its known issues, and
 `.plan/ARCHITECTURE.md` §9 for the project's decision record.
 
+## How Expanse is made
+
+Expanse is a joint human–AI project. Its code, tests and documentation were
+built by a human maintainer working with AI coding assistants. The AI wrote
+much of the code and prose. The maintainer directs the work, reviews it and
+decides what ships.
+
+- **It is in the history.** Most commits credit an AI co-author in a
+  `Co-Authored-By` trailer; `git log` shows which.
+- **Claims come with evidence.** The VM-test coverage described under
+  [Status](#status) exercises failures, not just the happy path, and
+  [`CHANGELOG.md`](CHANGELOG.md) records what is unverified. Real hardware,
+  for example, is still untested.
+- **Judge it on its record.** Automated tests are no substitute for your own
+  evaluation; read the known issues before trusting Expanse with data you care
+  about.
+
+See also [How Expanse is made](https://team-expanse.github.io/expanse-website/#made-with-ai)
+on the project site.
+
 ## License
 
 Expanse is licensed under the [Apache License, Version 2.0](LICENSE); see
