@@ -20,11 +20,14 @@ EOF
 
 die() { echo "release: $*" >&2; exit 1; }
 
-# changelog_notes VERSION FILE prints the body of "## VERSION - date", trimmed.
+# changelog_notes VERSION FILE prints the body of "## VERSION - date", trimmed, with wrapped lines
+# joined, since GitHub renders each newline in release notes as a line break.
 changelog_notes() {
   awk -v v="$1" '
-    $0 ~ "^## " { if (on) exit; on = ($2 == v); next }
-    on { buf = buf $0 "\n" }
+    $0 ~ "^## " { if (on) exit; on = ($2 == v); prev = ""; next }
+    !on { next }
+    prev != "" && $0 != "" && $0 !~ /^(#|- |\* )/ { sub(/^ +/, ""); sub(/\n$/, " ", buf); buf = buf $0 "\n"; prev = $0; next }
+    { buf = buf $0 "\n"; prev = $0 }
     END { sub(/^\n+/, "", buf); sub(/\n+$/, "", buf); printf "%s", buf }
   ' "$2"
 }
@@ -135,6 +138,7 @@ main() {
   else
     echo "release: no $site/tools/sync-release; the website was not updated"
   fi
+  if [[ $dry_run == 1 ]]; then echo "release: dry run done; nothing was pushed or published"; return; fi
   echo "release: done: https://github.com/$repo/releases/tag/$tag"
 }
 

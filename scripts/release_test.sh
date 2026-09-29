@@ -22,13 +22,20 @@ cat >"$tmp/CHANGELOG.md" <<'MD'
 ### Fixed
 
 - A "quoted" thing.
+- A wrapped item that
+  continues `--here` and
+  - ends.
+
+A wrapped
+paragraph.
 
 ## 1.1.9 - 2026-09-30
 
 - Older.
 MD
 
-check notes-body $'### Fixed\n\n- A "quoted" thing.' "$(changelog_notes 1.2.0 "$tmp/CHANGELOG.md")"
+# Wrapped lines are joined: GitHub renders each newline in release notes as a break.
+check notes-body $'### Fixed\n\n- A "quoted" thing.\n- A wrapped item that continues `--here` and - ends.\n\nA wrapped paragraph.' "$(changelog_notes 1.2.0 "$tmp/CHANGELOG.md")"
 check notes-last '- Older.' "$(changelog_notes 1.1.9 "$tmp/CHANGELOG.md")"
 check notes-missing '' "$(changelog_notes 9.9.9 "$tmp/CHANGELOG.md")"
 check date 2026-10-01 "$(changelog_date 1.2.0 "$tmp/CHANGELOG.md")"
