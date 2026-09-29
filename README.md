@@ -47,9 +47,8 @@ LVM, WireGuard, nftables). See `.plan/PREMISE.md` for the full vision and
   [`docs/AGENT.md`](docs/AGENT.md).
 
 **Paused, not built:** SMB/NFS file shares (Samba deploy works; failover
-has an open bug — see `.plan/PHASE-03-TASKS.md`) and an on-prem LLM
-subsystem (no accelerator hardware available to validate against yet —
-see `.plan/PHASE-07-TASKS.md`). Both are independent of everything above
+has an open bug) and an on-prem LLM subsystem (no accelerator hardware
+available to validate against yet). Both are independent of everything above
 and can resume any time; nothing else depends on them.
 
 ## Quickstart

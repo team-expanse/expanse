@@ -4,8 +4,7 @@ All notable changes to Expanse are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
-through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
+History before 1.0.0 is not recorded here.
 
 ## 1.1.7 - 2026-09-28
 
