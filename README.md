@@ -103,11 +103,13 @@ components; build the control plane) new code is held to.
 
 ## Status
 
-Expanse 1.0.0 (`.plan/ROADMAP.md`, all 11 phases shipped). Every feature listed
+All 11 phases of `.plan/ROADMAP.md` have shipped. Every feature listed
 above under "What works today" has NixOS VM-test coverage exercising real
-node kills, partitions, and restarts — not just unit tests. See
-[`CHANGELOG.md`](CHANGELOG.md) for the release and its known issues, and
-`.plan/ARCHITECTURE.md` §9 for the project's decision record.
+node kills, partitions, and restarts — not just unit tests. The latest
+release and its installer ISO are on the
+[releases page](https://github.com/team-expanse/expanse/releases/latest);
+[`CHANGELOG.md`](CHANGELOG.md) records every release and its known issues, and
+`.plan/ARCHITECTURE.md` §9 is the project's decision record.
 
 ## How Expanse is made
 
