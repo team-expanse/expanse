@@ -49,6 +49,9 @@
       ];
     };
 
+    # Package licences (expanse ships its own and its vendored modules') under /run/current-system/sw/share/licenses.
+    environment.pathsToLink = [ "/share/licenses" ];
+
     environment.systemPackages = with pkgs; [
       btrfs-progs
       smartmontools

@@ -81,6 +81,10 @@
               case "$got" in "expanse ${want} "*) ;; *) echo "expanse version printed: $got, want ${want}"; exit 1 ;; esac
               echo ${want} > $out
             '';
+          # The package carries LICENSE, NOTICE and every vendored module's licence (MIT/BSD need them with binaries).
+          package-licenses = pkgs.runCommand "package-licenses" { } ''
+            ${pkgs.bash}/bin/bash ${./nix/tests/package-licenses.sh} ${self.packages.${system}.expanse} ${./vendor/modules.txt} | tee $out
+          '';
           # The configuration.nix the installer writes (Go goldens) evaluates to a system, as nixos-install needs.
           node-config-eval =
             let
@@ -111,6 +115,8 @@
                   "installed ${layout} node disables the serial login";
                 assert lib.assertMsg (lib.any (p: (p.pname or "") == "chrony") c.systemd.services.expansed.path)
                   "installed ${layout} node's agent cannot run chronyc, so its clock-sync check (and node health) reads unknown";
+                assert lib.assertMsg (lib.elem "/share/licenses" c.environment.pathsToLink)
+                  "installed ${layout} node does not link /run/current-system/sw/share/licenses";
                 assert lib.assertMsg (layout != "mirror" || mirrorBootsDegraded c)
                   "installed mirror node keeps /boot or / on a single disk, or cannot install systemd-boot onto md";
                 builtins.unsafeDiscardStringContext c.system.build.toplevel.drvPath;
