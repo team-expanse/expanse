@@ -192,7 +192,10 @@ func TestClockSyncGraceAfterBoot(t *testing.T) {
 		want     Health
 	}{
 		{"synced", synced, time.Hour, Healthy},
-		{"synced but far off", "Last offset     : +0.250000 seconds\nLeap status     : Normal\n", time.Hour, Degraded},
+		{"synced but far off", "System time     : 0.250000000 seconds fast of NTP time\nLeap status     : Normal\n", time.Hour, Degraded},
+		{"far off the other way", "System time     : 0.250000000 seconds slow of NTP time\nLeap status     : Normal\n", time.Hour, Degraded},
+		// Chrony stepped the clock at boot: the last offset is the correction, not the clock's error now.
+		{"stepped at boot", "System time     : 0.000000001 seconds slow of NTP time\nLast offset     : -1.359028578 seconds\nLeap status     : Normal\n", time.Minute, Healthy},
 		{"still syncing just after boot", unsynced, 40 * time.Second, Unknown},
 		{"still syncing at the grace edge", unsynced, ClockSyncGrace - time.Second, Unknown},
 		{"never synced, long after boot", unsynced, ClockSyncGrace + time.Second, Unhealthy},

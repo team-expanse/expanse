@@ -370,7 +370,7 @@ func (c *NixStoreCheck) Run(ctx context.Context) Result {
 // unsynchronised clock counts as unhealthy (and fires ExpanseNodeUnhealthy).
 const ClockSyncGrace = 10 * time.Minute
 
-// ClockSyncCheck: Degraded if offset > 100 ms; Unhealthy if chrony is not synced,
+// ClockSyncCheck: Degraded if the clock is > 100 ms off; Unhealthy if chrony is not synced,
 // except within ClockSyncGrace of boot, when it is still Unknown. Reads chronyc tracking.
 type ClockSyncCheck struct{}
 
@@ -392,14 +392,17 @@ func (c *ClockSyncCheck) Run(ctx context.Context) Result {
 func judgeClockSync(tracking string, uptime time.Duration) Result {
 	res := Result{Name: "clock-sync", Status: Unknown, Details: map[string]string{}}
 	for _, line := range strings.Split(tracking, "\n") {
-		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "Last offset" {
+		k, v, _ := strings.Cut(line, ":")
+		switch strings.TrimSpace(k) {
+		case "Last offset": // the last correction (a boot-time step included), not the clock's error
+			res.Details["last_offset"] = strings.TrimSpace(v)
+		case "System time": // "0.000000001 seconds slow of NTP time": the error now
 			offset := strings.TrimSpace(v)
-			res.Details["last_offset"] = offset
-			// +0.000001 seconds style; parse leading float.
+			res.Details["system_time"] = offset
 			secs, perr := strconv.ParseFloat(strings.Fields(offset + " x")[0], 64)
 			if perr == nil && (secs > 0.100 || secs < -0.100) {
 				res.Status = Worst(res.Status, Degraded)
-				res.Message = "offset " + offset
+				res.Message = "clock " + offset
 			}
 		}
 		if status, ok := strings.CutPrefix(line, "Leap status"); ok {
