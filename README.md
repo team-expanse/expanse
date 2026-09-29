@@ -108,3 +108,9 @@ above under "What works today" has NixOS VM-test coverage exercising real
 node kills, partitions, and restarts — not just unit tests. See
 [`CHANGELOG.md`](CHANGELOG.md) for the release and its known issues, and
 `.plan/ARCHITECTURE.md` §9 for the project's decision record.
+
+## License
+
+Expanse is licensed under the [Apache License, Version 2.0](LICENSE); see
+[`NOTICE`](NOTICE). Contributions are accepted under the same licence.
+Vendored Go modules keep their own licences.

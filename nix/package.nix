@@ -15,6 +15,7 @@ buildGoModule {
   subPackages = [ "cmd/expanse" "cmd/expanse-block-run" ];
 
   meta = {
+    license = lib.licenses.asl20;
     mainProgram = "expanse";
   };
 }

@@ -1,0 +1,6 @@
+Expanse
+Copyright 2026 Team Expanse
+
+This product includes software developed by Team Expanse,
+licensed under the Apache License, Version 2.0 (see LICENSE).
+Third-party Go modules under vendor/ keep their own licences, alongside each module.
