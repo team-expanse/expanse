@@ -94,7 +94,9 @@ in
 
   # Bake the flake source into the store for offline evaluation, and the reference nodes for a fast install.
   isoImage.storeContents = [ flakeSource ]
-    ++ map (node: node.config.system.build.toplevel) (lib.attrValues referenceNodes);
+    ++ map (node: node.config.system.build.toplevel) (lib.attrValues referenceNodes)
+    # What disko's script writer and the node-specific derivations (hostname, disks, initrd) build with.
+    ++ (with pkgs; [ stdenv makeBinaryWrapper makeShellWrapper kmod.dev lndir libredirect lkl.lib nukeReferences ]);
 
   # Size control.
   isoImage.squashfsCompression = "zstd -Xcompression-level 19";
