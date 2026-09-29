@@ -75,6 +75,8 @@
               "ISO NIX_PATH ${toString iso.nix.nixPath} needs flakes, which the installer does not enable";
             assert lib.assertMsg (lib.elem "console=ttyS0,115200n8" iso.boot.kernelParams)
               "the ISO does not log to the serial console";
+            assert lib.assertMsg (lib.elem "/share/licenses" iso.environment.pathsToLink)
+              "the ISO does not link /run/current-system/sw/share/licenses";
             # The binary itself reports the release (the CLI and the web UI footer read the same stamp).
             pkgs.runCommand "iso-version" { } ''
               got=$(${self.packages.${system}.expanse}/bin/expanse version)

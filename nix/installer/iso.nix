@@ -21,6 +21,7 @@ in
   ];
   image.baseName = lib.mkForce "expanse-${pkgs.expanse.version}-${pkgs.stdenv.hostPlatform.system}";
 
+  environment.pathsToLink = [ "/share/licenses" ]; # expanse's licence and third-party notices
   environment.systemPackages = with pkgs; [
     expanse
     disko
