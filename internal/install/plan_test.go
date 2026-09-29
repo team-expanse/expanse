@@ -94,7 +94,8 @@ func TestStageInstallUsesThePersistedConfig(t *testing.T) {
 	if err := stageInstall(rc); err != nil {
 		t.Fatal(err)
 	}
-	want := "env NIXOS_CONFIG=/mnt/persist/etc/nixos/configuration.nix nixos-install --root /mnt --no-root-password"
+	want := "env NIXOS_CONFIG=/mnt/persist/etc/nixos/configuration.nix nixos-install --root /mnt --no-root-password" +
+		" --option always-allow-substitutes true"
 	if len(ran) != 1 || ran[0] != want {
 		t.Fatalf("ran %q, want [%q]", ran, want)
 	}

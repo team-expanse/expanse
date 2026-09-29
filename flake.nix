@@ -90,16 +90,13 @@
           # The configuration.nix the installer writes (Go goldens) evaluates to a system, as nixos-install needs.
           node-config-eval =
             let
+              refs = import ./nix/installer/reference-nodes.nix {
+                inherit self nixpkgs system;
+                hardware = ./test/fixtures/install/hardware-configuration.nix;
+              };
               evalNode = layout:
                 let
-                  text = builtins.replaceStrings
-                    [ "@flake@" "./hardware-configuration.nix" ]
-                    [ "${self}" "${./test/fixtures/install/hardware-configuration.nix}" ]
-                    (builtins.readFile ./test/fixtures/install/configuration-${layout}.nix);
-                  node = import "${nixpkgs}/nixos" {
-                    inherit system;
-                    configuration = builtins.toFile "configuration-${layout}.nix" text;
-                  };
+                  node = refs.${layout};
                   c = node.config;
                 in
                 assert lib.assertMsg (c.systemd.services ? expansed) "installed ${layout} node has no expansed service";
@@ -117,6 +114,9 @@
                   "installed ${layout} node disables the serial login";
                 assert lib.assertMsg (lib.any (p: (p.pname or "") == "chrony") c.systemd.services.expansed.path)
                   "installed ${layout} node's agent cannot run chronyc, so its clock-sync check (and node health) reads unknown";
+                # The same derivation as the ISO's, so nixos-install copies it off the ISO instead of compiling it.
+                assert lib.assertMsg (node.pkgs.expanse.drvPath == self.packages.${system}.expanse.drvPath)
+                  "installed ${layout} node builds a different expanse from the installer's";
                 assert lib.assertMsg (lib.elem "/share/licenses" c.environment.pathsToLink)
                   "installed ${layout} node does not link /run/current-system/sw/share/licenses";
                 assert lib.assertMsg (layout != "mirror" || mirrorBootsDegraded c)

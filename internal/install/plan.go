@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/expanse/expanse/internal/version"
 )
 
 // Stage is one step of the install.
@@ -26,6 +28,7 @@ type RunContext struct {
 	Layout            DiskLayout
 	Force             bool
 	TargetFlake       string
+	SourceRev         string // the installer's commit; the target builds the same expanse and copies it off the ISO
 	Mount             string // /mnt
 	SkipSystemInstall bool
 	Identity          *Identity
@@ -96,7 +99,7 @@ func Stages() []Stage {
 		},
 		{
 			Name: "install", Desc: "nixos-install onto /mnt", Run: stageInstall,
-			DryRun: "env NIXOS_CONFIG=/mnt/persist/etc/nixos/configuration.nix nixos-install --root /mnt --no-root-password",
+			DryRun: "env NIXOS_CONFIG=/mnt/persist/etc/nixos/configuration.nix nixos-install --root /mnt --no-root-password --option always-allow-substitutes true",
 		},
 		{
 			Name: "verify", Desc: "verify bootloader, subvolumes, blank snapshot, identity", Run: stageVerify,
@@ -113,7 +116,7 @@ func Run(opts Options) error {
 		logf = func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
 	}
 
-	rc := &RunContext{TargetFlake: opts.TargetFlake, Logger: logf, Mount: "/mnt", Out: opts.Out}
+	rc := &RunContext{TargetFlake: opts.TargetFlake, SourceRev: version.Commit, Logger: logf, Mount: "/mnt", Out: opts.Out}
 	if rc.TargetFlake == "" {
 		rc.TargetFlake = DefaultTargetFlake
 	}
@@ -263,7 +266,9 @@ func stageInstall(rc *RunContext) error {
 		return nil
 	}
 	config := "NIXOS_CONFIG=" + filepath.Join(rc.Mount, nixosConfigDir, "configuration.nix")
-	return rc.run("env", config, "nixos-install", "--root", rc.Mount, "--no-root-password")
+	// NixOS's small local-only derivations (units, /etc, system-path) are on the ISO; copy them instead of rebuilding.
+	return rc.run("env", config, "nixos-install", "--root", rc.Mount, "--no-root-password",
+		"--option", "always-allow-substitutes", "true")
 }
 
 func stageIdentity(rc *RunContext) error {
@@ -323,6 +328,9 @@ func writeConfiguration(rc *RunContext, path string) error {
 	fmt.Fprintf(&b, "  expanse.hostname = %q;\n", hostname)
 	fmt.Fprintf(&b, "  expanse.ssh.authorizedKeys = [ %s ];\n", strings.Join(quoted(rc.Config.SSH.AuthorizedKeys), " "))
 	fmt.Fprintf(&b, "  expanse.disks = [ %s ];\n", strings.Join(quoted(rc.Config.Disks.Devices), " "))
+	if rc.SourceRev != "" {
+		fmt.Fprintf(&b, "  expanse.sourceRev = %q;\n", rc.SourceRev)
+	}
 	fmt.Fprintf(&b, "}\n")
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }

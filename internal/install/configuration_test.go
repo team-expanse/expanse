@@ -9,8 +9,11 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
-// flakePlaceholder stands in for the installer's flake path; the node-config-eval check substitutes the real one.
-const flakePlaceholder = "@flake@"
+// Placeholders for the installer's flake path and commit; the node-config-eval check substitutes the real ones.
+const (
+	flakePlaceholder = "@flake@"
+	revPlaceholder   = "@rev@"
+)
 
 // TestWriteConfigurationGolden pins the configuration.nix nixos-install builds; node-config-eval evaluates these files.
 func TestWriteConfigurationGolden(t *testing.T) {
@@ -25,7 +28,7 @@ func TestWriteConfigurationGolden(t *testing.T) {
 		cfg.Hostname = "golden-node"
 		cfg.Disks.Devices = tc.disks
 		cfg.SSH.AuthorizedKeys = []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIgolden golden@test"}
-		rc := &RunContext{Config: cfg, Layout: tc.layout, TargetFlake: flakePlaceholder}
+		rc := &RunContext{Config: cfg, Layout: tc.layout, TargetFlake: flakePlaceholder, SourceRev: revPlaceholder}
 
 		got := filepath.Join(t.TempDir(), "configuration.nix")
 		if err := writeConfiguration(rc, got); err != nil {

@@ -5,6 +5,14 @@ let
   # The flake source is baked into the ISO so the installer can evaluate
   # the node configuration offline.
   flakeSource = self;
+  # Installed nodes share almost all of these; nixos-install copies them off the ISO instead of downloading.
+  referenceNodes = import ./reference-nodes.nix {
+    inherit self nixpkgs;
+    inherit (pkgs.stdenv.hostPlatform) system;
+    hardware = builtins.toFile "hardware-configuration.nix" ''
+      { nixpkgs.hostPlatform = "${pkgs.stdenv.hostPlatform.system}"; }
+    '';
+  };
 in
 {
   imports = [
@@ -84,8 +92,9 @@ in
     };
   };
 
-  # Bake the flake source into the store for offline evaluation.
-  isoImage.storeContents = [ flakeSource ];
+  # Bake the flake source into the store for offline evaluation, and the reference nodes for a fast install.
+  isoImage.storeContents = [ flakeSource ]
+    ++ map (node: node.config.system.build.toplevel) (lib.attrValues referenceNodes);
 
   # Size control.
   isoImage.squashfsCompression = "zstd -Xcompression-level 19";
