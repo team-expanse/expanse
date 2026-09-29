@@ -7,6 +7,30 @@ All notable changes to Expanse are recorded here. The format follows
 History before 1.0.0 is not reconstructed here: `.plan/PHASE-01-TASKS.md`
 through `.plan/PHASE-11-TASKS.md` are that record, phase by phase.
 
+## 1.1.7 - 2026-09-28
+
+### Added
+
+- Expanse is licensed under the Apache License, Version 2.0: `LICENSE` and
+  `NOTICE` at the top of the source tree, and `meta.license` on the Nix
+  package.
+- The `expanse` package ships `LICENSE`, `NOTICE`, a `THIRD-PARTY.md` listing
+  every vendored Go module and its version, and each module's own licence,
+  under `share/licenses/expanse`. Installed nodes and the installer link them
+  at `/run/current-system/sw/share/licenses/expanse`. Earlier ISOs shipped the
+  binaries without the notices their MIT and BSD modules require.
+- `scripts/release.sh` publishes a release: it builds and checks the ISO,
+  stages `SHA256SUMS`, the changelog notes and a `release.json` manifest,
+  pushes the tag, creates the GitHub release with the ISO attached and runs
+  the website's `tools/sync-release` hook. See `docs/RELEASING.md`.
+
+### Fixed
+
+- Nodes read DEGRADED for about two minutes after each boot, long enough to
+  fire `ExpanseNodeDegraded`: the clock-sync check judged chrony's last
+  correction, which is the clock step chrony makes at boot, instead of how far
+  the clock is off now (`System time` in `chronyc tracking`).
+
 ## 1.1.6 - 2026-09-28
 
 ### Changed

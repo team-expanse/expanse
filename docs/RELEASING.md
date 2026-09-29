@@ -9,7 +9,7 @@ checkout, so the ISO that is published is the one that was tested.
 1. Bump `nix/version.nix`, add a `## <version> - <YYYY-MM-DD>` section to
    `CHANGELOG.md`, and commit as `release: <version> -- <one-line summary>`
    (the summary becomes the release title).
-2. Tag it: `git tag v<version>`, and push `main`.
+2. Tag it: `git tag -a v<version> -m "Expanse <version>"`, and push `main`.
 3. Stage everything without publishing:
 
    ```sh
