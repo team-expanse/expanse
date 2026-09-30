@@ -19,7 +19,10 @@ busybox httpd -p 80 -h /srv
 while :; do
   seq=$((seq + 1))
   echo "$seq" > /srv/seq
+  # Durable before visible: the watcher only ever sees a page that survives a crash.
+  echo "name=$name boot=$boot seq=$seq" > /srv/index.tmp
   sync
-  echo "name=$name boot=$boot seq=$seq" > /srv/index.html
+  mv /srv/index.tmp /srv/index.html
+  sync
   sleep 1
 done

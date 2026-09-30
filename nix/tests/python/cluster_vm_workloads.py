@@ -180,7 +180,7 @@ def report_outage(name, since, label):
         note(f"{label}: {name} outage", 0.0)
         return
     gap, seq_before, seq_after, boot = o
-    lost = (seq_before or 0) - (seq_after or 0) + 1
+    lost = (seq_before or 0) - (seq_after or 0)  # the first page back may repeat the last one seen
     print(f"OUTAGE {name} ({label}): {gap:.1f}s; last seq before {seq_before}, first after {seq_after} "
           f"(boot {boot}); acknowledged writes lost: {max(lost, 0)}")
     note(f"{label}: {name} outage (watcher)", gap)
