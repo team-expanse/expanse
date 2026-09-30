@@ -34,8 +34,6 @@ let
         wantedBy = [ "multi-user.target" ];
         path = with pkgs; [ coreutils gnugrep iproute2 util-linux e2fsprogs busybox ];
         script = builtins.readFile ./guest-workload.sh;
-        serviceConfig.StandardOutput = "journal+console";
-        serviceConfig.StandardError = "journal+console";
       };
     };
   };

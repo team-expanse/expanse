@@ -1,6 +1,7 @@
 # Guest workload for cluster-vm-workloads.nix: address from the kernel command line, a counter on the
 # replicated disk made durable before it is served, and busybox httpd serving it on port 80.
-set -eux  # the trace reaches the console, so a failed start says where
+exec 2>/dev/ttyS0  # the serial console reaches the host's log, so a failed start says where
+set -eux
 arg() { tr ' ' '\n' < /proc/cmdline | grep "^workload\.$1=" | cut -d= -f2; }
 name=$(arg name)
 ip addr add "$(arg ip)/24" dev eth0
