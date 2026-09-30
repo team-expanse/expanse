@@ -1,6 +1,6 @@
 # Guest workload for cluster-vm-workloads.nix: address from the kernel command line, a counter on the
 # replicated disk made durable before it is served, and busybox httpd serving it on port 80.
-set -eu
+set -eux  # the trace reaches the console, so a failed start says where
 arg() { tr ' ' '\n' < /proc/cmdline | grep "^workload\.$1=" | cut -d= -f2; }
 name=$(arg name)
 ip addr add "$(arg ip)/24" dev eth0
@@ -16,6 +16,7 @@ seq=$(cat /srv/seq 2>/dev/null || echo 0)
 sync
 
 busybox httpd -p 80 -h /srv
+set +x  # the loop runs every second; keep the console quiet
 while :; do
   seq=$((seq + 1))
   echo "$seq" > /srv/seq
