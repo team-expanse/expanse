@@ -283,6 +283,9 @@
           # Stream D: vertical slice -- X3/X4 proven together, one kill, black-box (no internal-state waits).
           vm-instance-vertical-slice = mkTest "vm-instance-vertical-slice" ./nix/tests/vm-instance-vertical-slice.nix;
 
+          # Six nodes, two VM workloads serving from replicated disks: forming and failover timings. Not a gate.
+          cluster-vm-workloads = mkTest "cluster-vm-workloads" ./nix/tests/cluster-vm-workloads.nix;
+
           # ROADMAP.md Phase 08 (backup and restore) Stream A (X1): restic
           # adopted (D1), basic backup/restore round-trip against a real
           # in-VM S3-compatible target (garage, not minio -- no insecure flag).

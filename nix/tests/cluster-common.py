@@ -13,7 +13,7 @@ import time
 # order. Raft binds 0.0.0.0 (IPv4), so advertise the v4 addr — node
 # NAMEs resolve to the driver's IPv6 addrs, which the v4-only raft
 # transport can never dial.
-IP = {"n1": "192.168.1.1", "n2": "192.168.1.2", "n3": "192.168.1.3", "n4": "192.168.1.4"}
+IP = {f"n{i}": f"192.168.1.{i}" for i in range(1, 7)}
 
 
 def addr(m):
@@ -123,7 +123,7 @@ def leaders(rep):
     out = []
     for ln in rep.splitlines():
         parts = ln.split()
-        if len(parts) >= 4 and parts[0] in ("n1", "n2", "n3") and parts[2] == "leader":
+        if len(parts) >= 4 and re.fullmatch(r"n\d+", parts[0]) and parts[2] == "leader":
             out.append(parts[0])
     return out
 

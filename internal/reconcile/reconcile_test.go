@@ -482,3 +482,74 @@ func TestDeletedDesiredStateRemovesResource(t *testing.T) {
 		t.Fatalf("applied = %d entries after deletion, want 0", left)
 	}
 }
+
+// flakyStore fails List on demand, as a follower's linearizable read does during an election.
+type flakyStore struct {
+	store.Store
+	failList atomic.Bool
+}
+
+func (s *flakyStore) List(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
+	if s.failList.Load() {
+		return nil, fmt.Errorf("unavailable: linear read rpc failed")
+	}
+	return s.Store.List(ctx, prefix)
+}
+
+// deletingManager counts the resources the reconciler tears down.
+type deletingManager struct {
+	fakeManager
+	deletes atomic.Int64
+}
+
+func (m *deletingManager) Delete(ctx context.Context, r Resource) error {
+	m.deletes.Add(1)
+	return nil
+}
+
+func newDeletingReconciler(t *testing.T) (*Reconciler, *flakyStore, *deletingManager) {
+	s := &flakyStore{Store: testStore(t)}
+	m := &deletingManager{fakeManager: fakeManager{converged: map[string]bool{}}}
+	r := New(s, Options{NodeID: "n1", Logger: testLogger(), Period: time.Hour})
+	r.Register(m)
+	return r, s, m
+}
+
+func TestFailedDesiredStateReadTearsNothingDown(t *testing.T) {
+	r, s, m := newDeletingReconciler(t)
+	ctx := context.Background()
+	putDesired(t, s, "n1", "vm", "")
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.failList.Store(true)
+	if err := r.Tick(ctx); err == nil {
+		t.Error("a tick that could not read desired state reported success")
+	}
+	if n := m.deletes.Load(); n != 0 {
+		t.Fatalf("an unreadable desired state deleted %d running resources", n)
+	}
+	s.failList.Store(false)
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.deletes.Load(); n != 0 {
+		t.Fatalf("recovering from the failed read deleted %d resources", n)
+	}
+}
+
+func TestUndecodableDesiredEntryKeepsItsResource(t *testing.T) {
+	r, s, m := newDeletingReconciler(t)
+	ctx := context.Background()
+	putDesired(t, s, "n1", "vm", "")
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Put(ctx, store.Key("/node/n1/resources/vm"), []byte("garbled")); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Tick(ctx)
+	if n := m.deletes.Load(); n != 0 {
+		t.Fatalf("an undecodable entry deleted its running resource (%d deletes)", n)
+	}
+}

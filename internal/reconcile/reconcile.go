@@ -336,7 +336,12 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 	start := time.Now()
 	r.ticks.Add(1)
 
-	resources, errs := r.loadDesired(tctx)
+	resources, errs, err := r.loadDesired(tctx)
+	if err != nil {
+		// Unreadable is not empty: a leader election must not tear down running workloads.
+		r.failures.Add(1)
+		return fmt.Errorf("desired state unreadable, tick skipped: %w", err)
+	}
 	for id, err := range errs {
 		r.logger.Error("invalid desired state", "id", id, "err", err)
 		r.recordStatus(tctx, &Status{ResourceID: id, Health: HealthUnhealthy, Error: err.Error(), UpdatedAt: time.Now()})
@@ -347,6 +352,9 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 	// desired state now were deleted — undo them via the manager.
 	r.mu.Lock()
 	for id, old := range r.applied {
+		if _, undecodable := errs[id]; undecodable {
+			continue // a garbled entry keeps its resource until the entry is fixed or deleted
+		}
 		if _, ok := resources[id]; !ok {
 			delete(r.applied, id)
 			r.mu.Unlock()
@@ -642,11 +650,11 @@ func percentile(sorted []float64, p float64) float64 {
 
 // ---- Desired state & DAG ----
 
-// loadDesired reads and decodes all desired-state entries.
-func (r *Reconciler) loadDesired(ctx context.Context) (map[string]Resource, map[string]error) {
+// loadDesired reads and decodes all desired-state entries; err is set only when the list itself failed.
+func (r *Reconciler) loadDesired(ctx context.Context) (map[string]Resource, map[string]error, error) {
 	entries, err := r.store.List(ctx, r.DesiredPrefix())
 	if err != nil {
-		return nil, map[string]error{"<list>": fmt.Errorf("list desired: %w", err)}
+		return nil, nil, fmt.Errorf("list desired: %w", err)
 	}
 	resources := map[string]Resource{}
 	errs := map[string]error{}
@@ -671,7 +679,7 @@ func (r *Reconciler) loadDesired(ctx context.Context) (map[string]Resource, map[
 		}
 		resources[id] = res
 	}
-	return resources, errs
+	return resources, errs, nil
 }
 
 // splitType decodes the "type: <t>" header line from a spec.
