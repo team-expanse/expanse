@@ -202,7 +202,7 @@ with subtest(f"form a {NODE_COUNT}-node cluster"):
                f"--advertise-addr {addr(n1)}:7444 --expect {NODE_COUNT}")
     token = ""
     for _ in range(30):
-        _, out = n1.execute("expanse cluster token --data-dir /persist/expanse create --uses {NODE_COUNT - 1} 2>/dev/null || true")
+        _, out = n1.execute(f"expanse cluster token --data-dir /persist/expanse create --uses {NODE_COUNT - 1} 2>/dev/null || true")
         found = re.search(r"expanse-join-[A-Za-z0-9_-]+", out)
         if found:
             token = found.group(0)
