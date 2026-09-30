@@ -6,6 +6,39 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.1.9 - 2026-09-30
+
+### Fixed
+
+- Killing the raft leader could restart VM and other workloads on healthy
+  nodes. While the cluster elected a new leader, a node's read of its desired
+  state failed as unavailable, and the reconciler took the failed read for an
+  empty desired state and stopped everything it ran; a VM workload then cold
+  booted again once the new leader was up. A failed read now skips the round,
+  and a desired-state entry that fails to decode keeps its workload running.
+- A leader election could still restart a VM on a healthy node, through its
+  disk. Reading a volume's record during the election failed, the failure was
+  reported as "not found", and the component that writes each node's desired
+  state dropped the VM's disk mount and changed its spec. The storage controller
+  had the same blind spot and could request a second volume under an existing
+  name. Read failures now keep their real kind, and both components skip the
+  round instead of acting on a partial view.
+- Workloads and their disks piled onto the same few nodes. Every replicated
+  disk went to the same nodes (the lowest node IDs), a VM has to run where its
+  disk is, and the least-loaded score saw no node capacity so it never counted.
+  Disks now go to the nodes holding the fewest replicas, the scheduler knows
+  each node's capacity, and workloads placed together see each other's load,
+  so VMs spread evenly across the cluster.
+
+### Added
+
+- A cluster test with VM workloads that serve HTTP from replicated disks,
+  watched from outside the cluster, measuring forming, node-loss failover,
+  rejoin and leader-loss failover; it runs at 6 nodes and at 12, each VM
+  pinned to its own physical cores. At 6 nodes a node loss costs a workload
+  about 105 seconds (node declared lost, then a nested-VM cold boot) with no
+  acknowledged write lost, and a leader loss costs nothing.
+
 ## 1.1.8 - 2026-09-29
 
 ### Changed
