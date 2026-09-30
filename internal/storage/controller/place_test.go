@@ -9,6 +9,7 @@ import (
 
 	pbproto "google.golang.org/protobuf/proto"
 
+	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/storage/drbd"
 	"github.com/expanse/expanse/internal/store"
@@ -332,5 +333,32 @@ func TestSuccessiveVolumesSpreadEvenlyAcrossNodes(t *testing.T) {
 	}
 	if len(perNode) != 6 {
 		t.Errorf("replicas per node %v: two 3-way volumes on 6 nodes should use every node once", perNode)
+	}
+}
+
+// flakyVolumes fails volume record reads the way a follower does during a leader election.
+type flakyVolumes struct{ store.Store }
+
+func (f flakyVolumes) Get(ctx context.Context, k store.Key) (*store.Entry, error) {
+	if strings.HasPrefix(string(k), storage.VolumePrefix) && !strings.HasPrefix(string(k), storage.PendingPrefix) {
+		return nil, experrors.New(experrors.KindUnavailable, "raftstore.ForwardRead", "no leader known")
+	}
+	return f.Store.Get(ctx, k)
+}
+
+// An unreadable volume is not a missing one: nothing may be requested or created in its place.
+func TestUnreadableVolumesAreNeverTakenForMissing(t *testing.T) {
+	c, st := newPlacer(t, "n1", "n2", "n3")
+	request(t, st, "data", 3)
+	c.processPending(context.Background(), meshed(t, c))
+	if len(placed(t, st)) != 1 {
+		t.Fatal("setup: want one volume")
+	}
+	c.opts.St = flakyVolumes{st}
+	if _, err := c.volumesByName(context.Background()); err == nil {
+		t.Error("volumesByName succeeded with unreadable volumes, want an error")
+	}
+	if _, err := c.nameTaken(context.Background(), "data", "vol-other"); err == nil {
+		t.Error("nameTaken succeeded with unreadable volumes, want an error")
 	}
 }

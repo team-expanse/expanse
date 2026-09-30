@@ -330,7 +330,7 @@ func SaveSpec(ctx context.Context, st store.Store, s Spec) error {
 func LoadSpec(ctx context.Context, st store.Store, volID string) (Spec, error) {
 	entry, err := st.Get(ctx, SpecKey(volID))
 	if err != nil {
-		return Spec{}, experrors.Wrap(err, experrors.KindNotFound, "storage.LoadSpec", "get")
+		return Spec{}, experrors.Wrap(err, experrors.KindOf(err), "storage.LoadSpec", "get")
 	}
 	var p pb.VolumeSpec
 	if err := proto.Unmarshal(entry.Value, &p); err != nil {
@@ -345,7 +345,7 @@ func LoadSpec(ctx context.Context, st store.Store, volID string) (Spec, error) {
 func LoadSpecRev(ctx context.Context, st store.Store, volID string) (Spec, store.Revision, error) {
 	entry, err := st.Get(ctx, SpecKey(volID))
 	if err != nil {
-		return Spec{}, 0, experrors.Wrap(err, experrors.KindNotFound, "storage.LoadSpecRev", "get")
+		return Spec{}, 0, experrors.Wrap(err, experrors.KindOf(err), "storage.LoadSpecRev", "get")
 	}
 	var p pb.VolumeSpec
 	if err := proto.Unmarshal(entry.Value, &p); err != nil {
@@ -386,7 +386,7 @@ func SaveStatus(ctx context.Context, st store.Store, volID string, s Status) err
 func LoadStatus(ctx context.Context, st store.Store, volID string) (Status, store.Revision, error) {
 	entry, err := st.Get(ctx, StatusKey(volID))
 	if err != nil {
-		return Status{}, 0, experrors.Wrap(err, experrors.KindNotFound, "storage.LoadStatus", "get")
+		return Status{}, 0, experrors.Wrap(err, experrors.KindOf(err), "storage.LoadStatus", "get")
 	}
 	var p pb.VolumeStatus
 	if err := proto.Unmarshal(entry.Value, &p); err != nil {

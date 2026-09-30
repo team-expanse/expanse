@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/storage/drbd"
@@ -495,12 +496,18 @@ func (c *Controller) volumesByName(ctx context.Context) (map[string]volEntry, er
 	}
 	for _, id := range ids {
 		spec, err := storage.LoadSpec(ctx, c.opts.St, id)
-		if err != nil {
+		if experrors.Is(err, experrors.KindNotFound) {
 			continue
 		}
-		status, rev, err := storage.LoadStatus(ctx, c.opts.St, id)
 		if err != nil {
+			return nil, err // unreadable is not missing: a missing volume gets requested anew
+		}
+		status, rev, err := storage.LoadStatus(ctx, c.opts.St, id)
+		if experrors.Is(err, experrors.KindNotFound) {
 			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		out[spec.Name] = volEntry{id: id, status: status, rev: rev}
 	}

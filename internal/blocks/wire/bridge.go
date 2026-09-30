@@ -28,7 +28,6 @@ import (
 	expstorage "github.com/expanse/expanse/internal/storage"
 	expmount "github.com/expanse/expanse/internal/storage/mount"
 	"github.com/expanse/expanse/internal/store"
-	"github.com/expanse/expanse/internal/store/raftstore"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
 )
@@ -43,7 +42,7 @@ const resourcePrefix = "/node/"
 
 // Bridge materializes placements as desired state on their nodes.
 type Bridge struct {
-	St *raftstore.Store
+	St store.Store
 	// Interval between full syncs; DefaultBridgeInterval when zero.
 	Interval time.Duration
 }
@@ -112,8 +111,12 @@ func (b *Bridge) Sync(ctx context.Context) error {
 		}
 		var status pb.BlockStatus
 		se, err := b.St.Get(ctx, store.Key(string(e.Key)+"/status"))
-		if err != nil {
+		if errors.Is(err, errors.KindNotFound) {
 			continue // nothing placed yet
+		}
+		if err != nil {
+			// Unreadable is not unplaced: syncing now would delete the block's workloads.
+			return errors.Wrap(err, errors.KindOf(err), "bridge.Sync", "read "+string(e.Key)+"/status")
 		}
 		if err := proto.Unmarshal(se.Value, &status); err != nil {
 			continue
@@ -200,7 +203,7 @@ type volumeRef struct {
 // entries look this up under their auto-provisioned name
 // (expstorage.BlockVolumeName), not their raw declared name — the same
 // composite name reconcileBlocks creates the volume under.
-func volumeView(ctx context.Context, st *bStore) (map[string]volumeRef, error) {
+func volumeView(ctx context.Context, st bStore) (map[string]volumeRef, error) {
 	out := map[string]volumeRef{}
 	ids, err := expstorage.ListVolumeIDs(ctx, st)
 	if err != nil {
@@ -208,12 +211,19 @@ func volumeView(ctx context.Context, st *bStore) (map[string]volumeRef, error) {
 	}
 	for _, id := range ids {
 		spec, err := expstorage.LoadSpec(ctx, st, id)
+		if errors.Is(err, errors.KindNotFound) {
+			continue // deleted since the listing
+		}
 		if err != nil {
-			continue
+			// A volume missing from the view loses its mount and changes its workloads' specs.
+			return nil, errors.Wrap(err, errors.KindOf(err), "bridge.volumeView", "read volume "+id)
 		}
 		status, _, err := expstorage.LoadStatus(ctx, st, id)
+		if errors.Is(err, errors.KindNotFound) {
+			continue // not placed yet
+		}
 		if err != nil {
-			continue
+			return nil, errors.Wrap(err, errors.KindOf(err), "bridge.volumeView", "read volume "+id)
 		}
 		out[spec.Name] = volumeRef{id: id, primary: status.Primary}
 	}
@@ -221,7 +231,7 @@ func volumeView(ctx context.Context, st *bStore) (map[string]volumeRef, error) {
 }
 
 // bStore is the store surface the bridge and storage helpers share.
-type bStore = raftstore.Store
+type bStore = store.Store
 
 // blockStorageVolumeName resolves the cluster volume name one storage
 // entry maps to for one specific placement (PHASE-05-TASKS.md D3): a

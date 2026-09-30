@@ -11,6 +11,7 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
+	experrors "github.com/expanse/expanse/internal/errors"
 	expstorage "github.com/expanse/expanse/internal/storage"
 	expmount "github.com/expanse/expanse/internal/storage/mount"
 	"github.com/expanse/expanse/internal/store"
@@ -708,5 +709,50 @@ func TestReplicaSpecVMInstanceRunsAsRoot(t *testing.T) {
 	}
 	if !spec.RunAsRoot {
 		t.Error("vm/instance must run as root: macvtap creation and /dev/kvm both need it")
+	}
+}
+
+// flakyReads fails reads under prefix the way a follower does during a leader election.
+type flakyReads struct {
+	store.Store
+	prefix string
+}
+
+func (f flakyReads) Get(ctx context.Context, k store.Key) (*store.Entry, error) {
+	if strings.HasPrefix(string(k), f.prefix) {
+		return nil, experrors.New(experrors.KindUnavailable, "raftstore.ForwardRead", "no leader known")
+	}
+	return f.Store.Get(ctx, k)
+}
+
+// An unreadable volume or block status must fail the sync, not drop the mount and change the workload.
+func TestBridgeKeepsDesiredStateWhenReadsFail(t *testing.T) {
+	for _, prefix := range []string{expstorage.VolumePrefix, "/blocks/"} {
+		st := newStore(t)
+		ctx := context.Background()
+		seedPlaced(t, ctx, st, 18080)
+		seedVolume(t, ctx, st, "n1")
+		if err := (&Bridge{St: st}).Sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+		before, err := st.List(ctx, "/node/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := (&Bridge{St: flakyReads{st, prefix}}).Sync(ctx); err == nil {
+			t.Errorf("reads under %s failing: Sync succeeded, want an error", prefix)
+		}
+		after, err := st.List(ctx, "/node/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after) != len(before) {
+			t.Errorf("reads under %s failing: desired keys %d -> %d", prefix, len(before), len(after))
+		}
+		for i := range after {
+			if i < len(before) && (after[i].Key != before[i].Key || after[i].Revision != before[i].Revision) {
+				t.Errorf("reads under %s failing: %s changed", prefix, after[i].Key)
+			}
+		}
 	}
 }

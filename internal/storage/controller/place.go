@@ -97,7 +97,14 @@ func (c *Controller) nameTaken(ctx context.Context, name, id string) (bool, erro
 		if other == id {
 			continue
 		}
-		if spec, err := storage.LoadSpec(ctx, c.opts.St, other); err == nil && spec.Name == name {
+		spec, err := storage.LoadSpec(ctx, c.opts.St, other)
+		if experrors.Is(err, experrors.KindNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err // an unread volume may hold the name
+		}
+		if spec.Name == name {
 			return true, nil
 		}
 	}

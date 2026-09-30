@@ -210,3 +210,27 @@ func next(s VolumeState) VolumeState {
 	}
 	return StateDeleting
 }
+
+// unavailableStore fails every read the way a follower does during a leader election.
+type unavailableStore struct{ store.Store }
+
+func (unavailableStore) Get(context.Context, store.Key) (*store.Entry, error) {
+	return nil, experrors.New(experrors.KindUnavailable, "raftstore.ForwardRead", "no leader known")
+}
+
+// A failed read must not pass for a missing volume: callers drop a volume they are told is gone.
+func TestLoadersKeepTheReadErrorKind(t *testing.T) {
+	ctx := context.Background()
+	st := unavailableStore{newStore(t)}
+	_, specErr := LoadSpec(ctx, st, "vol-x")
+	_, _, revErr := LoadSpecRev(ctx, st, "vol-x")
+	_, _, statusErr := LoadStatus(ctx, st, "vol-x")
+	for name, err := range map[string]error{"LoadSpec": specErr, "LoadSpecRev": revErr, "LoadStatus": statusErr} {
+		if experrors.Is(err, experrors.KindNotFound) || !experrors.Is(err, experrors.KindUnavailable) {
+			t.Errorf("%s: %v, want unavailable and not not_found", name, err)
+		}
+	}
+	if _, err := LoadSpec(ctx, newStore(t), "vol-x"); !experrors.Is(err, experrors.KindNotFound) {
+		t.Errorf("LoadSpec of a missing volume: %v, want not_found", err)
+	}
+}
