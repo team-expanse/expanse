@@ -285,6 +285,9 @@
 
           # Six nodes, two VM workloads serving from replicated disks: forming and failover timings. Not a gate.
           cluster-vm-workloads = mkTest "cluster-vm-workloads" ./nix/tests/cluster-vm-workloads.nix;
+          # The same at the largest size one 16-core host pins sensibly: 12 nodes, one physical core each.
+          cluster-vm-workloads-12 = pkgs.testers.nixosTest
+            (import ./nix/tests/cluster-vm-workloads.nix { inherit self; nodeCount = 12; coresPerVM = 1; });
 
           # ROADMAP.md Phase 08 (backup and restore) Stream A (X1): restic
           # adopted (D1), basic backup/restore round-trip against a real

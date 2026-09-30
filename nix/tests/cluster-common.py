@@ -16,8 +16,14 @@ import time
 IP = {f"n{i}": f"192.168.1.{i}" for i in range(1, 7)}
 
 
+ADDR = {}
+
+
 def addr(m):
-    return IP[m.name]
+    """The machine's own eth1 address: the driver numbers machines alphabetically, so n10 is not .10."""
+    if m.name not in ADDR:
+        ADDR[m.name] = m.succeed("ip -4 -o addr show eth1 | awk '{print $4}' | cut -d/ -f1").strip()
+    return ADDR[m.name]
 
 
 

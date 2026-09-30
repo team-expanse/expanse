@@ -1,15 +1,17 @@
-"""Six nodes, two VM workloads serving HTTP from replicated disks, observed from an outside watcher.
+"""NODE_COUNT nodes, two VM workloads serving HTTP from replicated disks, observed from an outside watcher.
 
 Measures cluster forming, placement, failover when a workload's node dies, the dead node's rejoin
 and resync, and failover when the raft leader dies. Runs after cluster-common.py and
-block-common.py; expects KERNEL, INITRD, CMDLINE and POLLER spliced in ahead of it.
+block-common.py; expects KERNEL, INITRD, CMDLINE, POLLER, NODE_COUNT and CORES_PER_VM spliced in.
 """
 import functools
 import os
 
 print = functools.partial(print, flush=True)  # stdout is a file; show timings as they happen
 
-NODES = {f"n{i}": globals()[f"n{i}"] for i in range(1, 7)}
+NODES = {f"n{i}": globals()[f"n{i}"] for i in range(1, NODE_COUNT + 1)}
+QUORUM = (NODE_COUNT, NODE_COUNT // 2 + 1)
+
 WORKLOADS = {"web1": "192.168.1.50", "web2": "192.168.1.51"}
 TIMINGS = []
 
@@ -19,7 +21,7 @@ def note(what, seconds):
     print(f"TIMING {what}: {seconds:.1f}s")
 
 
-# --- CPU pinning: each VM gets two whole physical cores (with their hyperthread siblings) ---
+# --- CPU pinning: each VM gets CORES_PER_VM whole physical cores (with their hyperthread siblings) ---
 
 def physical_cores():
     """Lists of CPUs per physical core, grouped by socket; only cores this process may use."""
@@ -36,7 +38,7 @@ def physical_cores():
 
 
 CORES = physical_cores()
-SLOTS = {name: i for i, name in enumerate(sorted(NODES) + ["watcher"])}
+SLOTS = {name: i for i, name in enumerate(list(NODES) + ["watcher"])}
 
 
 def descendants(pid):
@@ -56,11 +58,11 @@ def descendants(pid):
 
 
 def pin(m):
-    i = SLOTS[m.name]
-    if len(CORES) < 2 * (i + 1):
+    first = SLOTS[m.name] * CORES_PER_VM
+    if len(CORES) < first + CORES_PER_VM:
         print(f"PIN {m.name}: only {len(CORES)} cores available, left unpinned")
         return
-    cpus = set(CORES[2 * i] + CORES[2 * i + 1])
+    cpus = set(sum(CORES[first:first + CORES_PER_VM], []))
     for pid in descendants(m.process.pid):
         for tid in os.listdir(f"/proc/{pid}/task"):
             try:
@@ -192,15 +194,15 @@ for m in list(NODES.values()) + [watcher]:
 for m in NODES.values():
     m.wait_for_unit("multi-user.target")
     m.succeed("systemctl stop expansed.service")
-note("6 nodes booted", time.time() - t_boot)
+note(f"{NODE_COUNT} nodes booted", time.time() - t_boot)
 
-with subtest("form a six-node cluster"):
+with subtest(f"form a {NODE_COUNT}-node cluster"):
     t0 = time.time()
     n1.succeed("expanse cluster init --data-dir /persist/expanse --name workloads --node-id n1 "
-               "--advertise-addr 192.168.1.1:7444 --expect 6")
+               f"--advertise-addr {addr(n1)}:7444 --expect {NODE_COUNT}")
     token = ""
     for _ in range(30):
-        _, out = n1.execute("expanse cluster token --data-dir /persist/expanse create --uses 5 2>/dev/null || true")
+        _, out = n1.execute("expanse cluster token --data-dir /persist/expanse create --uses {NODE_COUNT - 1} 2>/dev/null || true")
         found = re.search(r"expanse-join-[A-Za-z0-9_-]+", out)
         if found:
             token = found.group(0)
@@ -210,12 +212,12 @@ with subtest("form a six-node cluster"):
     n1.succeed("systemctl start expansed.service")
     wait_agent_ready(n1)
     note("form: init + first node serving", time.time() - t0)
-    for name in ["n2", "n3", "n4", "n5", "n6"]:
+    for name in list(NODES)[1:]:
         tj = time.time()
         join_and_start(NODES[name], token, "voter")
         note(f"form: {name} joined", time.time() - tj)
-    until(lambda: quorum(n1) == (6, 4), "quorum 6/4", 120)
-    note("form: total, init to quorum 6/4", time.time() - t0)
+    until(lambda: quorum(n1) == QUORUM, f"quorum {QUORUM}", 180)
+    note(f"form: total, init to quorum {QUORUM[0]}/{QUORUM[1]}", time.time() - t0)
     print(status(n1))
 
 with subtest("deploy two VM workloads and serve HTTP from their disks"):
@@ -260,7 +262,7 @@ with subtest("bring the dead node back: rejoin and resync"):
     NODES[victim].wait_for_unit("multi-user.target")
     wait_agent_ready(NODES[victim])
     note("rejoin: agent up after power-on", time.time() - t0)
-    until(lambda: quorum(via) == (6, 4), "quorum 6/4 again", 300)
+    until(lambda: quorum(via) == QUORUM, "full quorum again", 300)
     note("rejoin: back in quorum", time.time() - t0)
     rc = until(lambda: NODES[victim].execute(
         "s=$(drbdadm status 2>&1); echo \"$s\" | grep -q disk: && ! echo \"$s\" | grep -Eq 'Inconsistent|Outdated|Sync|Connecting'")[0] == 0,

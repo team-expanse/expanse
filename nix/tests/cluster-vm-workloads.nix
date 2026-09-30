@@ -1,6 +1,7 @@
-# Six-node cluster running two VM workloads that serve HTTP from their replicated disks: measures
-# forming, placement, and failover on node loss and on leader loss. A benchmark, not a gate.
-{ self }:
+# A cluster of nodeCount nodes running two VM workloads that serve HTTP from their replicated disks:
+# measures forming, placement, and failover on node loss and on leader loss. A benchmark, not a gate.
+# Each VM is pinned to coresPerVM physical cores.
+{ self, nodeCount ? 6, coresPerVM ? 2 }:
 { pkgs, lib, ... }:
 let
   lint = pkgs.runCommand "cluster-vm-workloads-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -44,7 +45,7 @@ let
     nixpkgs.overlays = [ (final: prev: { expanse = self.packages.${prev.system}.expanse; }) ];
     expanse.node.enable = true;
     expanse.agent.enable = true;
-    expanse.hostId = "0000000${toString idx}";
+    expanse.hostId = lib.fixedWidthString 8 "0" (lib.toLower (lib.toHexString idx));
     expanse.hostname = "n${toString idx}";
     expanse.storage-test.enable = true;
     expanse.agent.period = "5s";
@@ -60,10 +61,10 @@ let
   };
 in
 {
-  name = "expanse-cluster-vm-workloads";
+  name = "expanse-cluster-vm-workloads-${toString nodeCount}";
 
-  nodes = lib.genAttrs (map (i: "n${toString i}") (lib.range 1 6)) (n: { ... }: node (lib.toInt (lib.removePrefix "n" n)))
-    # Outside the cluster, polling the services the way a client would; sorts after n* so n1..n6 keep .1-.6.
+  nodes = lib.genAttrs (map (i: "n${toString i}") (lib.range 1 nodeCount)) (n: { ... }: node (lib.toInt (lib.removePrefix "n" n)))
+    # Outside the cluster, polling the services the way a client would.
     // {
       watcher = { pkgs, ... }: {
         environment.systemPackages = [ pkgs.curl ];
@@ -80,6 +81,8 @@ in
     INITRD = "${initrd}"
     CMDLINE = "${cmdline}"
     POLLER = "${./watcher-poll.sh}"
+    NODE_COUNT = ${toString nodeCount}
+    CORES_PER_VM = ${toString coresPerVM}
     ${builtins.readFile ./python/cluster_vm_workloads.py}
   '';
 }
