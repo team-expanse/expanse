@@ -4,6 +4,7 @@ exec 2>/dev/ttyS0  # the serial console reaches the host's log, so a failed star
 set -eux
 arg() { tr ' ' '\n' < /proc/cmdline | grep "^workload\.$1=" | cut -d= -f2; }
 name=$(arg name)
+until ip link show eth0 >/dev/null 2>&1; do sleep 1; done  # a starved guest may start this before udev adds the NIC
 ip addr add "$(arg ip)/24" dev eth0
 ip link set eth0 up
 
