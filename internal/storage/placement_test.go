@@ -228,3 +228,20 @@ func TestSelectNodesMissingID(t *testing.T) {
 		t.Errorf("KindOf = %v, want invalid", experrors.KindOf(err))
 	}
 }
+
+func TestSelectNodesPrefersNodesHoldingFewerReplicas(t *testing.T) {
+	class := drbdClass(2, nil)
+	nodes := []NodeInfo{
+		{ID: "n1", FreeBytes: 900 << 30, Replicas: 1},
+		{ID: "n2", FreeBytes: 900 << 30, Replicas: 1},
+		{ID: "n3", FreeBytes: 10 << 30},
+		{ID: "n4", FreeBytes: 10 << 30},
+	}
+	got, err := SelectNodes(class, nodes, nil)
+	if err != nil {
+		t.Fatalf("SelectNodes: %v", err)
+	}
+	if fmt.Sprint(ids(got)) != "[n3 n4]" {
+		t.Errorf("got %v, want [n3 n4]: the least-used nodes win before free space", ids(got))
+	}
+}

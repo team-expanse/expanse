@@ -94,6 +94,9 @@ func TestNodesView(t *testing.T) {
 	}
 	byID := map[string]schedulerNode{}
 	for _, v := range views {
+		if v.CapacityCPU != DefaultCapacity.CPU {
+			t.Errorf("%s CapacityCPU = %s, want %s: least-loaded scoring needs it", v.ID, v.CapacityCPU, DefaultCapacity.CPU)
+		}
 		byID[v.ID] = schedulerNode{
 			Ready: v.Ready, FreeCPU: v.FreeCPU.Milli, FreeMem: v.FreeMem.N,
 		}

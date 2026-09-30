@@ -234,6 +234,7 @@ with subtest("deploy two VM workloads and serve HTTP from their disks"):
         note(f"deploy: {name} serving HTTP to the watcher", time.time() - t0)
     placement = {name: holder(name, n1) for name in WORKLOADS}
     print(f"PLACEMENT {placement}; leader {leader(n1)}")
+    assert placement["web1"] != placement["web2"], f"both workloads placed on {placement['web1']}"
     print(n1.succeed("expanse ctl volume list 2>&1"))
     time.sleep(20)  # a steady baseline in the poll log
 

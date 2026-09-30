@@ -147,6 +147,7 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 				Capabilities:   nodeCapabilities(ctx, st, id),
 				Volumes:        local,
 				HealthyVolumes: healthyLocal,
+				CapacityCPU:    DefaultCapacity.CPU,
 				FreeCPU:        quantity.CPU{Milli: DefaultCapacity.CPU.Milli - u.cpu},
 				FreeMem:        quantity.Bytes{N: DefaultCapacity.Mem.N - u.mem},
 				FreeDisk:       quantity.Bytes{N: DefaultCapacity.Disk.N - u.dsk},

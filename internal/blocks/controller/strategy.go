@@ -98,11 +98,8 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 		if placementAt(status, int32(i)) != nil {
 			continue
 		}
-		nodeID, pending := scheduler.Schedule(nodes, scheduler.ReplicaRequest{
-			Block:              b,
-			ReplicaIndex:       i,
-			ExistingPlacements: existing,
-		}, cfg, scheduler.ClusterView{SameBlockReplicas: sameBlockReplicas(existing)})
+		req := scheduler.ReplicaRequest{Block: b, ReplicaIndex: i, ExistingPlacements: existing}
+		nodeID, pending := scheduler.Schedule(nodes, req, cfg, scheduler.ClusterView{SameBlockReplicas: sameBlockReplicas(existing)})
 		if pending != nil {
 			// Persist the reason but do NOT advance the phase (§4.3):
 			// the replica stays Pending and is retried on the next trigger.
@@ -119,6 +116,7 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 			Generation:   int64(e.Revision),
 		})
 		existing = append(existing, nodeID)
+		scheduler.Reserve(nodes, nodeID, req)
 		placed++
 	}
 	if placed > 0 || status.GetPendingReason() != nil {

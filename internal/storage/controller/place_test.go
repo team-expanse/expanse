@@ -318,3 +318,19 @@ func TestNoSpecIsVisibleUntilTheStatusIsWritten(t *testing.T) {
 		t.Error("request dropped although placement failed")
 	}
 }
+
+func TestSuccessiveVolumesSpreadEvenlyAcrossNodes(t *testing.T) {
+	c, st := newPlacer(t, "n1", "n2", "n3", "n4", "n5", "n6")
+	request(t, st, "web1", 3)
+	request(t, st, "web2", 3)
+	c.processPending(context.Background(), meshed(t, c))
+	perNode := map[string]int{}
+	for _, id := range placed(t, st) {
+		for _, r := range load(t, st, id).Placement {
+			perNode[r.NodeID]++
+		}
+	}
+	if len(perNode) != 6 {
+		t.Errorf("replicas per node %v: two 3-way volumes on 6 nodes should use every node once", perNode)
+	}
+}

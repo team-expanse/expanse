@@ -18,6 +18,8 @@ type NodeInfo struct {
 	// FreeBytes is the pool's free space. Nodes with unknown free space
 	// (0) sort after known quantities but are still eligible.
 	FreeBytes uint64
+	// Replicas counts the volume replicas the node already holds; fewer wins, so volumes spread evenly.
+	Replicas int
 }
 
 // SelectNodes chooses the node set for a volume's replicas (§4.6):
@@ -62,10 +64,13 @@ func SelectNodes(class StorageClass, nodes []NodeInfo, existing []string) ([]Nod
 				class.Name, count, class.NodeSelector, len(eligible), len(existing)))
 	}
 
-	// Prefer nodes with more free space; ties break by node ID so the
+	// Prefer nodes holding fewer replicas, then more free space; ties break by node ID so the
 	// choice is deterministic (and stable across identical cluster
 	// states, which keeps controller reconcile convergent).
 	sort.Slice(eligible, func(i, j int) bool {
+		if eligible[i].Replicas != eligible[j].Replicas {
+			return eligible[i].Replicas < eligible[j].Replicas
+		}
 		if eligible[i].FreeBytes != eligible[j].FreeBytes {
 			return eligible[i].FreeBytes > eligible[j].FreeBytes
 		}

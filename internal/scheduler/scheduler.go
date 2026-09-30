@@ -227,6 +227,21 @@ func availMem(n NodeView, cfg OvercommitConfig) quantity.Bytes {
 	return quantity.Bytes{N: b}
 }
 
+// Reserve charges req's requests to nodeID in nodes, so later placements in the same pass see the load.
+func Reserve(nodes []NodeView, nodeID string, req ReplicaRequest) {
+	cpu, mem, disk, _, errMsg := requestQuantities(req)
+	if errMsg != "" {
+		return
+	}
+	for i := range nodes {
+		if nodes[i].ID == nodeID {
+			nodes[i].FreeCPU.Milli -= cpu.Milli
+			nodes[i].FreeMem.N -= mem.N
+			nodes[i].FreeDisk.N -= disk.N
+		}
+	}
+}
+
 // requestQuantities parses the request quantities once; deviceReqs keeps
 // insertion order for deterministic messages. An unparseable quantity (V9's
 // job to reject) fails every node with InvalidRequests rather than being

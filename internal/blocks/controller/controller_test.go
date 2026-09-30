@@ -283,3 +283,31 @@ func TestOtherTriggerCallbacks(t *testing.T) {
 		}
 	}
 }
+
+// Blocks placed in one pass see each other's load, so they spread instead of piling up.
+func TestBlocksPlacedInOnePassSpreadAcrossNodes(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		views := nodeViews(4)
+		for i := range views {
+			views[i].CapacityCPU = quantity.CPU{Milli: 4000}
+		}
+		return views, testCfg(), nil
+	})
+	names := []string{"web1", "web2", "web3", "web4"}
+	for _, name := range names {
+		mustCreate(t, ctx, st, blockFor(name, 1))
+	}
+	if n, err := c.Reconcile(ctx); err != nil || n != 4 {
+		t.Fatalf("Reconcile = %d, %v; want 4 placed", n, err)
+	}
+	used := map[string]string{}
+	for _, name := range names {
+		node := loadStatus(t, ctx, st, "default", name).GetPlacements()[0].GetNodeId()
+		if other, taken := used[node]; taken {
+			t.Errorf("%s and %s both placed on %s", other, name, node)
+		}
+		used[node] = name
+	}
+}

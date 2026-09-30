@@ -66,13 +66,31 @@ func (c *Controller) meshedNodes(ctx context.Context) (map[string]bool, error) {
 // storageNodes are the live nodes that can take a new replica: not witnesses (no
 // capacity) and not cordoned.
 func (c *Controller) storageNodes(ctx context.Context, meshed map[string]bool) []storage.NodeInfo {
+	held := c.replicaCounts(ctx)
 	var nodes []storage.NodeInfo
 	for id, alive := range meshed {
 		rec, _ := c.nodeRecord(ctx, id)
 		if alive && rec.Role != "witness" && !rec.Cordoned {
-			nodes = append(nodes, storage.NodeInfo{ID: id})
+			nodes = append(nodes, storage.NodeInfo{ID: id, Replicas: held[id]})
 		}
 	}
 	slices.SortFunc(nodes, func(a, b storage.NodeInfo) int { return strings.Compare(a.ID, b.ID) })
 	return nodes
+}
+
+// replicaCounts is how many volume replicas each node holds, so placement can spread new ones.
+func (c *Controller) replicaCounts(ctx context.Context) map[string]int {
+	held := map[string]int{}
+	ids, err := storage.ListVolumeIDs(ctx, c.opts.St)
+	if err != nil {
+		return held
+	}
+	for _, id := range ids {
+		if status, _, err := storage.LoadStatus(ctx, c.opts.St, id); err == nil {
+			for _, r := range status.Placement {
+				held[r.NodeID]++
+			}
+		}
+	}
+	return held
 }
