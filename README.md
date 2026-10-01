@@ -7,6 +7,8 @@ distributed-systems code where a proven one already exists (Raft, DRBD,
 LVM, WireGuard, nftables). See `.plan/PREMISE.md` for the full vision and
 `.plan/ARCHITECTURE.md` for how it's actually built.
 
+The project site is [expanseos.org](https://expanseos.org).
+
 ## What works today
 
 - **Install** — bootable ISO, TUI or unattended install, declarative
@@ -127,7 +129,7 @@ decides what ships.
   evaluation; read the known issues before trusting Expanse with data you care
   about.
 
-See also [How Expanse is made](https://team-expanse.github.io/expanse-website/#made-with-ai)
+See also [How Expanse is made](https://expanseos.org/#made-with-ai)
 on the project site.
 
 ## License
