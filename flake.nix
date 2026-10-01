@@ -271,6 +271,9 @@
           # Probe (Phase 6 D1, final choice): not a gate.
           vm-d1-boot-probe = mkTest "vm-d1-boot-probe" ./nix/tests/vm-d1-boot-probe.nix;
 
+          # Probe (workload health, step 1): not a gate.
+          vm-vsock-notify-probe = mkTest "vm-vsock-notify-probe" ./nix/tests/vm-vsock-notify-probe.nix;
+
           # Stream A, X1: a real vm/instance block deploy, not a probe.
           vm-instance = mkTest "vm-instance" ./nix/tests/vm-instance.nix;
 
