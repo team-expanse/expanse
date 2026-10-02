@@ -61,11 +61,26 @@ with subtest("a frozen replica is restarted on its node"):
     assert invocation(host) != before, "the unit was not restarted"
     host.succeed("journalctl -u expansed.service | grep -q 'liveness probe failing; restarting replica'")
 
+
+def status_table():
+    """The human `ctl block get` output, one list of fields per line."""
+    out = n1.succeed(f"expanse ctl block get {SOCK} web")
+    return out, [line.split() for line in out.splitlines()]
+
+
 with subtest("the restarted replica stays put and RUNNING"):
     time.sleep(20)
     b = wait_phase(n1, "web", ["RUNNING"], 30)
     assert replica_node(b, 0) == node, f"replica moved: {b.get('status')}"
     assert liveness_record().get("restarts") == 1, f"restarted again: {liveness_record()}"
+
+with subtest("ctl block get shows the replica's health by node"):
+    health = next(p for p in b["status"]["placements"] if p.get("nodeId") == node).get("health") or {}
+    assert health.get("restarts") == 1 and (health.get("readiness") or {}).get("ok"), f"health: {health}"
+    assert b["status"].get("replicas", {}).get("ready") == 1, f"ready count: {b['status']}"
+    out, rows = status_table()
+    assert ["0", node, "RUNNING", "yes", "1"] in [r[:5] for r in rows], f"no healthy row for {node}:\n{out}"
+    assert "Phase:   RUNNING (1/1 ready)" in out, out
 
 
 def freeze_until(m, done, timeout):
@@ -111,3 +126,9 @@ with subtest("a replica failing on a second node is stopped, not moved again"):
     time.sleep(20)
     b = get_json(n1, "web")
     assert phase_of(b) == "FAILED" and replica_node(b, 0) is None, f"replica came back: {b.get('status')}"
+    out, rows = status_table()
+    assert "Reason:  LivenessFailed: replica 0 failed its liveness probe on 2 nodes" in out, out
+    for n in (node, second):
+        row = next((r for r in rows if r[1:2] == [n]), None)
+        assert row and row[2] == "FAILED" and " ".join(row[5:]).startswith(
+            "stopped: liveness probe failed after 1 restart:"), f"no stopped row for {n}:\n{out}"

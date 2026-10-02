@@ -40,7 +40,18 @@ History before 1.0.0 is not recorded here.
   marked `FAILED` but stays on its node. The agent's new
   `livenessMaxRestarts` option sets how many restarts a node tries first.
 
+- `expanse ctl block get` now prints a status table by default, with each
+  replica's node, readiness, restarts and last probe result, and why a
+  replaced placement was stopped. The web UI's block page shows the same
+  columns. Use `-o yaml` or `-o json` for the full record, which now
+  includes each placement's `health` and `message`. `ctl block list` shows
+  ready/desired replicas.
+
 ### Fixed
+
+- A block's ready replica count was always 0, in the web UI and the API.
+  It now counts replicas that are `RUNNING` and whose readiness probe is not
+  failing.
 
 - An `iscsi/target` block's VIP could fail to come up. Creating the target
   also opened a default portal on port 3260 on every address of the node,

@@ -171,14 +171,15 @@ func (s *Server) Watch(r *pb.WatchBlocksRequest, srv pb.BlockService_WatchServer
 }
 
 // blockNameFromKey extracts (namespace, name) from a store key under
-// BlockPrefix, whether it names the block itself or its observed-status
-// sub-key ("<key>/status", written by the placement controller) — Watch
-// must match both, since a phase promotion touches only the sub-key.
+// BlockPrefix: the block itself, its observed status, or a replica's probe record under it,
+// since a phase promotion or a probe result touches only its own sub-key.
 func blockNameFromKey(k store.Key) (ns, name string, ok bool) {
 	rest := strings.TrimPrefix(string(k), BlockPrefix)
-	rest = strings.TrimSuffix(rest, "/status")
-	parts := strings.SplitN(rest, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	parts := strings.SplitN(rest, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	if len(parts) == 3 && parts[2] != "status" && !strings.HasPrefix(parts[2], "status/") {
 		return "", "", false
 	}
 	return parts[0], parts[1], true

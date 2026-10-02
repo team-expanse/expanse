@@ -361,6 +361,25 @@ message PlacementStatus {
   int64 generation = 4;
   // The replica index a retired placement (replica_index -1) served.
   int32 former_index = 5;
+  // The replica's latest probe results on this node; filled in by the block API on read, never stored.
+  ReplicaHealth health = 6;
+  // Why the controller failed this placement, e.g. the liveness probe's last error.
+  string message = 7;
+}
+
+// ProbeResult is one probe outcome as the replica's node last recorded it.
+message ProbeResult {
+  bool ok = 1;
+  string detail = 2;
+  int64 at_unix_ns = 3;
+}
+
+// ReplicaHealth is what the replica's node reports about it. An unset result is unknown, not failing.
+message ReplicaHealth {
+  ProbeResult readiness = 1;
+  // Unset until the node restarts the replica; ok is false once the node gives up on it.
+  ProbeResult liveness = 2;
+  int32 restarts = 3;
 }
 
 // PendingReason explains why a replica could not be placed (§4.3).

@@ -146,6 +146,7 @@ func (c *Controller) livenessPass(ctx context.Context, b *pb.Block, k store.Key,
 			return false, false // unknown is not unhealthy
 		}
 		p.Phase, marked = pb.Phase_FAILED, true
+		p.Message = fmt.Sprintf("liveness probe failed after %d restart%s: %s", rec.Restarts, plural(rec.Restarts), rec.Detail)
 	}
 	if b.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_DAEMONSET {
 		return false, marked
@@ -247,4 +248,11 @@ func hasRetired(status *pb.BlockStatus) bool {
 		}
 	}
 	return false
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }

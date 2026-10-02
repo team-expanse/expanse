@@ -64,6 +64,9 @@ func TestLivenessFailureMovesReplicaOffItsNode(t *testing.T) {
 	if old := failedPlacementOn(s, from); old == nil || old.GetReplicaIndex() != -1 {
 		t.Fatalf("placement on %s = %+v, want retired and FAILED (status %v)", from, old, s)
 	}
+	if m := failedPlacementOn(s, from).GetMessage(); m != "liveness probe failed after 5 restarts: connection refused" {
+		t.Errorf("failed placement message = %q", m)
+	}
 	if p := placementAt(s, 0); p == nil || p.GetNodeId() == from {
 		t.Fatalf("replica 0 = %+v, want it on a node other than %s", p, from)
 	}
@@ -178,9 +181,12 @@ func TestLivenessFailureOnTwoNodesStopsTheReplica(t *testing.T) {
 	c := fixedNodes(st, nodeViews(3))
 	reconcile(t, c)
 	first := placementAt(waitPlaced(t, ctx, c, "default", "web", 1), 0).GetNodeId()
-	publishLiveness(t, st, "web", 0, first, health.LivenessRecord{Failed: true})
+	publishLiveness(t, st, "web", 0, first, health.LivenessRecord{Restarts: 1, Failed: true, Detail: "timeout"})
 	reconcile(t, c)
 	second := placementAt(loadStatus(t, ctx, st, "default", "web"), 0).GetNodeId()
+	if m := failedPlacementOn(loadStatus(t, ctx, st, "default", "web"), first).GetMessage(); m != "liveness probe failed after 1 restart: timeout" {
+		t.Errorf("message = %q", m)
+	}
 
 	publishLiveness(t, st, "web", 0, second, health.LivenessRecord{Failed: true})
 	reconcile(t, c)

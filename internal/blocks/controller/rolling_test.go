@@ -414,3 +414,21 @@ func TestUpdatePassScaleUpCreatesMissingReplicas(t *testing.T) {
 		t.Fatalf("placements after scale-up = %d, want 3", got)
 	}
 }
+
+// A replica restarted at a new generation sheds the failure message from its old one.
+func TestRollingUpdateClearsAReplicasOldFailureMessage(t *testing.T) {
+	ctx := context.Background()
+	b := blockFor("web", 2)
+	b.Spec.Strategy = &pb.Strategy{Update: &pb.UpdateStrategy{MaxUnavailable: 1}}
+	c, h, _ := rollBlock(t, ctx, b, 3)
+	status := loadStatus(t, ctx, c.St, "default", "web")
+	placementAt(status, 0).Message = "liveness probe failed after 5 restarts: refused"
+	if err := c.persistStatus(ctx, blockKey("default", "web"), status); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _ = runRoll(t, ctx, c, h, "default", "web", 2, func() int { return 2 })
+	if m := placementAt(status, 0).GetMessage(); m != "" {
+		t.Errorf("replica 0 message after the roll = %q, want none", m)
+	}
+}

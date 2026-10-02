@@ -58,13 +58,13 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 				}
 				return emit(opts, func() {
 					w := cmd.OutOrStdout()
-					fmt.Fprintf(w, "%-24s %-20s %-9s %-8s\n", "NAME", "TYPE", "REPLICAS", "PHASE")
+					fmt.Fprintf(w, "%-24s %-20s %-9s %-8s\n", "NAME", "TYPE", "READY", "PHASE")
 					for _, b := range resp.GetBlocks() {
 						m := b.GetMetadata()
-						fmt.Fprintf(w, "%-24s %-20s %-9d %-8s\n",
+						fmt.Fprintf(w, "%-24s %-20s %-9s %-8s\n",
 							m.GetNamespace()+"/"+m.GetName(),
 							b.GetSpec().GetType(),
-							b.GetSpec().GetReplicas(),
+							fmt.Sprintf("%d/%d", b.GetStatus().GetReplicas().GetReady(), b.GetSpec().GetReplicas()),
 							b.GetStatus().GetPhase().String())
 					}
 				}, resp.GetBlocks())
@@ -75,7 +75,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 
 	get := &cobra.Command{
 		Use:   "get <name>",
-		Short: "Get one block",
+		Short: "Show one block's status and replica health (-o yaml|json for the full record)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ns := nsFlag(cmd)
@@ -84,7 +84,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 				if err != nil {
 					return fmt.Errorf("Get: %w", err)
 				}
-				return emit(opts, nil, b)
+				return emit(opts, func() { printBlockStatus(cmd.OutOrStdout(), b, time.Now()) }, b)
 			})
 		},
 	}

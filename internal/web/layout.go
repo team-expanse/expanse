@@ -114,6 +114,8 @@ func (t *templates) execute(w io.Writer, name string, data any) error {
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		"phase":      phasePill,
+		"replica":    replicaRow,
+		"live":       livePlacements,
 		"volstate":   volumePill,
 		"health":     healthPill,
 		"nodeState":  nodePill,

@@ -230,7 +230,7 @@ func (c *Controller) updatePass(ctx context.Context, b *pb.Block, status *pb.Blo
 			errors.Wrap(err, errors.KindInternal, "controller.update", "stop replica"))
 	}
 	r.Phase = pb.Phase_STARTING
-	r.Generation = target
+	r.Generation, r.Message = target, ""
 	if err := h.start(ctx, b, r); err != nil {
 		return failUpdate(ctx, h, b, status, r, prevGen, target, upd.GetAutoRollback(),
 			errors.Wrap(err, errors.KindInternal, "controller.update", "start replica at new generation"))

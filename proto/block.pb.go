@@ -2316,7 +2316,11 @@ type PlacementStatus struct {
 	// generation for rolling updates). 0 = pre-T15 placement.
 	Generation int64 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"`
 	// The replica index a retired placement (replica_index -1) served.
-	FormerIndex   int32 `protobuf:"varint,5,opt,name=former_index,json=formerIndex,proto3" json:"former_index,omitempty"`
+	FormerIndex int32 `protobuf:"varint,5,opt,name=former_index,json=formerIndex,proto3" json:"former_index,omitempty"`
+	// The replica's latest probe results on this node; filled in by the block API on read, never stored.
+	Health *ReplicaHealth `protobuf:"bytes,6,opt,name=health,proto3" json:"health,omitempty"`
+	// Why the controller failed this placement, e.g. the liveness probe's last error.
+	Message       string `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2386,6 +2390,143 @@ func (x *PlacementStatus) GetFormerIndex() int32 {
 	return 0
 }
 
+func (x *PlacementStatus) GetHealth() *ReplicaHealth {
+	if x != nil {
+		return x.Health
+	}
+	return nil
+}
+
+func (x *PlacementStatus) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// ProbeResult is one probe outcome as the replica's node last recorded it.
+type ProbeResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Detail        string                 `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
+	AtUnixNs      int64                  `protobuf:"varint,3,opt,name=at_unix_ns,json=atUnixNs,proto3" json:"at_unix_ns,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeResult) Reset() {
+	*x = ProbeResult{}
+	mi := &file_proto_block_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeResult) ProtoMessage() {}
+
+func (x *ProbeResult) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_block_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
+func (*ProbeResult) Descriptor() ([]byte, []int) {
+	return file_proto_block_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ProbeResult) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *ProbeResult) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *ProbeResult) GetAtUnixNs() int64 {
+	if x != nil {
+		return x.AtUnixNs
+	}
+	return 0
+}
+
+// ReplicaHealth is what the replica's node reports about it. An unset result is unknown, not failing.
+type ReplicaHealth struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Readiness *ProbeResult           `protobuf:"bytes,1,opt,name=readiness,proto3" json:"readiness,omitempty"`
+	// Unset until the node restarts the replica; ok is false once the node gives up on it.
+	Liveness      *ProbeResult `protobuf:"bytes,2,opt,name=liveness,proto3" json:"liveness,omitempty"`
+	Restarts      int32        `protobuf:"varint,3,opt,name=restarts,proto3" json:"restarts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplicaHealth) Reset() {
+	*x = ReplicaHealth{}
+	mi := &file_proto_block_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicaHealth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicaHealth) ProtoMessage() {}
+
+func (x *ReplicaHealth) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_block_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicaHealth.ProtoReflect.Descriptor instead.
+func (*ReplicaHealth) Descriptor() ([]byte, []int) {
+	return file_proto_block_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ReplicaHealth) GetReadiness() *ProbeResult {
+	if x != nil {
+		return x.Readiness
+	}
+	return nil
+}
+
+func (x *ReplicaHealth) GetLiveness() *ProbeResult {
+	if x != nil {
+		return x.Liveness
+	}
+	return nil
+}
+
+func (x *ReplicaHealth) GetRestarts() int32 {
+	if x != nil {
+		return x.Restarts
+	}
+	return 0
+}
+
 // PendingReason explains why a replica could not be placed (§4.3).
 type PendingReason struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
@@ -2399,7 +2540,7 @@ type PendingReason struct {
 
 func (x *PendingReason) Reset() {
 	*x = PendingReason{}
-	mi := &file_proto_block_proto_msgTypes[25]
+	mi := &file_proto_block_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2411,7 +2552,7 @@ func (x *PendingReason) String() string {
 func (*PendingReason) ProtoMessage() {}
 
 func (x *PendingReason) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[25]
+	mi := &file_proto_block_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2424,7 +2565,7 @@ func (x *PendingReason) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PendingReason.ProtoReflect.Descriptor instead.
 func (*PendingReason) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{25}
+	return file_proto_block_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *PendingReason) GetCode() string {
@@ -2464,7 +2605,7 @@ type BlockStatus struct {
 
 func (x *BlockStatus) Reset() {
 	*x = BlockStatus{}
-	mi := &file_proto_block_proto_msgTypes[26]
+	mi := &file_proto_block_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2476,7 +2617,7 @@ func (x *BlockStatus) String() string {
 func (*BlockStatus) ProtoMessage() {}
 
 func (x *BlockStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[26]
+	mi := &file_proto_block_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2489,7 +2630,7 @@ func (x *BlockStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockStatus.ProtoReflect.Descriptor instead.
 func (*BlockStatus) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{26}
+	return file_proto_block_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *BlockStatus) GetPhase() Phase {
@@ -2553,7 +2694,7 @@ type Block struct {
 
 func (x *Block) Reset() {
 	*x = Block{}
-	mi := &file_proto_block_proto_msgTypes[27]
+	mi := &file_proto_block_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2565,7 +2706,7 @@ func (x *Block) String() string {
 func (*Block) ProtoMessage() {}
 
 func (x *Block) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[27]
+	mi := &file_proto_block_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2578,7 +2719,7 @@ func (x *Block) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Block.ProtoReflect.Descriptor instead.
 func (*Block) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{27}
+	return file_proto_block_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Block) GetMetadata() *Metadata {
@@ -2612,7 +2753,7 @@ type GetBlockRequest struct {
 
 func (x *GetBlockRequest) Reset() {
 	*x = GetBlockRequest{}
-	mi := &file_proto_block_proto_msgTypes[28]
+	mi := &file_proto_block_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2624,7 +2765,7 @@ func (x *GetBlockRequest) String() string {
 func (*GetBlockRequest) ProtoMessage() {}
 
 func (x *GetBlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[28]
+	mi := &file_proto_block_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2637,7 +2778,7 @@ func (x *GetBlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlockRequest.ProtoReflect.Descriptor instead.
 func (*GetBlockRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{28}
+	return file_proto_block_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *GetBlockRequest) GetNamespace() string {
@@ -2664,7 +2805,7 @@ type ListBlocksRequest struct {
 
 func (x *ListBlocksRequest) Reset() {
 	*x = ListBlocksRequest{}
-	mi := &file_proto_block_proto_msgTypes[29]
+	mi := &file_proto_block_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2676,7 +2817,7 @@ func (x *ListBlocksRequest) String() string {
 func (*ListBlocksRequest) ProtoMessage() {}
 
 func (x *ListBlocksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[29]
+	mi := &file_proto_block_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2689,7 +2830,7 @@ func (x *ListBlocksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBlocksRequest.ProtoReflect.Descriptor instead.
 func (*ListBlocksRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{29}
+	return file_proto_block_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ListBlocksRequest) GetNamespace() string {
@@ -2708,7 +2849,7 @@ type ListBlocksResponse struct {
 
 func (x *ListBlocksResponse) Reset() {
 	*x = ListBlocksResponse{}
-	mi := &file_proto_block_proto_msgTypes[30]
+	mi := &file_proto_block_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2720,7 +2861,7 @@ func (x *ListBlocksResponse) String() string {
 func (*ListBlocksResponse) ProtoMessage() {}
 
 func (x *ListBlocksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[30]
+	mi := &file_proto_block_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2733,7 +2874,7 @@ func (x *ListBlocksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBlocksResponse.ProtoReflect.Descriptor instead.
 func (*ListBlocksResponse) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{30}
+	return file_proto_block_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ListBlocksResponse) GetBlocks() []*Block {
@@ -2753,7 +2894,7 @@ type DeleteBlockRequest struct {
 
 func (x *DeleteBlockRequest) Reset() {
 	*x = DeleteBlockRequest{}
-	mi := &file_proto_block_proto_msgTypes[31]
+	mi := &file_proto_block_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2765,7 +2906,7 @@ func (x *DeleteBlockRequest) String() string {
 func (*DeleteBlockRequest) ProtoMessage() {}
 
 func (x *DeleteBlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[31]
+	mi := &file_proto_block_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2778,7 +2919,7 @@ func (x *DeleteBlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBlockRequest.ProtoReflect.Descriptor instead.
 func (*DeleteBlockRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{31}
+	return file_proto_block_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *DeleteBlockRequest) GetNamespace() string {
@@ -2806,7 +2947,7 @@ type ScaleRequest struct {
 
 func (x *ScaleRequest) Reset() {
 	*x = ScaleRequest{}
-	mi := &file_proto_block_proto_msgTypes[32]
+	mi := &file_proto_block_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2818,7 +2959,7 @@ func (x *ScaleRequest) String() string {
 func (*ScaleRequest) ProtoMessage() {}
 
 func (x *ScaleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[32]
+	mi := &file_proto_block_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2831,7 +2972,7 @@ func (x *ScaleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScaleRequest.ProtoReflect.Descriptor instead.
 func (*ScaleRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{32}
+	return file_proto_block_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ScaleRequest) GetNamespace() string {
@@ -2867,7 +3008,7 @@ type RestartRequest struct {
 
 func (x *RestartRequest) Reset() {
 	*x = RestartRequest{}
-	mi := &file_proto_block_proto_msgTypes[33]
+	mi := &file_proto_block_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2879,7 +3020,7 @@ func (x *RestartRequest) String() string {
 func (*RestartRequest) ProtoMessage() {}
 
 func (x *RestartRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[33]
+	mi := &file_proto_block_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2892,7 +3033,7 @@ func (x *RestartRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestartRequest.ProtoReflect.Descriptor instead.
 func (*RestartRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{33}
+	return file_proto_block_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *RestartRequest) GetNamespace() string {
@@ -2927,7 +3068,7 @@ type WatchBlocksRequest struct {
 
 func (x *WatchBlocksRequest) Reset() {
 	*x = WatchBlocksRequest{}
-	mi := &file_proto_block_proto_msgTypes[34]
+	mi := &file_proto_block_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2939,7 +3080,7 @@ func (x *WatchBlocksRequest) String() string {
 func (*WatchBlocksRequest) ProtoMessage() {}
 
 func (x *WatchBlocksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[34]
+	mi := &file_proto_block_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2952,7 +3093,7 @@ func (x *WatchBlocksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchBlocksRequest.ProtoReflect.Descriptor instead.
 func (*WatchBlocksRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{34}
+	return file_proto_block_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *WatchBlocksRequest) GetNamespace() string {
@@ -2979,7 +3120,7 @@ type BlockEvent struct {
 
 func (x *BlockEvent) Reset() {
 	*x = BlockEvent{}
-	mi := &file_proto_block_proto_msgTypes[35]
+	mi := &file_proto_block_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2991,7 +3132,7 @@ func (x *BlockEvent) String() string {
 func (*BlockEvent) ProtoMessage() {}
 
 func (x *BlockEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[35]
+	mi := &file_proto_block_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3004,7 +3145,7 @@ func (x *BlockEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockEvent.ProtoReflect.Descriptor instead.
 func (*BlockEvent) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{35}
+	return file_proto_block_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *BlockEvent) GetType() EventType {
@@ -3036,7 +3177,7 @@ type LogsRequest struct {
 
 func (x *LogsRequest) Reset() {
 	*x = LogsRequest{}
-	mi := &file_proto_block_proto_msgTypes[36]
+	mi := &file_proto_block_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3048,7 +3189,7 @@ func (x *LogsRequest) String() string {
 func (*LogsRequest) ProtoMessage() {}
 
 func (x *LogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[36]
+	mi := &file_proto_block_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3061,7 +3202,7 @@ func (x *LogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsRequest.ProtoReflect.Descriptor instead.
 func (*LogsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{36}
+	return file_proto_block_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *LogsRequest) GetNamespace() string {
@@ -3117,7 +3258,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_proto_block_proto_msgTypes[37]
+	mi := &file_proto_block_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3129,7 +3270,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[37]
+	mi := &file_proto_block_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3142,7 +3283,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{37}
+	return file_proto_block_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *LogLine) GetReplicaIndex() int32 {
@@ -3176,7 +3317,7 @@ type ExplainRequest struct {
 
 func (x *ExplainRequest) Reset() {
 	*x = ExplainRequest{}
-	mi := &file_proto_block_proto_msgTypes[38]
+	mi := &file_proto_block_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3188,7 +3329,7 @@ func (x *ExplainRequest) String() string {
 func (*ExplainRequest) ProtoMessage() {}
 
 func (x *ExplainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[38]
+	mi := &file_proto_block_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3201,7 +3342,7 @@ func (x *ExplainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainRequest.ProtoReflect.Descriptor instead.
 func (*ExplainRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{38}
+	return file_proto_block_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ExplainRequest) GetNamespace() string {
@@ -3234,7 +3375,7 @@ type NodeExplanation struct {
 
 func (x *NodeExplanation) Reset() {
 	*x = NodeExplanation{}
-	mi := &file_proto_block_proto_msgTypes[39]
+	mi := &file_proto_block_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3246,7 +3387,7 @@ func (x *NodeExplanation) String() string {
 func (*NodeExplanation) ProtoMessage() {}
 
 func (x *NodeExplanation) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[39]
+	mi := &file_proto_block_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3259,7 +3400,7 @@ func (x *NodeExplanation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeExplanation.ProtoReflect.Descriptor instead.
 func (*NodeExplanation) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{39}
+	return file_proto_block_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *NodeExplanation) GetNode() string {
@@ -3313,7 +3454,7 @@ type ReplicaExplanation struct {
 
 func (x *ReplicaExplanation) Reset() {
 	*x = ReplicaExplanation{}
-	mi := &file_proto_block_proto_msgTypes[40]
+	mi := &file_proto_block_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3325,7 +3466,7 @@ func (x *ReplicaExplanation) String() string {
 func (*ReplicaExplanation) ProtoMessage() {}
 
 func (x *ReplicaExplanation) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[40]
+	mi := &file_proto_block_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3338,7 +3479,7 @@ func (x *ReplicaExplanation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicaExplanation.ProtoReflect.Descriptor instead.
 func (*ReplicaExplanation) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{40}
+	return file_proto_block_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ReplicaExplanation) GetReplicaIndex() int32 {
@@ -3389,7 +3530,7 @@ type ExplainResponse struct {
 
 func (x *ExplainResponse) Reset() {
 	*x = ExplainResponse{}
-	mi := &file_proto_block_proto_msgTypes[41]
+	mi := &file_proto_block_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3401,7 +3542,7 @@ func (x *ExplainResponse) String() string {
 func (*ExplainResponse) ProtoMessage() {}
 
 func (x *ExplainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[41]
+	mi := &file_proto_block_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3414,7 +3555,7 @@ func (x *ExplainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainResponse.ProtoReflect.Descriptor instead.
 func (*ExplainResponse) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{41}
+	return file_proto_block_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ExplainResponse) GetNamespace() string {
@@ -3469,7 +3610,7 @@ type BlockType struct {
 
 func (x *BlockType) Reset() {
 	*x = BlockType{}
-	mi := &file_proto_block_proto_msgTypes[42]
+	mi := &file_proto_block_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3481,7 +3622,7 @@ func (x *BlockType) String() string {
 func (*BlockType) ProtoMessage() {}
 
 func (x *BlockType) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[42]
+	mi := &file_proto_block_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3494,7 +3635,7 @@ func (x *BlockType) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockType.ProtoReflect.Descriptor instead.
 func (*BlockType) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{42}
+	return file_proto_block_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *BlockType) GetName() string {
@@ -3547,7 +3688,7 @@ type ListTypesRequest struct {
 
 func (x *ListTypesRequest) Reset() {
 	*x = ListTypesRequest{}
-	mi := &file_proto_block_proto_msgTypes[43]
+	mi := &file_proto_block_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3559,7 +3700,7 @@ func (x *ListTypesRequest) String() string {
 func (*ListTypesRequest) ProtoMessage() {}
 
 func (x *ListTypesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[43]
+	mi := &file_proto_block_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3572,7 +3713,7 @@ func (x *ListTypesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTypesRequest.ProtoReflect.Descriptor instead.
 func (*ListTypesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{43}
+	return file_proto_block_proto_rawDescGZIP(), []int{45}
 }
 
 type ListTypesResponse struct {
@@ -3584,7 +3725,7 @@ type ListTypesResponse struct {
 
 func (x *ListTypesResponse) Reset() {
 	*x = ListTypesResponse{}
-	mi := &file_proto_block_proto_msgTypes[44]
+	mi := &file_proto_block_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3596,7 +3737,7 @@ func (x *ListTypesResponse) String() string {
 func (*ListTypesResponse) ProtoMessage() {}
 
 func (x *ListTypesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[44]
+	mi := &file_proto_block_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3609,7 +3750,7 @@ func (x *ListTypesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTypesResponse.ProtoReflect.Descriptor instead.
 func (*ListTypesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{44}
+	return file_proto_block_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *ListTypesResponse) GetTypes() []*BlockType {
@@ -3628,7 +3769,7 @@ type GetTypeRequest struct {
 
 func (x *GetTypeRequest) Reset() {
 	*x = GetTypeRequest{}
-	mi := &file_proto_block_proto_msgTypes[45]
+	mi := &file_proto_block_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3640,7 +3781,7 @@ func (x *GetTypeRequest) String() string {
 func (*GetTypeRequest) ProtoMessage() {}
 
 func (x *GetTypeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[45]
+	mi := &file_proto_block_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3653,7 +3794,7 @@ func (x *GetTypeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTypeRequest.ProtoReflect.Descriptor instead.
 func (*GetTypeRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{45}
+	return file_proto_block_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *GetTypeRequest) GetName() string {
@@ -3810,7 +3951,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\bR\x06status\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x127\n" +
-	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"\xc1\x01\n" +
+	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"\x94\x02\n" +
 	"\x0fPlacementStatus\x12#\n" +
 	"\rreplica_index\x18\x01 \x01(\x05R\freplicaIndex\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12-\n" +
@@ -3818,7 +3959,18 @@ const file_proto_block_proto_rawDesc = "" +
 	"\n" +
 	"generation\x18\x04 \x01(\x03R\n" +
 	"generation\x12!\n" +
-	"\fformer_index\x18\x05 \x01(\x05R\vformerIndex\"\xc2\x01\n" +
+	"\fformer_index\x18\x05 \x01(\x05R\vformerIndex\x127\n" +
+	"\x06health\x18\x06 \x01(\v2\x1f.expanse.block.v1.ReplicaHealthR\x06health\x12\x18\n" +
+	"\amessage\x18\a \x01(\tR\amessage\"S\n" +
+	"\vProbeResult\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x16\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail\x12\x1c\n" +
+	"\n" +
+	"at_unix_ns\x18\x03 \x01(\x03R\batUnixNs\"\xa3\x01\n" +
+	"\rReplicaHealth\x12;\n" +
+	"\treadiness\x18\x01 \x01(\v2\x1d.expanse.block.v1.ProbeResultR\treadiness\x129\n" +
+	"\bliveness\x18\x02 \x01(\v2\x1d.expanse.block.v1.ProbeResultR\bliveness\x12\x1a\n" +
+	"\brestarts\x18\x03 \x01(\x05R\brestarts\"\xc2\x01\n" +
 	"\rPendingReason\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12G\n" +
@@ -4014,7 +4166,7 @@ func file_proto_block_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_block_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_proto_block_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_proto_block_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_proto_block_proto_goTypes = []any{
 	(StrategyKind)(0),          // 0: expanse.block.v1.StrategyKind
 	(UpdateMode)(0),            // 1: expanse.block.v1.UpdateMode
@@ -4051,37 +4203,39 @@ var file_proto_block_proto_goTypes = []any{
 	(*StatusReplicas)(nil),     // 32: expanse.block.v1.StatusReplicas
 	(*Condition)(nil),          // 33: expanse.block.v1.Condition
 	(*PlacementStatus)(nil),    // 34: expanse.block.v1.PlacementStatus
-	(*PendingReason)(nil),      // 35: expanse.block.v1.PendingReason
-	(*BlockStatus)(nil),        // 36: expanse.block.v1.BlockStatus
-	(*Block)(nil),              // 37: expanse.block.v1.Block
-	(*GetBlockRequest)(nil),    // 38: expanse.block.v1.GetBlockRequest
-	(*ListBlocksRequest)(nil),  // 39: expanse.block.v1.ListBlocksRequest
-	(*ListBlocksResponse)(nil), // 40: expanse.block.v1.ListBlocksResponse
-	(*DeleteBlockRequest)(nil), // 41: expanse.block.v1.DeleteBlockRequest
-	(*ScaleRequest)(nil),       // 42: expanse.block.v1.ScaleRequest
-	(*RestartRequest)(nil),     // 43: expanse.block.v1.RestartRequest
-	(*WatchBlocksRequest)(nil), // 44: expanse.block.v1.WatchBlocksRequest
-	(*BlockEvent)(nil),         // 45: expanse.block.v1.BlockEvent
-	(*LogsRequest)(nil),        // 46: expanse.block.v1.LogsRequest
-	(*LogLine)(nil),            // 47: expanse.block.v1.LogLine
-	(*ExplainRequest)(nil),     // 48: expanse.block.v1.ExplainRequest
-	(*NodeExplanation)(nil),    // 49: expanse.block.v1.NodeExplanation
-	(*ReplicaExplanation)(nil), // 50: expanse.block.v1.ReplicaExplanation
-	(*ExplainResponse)(nil),    // 51: expanse.block.v1.ExplainResponse
-	(*BlockType)(nil),          // 52: expanse.block.v1.BlockType
-	(*ListTypesRequest)(nil),   // 53: expanse.block.v1.ListTypesRequest
-	(*ListTypesResponse)(nil),  // 54: expanse.block.v1.ListTypesResponse
-	(*GetTypeRequest)(nil),     // 55: expanse.block.v1.GetTypeRequest
-	nil,                        // 56: expanse.block.v1.Metadata.LabelsEntry
-	nil,                        // 57: expanse.block.v1.Metadata.AnnotationsEntry
-	nil,                        // 58: expanse.block.v1.Placement.NodeSelectorEntry
-	nil,                        // 59: expanse.block.v1.PendingReason.PerNodeEntry
-	(*structpb.Struct)(nil),    // 60: google.protobuf.Struct
-	(*emptypb.Empty)(nil),      // 61: google.protobuf.Empty
+	(*ProbeResult)(nil),        // 35: expanse.block.v1.ProbeResult
+	(*ReplicaHealth)(nil),      // 36: expanse.block.v1.ReplicaHealth
+	(*PendingReason)(nil),      // 37: expanse.block.v1.PendingReason
+	(*BlockStatus)(nil),        // 38: expanse.block.v1.BlockStatus
+	(*Block)(nil),              // 39: expanse.block.v1.Block
+	(*GetBlockRequest)(nil),    // 40: expanse.block.v1.GetBlockRequest
+	(*ListBlocksRequest)(nil),  // 41: expanse.block.v1.ListBlocksRequest
+	(*ListBlocksResponse)(nil), // 42: expanse.block.v1.ListBlocksResponse
+	(*DeleteBlockRequest)(nil), // 43: expanse.block.v1.DeleteBlockRequest
+	(*ScaleRequest)(nil),       // 44: expanse.block.v1.ScaleRequest
+	(*RestartRequest)(nil),     // 45: expanse.block.v1.RestartRequest
+	(*WatchBlocksRequest)(nil), // 46: expanse.block.v1.WatchBlocksRequest
+	(*BlockEvent)(nil),         // 47: expanse.block.v1.BlockEvent
+	(*LogsRequest)(nil),        // 48: expanse.block.v1.LogsRequest
+	(*LogLine)(nil),            // 49: expanse.block.v1.LogLine
+	(*ExplainRequest)(nil),     // 50: expanse.block.v1.ExplainRequest
+	(*NodeExplanation)(nil),    // 51: expanse.block.v1.NodeExplanation
+	(*ReplicaExplanation)(nil), // 52: expanse.block.v1.ReplicaExplanation
+	(*ExplainResponse)(nil),    // 53: expanse.block.v1.ExplainResponse
+	(*BlockType)(nil),          // 54: expanse.block.v1.BlockType
+	(*ListTypesRequest)(nil),   // 55: expanse.block.v1.ListTypesRequest
+	(*ListTypesResponse)(nil),  // 56: expanse.block.v1.ListTypesResponse
+	(*GetTypeRequest)(nil),     // 57: expanse.block.v1.GetTypeRequest
+	nil,                        // 58: expanse.block.v1.Metadata.LabelsEntry
+	nil,                        // 59: expanse.block.v1.Metadata.AnnotationsEntry
+	nil,                        // 60: expanse.block.v1.Placement.NodeSelectorEntry
+	nil,                        // 61: expanse.block.v1.PendingReason.PerNodeEntry
+	(*structpb.Struct)(nil),    // 62: google.protobuf.Struct
+	(*emptypb.Empty)(nil),      // 63: google.protobuf.Empty
 }
 var file_proto_block_proto_depIdxs = []int32{
-	56, // 0: expanse.block.v1.Metadata.labels:type_name -> expanse.block.v1.Metadata.LabelsEntry
-	57, // 1: expanse.block.v1.Metadata.annotations:type_name -> expanse.block.v1.Metadata.AnnotationsEntry
+	58, // 0: expanse.block.v1.Metadata.labels:type_name -> expanse.block.v1.Metadata.LabelsEntry
+	59, // 1: expanse.block.v1.Metadata.annotations:type_name -> expanse.block.v1.Metadata.AnnotationsEntry
 	1,  // 2: expanse.block.v1.UpdateStrategy.mode:type_name -> expanse.block.v1.UpdateMode
 	0,  // 3: expanse.block.v1.Strategy.kind:type_name -> expanse.block.v1.StrategyKind
 	11, // 4: expanse.block.v1.Strategy.update:type_name -> expanse.block.v1.UpdateStrategy
@@ -4090,7 +4244,7 @@ var file_proto_block_proto_depIdxs = []int32{
 	14, // 7: expanse.block.v1.Resources.devices:type_name -> expanse.block.v1.Device
 	6,  // 8: expanse.block.v1.Storage.access_mode:type_name -> expanse.block.v1.AccessMode
 	3,  // 9: expanse.block.v1.Placement.anti_affinity:type_name -> expanse.block.v1.AntiAffinity
-	58, // 10: expanse.block.v1.Placement.node_selector:type_name -> expanse.block.v1.Placement.NodeSelectorEntry
+	60, // 10: expanse.block.v1.Placement.node_selector:type_name -> expanse.block.v1.Placement.NodeSelectorEntry
 	7,  // 11: expanse.block.v1.Placement.spread:type_name -> expanse.block.v1.Spread
 	4,  // 12: expanse.block.v1.Port.expose:type_name -> expanse.block.v1.Expose
 	19, // 13: expanse.block.v1.Port.http_routes:type_name -> expanse.block.v1.HttpRoute
@@ -4103,7 +4257,7 @@ var file_proto_block_proto_depIdxs = []int32{
 	16, // 20: expanse.block.v1.BlockSpec.storage:type_name -> expanse.block.v1.Storage
 	17, // 21: expanse.block.v1.BlockSpec.placement:type_name -> expanse.block.v1.Placement
 	25, // 22: expanse.block.v1.BlockSpec.network:type_name -> expanse.block.v1.Network
-	60, // 23: expanse.block.v1.BlockSpec.config:type_name -> google.protobuf.Struct
+	62, // 23: expanse.block.v1.BlockSpec.config:type_name -> google.protobuf.Struct
 	23, // 24: expanse.block.v1.BlockSpec.secrets:type_name -> expanse.block.v1.SecretRef
 	22, // 25: expanse.block.v1.BlockSpec.backup:type_name -> expanse.block.v1.Backup
 	18, // 26: expanse.block.v1.Network.ports:type_name -> expanse.block.v1.Port
@@ -4116,53 +4270,56 @@ var file_proto_block_proto_depIdxs = []int32{
 	29, // 33: expanse.block.v1.NetworkPolicy.ingress:type_name -> expanse.block.v1.IngressRule
 	30, // 34: expanse.block.v1.NetworkPolicy.egress:type_name -> expanse.block.v1.EgressRule
 	8,  // 35: expanse.block.v1.PlacementStatus.phase:type_name -> expanse.block.v1.Phase
-	59, // 36: expanse.block.v1.PendingReason.per_node:type_name -> expanse.block.v1.PendingReason.PerNodeEntry
-	8,  // 37: expanse.block.v1.BlockStatus.phase:type_name -> expanse.block.v1.Phase
-	32, // 38: expanse.block.v1.BlockStatus.replicas:type_name -> expanse.block.v1.StatusReplicas
-	33, // 39: expanse.block.v1.BlockStatus.conditions:type_name -> expanse.block.v1.Condition
-	34, // 40: expanse.block.v1.BlockStatus.placements:type_name -> expanse.block.v1.PlacementStatus
-	35, // 41: expanse.block.v1.BlockStatus.pending_reason:type_name -> expanse.block.v1.PendingReason
-	10, // 42: expanse.block.v1.Block.metadata:type_name -> expanse.block.v1.Metadata
-	24, // 43: expanse.block.v1.Block.spec:type_name -> expanse.block.v1.BlockSpec
-	36, // 44: expanse.block.v1.Block.status:type_name -> expanse.block.v1.BlockStatus
-	37, // 45: expanse.block.v1.ListBlocksResponse.blocks:type_name -> expanse.block.v1.Block
-	9,  // 46: expanse.block.v1.BlockEvent.type:type_name -> expanse.block.v1.EventType
-	37, // 47: expanse.block.v1.BlockEvent.block:type_name -> expanse.block.v1.Block
-	8,  // 48: expanse.block.v1.ReplicaExplanation.phase:type_name -> expanse.block.v1.Phase
-	49, // 49: expanse.block.v1.ReplicaExplanation.nodes:type_name -> expanse.block.v1.NodeExplanation
-	8,  // 50: expanse.block.v1.ExplainResponse.phase:type_name -> expanse.block.v1.Phase
-	35, // 51: expanse.block.v1.ExplainResponse.pending_reason:type_name -> expanse.block.v1.PendingReason
-	50, // 52: expanse.block.v1.ExplainResponse.replicas:type_name -> expanse.block.v1.ReplicaExplanation
-	52, // 53: expanse.block.v1.ListTypesResponse.types:type_name -> expanse.block.v1.BlockType
-	37, // 54: expanse.block.v1.BlockService.Create:input_type -> expanse.block.v1.Block
-	38, // 55: expanse.block.v1.BlockService.Get:input_type -> expanse.block.v1.GetBlockRequest
-	39, // 56: expanse.block.v1.BlockService.List:input_type -> expanse.block.v1.ListBlocksRequest
-	37, // 57: expanse.block.v1.BlockService.Update:input_type -> expanse.block.v1.Block
-	41, // 58: expanse.block.v1.BlockService.Delete:input_type -> expanse.block.v1.DeleteBlockRequest
-	42, // 59: expanse.block.v1.BlockService.Scale:input_type -> expanse.block.v1.ScaleRequest
-	43, // 60: expanse.block.v1.BlockService.Restart:input_type -> expanse.block.v1.RestartRequest
-	44, // 61: expanse.block.v1.BlockService.Watch:input_type -> expanse.block.v1.WatchBlocksRequest
-	46, // 62: expanse.block.v1.BlockService.StreamLogs:input_type -> expanse.block.v1.LogsRequest
-	48, // 63: expanse.block.v1.BlockService.Explain:input_type -> expanse.block.v1.ExplainRequest
-	53, // 64: expanse.block.v1.CatalogService.ListTypes:input_type -> expanse.block.v1.ListTypesRequest
-	55, // 65: expanse.block.v1.CatalogService.GetType:input_type -> expanse.block.v1.GetTypeRequest
-	37, // 66: expanse.block.v1.BlockService.Create:output_type -> expanse.block.v1.Block
-	37, // 67: expanse.block.v1.BlockService.Get:output_type -> expanse.block.v1.Block
-	40, // 68: expanse.block.v1.BlockService.List:output_type -> expanse.block.v1.ListBlocksResponse
-	37, // 69: expanse.block.v1.BlockService.Update:output_type -> expanse.block.v1.Block
-	61, // 70: expanse.block.v1.BlockService.Delete:output_type -> google.protobuf.Empty
-	37, // 71: expanse.block.v1.BlockService.Scale:output_type -> expanse.block.v1.Block
-	37, // 72: expanse.block.v1.BlockService.Restart:output_type -> expanse.block.v1.Block
-	45, // 73: expanse.block.v1.BlockService.Watch:output_type -> expanse.block.v1.BlockEvent
-	47, // 74: expanse.block.v1.BlockService.StreamLogs:output_type -> expanse.block.v1.LogLine
-	51, // 75: expanse.block.v1.BlockService.Explain:output_type -> expanse.block.v1.ExplainResponse
-	54, // 76: expanse.block.v1.CatalogService.ListTypes:output_type -> expanse.block.v1.ListTypesResponse
-	52, // 77: expanse.block.v1.CatalogService.GetType:output_type -> expanse.block.v1.BlockType
-	66, // [66:78] is the sub-list for method output_type
-	54, // [54:66] is the sub-list for method input_type
-	54, // [54:54] is the sub-list for extension type_name
-	54, // [54:54] is the sub-list for extension extendee
-	0,  // [0:54] is the sub-list for field type_name
+	36, // 36: expanse.block.v1.PlacementStatus.health:type_name -> expanse.block.v1.ReplicaHealth
+	35, // 37: expanse.block.v1.ReplicaHealth.readiness:type_name -> expanse.block.v1.ProbeResult
+	35, // 38: expanse.block.v1.ReplicaHealth.liveness:type_name -> expanse.block.v1.ProbeResult
+	61, // 39: expanse.block.v1.PendingReason.per_node:type_name -> expanse.block.v1.PendingReason.PerNodeEntry
+	8,  // 40: expanse.block.v1.BlockStatus.phase:type_name -> expanse.block.v1.Phase
+	32, // 41: expanse.block.v1.BlockStatus.replicas:type_name -> expanse.block.v1.StatusReplicas
+	33, // 42: expanse.block.v1.BlockStatus.conditions:type_name -> expanse.block.v1.Condition
+	34, // 43: expanse.block.v1.BlockStatus.placements:type_name -> expanse.block.v1.PlacementStatus
+	37, // 44: expanse.block.v1.BlockStatus.pending_reason:type_name -> expanse.block.v1.PendingReason
+	10, // 45: expanse.block.v1.Block.metadata:type_name -> expanse.block.v1.Metadata
+	24, // 46: expanse.block.v1.Block.spec:type_name -> expanse.block.v1.BlockSpec
+	38, // 47: expanse.block.v1.Block.status:type_name -> expanse.block.v1.BlockStatus
+	39, // 48: expanse.block.v1.ListBlocksResponse.blocks:type_name -> expanse.block.v1.Block
+	9,  // 49: expanse.block.v1.BlockEvent.type:type_name -> expanse.block.v1.EventType
+	39, // 50: expanse.block.v1.BlockEvent.block:type_name -> expanse.block.v1.Block
+	8,  // 51: expanse.block.v1.ReplicaExplanation.phase:type_name -> expanse.block.v1.Phase
+	51, // 52: expanse.block.v1.ReplicaExplanation.nodes:type_name -> expanse.block.v1.NodeExplanation
+	8,  // 53: expanse.block.v1.ExplainResponse.phase:type_name -> expanse.block.v1.Phase
+	37, // 54: expanse.block.v1.ExplainResponse.pending_reason:type_name -> expanse.block.v1.PendingReason
+	52, // 55: expanse.block.v1.ExplainResponse.replicas:type_name -> expanse.block.v1.ReplicaExplanation
+	54, // 56: expanse.block.v1.ListTypesResponse.types:type_name -> expanse.block.v1.BlockType
+	39, // 57: expanse.block.v1.BlockService.Create:input_type -> expanse.block.v1.Block
+	40, // 58: expanse.block.v1.BlockService.Get:input_type -> expanse.block.v1.GetBlockRequest
+	41, // 59: expanse.block.v1.BlockService.List:input_type -> expanse.block.v1.ListBlocksRequest
+	39, // 60: expanse.block.v1.BlockService.Update:input_type -> expanse.block.v1.Block
+	43, // 61: expanse.block.v1.BlockService.Delete:input_type -> expanse.block.v1.DeleteBlockRequest
+	44, // 62: expanse.block.v1.BlockService.Scale:input_type -> expanse.block.v1.ScaleRequest
+	45, // 63: expanse.block.v1.BlockService.Restart:input_type -> expanse.block.v1.RestartRequest
+	46, // 64: expanse.block.v1.BlockService.Watch:input_type -> expanse.block.v1.WatchBlocksRequest
+	48, // 65: expanse.block.v1.BlockService.StreamLogs:input_type -> expanse.block.v1.LogsRequest
+	50, // 66: expanse.block.v1.BlockService.Explain:input_type -> expanse.block.v1.ExplainRequest
+	55, // 67: expanse.block.v1.CatalogService.ListTypes:input_type -> expanse.block.v1.ListTypesRequest
+	57, // 68: expanse.block.v1.CatalogService.GetType:input_type -> expanse.block.v1.GetTypeRequest
+	39, // 69: expanse.block.v1.BlockService.Create:output_type -> expanse.block.v1.Block
+	39, // 70: expanse.block.v1.BlockService.Get:output_type -> expanse.block.v1.Block
+	42, // 71: expanse.block.v1.BlockService.List:output_type -> expanse.block.v1.ListBlocksResponse
+	39, // 72: expanse.block.v1.BlockService.Update:output_type -> expanse.block.v1.Block
+	63, // 73: expanse.block.v1.BlockService.Delete:output_type -> google.protobuf.Empty
+	39, // 74: expanse.block.v1.BlockService.Scale:output_type -> expanse.block.v1.Block
+	39, // 75: expanse.block.v1.BlockService.Restart:output_type -> expanse.block.v1.Block
+	47, // 76: expanse.block.v1.BlockService.Watch:output_type -> expanse.block.v1.BlockEvent
+	49, // 77: expanse.block.v1.BlockService.StreamLogs:output_type -> expanse.block.v1.LogLine
+	53, // 78: expanse.block.v1.BlockService.Explain:output_type -> expanse.block.v1.ExplainResponse
+	56, // 79: expanse.block.v1.CatalogService.ListTypes:output_type -> expanse.block.v1.ListTypesResponse
+	54, // 80: expanse.block.v1.CatalogService.GetType:output_type -> expanse.block.v1.BlockType
+	69, // [69:81] is the sub-list for method output_type
+	57, // [57:69] is the sub-list for method input_type
+	57, // [57:57] is the sub-list for extension type_name
+	57, // [57:57] is the sub-list for extension extendee
+	0,  // [0:57] is the sub-list for field type_name
 }
 
 func init() { file_proto_block_proto_init() }
@@ -4177,7 +4334,7 @@ func file_proto_block_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_block_proto_rawDesc), len(file_proto_block_proto_rawDesc)),
 			NumEnums:      10,
-			NumMessages:   50,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

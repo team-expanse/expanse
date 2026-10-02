@@ -104,6 +104,28 @@ it is marked `FAILED` and left running on its node. A missing or
 unreadable liveness record, or one written by another node, never
 moves or stops anything.
 
+`expanse ctl block get <name>` shows each replica's health as its own
+node reports it, and the block page in the web UI shows the same:
+
+```console
+$ expanse ctl block get api
+Block:   default/api
+Type:    web/nginx
+Phase:   DEGRADED (1/2 ready)
+Reason:  LivenessFailed: replica 1 failed its liveness probe on 2 nodes and was stopped
+
+REPLICA  NODE   PHASE    READY  RESTARTS  LAST PROBE
+0        node1  RUNNING  yes    1         HTTP 200 (4s ago)
+1        node2  FAILED   -      -         stopped: liveness probe failed after 5 restarts: connection refused
+1        node3  FAILED   -      -         stopped: liveness probe failed after 5 restarts: connection refused
+```
+
+`READY` is `?` until the node has published a readiness result. A
+replica counts as ready while it is `RUNNING` and its readiness probe is
+not failing. A `stopped` row is a placement the controller replaced; it
+keeps the reason. `-o json` carries the same data in each placement's
+`health` (`readiness`, `liveness`, `restarts`) and `message`.
+
 Fields not set fall back to the catalog type's `defaults.yaml`; every
 config knob the type defines is validated against its `schema.json`
 (JSON Schema 2020-12) and passed to the unit generator. Config is

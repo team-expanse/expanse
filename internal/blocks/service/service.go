@@ -169,7 +169,7 @@ func (s *Server) get(ctx context.Context, ns, name string) (*pb.Block, error) {
 	return &b, nil
 }
 
-// observedStatus reads the controller-owned observed-state record.
+// observedStatus reads the controller-owned observed-state record, with replica health.
 func (s *Server) observedStatus(ctx context.Context, ns, name string) *pb.BlockStatus {
 	e, err := s.St.Get(ctx, store.Key(key(ns, name)+"/status"))
 	if err != nil {
@@ -179,6 +179,7 @@ func (s *Server) observedStatus(ctx context.Context, ns, name string) *pb.BlockS
 	if err := proto.Unmarshal(e.Value, &st); err != nil {
 		return nil
 	}
+	s.withHealth(ctx, ns, name, &st)
 	return &st
 }
 

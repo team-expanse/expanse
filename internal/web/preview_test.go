@@ -159,6 +159,29 @@ func previewBlockList() []*pb.Block {
 		mk("media", "jellyfin", "media/jellyfin", 1, 0, pb.Phase_PENDING, "", &pb.PlacementStatus{ReplicaIndex: 0, NodeId: "n2", Phase: pb.Phase_PROVISIONING, Generation: 14}),
 		mk("default", "postgres", "data/postgres-ha", 2, 2, pb.Phase_UPDATING, "rolling update 13 → 14", &pb.PlacementStatus{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_RUNNING, Generation: 14}, &pb.PlacementStatus{ReplicaIndex: 1, NodeId: "n2", Phase: pb.Phase_DRAINING, Generation: 13}),
 		mk("ops", "backup", "util/echo", 1, 0, pb.Phase_FAILED, "container exited with status 1"),
+		previewProbedBlock(),
+	}
+}
+
+// previewProbedBlock shows replica health: one ready, one restarting, one stopped after failing liveness.
+func previewProbedBlock() *pb.Block {
+	ago := func(d time.Duration) int64 { return time.Now().Add(-d).UnixNano() }
+	want := int32(2)
+	return &pb.Block{
+		Metadata: &pb.Metadata{Namespace: "default", Name: "api"},
+		Spec:     &pb.BlockSpec{Type: "web/nginx", Replicas: &want},
+		Status: &pb.BlockStatus{
+			Phase: pb.Phase_DEGRADED, ObservedGeneration: 14, Replicas: &pb.StatusReplicas{Desired: 2, Ready: 1},
+			PendingReason: &pb.PendingReason{Code: "LivenessFailed", Message: "replica 1 failed its liveness probe on 2 nodes and was stopped"},
+			Placements: []*pb.PlacementStatus{
+				{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_RUNNING, Generation: 14, Health: &pb.ReplicaHealth{
+					Readiness: &pb.ProbeResult{Ok: true, Detail: "HTTP 200", AtUnixNs: ago(20 * time.Second)},
+					Liveness:  &pb.ProbeResult{Ok: true, Detail: "HTTP 500", AtUnixNs: ago(3 * time.Hour)}, Restarts: 1,
+				}},
+				{ReplicaIndex: -1, FormerIndex: 1, NodeId: "n2", Phase: pb.Phase_FAILED, Generation: 14, Message: "liveness probe failed after 5 restarts: dial tcp 10.0.0.2:8080: connect: connection refused"},
+				{ReplicaIndex: -1, FormerIndex: 1, NodeId: "n3", Phase: pb.Phase_FAILED, Generation: 14, Message: "liveness probe failed after 5 restarts: dial tcp 10.0.0.3:8080: connect: connection refused"},
+			},
+		},
 	}
 }
 

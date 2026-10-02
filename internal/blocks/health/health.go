@@ -305,18 +305,47 @@ func LivenessPublisher(st store.Store, blockKey store.Key, replicaIndex int32, n
 // LivenessFailedOn returns node's record if node gave up on the replica; nil when it has not,
 // or when the record is missing, from another node or unreadable (unknown is not unhealthy).
 func LivenessFailedOn(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) (*LivenessRecord, error) {
-	e, err := st.Get(ctx, livenessKey(blockKey, replicaIndex))
-	if errors.Is(err, errors.KindNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, errors.Wrap(err, errors.KindInternal, "health.livenessFailedOn", "read status")
-	}
 	var rec LivenessRecord
-	if json.Unmarshal(e.Value, &rec) != nil || !rec.Failed || rec.Node != node {
-		return nil, nil
+	ok, err := readOwn(ctx, st, livenessKey(blockKey, replicaIndex), node, &rec, &rec.Node)
+	if err != nil || !ok || !rec.Failed {
+		return nil, err
 	}
 	return &rec, nil
+}
+
+// RecordsOf returns node's readiness and liveness records for the replica; nil where node has none.
+func RecordsOf(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) (*Record, *LivenessRecord, error) {
+	var ready Record
+	var live LivenessRecord
+	okReady, err := readOwn(ctx, st, replicaKey(blockKey, replicaIndex), node, &ready, &ready.Node)
+	if err != nil {
+		return nil, nil, err
+	}
+	okLive, err := readOwn(ctx, st, livenessKey(blockKey, replicaIndex), node, &live, &live.Node)
+	if err != nil {
+		return nil, nil, err
+	}
+	var r *Record
+	var l *LivenessRecord
+	if okReady {
+		r = &ready
+	}
+	if okLive {
+		l = &live
+	}
+	return r, l, nil
+}
+
+// readOwn decodes key into rec and reports whether node wrote it; missing or garbled is false.
+func readOwn(ctx context.Context, st store.Store, key store.Key, node string, rec any, writer *string) (bool, error) {
+	e, err := st.Get(ctx, key)
+	if errors.Is(err, errors.KindNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, errors.Wrap(err, errors.KindInternal, "health.readOwn", "read status")
+	}
+	return json.Unmarshal(e.Value, rec) == nil && *writer == node, nil
 }
 
 // Retire deletes the replica's record if node wrote it, so a replica gone from node leaves no

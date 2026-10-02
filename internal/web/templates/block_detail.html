@@ -42,27 +42,30 @@
   <div class="kv-card"><div class="kv-label">Phase</div><div class="kv-value">{{template "pill" (phase .Status.GetPhase)}}</div><div class="kv-sub">{{with .Status.GetMessage}}{{.}}{{else}}observed generation {{.Status.GetObservedGeneration}}{{end}}</div></div>
   <div class="kv-card"><div class="kv-label">Replicas</div><div class="kv-value">{{.Status.GetReplicas.GetReady}}<span class="stat-of">/{{.Spec.GetReplicas}}</span></div><div class="kv-sub">ready / desired</div></div>
   <div class="kv-card"><div class="kv-label">Type</div><div class="kv-value"><code>{{.Spec.GetType}}</code></div><div class="kv-sub">from the catalog</div></div>
-  <div class="kv-card"><div class="kv-label">Placed on</div><div class="kv-value">{{len .Status.GetPlacements}}</div><div class="kv-sub">replica slot{{if ne (len .Status.GetPlacements) 1}}s{{end}}</div></div>
+  <div class="kv-card"><div class="kv-label">Placed on</div>{{$live := live .Status}}<div class="kv-value">{{$live}}</div><div class="kv-sub">replica slot{{if ne $live 1}}s{{end}}</div></div>
 </section>
 {{with .Status.GetPendingReason}}
-<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Not fully placed: {{.GetCode}}</strong><p>{{.GetMessage}}</p>{{if .GetPerNode}}<ul class="plain">{{range $n, $why := .GetPerNode}}<li><code>{{$n}}</code>: {{$why}}</li>{{end}}</ul>{{end}}</div></div>
+<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><strong>{{if eq .GetCode "LivenessFailed"}}Replica stopped{{else}}Not fully placed{{end}}: {{.GetCode}}</strong><p>{{.GetMessage}}</p>{{if .GetPerNode}}<ul class="plain">{{range $n, $why := .GetPerNode}}<li><code>{{$n}}</code>: {{$why}}</li>{{end}}</ul>{{end}}</div></div>
 {{end}}
 <section class="card">
   <div class="card-head"><h2>Replicas</h2></div>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Replica</th><th>Node</th><th>Phase</th><th>Generation</th><th></th></tr></thead>
+      <thead><tr><th>Replica</th><th>Node</th><th>Phase</th><th>Readiness</th><th>Restarts</th><th>Last probe</th><th>Generation</th><th></th></tr></thead>
       <tbody>
-        {{range .Status.GetPlacements}}
+        {{range .Status.GetPlacements}}{{$r := replica .}}
         <tr>
-          <td>#{{.GetReplicaIndex}}</td>
+          <td>#{{$r.Index}}{{if not $r.Live}} <span class="tag">Stopped here</span>{{end}}</td>
           <td><a href="/nodes/{{.GetNodeId}}">{{.GetNodeId}}</a></td>
           <td>{{template "pill" (phase .GetPhase)}}</td>
+          <td>{{if $r.Live}}{{template "pill" $r.Ready}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
+          <td>{{if $r.Live}}{{$r.Restarts}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
+          <td class="muted">{{with $r.Last}}{{.}}{{else}}&mdash;{{end}}{{if not $r.At.IsZero}} <span title="{{stamp $r.At}}">({{ago $r.At}})</span>{{end}}</td>
           <td class="muted">{{.GetGeneration}}</td>
-          <td class="text-right"><a class="btn btn-ghost btn-sm" href="/blocks/{{$.Metadata.GetNamespace}}/{{$.Metadata.GetName}}/logs?replica={{.GetReplicaIndex}}">Logs</a></td>
+          <td class="text-right">{{if $r.Live}}<a class="btn btn-ghost btn-sm" href="/blocks/{{$.Metadata.GetNamespace}}/{{$.Metadata.GetName}}/logs?replica={{.GetReplicaIndex}}">Logs</a>{{end}}</td>
         </tr>
         {{else}}
-        <tr><td colspan="5">{{template "empty" "No replicas placed yet."}}</td></tr>
+        <tr><td colspan="8">{{template "empty" "No replicas placed yet."}}</td></tr>
         {{end}}
       </tbody>
     </table>

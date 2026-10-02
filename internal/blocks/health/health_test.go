@@ -575,3 +575,31 @@ func TestLivenessFailedOn(t *testing.T) {
 		t.Fatalf("garbled record = %+v, %v; want unknown", rec, err)
 	}
 }
+
+func TestRecordsOfReturnOnlyTheNodesOwnRecords(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	const blk = store.Key("/blocks/default/web")
+	if r, l, err := RecordsOf(ctx, st, blk, 0, "n1"); err != nil || r != nil || l != nil {
+		t.Fatalf("no records = %+v, %+v, %v; want nil, nil, nil", r, l, err)
+	}
+	if err := StorePublisher(st, blk, 0, "n1")(ctx, Record{OK: false, Detail: "503"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := LivenessPublisher(st, blk, 0, "n1")(ctx, LivenessRecord{Restarts: 2, Detail: "timeout"}); err != nil {
+		t.Fatal(err)
+	}
+	r, l, err := RecordsOf(ctx, st, blk, 0, "n1")
+	if err != nil || r == nil || r.Detail != "503" || l == nil || l.Restarts != 2 {
+		t.Fatalf("n1 records = %+v, %+v, %v", r, l, err)
+	}
+	if r, l, _ := RecordsOf(ctx, st, blk, 0, "n2"); r != nil || l != nil {
+		t.Fatalf("n1's records shown for n2: %+v, %+v", r, l)
+	}
+	if _, err := st.Put(ctx, livenessKey(blk, 1), []byte("{")); err != nil {
+		t.Fatal(err)
+	}
+	if _, l, err := RecordsOf(ctx, st, blk, 1, "n1"); err != nil || l != nil {
+		t.Fatalf("garbled record = %+v, %v; want unknown", l, err)
+	}
+}
