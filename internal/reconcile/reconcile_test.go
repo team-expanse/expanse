@@ -339,6 +339,13 @@ func TestObserveTimeoutEnforced(t *testing.T) {
 	}
 }
 
+func value(e *store.Entry) string {
+	if e == nil {
+		return ""
+	}
+	return string(e.Value)
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && indexOf(s, sub) >= 0)
 }
@@ -577,7 +584,7 @@ func tickWithReadiness(t *testing.T, ready *bool) (resource, node string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := s.Get(context.Background(), "/nodes/n1/status")
+	n, err := s.Get(context.Background(), "/nodes/n1/reconcile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +599,31 @@ func TestNotReadyIsRecordedWithoutDegradingTheNode(t *testing.T) {
 		t.Errorf("resource status = %q, want healthy and ready=false", res)
 	}
 	if !contains(node, "health=healthy") {
-		t.Errorf("node status = %q, want healthy", node)
+		t.Errorf("node reconcile summary = %q, want healthy", node)
+	}
+}
+
+// A failing workload is the workload's problem: the node's own status (its health checks, which decide
+// whether it takes placements) stays as the agent wrote it, and the tick summary goes to its own key.
+func TestFailingWorkloadLeavesTheNodeStatusAlone(t *testing.T) {
+	s := testStore(t)
+	const agentStatus = "health=healthy"
+	if _, err := s.Put(context.Background(), "/nodes/n1/status", []byte(agentStatus)); err != nil {
+		t.Fatal(err)
+	}
+	m := newFakeManager()
+	m.failObserve = true
+	r := New(s, Options{NodeID: "n1", Logger: testLogger(), Period: time.Hour})
+	r.Register(m)
+	putDesired(t, s, "n1", "web", "")
+	if err := r.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Get(context.Background(), "/nodes/n1/status"); err != nil || string(n.Value) != agentStatus {
+		t.Errorf("node status = %q (err %v), want %q untouched", value(n), err, agentStatus)
+	}
+	if sum, err := s.Get(context.Background(), "/nodes/n1/reconcile"); err != nil || !contains(value(sum), "health=unhealthy") {
+		t.Errorf("reconcile summary = %q (err %v), want health=unhealthy", value(sum), err)
 	}
 }
 

@@ -607,8 +607,10 @@ func (r *Reconciler) recordStatus(ctx context.Context, st *Status) {
 	}
 }
 
+// recordNodeStatus writes the tick summary to /nodes/<id>/reconcile. /nodes/<id>/status is the agent's
+// (node health checks decide placement); a failing workload must not mark its node unfit.
 func (r *Reconciler) recordNodeStatus(ctx context.Context, health string) {
-	key := store.Key(fmt.Sprintf("/nodes/%s/status", r.opts.NodeID))
+	key := store.Key(fmt.Sprintf("/nodes/%s/reconcile", r.opts.NodeID))
 	val := fmt.Sprintf("health=%s ticks=%d changes=%d failures=%d updated=%d",
 		health, r.ticks.Load(), r.changes.Load(), r.failures.Load(), time.Now().UnixNano())
 	if _, err := r.store.Put(ctx, key, []byte(val)); err != nil {

@@ -17,6 +17,15 @@ History before 1.0.0 is not recorded here.
   down. A guest without systemd can opt out with `config.guestReady: none`.
   See `docs/VMS.md`.
 
+### Fixed
+
+- One failing workload could stop its whole node from taking new placements.
+  Each reconcile pass overwrote the node's health with the worst health of its
+  workloads, so a single crash-looping replica made the node look unhealthy
+  until the next health check, 10 seconds later. It also briefly hid a node's
+  lost quorum. The node's status now reflects only the node's own health
+  checks. The reconcile summary moved to `/nodes/<id>/reconcile`.
+
 ## 1.1.9 - 2026-09-30
 
 ### Fixed

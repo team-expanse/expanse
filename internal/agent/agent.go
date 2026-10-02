@@ -730,6 +730,7 @@ func (a *Agent) Run(ctx context.Context) error {
 				// placements").
 				a.logger.Warn("node failed; placements evicted (no placement engine yet)", "node", nodeID)
 				_ = a.store.Delete(context.Background(), store.Key("/nodes/"+nodeID+"/status"), 0)
+				_ = a.store.Delete(context.Background(), store.Key("/nodes/"+nodeID+"/reconcile"), 0)
 			},
 		}
 		go mon.Run(ctx)
