@@ -27,6 +27,11 @@ History before 1.0.0 is not recorded here.
 
 ### Fixed
 
+- An `iscsi/target` block's VIP could fail to come up. Creating the target
+  also opened a default portal on port 3260 on every address of the node,
+  so the VIP could not listen on that port whenever the target started
+  first. The default portal is now removed.
+
 - One failing workload could stop its whole node from taking new placements.
   Each reconcile pass overwrote the node's health with the worst health of its
   workloads, so a single crash-looping replica made the node look unhealthy

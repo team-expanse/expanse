@@ -748,13 +748,9 @@ func (l *lioTarget) setup(ctx context.Context) error {
 		return err
 	}
 	tpg := "/iscsi/" + l.iqn + "/tpg1"
-	// No default portal to remove first: `/iscsi create` does not
-	// auto-create one on this targetcli-fb version (confirmed directly —
-	// a `portals delete 0.0.0.0 3260` here always failed with "No such
-	// NetworkPortal in configfs"), unlike the reference declarative
-	// services.target config some docs show. teardown() below always
-	// deletes the whole target object first, so there is never a stale
-	// portal left over to collide with this create either.
+	// `/iscsi create` adds a default portal on [::0]:3260, which would hold the VIP's port on this
+	// node. It is absent when 3260 was already taken, so a failed delete is fine.
+	_ = targetcli(ctx, tpg+"/portals", "delete", "::0", "3260")
 	if err := targetcli(ctx, tpg+"/portals", "create", "0.0.0.0", l.port); err != nil {
 		return err
 	}
