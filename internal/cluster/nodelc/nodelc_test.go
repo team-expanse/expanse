@@ -422,3 +422,32 @@ func TestMonitorRecoveryClearsState(t *testing.T) {
 		t.Fatalf("state = %q, want cleared after fresh status", got)
 	}
 }
+
+// TestListReportsLifecycleAndLastSeen covers the node listing every CLI shows.
+func TestListReportsLifecycleAndLastSeen(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeNode(t, ctx, st, "n2", "witness")
+	writeStatus(t, ctx, st, "n1")
+	if _, err := st.Put(ctx, store.Key(join.NodesKeyPrefix+"n2/status"), []byte("health=bad degraded=true")); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodelc.Cordon(ctx, st, "n2"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := nodelc.List(ctx, st)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("List = %d nodes, want 2: %+v", len(got), got)
+	}
+	n1, n2 := got[0], got[1]
+	if n1.ID != "n1" || n1.Lifecycle != "healthy" || n1.Cordoned || n1.LastSeen.IsZero() {
+		t.Errorf("n1 = %+v, want healthy, uncordoned, seen", n1)
+	}
+	if n2.ID != "n2" || n2.Role != "witness" || n2.Lifecycle != "healthy/degraded" || !n2.Cordoned {
+		t.Errorf("n2 = %+v, want cordoned healthy/degraded witness", n2)
+	}
+}

@@ -47,7 +47,55 @@ service NodeService {
   rpc HoldLease(HoldLeaseRequest) returns (stream LeaseEvent);
   // GetLease reports the stored lease state (even if expired).
   rpc GetLease(GetLeaseRequest) returns (LeaseInfo);
+  // Node lifecycle (§4.8) through the running agent: follower writes
+  // forward to the leader; RemoveNode changes raft membership, so it
+  // must reach the leader's agent.
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc SetNodeCordon(SetNodeCordonRequest) returns (SetNodeCordonResponse);
+  rpc DrainNode(DrainNodeRequest) returns (DrainNodeResponse);
+  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
 }
+
+message ListNodesRequest {}
+
+message ClusterNode {
+  string id = 1;
+  string role = 2;
+  string lifecycle = 3;
+  bool cordoned = 4;
+  string raft_addr = 5;
+  string api_addr = 6;
+  int64 last_seen_unix_ns = 7;
+}
+
+message ListNodesResponse {
+  repeated ClusterNode nodes = 1;
+}
+
+message SetNodeCordonRequest {
+  string node_id = 1;
+  bool cordoned = 2;
+}
+
+message SetNodeCordonResponse {}
+
+message DrainNodeRequest {
+  string node_id = 1;
+  bool ignore_unplaceable = 2;
+}
+
+message DrainNodeResponse {
+  int32 resources = 1; // resources that must move off the node
+}
+
+message RemoveNodeRequest {
+  string node_id = 1;
+  bool force = 2;
+  string confirm = 3;
+  string reason = 4;
+}
+
+message RemoveNodeResponse {}
 
 message GetStatusRequest {}
 

@@ -18,6 +18,8 @@ package nodelc
 import (
 	"context"
 	"encoding/json"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/join"
@@ -140,6 +142,56 @@ func placeable(r join.NodeRecord) bool {
 		return false
 	}
 	return !r.Cordoned
+}
+
+// Info is one node's lifecycle view, as `ctl node list` shows it.
+type Info struct {
+	ID, Role, Lifecycle string
+	Cordoned            bool
+	RaftAddr, APIAddr   string
+	LastSeen            time.Time // last status write, else the join time
+}
+
+// List reports every enrolled node, sorted by ID.
+func List(ctx context.Context, st store.Store) ([]Info, error) {
+	entries, err := st.List(ctx, store.Key(join.NodesKeyPrefix))
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindUnavailable, "nodelc", "list nodes: "+err.Error())
+	}
+	status := map[string]*store.Entry{}
+	var recs []join.NodeRecord
+	for _, e := range entries {
+		rest := strings.TrimPrefix(string(e.Key), join.NodesKeyPrefix)
+		if id, ok := strings.CutSuffix(rest, "/status"); ok {
+			status[id] = e
+			continue
+		}
+		var r join.NodeRecord
+		if json.Unmarshal(e.Value, &r) == nil && r.ID != "" {
+			recs = append(recs, r)
+		}
+	}
+	out := make([]Info, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, infoOf(r, status[r.ID]))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func infoOf(r join.NodeRecord, st *store.Entry) Info {
+	in := Info{ID: r.ID, Role: r.Role, Lifecycle: r.State, Cordoned: r.Cordoned,
+		RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, LastSeen: time.Unix(0, r.JoinedAt)}
+	if in.Lifecycle == "" {
+		in.Lifecycle = "healthy"
+	}
+	if st != nil {
+		in.LastSeen = time.Unix(0, st.UpdatedAt)
+		if strings.Contains(" "+string(st.Value)+" ", " degraded=true ") {
+			in.Lifecycle += "/degraded"
+		}
+	}
+	return in
 }
 
 // Cordon marks the node as unavailable for new placements (§4.8).

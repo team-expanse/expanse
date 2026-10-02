@@ -6,6 +6,20 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- `expanse ctl node cordon`, `uncordon`, `drain`, `list` and `remove` now go
+  through the running agent, so they work from any node without stopping
+  `expansed`. Previously they opened the store directly, which meant stopping
+  the leader's agent and often failed with "this node is not the raft leader"
+  once the resulting election moved leadership. `remove` still has to run on
+  the leader, since it changes raft membership. The `--data-dir` and
+  `--node-id` flags are gone from these commands.
+- Removed the unreachable lifecycle `ctl node inspect <id>`, which was hidden by
+  the inventory `ctl node inspect`. `ctl node list` shows the same fields.
+
 ## 1.2.0 - 2026-10-02
 
 ### Changed
