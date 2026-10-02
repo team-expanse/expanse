@@ -100,9 +100,21 @@ def phase_of(b):
     return (b.get("status") or {}).get("phase", "")
 
 
+def failed_placement_on(n):
+    """The placement the controller failed and retired on node n, or None.
+
+    The node's own liveness record is gone as soon as the replica leaves it, so this is the lasting sign.
+    """
+    for p in ((get_json(n1, "web") or {}).get("status") or {}).get("placements", []):
+        if p.get("nodeId") == n and p.get("phase") == "FAILED" and p.get("replicaIndex", 0) == -1:
+            return p
+    return None
+
+
 with subtest("a replica still failing after its restarts moves to another node"):
-    freeze_until(host, lambda: liveness_record().get("failed"), 120)
-    assert liveness_record().get("node") == node, f"failed on the wrong node: {liveness_record()}"
+    freeze_until(host, lambda: failed_placement_on(node), 120)
+    msg = failed_placement_on(node).get("message", "")
+    assert msg.startswith("liveness probe failed after 1 restart:"), f"failed placement message: {msg!r}"
     deadline = time.time() + 120
     b = get_json(n1, "web")
     while time.time() < deadline:
