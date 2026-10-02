@@ -49,6 +49,12 @@ History before 1.0.0 is not recorded here.
 
 ### Fixed
 
+- A new block could stay `SCHEDULING` long after its replica was running,
+  most often on a freshly formed cluster. The block bridge took each
+  replica's status record for a stale replica and deleted it every 10
+  seconds, so the controller saw the replica as running only when its pass
+  happened to fall in the few seconds after the record was rewritten.
+
 - A block's ready replica count was always 0, in the web UI and the API.
   It now counts replicas that are `RUNNING` and whose readiness probe is not
   failing.

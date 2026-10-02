@@ -756,3 +756,27 @@ func TestBridgeKeepsDesiredStateWhenReadsFail(t *testing.T) {
 		}
 	}
 }
+
+// The reconciler's status records share the resource ID; the controller promotes replicas from them.
+func TestBridgeLeavesTheReconcilersStatusRecordsAlone(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	seedPlaced(t, ctx, st, 18080)
+	keys := []string{
+		"/node/n1/status/resources/block-replica:default/web/0",
+		"/node/n1/status/resources/volume-mount:vol-1",
+	}
+	for _, k := range keys {
+		if _, err := st.Put(ctx, store.Key(k), []byte("health=healthy in_sync=true")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := (&Bridge{St: st}).Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	for _, k := range keys {
+		if !hasKey(ctx, st, k) {
+			t.Errorf("bridge deleted the status record %s", k)
+		}
+	}
+}

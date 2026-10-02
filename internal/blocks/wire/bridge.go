@@ -189,9 +189,11 @@ func (b *Bridge) Sync(ctx context.Context) error {
 	return nil
 }
 
-// isBridgeKey reports whether a desired-state key is one the bridge owns.
+// isBridgeKey reports whether k is a desired-state key the bridge owns, /node/<id>/resources/<type>:…,
+// and not the reconciler's status record for it under /node/<id>/status/resources/.
 func isBridgeKey(k string) bool {
-	return strings.Contains(k, "/resources/block-replica:") || strings.Contains(k, "/resources/"+expmount.Type+":")
+	_, rest, _ := strings.Cut(strings.TrimPrefix(k, resourcePrefix), "/")
+	return strings.HasPrefix(rest, "resources/block-replica:") || strings.HasPrefix(rest, "resources/"+expmount.Type+":")
 }
 
 // volumeRef is one cluster volume's placement view.
