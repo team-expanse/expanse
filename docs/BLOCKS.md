@@ -82,6 +82,15 @@ until its probe passes on its own node. `tcp` and `http` probes run;
 instead (see `docs/VMS.md`). A port exposed on a VIP requires a
 readiness probe.
 
+A liveness probe runs the same way. When it fails `failureThreshold`
+times in a row, the node restarts the replica's unit in place, then
+waits a backoff (10 s, doubling up to 5 min) plus `initialDelaySeconds`
+before probing again. Five restarts that do not keep the probe passing
+for 10 minutes and the node gives up: the replica is left running and
+marked failed. Restarts and the failed mark are recorded at
+`/blocks/<ns>/<name>/status/liveness/<i>`. Liveness probes of VMs are
+not run yet.
+
 Fields not set fall back to the catalog type's `defaults.yaml`; every
 config knob the type defines is validated against its `schema.json`
 (JSON Schema 2020-12) and passed to the unit generator. Config is

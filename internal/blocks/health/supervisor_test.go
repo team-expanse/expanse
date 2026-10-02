@@ -161,3 +161,25 @@ func TestJobFor(t *testing.T) {
 		t.Error("got a job with no node address")
 	}
 }
+
+func TestLivenessJobFor(t *testing.T) {
+	tcp := &pb.HealthProbe{Type: pb.ProbeType_PROBE_TCP, Port: 8080}
+	b := block("web/whoami", nil)
+	b.Spec.Network.HealthCheck.Liveness = tcp
+	j, ok := LivenessJobFor(b, 2, "10.0.0.5", "expanse-block@default-web-2.service")
+	if !ok {
+		t.Fatal("no job for a tcp liveness probe")
+	}
+	if !j.Liveness || j.Unit != "expanse-block@default-web-2.service" || j.Target.Address != "10.0.0.5:8080" {
+		t.Errorf("job = %+v", j)
+	}
+	if r, _ := JobFor(block("web/whoami", tcp), 2, "10.0.0.5"); r.ID() == j.ID() {
+		t.Errorf("readiness and liveness jobs share the id %q", j.ID())
+	}
+	if _, ok := LivenessJobFor(b, 2, "10.0.0.5", ""); ok {
+		t.Error("got a liveness job with no unit to restart")
+	}
+	if _, ok := LivenessJobFor(block("web/whoami", tcp), 2, "10.0.0.5", "u.service"); ok {
+		t.Error("a readiness probe made a liveness job")
+	}
+}

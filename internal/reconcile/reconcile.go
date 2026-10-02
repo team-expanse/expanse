@@ -670,7 +670,7 @@ func (r *Reconciler) loadDesired(ctx context.Context) (map[string]Resource, map[
 	for _, e := range entries {
 		id := string(e.Key)[len(r.DesiredPrefix()):]
 		// The spec encodes its type on the first line: "type: <t>\n<spec>".
-		typ, spec, err := splitType(id, e.Value)
+		typ, spec, err := SplitType(id, e.Value)
 		if err != nil {
 			errs[id] = err
 			continue
@@ -691,8 +691,8 @@ func (r *Reconciler) loadDesired(ctx context.Context) (map[string]Resource, map[
 	return resources, errs, nil
 }
 
-// splitType decodes the "type: <t>" header line from a spec.
-func splitType(id string, v []byte) (string, []byte, error) {
+// SplitType decodes the "type: <t>" header line from a spec.
+func SplitType(id string, v []byte) (string, []byte, error) {
 	line := v
 	rest := []byte(nil)
 	if i := indexByte(v, '\n'); i >= 0 {

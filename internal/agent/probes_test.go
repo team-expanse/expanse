@@ -22,11 +22,12 @@ func TestProbeJobsCoverThisNodesReplicas(t *testing.T) {
 		Metadata: &pb.Metadata{Name: "web", Namespace: "default"},
 		Spec: &pb.BlockSpec{Type: "web/whoami", Network: &pb.Network{HealthCheck: &pb.HealthCheck{
 			Readiness: &pb.HealthProbe{Type: pb.ProbeType_PROBE_TCP, Port: 8080},
+			Liveness:  &pb.HealthProbe{Type: pb.ProbeType_PROBE_HTTP, Port: 8080, Path: "/alive"},
 		}}},
 	})
 	for k, v := range map[string]string{
 		"/nodes/n1": `{"raft_addr":"10.0.0.5:7000"}`,
-		"/node/n1/resources/block-replica:default/web/2":  "{}",
+		"/node/n1/resources/block-replica:default/web/2":  "type: block-replica\n" + `{"namespace":"default","name":"web","index":2,"runAsRoot":true}`,
 		"/node/n1/resources/block-replica:default/gone/0": "{}", // block deleted since
 		"/node/n1/resources/volume:data":                  "{}",
 		"/node/n2/resources/block-replica:default/web/0":  "{}",
@@ -44,7 +45,18 @@ func TestProbeJobsCoverThisNodesReplicas(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].ID() != "/blocks/default/web/2" || jobs[0].Target.Address != "10.0.0.5:8080" {
 		t.Fatalf("jobs = %+v, want web/2 probed at 10.0.0.5:8080", jobs)
 	}
+
+	// With units to restart, the liveness probe runs too.
+	a.replicaUnits = fakeUnits{}
+	jobs = a.probeJobs(ctx)
+	if len(jobs) != 2 || !jobs[1].Liveness || jobs[1].Unit != "expanse-block-root@default-web-2.service" {
+		t.Fatalf("jobs = %+v, want web/2's readiness and liveness", jobs)
+	}
 }
+
+type fakeUnits struct{}
+
+func (fakeUnits) Start(context.Context, string) error { return nil }
 
 func TestReplicaRef(t *testing.T) {
 	ns, name, idx, ok := replicaRef("/node/n1/resources/block-replica:default/web/2")

@@ -258,6 +258,7 @@
           block-scale = mkTest "block-scale" ./nix/tests/block-scale.nix;
           block-singleton = mkTest "block-singleton" ./nix/tests/block-singleton.nix;
           block-daemonset = mkTest "block-daemonset" ./nix/tests/block-daemonset.nix;
+          block-liveness = mkTest "block-liveness" ./nix/tests/block-liveness.nix;
           block-delete = mkTest "block-delete" ./nix/tests/block-delete.nix;
           block-catalog = mkTest "block-catalog" ./nix/tests/block-catalog.nix;
 

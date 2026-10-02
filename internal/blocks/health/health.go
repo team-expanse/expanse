@@ -282,10 +282,38 @@ func Passing(ctx context.Context, st store.Store, blockKey store.Key, replicaInd
 	return rec.OK && rec.Node == node, nil
 }
 
+func livenessKey(blockKey store.Key, replicaIndex int32) store.Key {
+	return store.Key(fmt.Sprintf("%s/status/liveness/%d", blockKey, replicaIndex))
+}
+
+// LivenessPublisher writes a replica's liveness record, stamped with node.
+func LivenessPublisher(st store.Store, blockKey store.Key, replicaIndex int32, node string) func(context.Context, LivenessRecord) error {
+	key := livenessKey(blockKey, replicaIndex)
+	return func(ctx context.Context, rec LivenessRecord) error {
+		rec.Node = node
+		b, err := json.Marshal(rec)
+		if err != nil {
+			return errors.Wrap(err, errors.KindInternal, "health.publishLiveness", "marshal record")
+		}
+		if _, err := st.Put(ctx, key, b); err != nil {
+			return errors.Wrap(err, errors.KindUnavailable, "health.publishLiveness", "write status")
+		}
+		return nil
+	}
+}
+
 // Retire deletes the replica's record if node wrote it, so a replica gone from node leaves no
 // stale verdict, yet the record of a replica that moved to another node survives.
 func Retire(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) error {
-	key := replicaKey(blockKey, replicaIndex)
+	return retire(ctx, st, replicaKey(blockKey, replicaIndex), node)
+}
+
+// RetireLiveness is Retire for the replica's liveness record.
+func RetireLiveness(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) error {
+	return retire(ctx, st, livenessKey(blockKey, replicaIndex), node)
+}
+
+func retire(ctx context.Context, st store.Store, key store.Key, node string) error {
 	e, err := st.Get(ctx, key)
 	if errors.Is(err, errors.KindNotFound) {
 		return nil
@@ -293,7 +321,9 @@ func Retire(ctx context.Context, st store.Store, blockKey store.Key, replicaInde
 	if err != nil {
 		return errors.Wrap(err, errors.KindInternal, "health.retire", "read status")
 	}
-	var rec Record
+	var rec struct {
+		Node string `json:"node"`
+	}
 	if json.Unmarshal(e.Value, &rec) != nil || rec.Node != node {
 		return nil
 	}

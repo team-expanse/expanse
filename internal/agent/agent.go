@@ -189,6 +189,7 @@ type Agent struct {
 	volnode      volumeRunner
 	volctl       *volctlc.Controller
 	blockBridge  *wire.Bridge
+	replicaUnits unitStarter // nil when block replicas are disabled; liveness probes restart through it
 	invMu        sync.Mutex
 	invSnapshot  *inventory.Inventory
 	invCollector *inventory.Collector
@@ -410,6 +411,7 @@ func New(cfg Config) (*Agent, error) {
 					if err != nil {
 						logger.Warn("closure cache unavailable; block replicas disabled", "err", err)
 					} else {
+						a.replicaUnits = api
 						r.Register(systemd.NewManager(api, &systemd.Applier{
 							Cache:   cache,
 							Builder: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef, logger: logger},

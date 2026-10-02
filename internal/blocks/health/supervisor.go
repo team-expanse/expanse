@@ -14,16 +14,24 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Job is one replica's readiness probe, run on the replica's node.
+// Job is one replica's readiness or liveness probe, run on the replica's node.
 type Job struct {
 	BlockKey store.Key
 	Index    int32
 	Probe    *pb.HealthProbe
 	Target   Target
+	// Liveness jobs restart Unit when the probe fails.
+	Liveness bool
+	Unit     string
 }
 
-// ID names the replica the job probes.
-func (j Job) ID() string { return fmt.Sprintf("%s/%d", j.BlockKey, j.Index) }
+// ID names the replica the job probes, and which probe.
+func (j Job) ID() string {
+	if j.Liveness {
+		return fmt.Sprintf("%s/%d/liveness", j.BlockKey, j.Index)
+	}
+	return fmt.Sprintf("%s/%d", j.BlockKey, j.Index)
+}
 
 func (j Job) equal(o Job) bool {
 	return j.ID() == o.ID() && proto.Equal(j.Probe, o.Probe) && reflect.DeepEqual(j.Target, o.Target)
@@ -36,6 +44,21 @@ func JobFor(b *pb.Block, index int32, host string) (Job, bool) {
 	if !ok || host == "" {
 		return Job{}, false
 	}
+	return jobFor(b, index, host, p), true
+}
+
+// LivenessJobFor builds the job that restarts unit, replica index of b, when its liveness probe fails.
+func LivenessJobFor(b *pb.Block, index int32, host, unit string) (Job, bool) {
+	p := b.GetSpec().GetNetwork().GetHealthCheck().GetLiveness()
+	if !agentProbed(b, p) || host == "" || unit == "" {
+		return Job{}, false
+	}
+	j := jobFor(b, index, host, p)
+	j.Liveness, j.Unit = true, unit
+	return j, true
+}
+
+func jobFor(b *pb.Block, index int32, host string, p *pb.HealthProbe) Job {
 	return Job{
 		BlockKey: store.Key("/blocks/" + b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()),
 		Index:    index,
@@ -45,7 +68,7 @@ func JobFor(b *pb.Block, index int32, host string) (Job, bool) {
 			Path:    p.GetPath(),
 			Timeout: time.Duration(p.GetTimeoutSeconds()) * time.Second,
 		},
-	}, true
+	}
 }
 
 // Supervisor keeps one running prober per job.
@@ -106,14 +129,14 @@ func (s *Supervisor) start(ctx context.Context, j Job) *supervised {
 	return r
 }
 
-// Readiness returns b's readiness probe if agents run it: tcp and http on a port, not on VMs.
+// Readiness returns b's readiness probe if agents run it.
 func Readiness(b *pb.Block) (*pb.HealthProbe, bool) {
 	p := b.GetSpec().GetNetwork().GetHealthCheck().GetReadiness()
-	switch {
-	case p.GetPort() == 0 || b.GetSpec().GetType() == "vm/instance":
-		return nil, false
-	case p.GetType() != pb.ProbeType_PROBE_TCP && p.GetType() != pb.ProbeType_PROBE_HTTP:
-		return nil, false
-	}
-	return p, true
+	return p, agentProbed(b, p)
+}
+
+// agentProbed reports whether agents run p: tcp and http on a port, not on VMs.
+func agentProbed(b *pb.Block, p *pb.HealthProbe) bool {
+	return p.GetPort() != 0 && b.GetSpec().GetType() != "vm/instance" &&
+		(p.GetType() == pb.ProbeType_PROBE_TCP || p.GetType() == pb.ProbeType_PROBE_HTTP)
 }

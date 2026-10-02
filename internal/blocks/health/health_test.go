@@ -513,3 +513,33 @@ func TestNoStaleReads(t *testing.T) {
 		t.Errorf("forbidden stale reads in health package: %v", bad)
 	}
 }
+
+// Liveness records live beside readiness ones and are retired the same way.
+func TestLivenessPublishAndRetire(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	key := store.Key("/blocks/default/web/status/liveness/1")
+	if err := LivenessPublisher(st, "/blocks/default/web", 1, "n1")(ctx, LivenessRecord{Restarts: 2, Failed: true}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	e, err := st.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var got LivenessRecord
+	if err := json.Unmarshal(e.Value, &got); err != nil || got.Node != "n1" || got.Restarts != 2 || !got.Failed {
+		t.Fatalf("record = %+v (%v)", got, err)
+	}
+	if err := RetireLiveness(ctx, st, "/blocks/default/web", 1, "n2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Get(ctx, key); err != nil {
+		t.Fatalf("n2 retired n1's record: %v", err)
+	}
+	if err := RetireLiveness(ctx, st, "/blocks/default/web", 1, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Get(ctx, key); err == nil {
+		t.Fatal("record still present after its node retired it")
+	}
+}

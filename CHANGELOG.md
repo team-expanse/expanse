@@ -25,6 +25,11 @@ History before 1.0.0 is not recorded here.
   A new replica, and so its block, is not `RUNNING` until its probe passes.
   `exec` probes are not run yet.
 
+- Block liveness probes now run. A replica whose `tcp` or `http` liveness
+  probe keeps failing is restarted on its node, with a growing pause between
+  restarts; after five restarts that do not fix it, the node marks it
+  failed. See `docs/BLOCKS.md`.
+
 ### Fixed
 
 - An `iscsi/target` block's VIP could fail to come up. Creating the target
