@@ -51,9 +51,10 @@ in
         # conflict-free, and lets us curl each replica directly.
         deploy(n1, "ds", echo_yaml("ds", None, 18086, "ds\n",
                                    antiaffinity=False, strategy="DAEMONSET"))
-        b = wait_phase(n1, "ds", ["RUNNING"], 30)
+        # A node whose agent has only just started may not be Ready yet, so wait for all three.
+        b = wait_placement_nodes(n1, "ds", 3, 60)
+        wait_phase(n1, "ds", ["RUNNING"], 30)
         nodes = placement_nodes(b)
-        assert len(nodes) == 3, f"daemonset on {nodes}, want 1 per node: {b.get('status')}"
 
     with subtest("each replica serves on its own node"):
         for node in nodes:
@@ -65,17 +66,9 @@ in
         n4.succeed("systemctl stop expansed.service")
         rc, token = n2.execute("cat /root/join-token")
         join_and_start(n4, token.strip(), "voter")
-        deadline = time.time() + 60
-        b = None
-        while time.time() < deadline:
-            b = get_json(n1, "ds")
-            if b is not None and len(placement_nodes(b)) == 4:
-                break
-            time.sleep(2)
-        nodes = placement_nodes(b or {})
-        st = (b or {}).get("status")
-        assert len(nodes) == 4 and "n4" in nodes, \
-            f"daemonset never extended to n4: {st}"
+        b = wait_placement_nodes(n1, "ds", 4, 60)
+        nodes = placement_nodes(b)
+        assert "n4" in nodes, f"daemonset never extended to n4: {b.get('status')}"
         echo_responds(n4, 18086, "ds\n", node="localhost")
 
     with subtest("cordon a node: daemonset stays (ignores cordon)"):

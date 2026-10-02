@@ -84,6 +84,18 @@ def placement_nodes(b):
     return nodes
 
 
+def wait_placement_nodes(m, name, count, timeout, ns="default"):
+    """Poll until the block has live placements on count nodes; return the JSON."""
+    deadline = time.time() + timeout
+    b = None
+    while time.time() < deadline:
+        b = get_json(m, name, ns)
+        if b is not None and len(placement_nodes(b)) == count:
+            return b
+        time.sleep(2)
+    raise Exception(f"block {name} never on {count} nodes: {(b or {}).get('status')}")
+
+
 def replica_phases(b):
     return {p.get("replicaIndex", 0): p.get("phase")
             for p in (b.get("status") or {}).get("placements", [])}
