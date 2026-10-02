@@ -27,7 +27,7 @@ let
     expanse.agent.blocksCatalog = ../blocks;
     expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
     environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-    expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+    expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
     expanse.agent.externalInterface = "eth1";
     # T17: DNS forwards to dnsmasq on the client VM (no internet here).
     expanse.agent.dnsUpstreams = "192.168.1.4:53";
@@ -82,7 +82,6 @@ in
     wait_agent_ready(n2)
     wait_agent_ready(n3)
 
-    vip = "192.168.1.100"
 
     with subtest("deploy nginx (3 replicas, VIP) and api (1 replica, no VIP)"):
         nginx = (
@@ -109,6 +108,7 @@ in
             "        protocol: tcp\n        expose: EXPOSE_NONE\n"
         )
         deploy(n1, "nginx", nginx)
+        vip = wait_block_vip(n1, "nginx")
         deploy(n1, "api", api)
 
     with subtest("both blocks Running"):

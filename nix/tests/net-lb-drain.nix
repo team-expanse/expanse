@@ -26,7 +26,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 ];
     };
@@ -45,7 +45,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 ];
     };
@@ -64,7 +64,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 ];
     };
@@ -89,7 +89,6 @@ in
     wait_agent_ready(n2)
     wait_agent_ready(n3)
 
-    vip = "192.168.1.100"
 
     def drain_manifest(greeting):
         return (
@@ -108,6 +107,7 @@ in
 
     with subtest("deploy whoami replicas=2 with expose: vip"):
         deploy(n1, "web", drain_manifest("v1-"))
+        vip = wait_block_vip(n1, "web")
 
     with subtest("both replicas Running within 90 s"):
         b = wait_phase(n1, "web", ["RUNNING"], 90)

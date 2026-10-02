@@ -123,3 +123,18 @@ def replica_node(b, idx):
         if p.get("replicaIndex", 0) == idx and p.get("phase") != "LOST" and idx >= 0:
             return p.get("nodeId")
     return None
+
+
+def wait_block_vip(m, name, timeout=60, ns="default"):
+    """The external VIP allocated to a block; the pool's other address is the web UI's."""
+    deadline = time.time() + timeout
+    out = ""
+    while time.time() < deadline:
+        rc, out = kv(m, f"get /network/vipPool/external/{ns}/{name}")
+        try:
+            if rc == 0:
+                return json.loads(out)["addr"].split("/")[0]
+        except (ValueError, KeyError):
+            pass
+        time.sleep(2)
+    raise AssertionError(f"{ns}/{name} was never given a VIP: {out!r}")

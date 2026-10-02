@@ -38,7 +38,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
@@ -58,7 +58,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
@@ -78,7 +78,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
@@ -106,7 +106,6 @@ in
     wait_agent_ready(n2)
     wait_agent_ready(n3)
 
-    vip = "192.168.1.100"
     ips = { "n1": "192.168.1.1", "n2": "192.168.1.2", "n3": "192.168.1.3" }
     nodes = [n1, n2, n3]
 
@@ -125,6 +124,7 @@ in
             "        port: 8080\n        period_seconds: 2\n"
         )
         deploy(n1, "web", manifest)
+        vip = wait_block_vip(n1, "web")
 
     with subtest("all replicas Running and exactly one holder"):
         b = wait_phase(n1, "web", ["RUNNING"], 60)
@@ -229,13 +229,15 @@ in
         # MAC flip (a failover). Legal flips are separated by at least
         # one full failover cycle (~lease TTL); a flip < 12 s after the
         # previous one means two nodes were answering simultaneously.
+        # The first entry is the initial holder, not a flip, so the
+        # first real flip is not timed against the checker's start.
         flips = []
         prev = None
         for ts, mac in answered:
             if mac != prev:
                 flips.append((ts, mac))
                 prev = mac
-        for (t1, m1), (t2, m2) in zip(flips, flips[1:]):
+        for (t1, m1), (t2, m2) in zip(flips[1:], flips[2:]):
             assert t2 - t1 >= 12, (
                 f"split brain: {m1} and {m2} both answered around t={t2:.1f} "
                 f"({t2 - t1:.1f}s after the previous flip) — duplicate holder"
@@ -252,9 +254,9 @@ in
         for i in range(len(names)):
             for j in range(i + 1, len(names)):
                 a, b = logs[names[i]], logs[names[j]]
-                # Two-sample overlap within 2 s: legal failover leaves a
-                # >= 10 s gap (release on renew failure vs takeover at
-                # TTL expiry), so any 2 s proximity is a real overlap.
+                # Two-sample overlap within 2 s: a lost lease drops the
+                # address by TTL/3 + renew budget (~6.7 s) and takeover waits
+                # for expiry (10 s), so legal failover leaves a >= 3 s gap.
                 overlap = None
                 ai = bi = 0
                 while ai < len(a) and bi < len(b):

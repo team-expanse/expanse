@@ -31,7 +31,7 @@ let
     expanse.agent.blocksCatalog = ../blocks;
     expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
     environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-    expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+    expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
     expanse.agent.externalInterface = "eth1";
     # T19/T20: apply the §4.5 ruleset. The agent is the SOLE nftables
     # owner here — the NixOS firewall module flushes the ruleset on
@@ -85,12 +85,12 @@ in
             "        port: 8080\n        period_seconds: 2\n"
         )
         deploy(n1, "nginx", nginx)
+        vip = wait_block_vip(n1, "nginx")
 
     with subtest("block Running and VIP allocated"):
         b = wait_phase(n1, "nginx", ["RUNNING"], 120)
         assert len(placement_nodes(b)) == 3, f"nginx placements: {b.get('status')}"
 
-    vip = "192.168.1.100"
     allowed = {22, 8443, 7446, 80}
 
     # The spec's full 1-10000 sweep takes tens of seconds per node when

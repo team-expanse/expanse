@@ -29,7 +29,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
@@ -49,7 +49,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
@@ -69,7 +69,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
@@ -96,7 +96,6 @@ in
     wait_agent_ready(n2)
     wait_agent_ready(n3)
 
-    vip = "192.168.1.100"
     print("=== M3 DEMO: node failure does not take the service down ===")
 
     with subtest("act 1 — deploy a 3-replica web service with a VIP"):
@@ -114,8 +113,9 @@ in
             "        port: 8080\n        period_seconds: 2\n"
         )
         deploy(n1, "web", manifest)
+        vip = wait_block_vip(n1, "web")
         wait_phase(n1, "web", ["RUNNING"], 60)
-        print("web deployed: 3 replicas across n1/n2/n3, VIP 192.168.1.100 announced")
+        print(f"web deployed: 3 replicas across n1/n2/n3, VIP {vip} announced")
 
     with subtest("act 2 — the outside world sees the service"):
         deadline = time.time() + 30

@@ -1,5 +1,5 @@
 # §6 net-vip-basic: deploy nginx replicas=3 with expose: vip; assert
-# exactly ONE node holds the external VIP (192.168.1.100/24) and the
+# exactly ONE node holds the block's external VIP and the
 # external client VM gets a 200 from the VIP.
 { self }:
 { pkgs, lib, ... }:
@@ -25,8 +25,8 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      # §4.2 external pool: a single address keeps the test deterministic.
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      # §4.2 external pool: one address for the web UI's VIP, one for the block's.
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       # The test LAN rides eth1 (the driver's 192.168.1.0/24 segment);
       # "auto" would resolve to the NAT'd eth0 default route.
       expanse.agent.externalInterface = "eth1";
@@ -50,7 +50,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       # Binary-backed blocks exec upstream binaries from the system
@@ -72,7 +72,7 @@ in
       expanse.agent.blocksCatalog = ../blocks;
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.100";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
       # Binary-backed blocks exec upstream binaries from the system
@@ -102,7 +102,6 @@ in
     wait_agent_ready(n2)
     wait_agent_ready(n3)
 
-    vip = "192.168.1.100"
 
     with subtest("deploy nginx replicas=3 with expose: vip"):
         manifest = (
@@ -119,6 +118,7 @@ in
             "        port: 8080\n        period_seconds: 2\n"
         )
         deploy(n1, "web", manifest)
+        vip = wait_block_vip(n1, "web")
 
     with subtest("all replicas Running and exactly one holder"):
         b = wait_phase(n1, "web", ["RUNNING"], 60)
