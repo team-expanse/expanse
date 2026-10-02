@@ -100,13 +100,8 @@ with subtest("stop replica 0 (masked so the reconciler keeps it down)"):
             replica0_node = m
             break
     assert replica0_node is not None, "replica-0 unit not found on any node"
-    # /etc is read-only on NixOS, so mask via /run (writable tmpfs
-    # unit dir the reconciler's restart cannot get past).
-    rc, out = replica0_node.execute(
-        f"systemctl stop {unit} && "
-        "mkdir -p /run/systemd/system && "
-        f"ln -sf /dev/null /run/systemd/system/{unit} && "
-        "systemctl daemon-reload")
+    # Mask (in /run: /etc is read-only on NixOS) before stopping, or the reconciler can restart it in between.
+    rc, out = replica0_node.execute(f"systemctl mask --runtime {unit} && systemctl stop {unit}")
     assert rc == 0, f"stop/mask failed: {out}"
 
 with subtest("within 10 s: no requests reach replica 0 and ZERO client errors (G5.7)"):
