@@ -69,6 +69,9 @@ type Config struct {
 	// ControllerPeriod is the block placement controller's backstop pass
 	// interval (§4.3 retry timer, default 30s). Shorter in tests.
 	ControllerPeriod time.Duration
+	// LivenessMaxRestarts is how often a replica failing its liveness probe is restarted before
+	// its node gives up on it (default 5).
+	LivenessMaxRestarts int
 	// RenewalPeriod is the cert-renewal/CA-rotation loop's tick
 	// interval (Phase 10 X2, default control.RenewalInterval). Shorter
 	// in tests, which can't wait out real 30-day cert validity.

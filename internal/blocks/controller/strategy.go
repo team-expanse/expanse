@@ -93,18 +93,21 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 		}
 	}
 
+	failedOn := livenessFailedNodes(status, int64(e.Revision))
+	candidates := withoutNodes(nodes, failedOn)
+	stopped := stoppedReplicas(status, int64(e.Revision))
 	placed := 0
 	for i := 0; i < want; i++ {
-		if placementAt(status, int32(i)) != nil {
+		if placementAt(status, int32(i)) != nil || stopped[int32(i)] {
 			continue
 		}
 		req := scheduler.ReplicaRequest{Block: b, ReplicaIndex: i, ExistingPlacements: existing}
-		nodeID, pending := scheduler.Schedule(nodes, req, cfg, scheduler.ClusterView{SameBlockReplicas: sameBlockReplicas(existing)})
+		nodeID, pending := scheduler.Schedule(candidates, req, cfg, scheduler.ClusterView{SameBlockReplicas: sameBlockReplicas(existing)})
 		if pending != nil {
 			// Persist the reason but do NOT advance the phase (§4.3):
 			// the replica stays Pending and is retried on the next trigger.
 			status.Phase = pb.Phase_PENDING
-			status.PendingReason = pending
+			status.PendingReason = withLivenessFailures(pending, failedOn)
 			break
 		}
 		status.PendingReason = nil
@@ -117,7 +120,13 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 		})
 		existing = append(existing, nodeID)
 		scheduler.Reserve(nodes, nodeID, req)
+		if len(candidates) != len(nodes) {
+			scheduler.Reserve(candidates, nodeID, req)
+		}
 		placed++
+	}
+	if len(stopped) > 0 {
+		markStopped(status, stopped)
 	}
 	if placed > 0 || status.GetPendingReason() != nil {
 		if err := c.persistStatus(ctx, e.Key, status); err != nil {
@@ -125,6 +134,17 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 		}
 	}
 	return placed, nil
+}
+
+// withLivenessFailures adds the nodes left out for failing the block's liveness probe to r.
+func withLivenessFailures(r *pb.PendingReason, failedOn map[string]bool) *pb.PendingReason {
+	for id := range failedOn {
+		if r.PerNode == nil {
+			r.PerNode = map[string]string{}
+		}
+		r.PerNode[id] = "replica failed its liveness probe here"
+	}
+	return r
 }
 
 // placeDaemonset keeps exactly one placement per eligible node: Ready,

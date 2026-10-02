@@ -66,3 +66,48 @@ with subtest("the restarted replica stays put and RUNNING"):
     b = wait_phase(n1, "web", ["RUNNING"], 30)
     assert replica_node(b, 0) == node, f"replica moved: {b.get('status')}"
     assert liveness_record().get("restarts") == 1, f"restarted again: {liveness_record()}"
+
+
+def freeze_until(m, done, timeout):
+    """SIGSTOP the replica on m every 2 s, so restarts freeze too, until done() is true."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if done():
+            return
+        m.execute(f"systemctl kill --signal=SIGSTOP {unit}")
+        time.sleep(2)
+    print(kv(n1, "list /blocks/default/web/status/")[1])
+    print(m.execute("journalctl -u expansed.service | grep -i liveness")[1])
+    raise AssertionError(f"gave up freezing the replica on {m.name}: {get_json(n1, 'web')}")
+
+
+def phase_of(b):
+    return (b.get("status") or {}).get("phase", "")
+
+
+with subtest("a replica still failing after its restarts moves to another node"):
+    freeze_until(host, lambda: liveness_record().get("failed"), 120)
+    assert liveness_record().get("node") == node, f"failed on the wrong node: {liveness_record()}"
+    deadline = time.time() + 120
+    b = get_json(n1, "web")
+    while time.time() < deadline:
+        b = get_json(n1, "web") or {}
+        if replica_node(b, 0) not in (None, node) and phase_of(b) == "RUNNING":
+            break
+        time.sleep(2)
+    second = replica_node(b, 0)
+    assert second not in (None, node) and phase_of(b) == "RUNNING", f"replica not moved: {b.get('status')}"
+    host.wait_until_fails(f"systemctl is-active --quiet {unit}", timeout=60)
+    second_host = by_name[second]
+    second_host.wait_until_succeeds("curl -sf --max-time 2 http://localhost:8080/", timeout=60)
+
+with subtest("a replica failing on a second node is stopped, not moved again"):
+    freeze_until(second_host, lambda: phase_of(get_json(n1, "web") or {}) == "FAILED", 180)
+    b = get_json(n1, "web")
+    reason = (b.get("status") or {}).get("pendingReason") or {}
+    assert reason.get("code") == "LivenessFailed", f"unexpected reason: {b.get('status')}"
+    for m in (n1, n2, n3):
+        m.wait_until_fails(f"systemctl is-active --quiet {unit}", timeout=60)
+    time.sleep(20)
+    b = get_json(n1, "web")
+    assert phase_of(b) == "FAILED" and replica_node(b, 0) is None, f"replica came back: {b.get('status')}"

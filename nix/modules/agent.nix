@@ -29,6 +29,12 @@ in
       description = "Block placement controller pass interval. Empty = daemon default (30s).";
     };
 
+    livenessMaxRestarts = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 5;
+      description = "Restarts of a replica failing its liveness probe before it is moved to another node.";
+    };
+
     renewalPeriod = lib.mkOption {
       type = lib.types.str;
       default = "";
@@ -309,6 +315,7 @@ in
         ExecStart = with lib;
           "${pkgs.expanse}/bin/expanse agent --data-dir ${cfg.persistDir}/expanse --period ${cfg.period}" +
           optionalString (cfg.controllerPeriod != "") " --controller-period ${cfg.controllerPeriod}" +
+          " --liveness-max-restarts ${toString cfg.livenessMaxRestarts}" +
           optionalString (cfg.renewalPeriod != "") " --renewal-period ${cfg.renewalPeriod}" +
           optionalString (cfg.blocksCatalog != null) " --blocks-catalog ${cfg.blocksCatalog}" +
           optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}" +

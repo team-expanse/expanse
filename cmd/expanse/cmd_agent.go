@@ -13,27 +13,28 @@ import (
 
 func newAgentCmd() *cobra.Command {
 	var (
-		dataDir     string
-		socket      string
-		period      string
-		ctlPeriod   string
-		renewPeriod string
-		dryRun      bool
-		enableTCP   bool
-		role        string
-		raftBind    string
-		raftAdv     string
-		blockCat    string
-		blockFlake  string
-		extPool     string
-		extIface    string
-		dnsUp       string
-		storageVG   string
-		storagePool string
-		drbdCfgDir  string
-		lostAfter   string
-		firewall    bool
-		pprofAddr   string
+		dataDir          string
+		socket           string
+		period           string
+		ctlPeriod        string
+		livenessRestarts int
+		renewPeriod      string
+		dryRun           bool
+		enableTCP        bool
+		role             string
+		raftBind         string
+		raftAdv          string
+		blockCat         string
+		blockFlake       string
+		extPool          string
+		extIface         string
+		dnsUp            string
+		storageVG        string
+		storagePool      string
+		drbdCfgDir       string
+		lostAfter        string
+		firewall         bool
+		pprofAddr        string
 	)
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -79,6 +80,7 @@ func newAgentCmd() *cobra.Command {
 				}
 				cfg.ControllerPeriod = d
 			}
+			cfg.LivenessMaxRestarts = livenessRestarts
 			if renewPeriod != "" {
 				d, err := parseDuration(renewPeriod)
 				if err != nil {
@@ -103,6 +105,7 @@ func newAgentCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
 	cmd.Flags().StringVar(&socket, "socket", "/run/expanse/agent.sock", "gRPC unix socket path")
 	cmd.Flags().StringVar(&period, "period", "30s", "reconcile tick period")
+	cmd.Flags().IntVar(&livenessRestarts, "liveness-max-restarts", 5, "restarts of a replica failing its liveness probe before it is moved to another node")
 	cmd.Flags().StringVar(&ctlPeriod, "controller-period", "", "block placement controller pass interval (default 30s)")
 	cmd.Flags().StringVar(&renewPeriod, "renewal-period", "", "cert renewal / CA rotation catch-up pass interval (Phase 10 X2, default 6h)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "plan but never apply changes")

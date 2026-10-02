@@ -359,6 +359,8 @@ message PlacementStatus {
   // Block-store revision this replica was last started at (§5.2 target
   // generation for rolling updates). 0 = pre-T15 placement.
   int64 generation = 4;
+  // The replica index a retired placement (replica_index -1) served.
+  int32 former_index = 5;
 }
 
 // PendingReason explains why a replica could not be placed (§4.3).

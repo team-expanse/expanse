@@ -1,6 +1,6 @@
 # block-liveness: a replica whose liveness probe fails (its process frozen,
-# so the unit stays active) is restarted on the same node by its agent,
-# which records the restart at /blocks/<ns>/<name>/status/liveness/<i>.
+# so the unit stays active) is restarted on the same node by its agent; once
+# its restarts run out it moves to another node, and failing there too stops it.
 { self }:
 { pkgs, lib, ... }:
 let
@@ -16,6 +16,7 @@ let
     virtualisation.memorySize = 2048;
     expanse.agent.period = "5s";
     expanse.agent.controllerPeriod = "5s";
+    expanse.agent.livenessMaxRestarts = 1;
     expanse.agent.blocksCatalog = ../blocks;
     expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
     environment.etc."expanse/blocks-flake".source = ../blocks-flake;

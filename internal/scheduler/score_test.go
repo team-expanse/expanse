@@ -266,3 +266,10 @@ func TestScoreMonotoneS3(t *testing.T) {
 	}
 	sort.Slice(sa, func(i, j int) bool { return sa[i].NodeID < sa[j].NodeID })
 }
+
+func TestScheduleWithNoNodesIsPending(t *testing.T) {
+	id, pending := Schedule(nil, baseReq(), baseCfg(), ClusterView{})
+	if id != "" || pending.GetCode() != CodeNoNodes {
+		t.Fatalf("Schedule(no nodes) = %q, %+v; want pending %s", id, pending, CodeNoNodes)
+	}
+}

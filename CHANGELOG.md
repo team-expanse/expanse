@@ -30,6 +30,16 @@ History before 1.0.0 is not recorded here.
   restarts; after five restarts that do not fix it, the node marks it
   failed. See `docs/BLOCKS.md`.
 
+- A replica that its node marked failed now moves to another node. Its
+  placement is marked `FAILED` and a replacement is scheduled anywhere but
+  that node; a singleton with storage only moves to a node holding a replica
+  of its disk. A replica that fails on a second node as well is stopped
+  rather than moved again, so a broken workload does not cycle through the
+  cluster: the block goes `FAILED`, or `DEGRADED` while other replicas still
+  run, until a new version of the block is applied. A daemonset replica is
+  marked `FAILED` but stays on its node. The agent's new
+  `livenessMaxRestarts` option sets how many restarts a node tries first.
+
 ### Fixed
 
 - An `iscsi/target` block's VIP could fail to come up. Creating the target

@@ -543,3 +543,35 @@ func TestLivenessPublishAndRetire(t *testing.T) {
 		t.Fatal("record still present after its node retired it")
 	}
 }
+
+func TestLivenessFailedOn(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	const blk = store.Key("/blocks/default/web")
+	if rec, err := LivenessFailedOn(ctx, st, blk, 0, "n1"); err != nil || rec != nil {
+		t.Fatalf("no record = %+v, %v; want nil, nil", rec, err)
+	}
+	publish := LivenessPublisher(st, blk, 0, "n1")
+	if err := publish(ctx, LivenessRecord{Restarts: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := LivenessFailedOn(ctx, st, blk, 0, "n1"); rec != nil {
+		t.Fatalf("restarting replica reported failed: %+v", rec)
+	}
+	if err := publish(ctx, LivenessRecord{Restarts: 5, Failed: true, Detail: "connection refused"}); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := LivenessFailedOn(ctx, st, blk, 0, "n2"); rec != nil {
+		t.Fatalf("n1's verdict applied to n2: %+v", rec)
+	}
+	rec, err := LivenessFailedOn(ctx, st, blk, 0, "n1")
+	if err != nil || rec == nil || rec.Detail != "connection refused" {
+		t.Fatalf("failed record = %+v, %v", rec, err)
+	}
+	if _, err := st.Put(ctx, livenessKey(blk, 1), []byte("{not json")); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := LivenessFailedOn(ctx, st, blk, 1, "n1"); err != nil || rec != nil {
+		t.Fatalf("garbled record = %+v, %v; want unknown", rec, err)
+	}
+}

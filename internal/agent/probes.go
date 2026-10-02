@@ -58,9 +58,10 @@ func (a *Agent) probeLoop(ctx context.Context) {
 func (a *Agent) watchLiveness(ctx context.Context, j blockhealth.Job) {
 	publish := blockhealth.LivenessPublisher(a.store, j.BlockKey, j.Index, a.cfg.NodeID)
 	w := &blockhealth.Watchdog{
-		Prober: blockhealth.For(j.Probe.GetType()),
-		Target: j.Target,
-		Probe:  j.Probe,
+		Prober:      blockhealth.For(j.Probe.GetType()),
+		Target:      j.Target,
+		Probe:       j.Probe,
+		MaxRestarts: a.cfg.LivenessMaxRestarts,
 		Restart: func(ctx context.Context) error {
 			a.logger.Warn("liveness probe failing; restarting replica", "replica", j.ID(), "unit", j.Unit)
 			return a.replicaUnits.Start(ctx, j.Unit)

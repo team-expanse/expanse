@@ -302,6 +302,23 @@ func LivenessPublisher(st store.Store, blockKey store.Key, replicaIndex int32, n
 	}
 }
 
+// LivenessFailedOn returns node's record if node gave up on the replica; nil when it has not,
+// or when the record is missing, from another node or unreadable (unknown is not unhealthy).
+func LivenessFailedOn(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) (*LivenessRecord, error) {
+	e, err := st.Get(ctx, livenessKey(blockKey, replicaIndex))
+	if errors.Is(err, errors.KindNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, "health.livenessFailedOn", "read status")
+	}
+	var rec LivenessRecord
+	if json.Unmarshal(e.Value, &rec) != nil || !rec.Failed || rec.Node != node {
+		return nil, nil
+	}
+	return &rec, nil
+}
+
 // Retire deletes the replica's record if node wrote it, so a replica gone from node leaves no
 // stale verdict, yet the record of a replica that moved to another node survives.
 func Retire(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) error {

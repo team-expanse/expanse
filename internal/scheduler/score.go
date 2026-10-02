@@ -91,6 +91,9 @@ func Score(candidates []NodeView, req ReplicaRequest, cluster ClusterView) []Sco
 // rejection.
 func Schedule(nodes []NodeView, req ReplicaRequest, cfg OvercommitConfig, cluster ClusterView) (nodeID string, pending *pb.PendingReason) {
 	cands, reasons := Filter(nodes, req, cfg)
+	if len(cands) == 0 && len(reasons) == 0 {
+		return "", &pb.PendingReason{Code: CodeNoNodes, Message: "no nodes to place on"}
+	}
 	if len(cands) == 0 {
 		return "", BuildPendingReason(reasons)
 	}

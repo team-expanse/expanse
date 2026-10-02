@@ -73,6 +73,7 @@ type OvercommitConfig struct {
 // Stable predicate codes, used as PendingReason codes (§4.3).
 const (
 	CodeNotReady           = "NotReady"
+	CodeNoNodes            = "NoNodes"
 	CodeWitness            = "Witness"
 	CodeInsufficientCPU    = "InsufficientCPU"
 	CodeInsufficientMemory = "InsufficientMemory"

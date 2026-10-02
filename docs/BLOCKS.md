@@ -86,10 +86,23 @@ A liveness probe runs the same way. When it fails `failureThreshold`
 times in a row, the node restarts the replica's unit in place, then
 waits a backoff (10 s, doubling up to 5 min) plus `initialDelaySeconds`
 before probing again. Five restarts that do not keep the probe passing
-for 10 minutes and the node gives up: the replica is left running and
-marked failed. Restarts and the failed mark are recorded at
-`/blocks/<ns>/<name>/status/liveness/<i>`. Liveness probes of VMs are
-not run yet.
+for 10 minutes and the node gives up and marks the replica failed.
+Restarts and the failed mark are recorded at
+`/blocks/<ns>/<name>/status/liveness/<i>`. The number of restarts is the
+agent's `livenessMaxRestarts` option. Liveness probes of VMs are not run
+yet.
+
+The controller then marks the placement `FAILED`, stops it and schedules
+the replica on another node, never the one it failed on. A singleton
+with storage only moves to a node holding a replica of its disk. If the
+replica fails on that second node too, it is stopped instead of moved
+again, so a broken workload does not cycle through the cluster: the
+block goes `FAILED` (or `DEGRADED` while its other replicas run) with
+reason `LivenessFailed`. Applying a new version of the block clears
+this and places the replica again. A daemonset replica cannot move, so
+it is marked `FAILED` and left running on its node. A missing or
+unreadable liveness record, or one written by another node, never
+moves or stops anything.
 
 Fields not set fall back to the catalog type's `defaults.yaml`; every
 config knob the type defines is validated against its `schema.json`
