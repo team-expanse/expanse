@@ -230,3 +230,43 @@ func TestRuntimePassWaitsForReadiness(t *testing.T) {
 		t.Fatalf("phase = %v, want RUNNING once ready", s.GetPhase())
 	}
 }
+
+// A replica with a readiness probe is RUNNING only once its own node publishes a passing result.
+func TestRuntimePassWaitsForReadinessProbe(t *testing.T) {
+	c, ctx := runtimeHarness(t)
+	b := blockFor("web", 1)
+	b.Spec.Network = &pb.Network{HealthCheck: &pb.HealthCheck{
+		Readiness: &pb.HealthProbe{Type: pb.ProbeType_PROBE_TCP, Port: 80},
+	}}
+	mustCreate(t, ctx, c.St, b)
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	node := loadStatus(t, ctx, c.St, "default", "web").GetPlacements()[0].GetNodeId()
+	unit := store.Key("/node/" + node + "/status/resources/" + ReplicaResourceID("default", "web", 0))
+	if _, err := c.St.Put(ctx, unit, []byte("health=healthy in_sync=true actions=1 updated=1")); err != nil {
+		t.Fatal(err)
+	}
+	probe := store.Key("/blocks/default/web/status/replicas/0")
+	for _, step := range []struct {
+		record string // "" leaves no record
+		want   pb.Phase
+	}{
+		{"", pb.Phase_SCHEDULING},
+		{`{"ok":false,"node":"` + node + `"}`, pb.Phase_SCHEDULING},
+		{`{"ok":true,"node":"another-node"}`, pb.Phase_SCHEDULING},
+		{`{"ok":true,"node":"` + node + `"}`, pb.Phase_RUNNING},
+	} {
+		if step.record != "" {
+			if _, err := c.St.Put(ctx, probe, []byte(step.record)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := c.RuntimePass(ctx); err != nil {
+			t.Fatalf("RuntimePass: %v", err)
+		}
+		if got := loadStatus(t, ctx, c.St, "default", "web").GetPhase(); got != step.want {
+			t.Fatalf("record %q: phase = %v, want %v", step.record, got, step.want)
+		}
+	}
+}

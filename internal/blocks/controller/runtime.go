@@ -11,7 +11,8 @@ package controller
 //
 // Deliberately minimal: no STARTING dwell in the steady-state path —
 // in_sync+healthy IS running (the unit reached active), unless the record
-// says ready=false (a VM whose guest has not booted yet). STARTING remains
+// says ready=false (a VM whose guest has not booted yet) or the block's
+// readiness probe has not passed on the replica's node. STARTING remains
 // a rolling-update-only phase (§5.2), whose Ready hook decides promotion
 // mid-update. Health-driven demotion (RUNNING→DEGRADED) is likewise out:
 // the reschedule pass owns failure handling (§4.4), fed by the same
@@ -19,10 +20,11 @@ package controller
 
 import (
 	"context"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"strconv"
 	"strings"
 
+	"github.com/expanse/expanse/internal/blocks/blockkey"
+	"github.com/expanse/expanse/internal/blocks/health"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -91,6 +93,11 @@ func (c *Controller) promoteBlock(ctx context.Context, e store.Entry) error {
 		ok, err := c.replicaUp(ctx, p.GetNodeId(), statusKey2ns(k), statusKey2name(k), int(p.GetReplicaIndex()))
 		if err != nil {
 			return err
+		}
+		if _, probed := health.Readiness(&blk); ok && probed {
+			if ok, err = health.Passing(ctx, c.St, k, p.GetReplicaIndex(), p.GetNodeId()); err != nil {
+				return errors.Wrap(err, errors.KindInternal, "controller.RuntimePass", "replica readiness")
+			}
 		}
 		if ok {
 			p.Phase = pb.Phase_RUNNING

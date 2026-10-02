@@ -76,7 +76,8 @@ spec:
 The readiness probe runs on the node hosting each replica, against the
 node's own address and the probe's `port`. Each result is written to
 `/blocks/<ns>/<name>/status/replicas/<i>`, and the VIP load balancer and
-DNS skip a replica whose probe fails. `tcp` and `http` probes run;
+DNS skip a replica whose probe fails. A new replica is not `RUNNING`
+until its probe passes on its own node. `tcp` and `http` probes run;
 `exec` probes are not run yet. A VM's readiness comes from its guest
 instead (see `docs/VMS.md`). A port exposed on a VIP requires a
 readiness probe.

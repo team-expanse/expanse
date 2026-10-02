@@ -266,6 +266,22 @@ func StorePublisher(st store.Store, blockKey store.Key, replicaIndex int32, node
 	}
 }
 
+// Passing reports whether node's latest probe of the replica passed; no record is not a pass.
+func Passing(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) (bool, error) {
+	e, err := st.Get(ctx, replicaKey(blockKey, replicaIndex))
+	if errors.Is(err, errors.KindNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, errors.Wrap(err, errors.KindInternal, "health.passing", "read status")
+	}
+	var rec Record
+	if json.Unmarshal(e.Value, &rec) != nil {
+		return false, nil
+	}
+	return rec.OK && rec.Node == node, nil
+}
+
 // Retire deletes the replica's record if node wrote it, so a replica gone from node leaves no
 // stale verdict, yet the record of a replica that moved to another node survives.
 func Retire(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) error {

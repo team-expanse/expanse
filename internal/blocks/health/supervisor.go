@@ -32,11 +32,8 @@ func (j Job) equal(o Job) bool {
 // JobFor builds the readiness job for replica index of b, whose ports listen on host. Exec probes
 // are not run yet (they need the unit's namespaces), nor VM probes (the guest reports over vsock).
 func JobFor(b *pb.Block, index int32, host string) (Job, bool) {
-	p := b.GetSpec().GetNetwork().GetHealthCheck().GetReadiness()
-	switch {
-	case host == "" || p.GetPort() == 0 || b.GetSpec().GetType() == "vm/instance":
-		return Job{}, false
-	case p.GetType() != pb.ProbeType_PROBE_TCP && p.GetType() != pb.ProbeType_PROBE_HTTP:
+	p, ok := Readiness(b)
+	if !ok || host == "" {
 		return Job{}, false
 	}
 	return Job{
@@ -107,4 +104,16 @@ func (s *Supervisor) start(ctx context.Context, j Job) *supervised {
 		s.Run(rctx, j)
 	}()
 	return r
+}
+
+// Readiness returns b's readiness probe if agents run it: tcp and http on a port, not on VMs.
+func Readiness(b *pb.Block) (*pb.HealthProbe, bool) {
+	p := b.GetSpec().GetNetwork().GetHealthCheck().GetReadiness()
+	switch {
+	case p.GetPort() == 0 || b.GetSpec().GetType() == "vm/instance":
+		return nil, false
+	case p.GetType() != pb.ProbeType_PROBE_TCP && p.GetType() != pb.ProbeType_PROBE_HTTP:
+		return nil, false
+	}
+	return p, true
 }

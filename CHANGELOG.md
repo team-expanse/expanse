@@ -22,6 +22,7 @@ History before 1.0.0 is not recorded here.
   balancer only noticed a dead replica when a connection to it failed. Each
   node now probes the replicas it hosts and publishes the result, and the
   load balancer and DNS stop sending traffic to a replica whose probe fails.
+  A new replica, and so its block, is not `RUNNING` until its probe passes.
   `exec` probes are not run yet.
 
 ### Fixed
