@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"strings"
 
 	"github.com/expanse/expanse/internal/cluster/join"
@@ -67,8 +68,8 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 				errors.KindInternal, "wire.Nodes", "list blocks")
 		}
 		for _, e := range entries {
-			if strings.HasSuffix(string(e.Key), "/status") {
-				continue // status root, not a block record
+			if !blockkey.IsSpec(e.Key) {
+				continue // status, probe records: not a block record
 			}
 			var b pb.Block
 			if err := proto.Unmarshal(e.Value, &b); err != nil {

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"net"
 	"net/netip"
 	"strings"
@@ -116,11 +117,10 @@ func (a *Agent) fwPolicies(ctx context.Context) ([]fw.BlockPolicy, map[string][]
 		return nil, nil, err
 	}
 	for _, e := range ents {
-		parts := strings.Split(string(e.Key), "/")
-		// /blocks/<ns>/<name> (spec); skip status keys.
-		if len(parts) != 4 {
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
+		parts := strings.Split(string(e.Key), "/")
 		var blk pb.Block
 		if err := proto.Unmarshal(e.Value, &blk); err != nil {
 			continue
@@ -267,9 +267,7 @@ func (a *Agent) fwDesired(ctx context.Context) (fw.Desired, error) {
 		return d, err
 	}
 	for _, e := range blocks {
-		parts := strings.Split(string(e.Key), "/")
-		// /blocks/<ns>/<name> (spec); skip deeper status keys.
-		if len(parts) != 4 {
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		var b pb.Block

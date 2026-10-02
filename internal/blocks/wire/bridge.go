@@ -18,6 +18,7 @@ package wire
 import (
 	"context"
 	"encoding/json"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"strings"
 	"time"
 
@@ -106,7 +107,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 		return errors.Wrap(err, errors.KindInternal, "bridge.Sync", "list blocks")
 	}
 	for _, e := range entries {
-		if strings.HasSuffix(string(e.Key), "/status") {
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		var status pb.BlockStatus

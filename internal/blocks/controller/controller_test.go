@@ -311,3 +311,19 @@ func TestBlocksPlacedInOnePassSpreadAcrossNodes(t *testing.T) {
 		used[node] = name
 	}
 }
+
+// A replica's readiness record lives under its block; it must never be read as a block.
+func TestReplicaProbeRecordIsNotABlock(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mustCreate(t, ctx, st, blockFor("web", 3))
+	if _, err := st.Put(ctx, "/blocks/default/web/status/replicas/0", []byte(`{"ok":true,"detail":"connected"}`)); err != nil {
+		t.Fatal(err)
+	}
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodeViews(3), testCfg(), nil
+	})
+	if n, err := c.Reconcile(ctx); err != nil || n != 3 {
+		t.Fatalf("Reconcile placed %d (err %v), want 3", n, err)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -88,7 +89,7 @@ func (a *Agent) scanPostgresInstances(ctx context.Context) map[string]pgha.Insta
 	}
 	for _, e := range ents {
 		k := string(e.Key)
-		if len(k) > 7 && k[len(k)-7:] == "/status" {
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		var b pb.Block

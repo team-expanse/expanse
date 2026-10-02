@@ -262,3 +262,22 @@ func TestDuplicateNameRejectedV2(t *testing.T) {
 		t.Fatalf("cross-namespace same name: %v", err)
 	}
 }
+
+// Replica readiness records live under their block; listing must skip them, not fail on them.
+func TestListSkipsReplicaProbeRecords(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newServer(t)
+	if _, err := s.Create(ctx, validBlock("a")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := s.St.Put(ctx, "/blocks/default/a/status/replicas/0", []byte(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	lst, err := s.List(ctx, &pb.ListBlocksRequest{})
+	if err != nil || len(lst.GetBlocks()) != 1 {
+		t.Fatalf("List = %d blocks (err %v), want 1", len(lst.GetBlocks()), err)
+	}
+	if names := s.namesInNamespace(ctx, "default", ""); fmt.Sprint(names) != "[a]" {
+		t.Errorf("namesInNamespace = %v, want [a]", names)
+	}
+}

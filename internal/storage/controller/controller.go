@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"log/slog"
 	"strings"
 	"time"
@@ -305,7 +306,7 @@ func (c *Controller) reconcileBlocks(ctx context.Context, meshed map[string]bool
 		return err
 	}
 	for _, e := range entries {
-		if strings.HasSuffix(string(e.Key), "/status") {
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		var blk pb.Block

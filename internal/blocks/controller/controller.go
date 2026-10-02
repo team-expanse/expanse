@@ -21,6 +21,7 @@ package controller
 
 import (
 	"context"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"log/slog"
 	"sync"
 	"time"
@@ -214,8 +215,8 @@ func (c *Controller) Reconcile(ctx context.Context) (int, error) {
 	}
 	placed := 0
 	for _, e := range entries {
-		// List's literal prefix includes our own /status subtrees; skip them.
-		if len(string(e.Key)) > 0 && string(e.Key[len(e.Key)-len(StatusSuffix):]) == StatusSuffix {
+		// List's literal prefix includes the status subtrees beneath each block; skip them.
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		n, err := c.placeBlock(ctx, *e, nodes, cfg)

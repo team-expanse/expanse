@@ -22,6 +22,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"sort"
 	"strings"
 
@@ -193,8 +194,8 @@ func (s *Server) List(ctx context.Context, r *pb.ListBlocksRequest) (*pb.ListBlo
 	}
 	resp := &pb.ListBlocksResponse{}
 	for _, e := range entries {
-		// Skip the controller-owned observed-state subtrees.
-		if strings.HasSuffix(string(e.Key), "/status") {
+		// Skip the observed-state subtrees: block status, replica probe records.
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		var b pb.Block
@@ -309,7 +310,7 @@ func (s *Server) namesInNamespace(ctx context.Context, ns, exclude string) []str
 	var names []string
 	for _, e := range entries {
 		p := strings.TrimPrefix(string(e.Key), BlockPrefix+ns+"/")
-		if p != exclude && p != "" {
+		if blockkey.IsSpec(e.Key) && p != exclude {
 			names = append(names, p)
 		}
 	}

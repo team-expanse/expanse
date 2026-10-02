@@ -10,6 +10,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"io"
 	"net/netip"
 	"strings"
@@ -140,7 +141,7 @@ func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string
 	}
 	for _, e := range ents {
 		k := string(e.Key)
-		if len(k) > 7 && k[len(k)-7:] == "/status" {
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		var b pb.Block

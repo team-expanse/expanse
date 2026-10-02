@@ -19,6 +19,7 @@ package controller
 
 import (
 	"context"
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"strconv"
 	"strings"
 
@@ -43,7 +44,7 @@ func (c *Controller) RuntimePass(ctx context.Context) error {
 		return errors.Wrap(err, errors.KindInternal, "controller.RuntimePass", "list blocks")
 	}
 	for _, e := range entries {
-		if isStatusKey(e.Key) {
+		if !blockkey.IsSpec(e.Key) {
 			continue
 		}
 		if err := c.promoteBlock(ctx, *e); err != nil {
@@ -174,12 +175,6 @@ func statusFields(v string) map[string]string {
 		out[k] = val
 	}
 	return out
-}
-
-// isStatusKey reports whether k is a block status root.
-func isStatusKey(k store.Key) bool {
-	s := string(k)
-	return len(s) >= len(StatusSuffix) && s[len(s)-len(StatusSuffix):] == StatusSuffix
 }
 
 // statusKey2ns/statusKey2name split "/blocks/<ns>/<name>".
