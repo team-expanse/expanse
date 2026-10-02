@@ -21,6 +21,11 @@
     "bootCmdline": {
       "type": "string",
       "description": "Kernel command line, only used with bootKernel"
+    },
+    "guestReady": {
+      "type": "string",
+      "enum": ["systemd", "none"],
+      "description": "When the VM counts as RUNNING. systemd (the default): once the guest's systemd reports over vsock that it booted to multi-user.target. none: as soon as qemu-kvm starts, for guests without systemd 254 or newer"
     }
   }
 }

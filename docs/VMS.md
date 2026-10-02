@@ -85,6 +85,30 @@ distributions, BSDs) each carry their own boot-firmware and virtio-driver expect
 has not measured — a documented scope limit, not a fixed one, mirroring Phase 4's initiator-diversity
 and Phase 5's client-diversity risk rows.
 
+### When a VM counts as RUNNING
+
+A VM replica is RUNNING once its guest has booted, not merely once `qemu-kvm` has started. Each VM
+gets a vsock device and the systemd credential `vmm.notify_socket`, so a guest running systemd 254
+or newer reports its boot to `expanse-block-run` on its node. The guest counts as booted when it has
+sent `READY=1` and `multi-user.target` is active. A guest in emergency or rescue mode also sends
+`READY=1`, so it stays not ready. `nix/tests/vm-vsock-notify-probe.nix` measured these messages.
+
+The guest's state is the unit's status text, so it can be read on the VM's node:
+
+```sh
+systemctl show -p StatusText --value expanse-block-root@default-vm1-0.service
+# ready: multi-user.target reached
+```
+
+Other values are `booting`, `not ready: guest started, waiting for multi-user.target`, `not ready:
+guest in emergency.target` (or `rescue.target`), `not ready: guest shutting down` and `not ready:
+guest powered off (exit status N)`. A guest that never boots stays out of RUNNING; nothing restarts
+it for that yet. The guest's serial console reads end-of-file, so an emergency shell gives up at
+once and the guest carries on booting.
+
+A guest without systemd never reports. Set `config.guestReady: none` for it, and the VM counts as
+ready as soon as `qemu-kvm` starts, as it did before.
+
 ## 4. Failover, from the guest's perspective
 
 When the node running the VM is hard-killed, the disk's own DRBD promotion (already proven,

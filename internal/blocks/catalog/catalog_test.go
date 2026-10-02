@@ -522,3 +522,21 @@ func TestLoadShippedBlocksBatch3(t *testing.T) {
 		}
 	})
 }
+
+// vm/instance accepts guestReady systemd or none, and rejects anything else at apply time.
+func TestVMInstanceGuestReadyConfig(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	for _, v := range []string{"systemd", "none"} {
+		cfg, _ := structpb.NewStruct(map[string]any{"guestReady": v})
+		if errs := c.ValidateConfig("vm/instance", cfg); len(errs) != 0 {
+			t.Errorf("guestReady %q rejected: %v", v, errs)
+		}
+	}
+	cfg, _ := structpb.NewStruct(map[string]any{"guestReady": "sometimes"})
+	if errs := c.ValidateConfig("vm/instance", cfg); len(errs) != 1 || !strings.HasPrefix(errs[0], "/guestReady:") {
+		t.Errorf("guestReady \"sometimes\" errors = %v, want one naming /guestReady", errs)
+	}
+}

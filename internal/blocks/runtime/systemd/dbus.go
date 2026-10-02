@@ -39,6 +39,16 @@ func (d *DBUSAPI) UnitState(ctx context.Context, unit string) (load, active, sub
 	return strProp(props["LoadState"]), strProp(props["ActiveState"]), strProp(props["SubState"]), nil
 }
 
+// StatusText reads the service's sd_notify STATUS= text.
+func (d *DBUSAPI) StatusText(ctx context.Context, unit string) (string, error) {
+	p, err := d.conn.GetUnitTypePropertyContext(ctx, unit, "Service", "StatusText")
+	if err != nil {
+		return "", errors.Wrap(err, errors.KindUnavailable, "systemd.StatusText", unit)
+	}
+	text, _ := p.Value.Value().(string)
+	return text, nil
+}
+
 // Start starts (or restarts, via replace) the unit and waits for the job.
 //
 // Clears a tripped StartLimitBurst first (PHASE-05-TASKS.md Stream A,

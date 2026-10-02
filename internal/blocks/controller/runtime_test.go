@@ -201,3 +201,32 @@ func TestRuntimePassSkipsRetired(t *testing.T) {
 		t.Fatal("status vanished")
 	}
 }
+
+// A replica whose workload reports not ready (a booting VM guest) is not promoted until it is.
+func TestRuntimePassWaitsForReadiness(t *testing.T) {
+	c, ctx := runtimeHarness(t)
+	mustCreate(t, ctx, c.St, blockFor("web", 1))
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	p := loadStatus(t, ctx, c.St, "default", "web").GetPlacements()[0]
+	key := store.Key("/node/" + p.GetNodeId() + "/status/resources/" + ReplicaResourceID("default", "web", 0))
+	put := func(v string) {
+		t.Helper()
+		if _, err := c.St.Put(ctx, key, []byte(v)); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.RuntimePass(ctx); err != nil {
+			t.Fatalf("RuntimePass: %v", err)
+		}
+	}
+
+	put(`health=healthy in_sync=true ready=false actions=0 error="saw ready=true" updated=1`)
+	if s := loadStatus(t, ctx, c.St, "default", "web"); s.GetPhase() != pb.Phase_SCHEDULING {
+		t.Fatalf("phase = %v, want SCHEDULING while not ready", s.GetPhase())
+	}
+	put(`health=healthy in_sync=true ready=true actions=0 error="" updated=2`)
+	if s := loadStatus(t, ctx, c.St, "default", "web"); s.GetPhase() != pb.Phase_RUNNING {
+		t.Fatalf("phase = %v, want RUNNING once ready", s.GetPhase())
+	}
+}

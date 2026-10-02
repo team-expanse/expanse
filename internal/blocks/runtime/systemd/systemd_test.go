@@ -11,6 +11,7 @@ import (
 	"time"
 
 	nix "github.com/expanse/expanse/internal/agent/nix"
+	"github.com/expanse/expanse/internal/reconcile"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -271,6 +272,11 @@ func TestCachePersistence(t *testing.T) {
 type fakeUnitAPI struct {
 	states map[string][3]string
 	starts int
+	status map[string]string // unit -> StatusText
+}
+
+func (f *fakeUnitAPI) StatusText(ctx context.Context, unit string) (string, error) {
+	return f.status[unit], nil
 }
 
 func (f *fakeUnitAPI) UnitState(ctx context.Context, unit string) (string, string, string, error) {
@@ -412,5 +418,78 @@ func TestManagerSpecFileLifecycle(t *testing.T) {
 	}
 	if api.states[UnitName("default", "web", 0)][1] != "inactive" {
 		t.Errorf("unit not stopped: %v", api.states[UnitName("default", "web", 0)])
+	}
+}
+
+// converged loads spec and applies the manager's plan, so the next Observe sees a running unit.
+func converged(t *testing.T, api *fakeUnitAPI, spec Spec) (*Manager, reconcile.Resource) {
+	t.Helper()
+	ctx := context.Background()
+	m := NewManager(api, &Applier{Cache: newTestCache(t), Builder: &mockBuilder{}})
+	m.SpecDir = t.TempDir()
+	b, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.Load("block-replica:default/x/0", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := m.Observe(ctx, res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acts, err := m.Plan(ctx, res, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if err := m.Apply(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return m, res
+}
+
+// A VM replica's unit is running while its guest boots: in sync and healthy, but not ready.
+func TestVMReplicaReadinessFollowsTheGuest(t *testing.T) {
+	ctx := context.Background()
+	spec := sampleSpec()
+	spec.Type, spec.RunAsRoot = "vm/instance", true
+	api := &fakeUnitAPI{states: map[string][3]string{}, status: map[string]string{}}
+	m, res := converged(t, api, spec)
+	unit := UnitNameForSpec(spec)
+
+	for text, want := range map[string]bool{
+		"booting":                              false,
+		"not ready: guest in emergency.target": false,
+		"ready: multi-user.target reached":     true,
+	} {
+		api.status[unit] = text
+		o, err := m.Observe(ctx, res)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !o.InSync || o.Health != reconcile.HealthHealthy {
+			t.Errorf("%q: in_sync=%v health=%v, want in sync and healthy", text, o.InSync, o.Health)
+		}
+		if o.Ready == nil || *o.Ready != want {
+			t.Errorf("%q: ready=%v, want %v", text, o.Ready, want)
+		}
+		if o.Details["status"] != text {
+			t.Errorf("%q: details status = %q", text, o.Details["status"])
+		}
+	}
+}
+
+func TestOtherReplicasReportNoReadiness(t *testing.T) {
+	api := &fakeUnitAPI{states: map[string][3]string{}, status: map[string]string{}}
+	m, res := converged(t, api, sampleSpec())
+	o, err := m.Observe(context.Background(), res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Ready != nil {
+		t.Errorf("ready = %v, want unreported", *o.Ready)
 	}
 }

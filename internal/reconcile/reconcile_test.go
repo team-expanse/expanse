@@ -553,3 +553,56 @@ func TestUndecodableDesiredEntryKeepsItsResource(t *testing.T) {
 		t.Fatalf("an undecodable entry deleted its running resource (%d deletes)", n)
 	}
 }
+
+// readyManager reports every resource converged and healthy, with a fixed readiness.
+type readyManager struct {
+	fakeManager
+	ready *bool
+}
+
+func (m *readyManager) Observe(ctx context.Context, r Resource) (Observed, error) {
+	return Observed{Exists: true, InSync: true, Health: HealthHealthy, Ready: m.ready}, nil
+}
+
+func tickWithReadiness(t *testing.T, ready *bool) (resource, node string) {
+	t.Helper()
+	s := testStore(t)
+	r := New(s, Options{NodeID: "n1", Logger: testLogger(), Period: time.Hour})
+	r.Register(&readyManager{fakeManager: fakeManager{converged: map[string]bool{}}, ready: ready})
+	putDesired(t, s, "n1", "vm", "")
+	if err := r.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e, err := s.Get(context.Background(), r.StatusPrefix()+"vm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.Get(context.Background(), "/nodes/n1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(e.Value), string(n.Value)
+}
+
+// A workload that is not ready yet (a booting VM guest) is not a node health problem.
+func TestNotReadyIsRecordedWithoutDegradingTheNode(t *testing.T) {
+	notReady := false
+	res, node := tickWithReadiness(t, &notReady)
+	if !contains(res, "health=healthy") || !contains(res, "ready=false") {
+		t.Errorf("resource status = %q, want healthy and ready=false", res)
+	}
+	if !contains(node, "health=healthy") {
+		t.Errorf("node status = %q, want healthy", node)
+	}
+}
+
+func TestReadinessIsOmittedWhenNotReported(t *testing.T) {
+	res, _ := tickWithReadiness(t, nil)
+	if contains(res, "ready=") {
+		t.Errorf("resource status = %q, want no ready field", res)
+	}
+	yes := true
+	if res, _ := tickWithReadiness(t, &yes); !contains(res, " ready=true") {
+		t.Errorf("resource status = %q, want ready=true", res)
+	}
+}

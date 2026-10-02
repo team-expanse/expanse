@@ -10,7 +10,8 @@ package controller
 // then the block itself when every replica is there (§4.3 converge).
 //
 // Deliberately minimal: no STARTING dwell in the steady-state path —
-// in_sync+healthy IS running (the unit reached active). STARTING remains
+// in_sync+healthy IS running (the unit reached active), unless the record
+// says ready=false (a VM whose guest has not booted yet). STARTING remains
 // a rolling-update-only phase (§5.2), whose Ready hook decides promotion
 // mid-update. Health-driven demotion (RUNNING→DEGRADED) is likewise out:
 // the reschedule pass owns failure handling (§4.4), fed by the same
@@ -154,8 +155,25 @@ func (c *Controller) replicaUp(ctx context.Context, node, ns, name string, idx i
 		}
 		return false, errors.Wrap(err, errors.KindInternal, "controller.RuntimePass", "replica status")
 	}
-	v := string(e.Value)
-	return strings.Contains(v, "health=healthy") && strings.Contains(v, "in_sync=true"), nil
+	f := statusFields(string(e.Value))
+	// ready is absent for workloads that never report it; only an explicit false holds promotion back.
+	return f["health"] == "healthy" && f["in_sync"] == "true" && f["ready"] != "false", nil
+}
+
+// statusFields parses the agent's "key=value ..." status record up to the free-text error field.
+func statusFields(v string) map[string]string {
+	out := map[string]string{}
+	for _, tok := range strings.Fields(v) {
+		k, val, ok := strings.Cut(tok, "=")
+		if !ok {
+			continue
+		}
+		if k == "error" {
+			break
+		}
+		out[k] = val
+	}
+	return out
 }
 
 // isStatusKey reports whether k is a block status root.

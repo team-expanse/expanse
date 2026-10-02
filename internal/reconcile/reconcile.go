@@ -53,6 +53,9 @@ type Observed struct {
 	InSync  bool
 	Details map[string]string
 	Health  Health
+	// Ready is whether the workload itself is serving (a VM guest booted); nil when not reported.
+	// It is kept apart from Health so a workload still starting never degrades its node.
+	Ready *bool
 }
 
 // Action is one step a Manager wants to take to converge a resource.
@@ -133,6 +136,7 @@ type Status struct {
 	ResourceID string
 	Health     Health
 	InSync     bool
+	Ready      *bool
 	Error      string
 	Actions    int
 	UpdatedAt  time.Time
@@ -465,7 +469,7 @@ func (r *Reconciler) processResource(ctx context.Context, res Resource) *Status 
 	}
 	if obs.InSync {
 		r.markSuccess(res.ID())
-		st.Health = obs.Health
+		st.Health, st.Ready = obs.Health, obs.Ready
 		st.InSync = true
 		return st
 	}
@@ -480,7 +484,7 @@ func (r *Reconciler) processResource(ctx context.Context, res Resource) *Status 
 	if len(actions) == 0 {
 		// Not in sync but nothing to do (manager waiting on external state).
 		r.markSuccess(res.ID())
-		st.Health = obs.Health
+		st.Health, st.Ready = obs.Health, obs.Ready
 		st.InSync = true
 		return st
 	}
@@ -520,7 +524,7 @@ func (r *Reconciler) processResource(ctx context.Context, res Resource) *Status 
 		return st
 	}
 	r.markSuccess(res.ID())
-	st.Health = obs2.Health
+	st.Health, st.Ready = obs2.Health, obs2.Ready
 	st.InSync = true
 	return st
 }
@@ -593,8 +597,11 @@ func (r *Reconciler) markSuccess(id string) {
 
 func (r *Reconciler) recordStatus(ctx context.Context, st *Status) {
 	key := r.StatusPrefix() + store.Key(st.ResourceID)
-	val := fmt.Sprintf("health=%s in_sync=%t actions=%d error=%q updated=%d",
-		st.Health, st.InSync, st.Actions, st.Error, st.UpdatedAt.UnixNano())
+	val := fmt.Sprintf("health=%s in_sync=%t", st.Health, st.InSync)
+	if st.Ready != nil {
+		val += fmt.Sprintf(" ready=%t", *st.Ready) // before the free-text error, so parsers never confuse the two
+	}
+	val += fmt.Sprintf(" actions=%d error=%q updated=%d", st.Actions, st.Error, st.UpdatedAt.UnixNano())
 	if _, err := r.store.Put(ctx, key, []byte(val)); err != nil {
 		r.logger.Error("record status failed", "id", st.ResourceID, "err", err)
 	}

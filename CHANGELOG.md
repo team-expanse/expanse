@@ -6,6 +6,17 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Changed
+
+- A VM is RUNNING only once its guest has booted. Previously a VM counted as
+  RUNNING as soon as `qemu-kvm` started, even if the guest never booted. The
+  guest's systemd now reports its boot over vsock, and the VM's unit status
+  says whether the guest is booting, booted, in emergency mode or shutting
+  down. A guest without systemd can opt out with `config.guestReady: none`.
+  See `docs/VMS.md`.
+
 ## 1.1.9 - 2026-09-30
 
 ### Fixed

@@ -102,4 +102,42 @@ with subtest("the raw storage entry was never formatted or mounted (D3, unchange
     mounts = host.succeed(f"grep -F /mnt/{NAME}-disk /proc/mounts || true").strip()
     assert mounts == "", f"{host_name}: /mnt/{NAME}-disk unexpectedly mounted: {mounts!r}"
 
+
+def unit_of(name):
+    return f"expanse-block-root@default-{name}-0.service"
+
+
+def status_text(m, name):
+    return m.succeed(f"systemctl show -p StatusText --value {unit_of(name)}").strip()
+
+
+with subtest("the booted guest reported ready over vsock, and that is what made it RUNNING"):
+    text = status_text(host, NAME)
+    print(f"{NAME} status: {text}")
+    assert text.startswith("ready:"), f"{NAME} is RUNNING but its unit status is {text!r}"
+
+STUCK = "vm2"
+WAITING = "not ready: guest started, waiting for multi-user.target"
+with subtest("a guest that starts but never reaches multi-user.target is never RUNNING"):
+    # basic.target sends READY=1 (as emergency mode does) but never multi-user.target. Emergency mode
+    # itself is no good here: its shell reads EOF from the console and the guest carries on booting.
+    deploy(n1, STUCK, MANIFEST.replace(f"name: {NAME}", f"name: {STUCK}")
+           .replace(f"/mnt/{NAME}-disk", f"/mnt/{STUCK}-disk")
+           .replace(f'bootCmdline: "{CMDLINE}"', f'bootCmdline: "{CMDLINE} systemd.unit=basic.target"'))
+
+    def stuck_node():
+        nodes = placement_nodes(get_json(n1, STUCK) or {})
+        return next(iter(nodes)) if len(nodes) == 1 else ""
+
+    wait_for(lambda: stuck_node() != "", f"{STUCK} placed", timeout=300)
+    stuck_host = ALL[stuck_node()]
+    stuck_host.wait_until_succeeds(f"systemctl is-active {unit_of(STUCK)}", timeout=300)
+    wait_for(lambda: status_text(stuck_host, STUCK) == WAITING, f"{STUCK} to report {WAITING!r}", timeout=300)
+    time.sleep(30)  # many controller passes, any one of which would promote a ready replica
+    text = status_text(stuck_host, STUCK)
+    phase = ((get_json(n1, STUCK) or {}).get("status") or {}).get("phase", "")
+    print(f"{STUCK}: phase {phase}, status {text!r}")
+    assert text == WAITING, f"{STUCK} status moved on to {text!r}"
+    assert phase != "RUNNING", f"{STUCK} is RUNNING although its guest never reached multi-user.target"
+
 print("VM-INSTANCE DONE")

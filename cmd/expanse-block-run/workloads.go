@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage/drbd"
@@ -1246,6 +1247,21 @@ func runVM(ctx context.Context, instance string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("vm/instance: resolve uplink interface: %w", err)
 	}
+	// Guest readiness (vm-vsock-notify-probe.nix): the guest's systemd reports its boot over vsock.
+	var watch *guestWatch
+	switch mode := cfgStr(cfg, "guestReady"); mode {
+	case "", "systemd":
+		if w, err := startGuestWatch(instance); err != nil {
+			publishGuestStatus(instance, "not ready: cannot watch the guest: "+err.Error())
+		} else {
+			watch = w
+			defer w.close()
+		}
+	case "none":
+	default:
+		return fmt.Errorf("vm/instance: guestReady %q: want systemd or none", mode)
+	}
+
 	tapName := macvtapIfaceName(instance)
 	tap, err := createMacvtap(uplink, tapName, mac)
 	if err != nil {
@@ -1289,6 +1305,12 @@ func runVM(ctx context.Context, instance string, args []string) error {
 		}
 	}
 
+	extra := []*os.File{tap} // fd 3
+	if watch != nil {
+		qemuArgv = append(qemuArgv, vmready.QEMUArgs(watch.cid, 4)...)
+		extra = append(extra, watch.vhost) // fd 4
+	}
+
 	path, err := resolveBin("qemu-kvm")
 	if err != nil {
 		tap.Close()
@@ -1296,7 +1318,7 @@ func runVM(ctx context.Context, instance string, args []string) error {
 		return fmt.Errorf("vm/instance: %w", err)
 	}
 	cmd := exec.CommandContext(ctx, path, qemuArgv...)
-	cmd.ExtraFiles = []*os.File{tap}
+	cmd.ExtraFiles = extra
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -1308,6 +1330,13 @@ func runVM(ctx context.Context, instance string, args []string) error {
 	// as Start returns; closing our own copy here does not affect it.
 	tap.Close()
 	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d memMiB=%d)\n", instance, dev, mac, cpus, memMiB)
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	if watch != nil {
+		go watch.serve(watchCtx, instance)
+	} else if cfgStr(cfg, "guestReady") == "none" {
+		publishGuestStatus(instance, vmready.ReadyPrefix+" not waited on (guestReady: none)")
+	}
 	err = cmd.Wait()
 	_ = deleteLink(tapName)
 	if ctx.Err() != nil {

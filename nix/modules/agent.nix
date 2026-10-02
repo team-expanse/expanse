@@ -116,7 +116,8 @@ in
     # values itself (a VM test's own concern, not this module's), and must
     # keep winning without a definition conflict.
     boot.extraModulePackages = lib.optional (cfg.storageVG != "") config.boot.kernelPackages.drbd;
-    boot.kernelModules = lib.optional (cfg.storageVG != "") "drbd";
+    # vhost_vsock: vm/instance guests report their boot to expanse-block-run over vsock.
+    boot.kernelModules = lib.optional (cfg.storageVG != "") "drbd" ++ [ "vhost_vsock" ];
     services.drbd = lib.mkIf (cfg.storageVG != "") {
       enable = lib.mkDefault true;
       config = lib.mkDefault ''
@@ -263,7 +264,10 @@ in
         # outright without this, the same class of restriction smbd's
         # own AF_NETLINK note (share/smb's module.nix) already covers
         # for interface auto-detection.
-        RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+        # AF_VSOCK and NotifyAccess: vm/instance hears its guest's boot over vsock
+        # and publishes it as this unit's status text, which the agent reads back.
+        RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
+        NotifyAccess=main
         TasksMax=512
         IOWeight=100
         Environment=PATH=/run/current-system/sw/bin

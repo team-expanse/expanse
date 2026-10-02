@@ -28,6 +28,7 @@ require (
 require (
 	github.com/anishathalye/porcupine v1.3.0
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/mdlayher/socket v0.5.1
 	golang.org/x/oauth2 v0.37.0
 )
 
@@ -63,7 +64,6 @@ require (
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/mdlayher/genetlink v1.3.2 // indirect
 	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
-	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect

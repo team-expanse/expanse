@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
 )
@@ -30,7 +31,12 @@ type unitAPI interface {
 	UnitState(ctx context.Context, unit string) (load, active, sub string, err error)
 	Start(ctx context.Context, unit string) error
 	Stop(ctx context.Context, unit string) error
+	// StatusText is the unit's sd_notify STATUS= text (empty when never sent).
+	StatusText(ctx context.Context, unit string) (string, error)
 }
+
+// reportsReadiness lists block types whose runtime publishes readiness as the unit's status text.
+var reportsReadiness = map[string]bool{"vm/instance": true}
 
 // Resource is the loaded desired state for one replica.
 type Resource struct {
@@ -156,14 +162,21 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 	if inSync {
 		h = reconcile.HealthHealthy
 	}
-	return reconcile.Observed{
+	obs := reconcile.Observed{
 		Exists: load != "not-found",
 		InSync: inSync,
 		Health: h,
 		Details: map[string]string{
 			"unit": unit, "load": load, "active": active, "sub": sub,
 		},
-	}, nil
+	}
+	if inSync && reportsReadiness[res.spec.Type] {
+		text, err := m.API.StatusText(ctx, unit)
+		ready := err == nil && vmready.StatusTextReady(text) // unreadable is not ready; nothing demotes on it
+		obs.Ready = &ready
+		obs.Details["status"] = text
+	}
+	return obs, nil
 }
 
 // Plan implements reconcile.Manager: resolve the closure (cache-checked)
