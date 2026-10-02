@@ -17,6 +17,13 @@ History before 1.0.0 is not recorded here.
   down. A guest without systemd can opt out with `config.guestReady: none`.
   See `docs/VMS.md`.
 
+- Block readiness probes now run. A block's `tcp` or `http` readiness probe
+  was validated (a VIP port requires one) but never executed, so the VIP load
+  balancer only noticed a dead replica when a connection to it failed. Each
+  node now probes the replicas it hosts and publishes the result, and the
+  load balancer and DNS stop sending traffic to a replica whose probe fails.
+  `exec` probes are not run yet.
+
 ### Fixed
 
 - One failing workload could stop its whole node from taking new placements.

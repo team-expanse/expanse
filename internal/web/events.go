@@ -113,9 +113,10 @@ func (l *eventLog) run(ctx context.Context, st store.Store) {
 	}
 }
 
-// record adds ev unless it is noise: a health probe, or a put that rewrote the same value.
+// record adds ev unless it is noise: a health probe, a replica probe's heartbeat, or a put that
+// rewrote the same value.
 func (l *eventLog) record(ev store.Event) {
-	if ev.Entry != nil && isNodeHealthProbe(string(ev.Entry.Key)) {
+	if ev.Entry != nil && (isNodeHealthProbe(string(ev.Entry.Key)) || isProbeHeartbeat(ev.Entry)) {
 		return
 	}
 	if ev.Type == store.EventPut && ev.Prev != nil && ev.Entry != nil && bytes.Equal(ev.Prev.Value, ev.Entry.Value) {
@@ -128,6 +129,11 @@ func (l *eventLog) record(ev store.Event) {
 func isNodeHealthProbe(key string) bool {
 	rest, ok := strings.CutPrefix(key, "/nodes/")
 	return ok && strings.Contains(rest, "/health/")
+}
+
+// isProbeHeartbeat matches a replica readiness record's periodic rewrite of an unchanged result.
+func isProbeHeartbeat(e *store.Entry) bool {
+	return strings.Contains(string(e.Key), "/status/replicas/") && bytes.Contains(e.Value, []byte(`"heartbeat":true`))
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {

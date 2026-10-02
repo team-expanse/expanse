@@ -182,6 +182,8 @@ type Record struct {
 	// Heartbeat marks unconditional periodic writes that carry unchanged
 	// state (§5.4); consumers treat them identically.
 	Heartbeat bool `json:"heartbeat,omitempty"`
+	// Node is the node that probed; Retire removes only its own node's record.
+	Node string `json:"node,omitempty"`
 }
 
 // thresholdCounter implements success/failureThreshold counting (§5.4):
@@ -233,12 +235,17 @@ func (c *thresholdCounter) observe(ok bool) (transitioned bool) {
 // writes the store linearizably (no stale reads); tests inject counters.
 type Publisher func(ctx context.Context, rec Record) error
 
-// StorePublisher publishes rec at the replica's status key with a
+func replicaKey(blockKey store.Key, replicaIndex int32) store.Key {
+	return store.Key(fmt.Sprintf("%s/status/replicas/%d", blockKey, replicaIndex))
+}
+
+// StorePublisher publishes rec, stamped with node, at the replica's status key with a
 // read-revision + CAS txn (Phase03 pattern: OpCheck guards concurrent
 // status writers).
-func StorePublisher(st store.Store, blockKey store.Key, replicaIndex int32) Publisher {
-	key := store.Key(fmt.Sprintf("%s/status/replicas/%d", blockKey, replicaIndex))
+func StorePublisher(st store.Store, blockKey store.Key, replicaIndex int32, node string) Publisher {
+	key := replicaKey(blockKey, replicaIndex)
 	return func(ctx context.Context, rec Record) error {
+		rec.Node = node
 		b, err := json.Marshal(rec)
 		if err != nil {
 			return errors.Wrap(err, errors.KindInternal, "health.publish", "marshal record")
@@ -259,6 +266,28 @@ func StorePublisher(st store.Store, blockKey store.Key, replicaIndex int32) Publ
 	}
 }
 
+// Retire deletes the replica's record if node wrote it, so a replica gone from node leaves no
+// stale verdict, yet the record of a replica that moved to another node survives.
+func Retire(ctx context.Context, st store.Store, blockKey store.Key, replicaIndex int32, node string) error {
+	key := replicaKey(blockKey, replicaIndex)
+	e, err := st.Get(ctx, key)
+	if errors.Is(err, errors.KindNotFound) {
+		return nil
+	}
+	if err != nil {
+		return errors.Wrap(err, errors.KindInternal, "health.retire", "read status")
+	}
+	var rec Record
+	if json.Unmarshal(e.Value, &rec) != nil || rec.Node != node {
+		return nil
+	}
+	ops := []store.Op{{Kind: store.OpCheck, Key: key, Expect: e.Revision}, {Kind: store.OpDelete, Key: key}}
+	if _, err := st.Txn(ctx, ops); err != nil {
+		return errors.Wrap(err, errors.KindUnavailable, "health.retire", "delete status")
+	}
+	return nil
+}
+
 // Runner drives probing for one replica and publishes with the §5.4
 // write-amplification rule: write on transition, heartbeat otherwise.
 type Runner struct {
@@ -274,6 +303,8 @@ type Runner struct {
 	Period time.Duration
 	// Heartbeat overrides HeartbeatInterval (tests).
 	Heartbeat time.Duration
+	// InitialDelay before the first probe; falls back to Probe.InitialDelaySeconds.
+	InitialDelay time.Duration
 	// Liveness marks a liveness prober: failures emit EventLivenessFail
 	// (→ Failed via retry/reschedule) instead of EventReadinessFail.
 	Liveness bool
@@ -286,18 +317,23 @@ type Runner struct {
 	last time.Time // last WRITE (transition or heartbeat)
 }
 
-// Run probes until ctx is done. First observation seeds state silently.
+// Run probes until ctx is done, after the initial delay, then every period.
 func (r *Runner) Run(ctx context.Context) {
 	period := r.period()
 	beat := r.Heartbeat
 	if beat <= 0 {
 		beat = HeartbeatInterval
 	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(r.initialDelay()):
+	}
+	r.ProbeOnce(ctx)
 	tick := time.NewTicker(period)
 	defer tick.Stop()
 	beatTick := time.NewTicker(beat)
 	defer beatTick.Stop()
-	r.last = r.now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -313,18 +349,21 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
-// ProbeOnce performs one probe cycle: probe, and on a threshold-crossing
-// transition publish + fire the lifecycle event. Exposed so tests can
-// drive the state machine deterministically without wall-clock races;
-// Run calls it every tick.
+// ProbeOnce performs one probe cycle: probe, publish the first result (a replica that never
+// passes must say so), and on a threshold-crossing transition publish + fire the lifecycle
+// event. Exposed so tests can drive the state machine without wall-clock races.
 func (r *Runner) ProbeOnce(ctx context.Context) {
 	r.init()
 	res := r.Prober.Probe(ctx, r.Target)
-	if r.st.observe(res.OK) {
+	first := !r.st.seen
+	transitioned := r.st.observe(res.OK)
+	if first || transitioned {
 		r.write(ctx, Record{
 			OK: res.OK, Detail: res.Detail, At: r.now(),
 			LatencyNs: int64(res.Latency),
 		})
+	}
+	if transitioned {
 		r.fire(res.OK)
 	}
 }
@@ -366,6 +405,13 @@ func (r *Runner) init() {
 	r.st.successThreshold = int(r.Probe.GetSuccessThreshold())
 	r.st.failureThreshold = int(r.Probe.GetFailureThreshold())
 	r.st.initDone = true
+}
+
+func (r *Runner) initialDelay() time.Duration {
+	if r.InitialDelay > 0 {
+		return r.InitialDelay
+	}
+	return time.Duration(r.Probe.GetInitialDelaySeconds()) * time.Second
 }
 
 func (r *Runner) period() time.Duration {

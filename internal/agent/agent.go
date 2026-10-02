@@ -704,6 +704,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		go a.lbPoolLoop(ctx)
 		go a.vipLoop(ctx)
 		go a.uiVIPLoop(ctx) // A3: the web UI's own VIP, independent of block VIPs
+		go a.probeLoop(ctx) // readiness of this node's replicas, which the pool and DNS gate on
 		a.initDNS(ctx)
 	}
 

@@ -192,19 +192,18 @@ func TestWriteOnTransitionOnly(t *testing.T) {
 	done := make(chan struct{})
 	go func() { r.Run(ctx); close(done) }()
 
-	// ~10 identical passing results over 100ms: 1 heartbeat (t≈40,80) + 0
-	// transitions (first result only seeds state).
+	// ~10 identical passing results over 100ms: the first result, then only heartbeats (t≈40,80).
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	<-done
 
 	n := pub.count()
-	if n < 1 || n > 4 {
-		t.Errorf("writes = %d for ~10 identical passing probes; want only heartbeats (1-4)", n)
+	if n < 2 || n > 5 {
+		t.Errorf("writes = %d for ~10 identical passing probes; want the first result plus heartbeats (2-5)", n)
 	}
 	for i, rec := range pub.writes {
-		if !rec.Heartbeat {
-			t.Errorf("write %d is a transition but no result changed: %+v", i, rec)
+		if rec.Heartbeat != (i > 0) {
+			t.Errorf("write %d: heartbeat=%t, want only the first write to carry a result: %+v", i, rec.Heartbeat, rec)
 		}
 	}
 }
@@ -224,7 +223,7 @@ func TestTransitionWrite(t *testing.T) {
 	done := make(chan struct{})
 	go func() { r.Run(ctx); close(done) }()
 
-	time.Sleep(30 * time.Millisecond) // seeds healthy silently
+	time.Sleep(30 * time.Millisecond) // first result: healthy
 	p.mu.Lock()
 	p.pass = false // flip: exactly 1 transition write
 	p.mu.Unlock()
@@ -232,8 +231,8 @@ func TestTransitionWrite(t *testing.T) {
 	cancel()
 	<-done
 
-	if got := pub.count(); got != 1 {
-		t.Errorf("writes = %d after one flip, want exactly 1", got)
+	if got := pub.count(); got != 2 {
+		t.Errorf("writes = %d after the first result and one flip, want exactly 2", got)
 	}
 	rec := pub.last()
 	if rec.OK || rec.Heartbeat {
@@ -354,14 +353,66 @@ func TestHeartbeatPeriodic(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	<-done
-	// ~100ms with 30ms heartbeats → at least 2, all heartbeats.
-	if n := pub.count(); n < 2 {
-		t.Errorf("heartbeats = %d, want >= 2 over 100ms", n)
+	// ~100ms with 30ms heartbeats → the first result, then at least 2 heartbeats.
+	if n := pub.count(); n < 3 {
+		t.Errorf("writes = %d, want the first result plus >= 2 heartbeats over 100ms", n)
 	}
-	for _, rec := range pub.writes {
+	for i, rec := range pub.writes[1:] {
 		if !rec.Heartbeat {
-			t.Errorf("non-heartbeat write with no transition: %+v", rec)
+			t.Errorf("write %d is not a heartbeat with no transition: %+v", i+1, rec)
 		}
+	}
+}
+
+// A replica that never passes must still say so: no record reads as healthy to the load balancer.
+func TestFirstResultIsPublishedWithoutAnEvent(t *testing.T) {
+	pub := &memPublisher{}
+	var events []lifecycle.Event
+	r := &Runner{
+		Publisher: pub.publish,
+		Prober:    &fakeProbe{pass: false},
+		Probe:     &pb.HealthProbe{},
+		OnEvent:   func(ev lifecycle.Event) { events = append(events, ev) },
+	}
+	r.ProbeOnce(context.Background())
+	if pub.count() != 1 || pub.last().OK || pub.last().Heartbeat {
+		t.Fatalf("writes = %+v, want one failing result", pub.writes)
+	}
+	if len(events) != 0 {
+		t.Errorf("first result fired %v; events are for transitions", events)
+	}
+}
+
+// Nothing is probed, and no heartbeat claims a result, before the initial delay.
+func TestInitialDelay(t *testing.T) {
+	pub := &memPublisher{}
+	r := &Runner{
+		Publisher:    pub.publish,
+		Prober:       &fakeProbe{pass: true},
+		Probe:        &pb.HealthProbe{},
+		Period:       5 * time.Millisecond,
+		Heartbeat:    5 * time.Millisecond,
+		InitialDelay: 80 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	time.Sleep(40 * time.Millisecond)
+	if n := pub.count(); n != 0 {
+		t.Errorf("writes = %d inside the initial delay, want 0", n)
+	}
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+	if pub.count() == 0 || !pub.writes[0].OK || pub.writes[0].Heartbeat {
+		t.Errorf("writes = %+v, want the first result after the delay", pub.writes)
+	}
+}
+
+func TestInitialDelayFallsBackToTheProbe(t *testing.T) {
+	r := &Runner{Probe: &pb.HealthProbe{InitialDelaySeconds: 7}}
+	if got := r.initialDelay(); got != 7*time.Second {
+		t.Errorf("initialDelay = %v, want 7s", got)
 	}
 }
 
@@ -404,7 +455,7 @@ func TestStorePublisherRoundTrip(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	pub := StorePublisher(st, "/blocks/default/web", 2)
+	pub := StorePublisher(st, "/blocks/default/web", 2, "n1")
 	rec := Record{OK: false, Detail: "HTTP 503", At: time.Now(), LatencyNs: 1234}
 	if err := pub(ctx, rec); err != nil {
 		t.Fatalf("publish: %v", err)
@@ -417,7 +468,7 @@ func TestStorePublisherRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(e.Value, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.OK != rec.OK || got.Detail != rec.Detail {
+	if got.OK != rec.OK || got.Detail != rec.Detail || got.Node != "n1" {
 		t.Errorf("record = %+v, want %+v", got, rec)
 	}
 	// Second publish (CAS against new revision) succeeds.
@@ -428,6 +479,31 @@ func TestStorePublisherRoundTrip(t *testing.T) {
 	// And the store has no other replica keys (targeted key only).
 	if _, err := st.Get(ctx, "/blocks/default/web/status/replicas/0"); err == nil {
 		t.Error("unexpected replica 0 status key")
+	}
+}
+
+// Retire removes this node's record, but never one a replica's new node has since written.
+func TestRetire(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	key := store.Key("/blocks/default/web/status/replicas/0")
+	if err := StorePublisher(st, "/blocks/default/web", 0, "n2")(ctx, Record{OK: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Retire(ctx, st, "/blocks/default/web", 0, "n1"); err != nil {
+		t.Fatalf("retire another node's record: %v", err)
+	}
+	if _, err := st.Get(ctx, key); err != nil {
+		t.Fatalf("n1 retired n2's record: %v", err)
+	}
+	if err := Retire(ctx, st, "/blocks/default/web", 0, "n2"); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	if _, err := st.Get(ctx, key); err == nil {
+		t.Fatal("record still present after its node retired it")
+	}
+	if err := Retire(ctx, st, "/blocks/default/web", 0, "n2"); err != nil {
+		t.Fatalf("retire with no record: %v", err)
 	}
 }
 

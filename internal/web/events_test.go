@@ -140,3 +140,16 @@ func TestEventLogKeepsABlockNamedHealth(t *testing.T) {
 		t.Errorf("block write under a block named health was dropped: %+v", got)
 	}
 }
+
+// A replica's readiness changing is an event; its periodic heartbeat is not.
+func TestEventLogSkipsReplicaProbeHeartbeats(t *testing.T) {
+	l := newEventLog(4)
+	put := func(val string) store.Event {
+		return store.Event{Type: store.EventPut, Entry: &store.Entry{Key: "/blocks/default/web/status/replicas/0", Value: []byte(val)}}
+	}
+	l.record(put(`{"ok":false,"detail":"connection refused"}`))
+	l.record(put(`{"ok":false,"detail":"heartbeat","heartbeat":true}`))
+	if got := l.recent("", 4); len(got) != 1 {
+		t.Errorf("recorded %d events, want only the probe result: %+v", len(got), got)
+	}
+}

@@ -73,6 +73,14 @@ spec:
         failureThreshold: 3
 ```
 
+The readiness probe runs on the node hosting each replica, against the
+node's own address and the probe's `port`. Each result is written to
+`/blocks/<ns>/<name>/status/replicas/<i>`, and the VIP load balancer and
+DNS skip a replica whose probe fails. `tcp` and `http` probes run;
+`exec` probes are not run yet. A VM's readiness comes from its guest
+instead (see `docs/VMS.md`). A port exposed on a VIP requires a
+readiness probe.
+
 Fields not set fall back to the catalog type's `defaults.yaml`; every
 config knob the type defines is validated against its `schema.json`
 (JSON Schema 2020-12) and passed to the unit generator. Config is

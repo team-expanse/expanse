@@ -65,7 +65,8 @@ healthy backends with drain-on-removal; L7 is an `httputil.ReverseProxy`
 routing by Host header (`<block>.<ns>.expanse.local`) and declared path
 prefixes, injecting `X-Forwarded-For`/`X-Forwarded-Host`, retrying
 idempotent methods on connection errors only (max 2). Backends are a
-block's RUNNING placements; health gates on the readiness record.
+block's RUNNING placements, minus any whose readiness probe (run by
+the replica's own node, `internal/agent/probes.go`) last failed.
 
 ### DNS (`internal/network/dns`, wired in `internal/agent/dns.go`)
 An authoritative miekg/dns server on the node's overlay address
