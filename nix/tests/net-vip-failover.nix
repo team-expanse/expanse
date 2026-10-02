@@ -194,7 +194,8 @@ in
         survivors = []
         while time.time() < deadline:
             survivors = []
-            for m in [n2, n3]:
+            # Never execute on the frozen holder: a paused VM never answers.
+            for m in [x for x in (n1, n2, n3) if x is not holder]:
                 rc, out = m.execute(f"ip -4 -o addr show eth1 | grep -F {vip} || true")
                 if rc == 0 and out.strip():
                     survivors.append(m.name)
@@ -207,7 +208,7 @@ in
 
     with subtest("restore the node: VIP does not flap back, client keeps working"):
         holder.send_monitor_command("cont")
-        time.sleep(20)  # n1 re-joins raft, agent resumes, becomes eligible again
+        time.sleep(20)  # the holder re-joins raft, agent resumes, becomes eligible again
         # The original holder must NOT have taken the VIP back.
         rc, out = holder.execute(f"ip -4 -o addr show eth1 | grep -F {vip} || true")
         assert not (rc == 0 and out.strip()), "VIP flapped back to the restored node"
