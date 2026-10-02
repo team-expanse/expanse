@@ -298,9 +298,15 @@ func (h *Holder) Run(ctx context.Context) error {
 			}
 		}
 
+		var lost <-chan struct{} // nil (never ready) while not holding
+		if state != nil {
+			lost = state.held.Done()
+		}
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-lost:
+			// Act on lease loss now, not at the next tick; the timer stays armed.
 		case <-waitC:
 			timer.Reset(wait)
 		}
@@ -335,10 +341,9 @@ func (h *Holder) onAcquired() {
 //  1. DelAddr  — FIRST. Packets stop being delivered; clients retry.
 //  2. listener.Close — then stop serving.
 //  3. Tracker.CloseAll — then drop in-flight connections.
+//
+// The holder record (OnLost) is cleared last: it is a store write that can hang in a partition.
 func (h *Holder) onLeaseLost(state *holderState) {
-	if h.cfg.OnLost != nil {
-		h.cfg.OnLost(h.cfg.VIP) // clear the holder record FIRST (we may already be stale)
-	}
 	s := h.cfg.Seams
 	_ = s.DelAddr(h.cfg.VIP) // FIRST
 	if state.listener != nil {
@@ -350,6 +355,9 @@ func (h *Holder) onLeaseLost(state *holderState) {
 	// Tidy the lease bookkeeping: the record expires on its own; we do
 	// not delete it (another node may take over sooner via expiry).
 	state.held.Abandon()
+	if h.cfg.OnLost != nil {
+		h.cfg.OnLost(h.cfg.VIP)
+	}
 }
 
 func (h *Holder) release(ctx context.Context, state *holderState) {

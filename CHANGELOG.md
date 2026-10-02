@@ -72,6 +72,12 @@ History before 1.0.0 is not recorded here.
   memory, the Nix store or the cluster store. Clock sync, load and reconcile
   problems still show in the node's health and alerts.
 
+- A node cut off from the cluster could keep answering on a VIP after another
+  node had taken it over. On losing its lease, the node noticed only at its next
+  2 s check and then wrote the VIP's holder record before dropping the address;
+  in a partition that write can hang until it times out. It now drops the
+  address as soon as the lease is lost, and writes the record afterwards.
+
 ## 1.1.9 - 2026-09-30
 
 ### Fixed

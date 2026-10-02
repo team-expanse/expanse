@@ -601,3 +601,69 @@ func TestDeadPreferredHolderTakeover(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// A holder whose lease is lost must stop answering before it touches the store: the
+// holder-record write can hang in a partition while the lease expires under it.
+func TestLeaseLossDropsAddrBeforeHolderRecord(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	h := NewHolder(HolderConfig{
+		Leases: mustLeases(t),
+		Self:   "n1",
+		VIP:    vipAddr,
+		Seams:  rec.seams(&tracker{rec: rec}),
+		OnLost: func(netip.Prefix) { rec.record("OnLost") },
+	})
+	_, seedMgr := newLeaseStore(t)
+	hld, err := seedMgr.TryAcquire(context.Background(), LeaseName(vipAddr.Addr()), lease.DefaultTTL)
+	if err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	state, err := h.becomeHolder(hld)
+	if err != nil {
+		t.Fatalf("becomeHolder: %v", err)
+	}
+	rec.calls = nil
+	h.onLeaseLost(state)
+
+	want := []string{"AddrDel " + vipAddr.String(), "ListenerClose", "ConnCloseAll", "OnLost"}
+	if got := rec.snapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("onLeaseLost calls = %v, want %v", got, want)
+	}
+}
+
+// Lease loss is acted on when it happens, not at the next retry tick: every second
+// the address outlives the lease eats into the margin before another node takes it.
+func TestLeaseLossDropsAddrWithoutWaitingForTick(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	st, mgr := newLeaseStore(t)
+	h := NewHolder(HolderConfig{
+		Leases: mgr,
+		Self:   "n1",
+		VIP:    vipAddr,
+		Cands:  func() []Candidate { return []Candidate{{NodeID: "n1", ReadyReplicas: 1}} },
+		Seams:  rec.seams(nil),
+		Retry:  time.Hour,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx) }()
+	waitFor(t, 2*time.Second, func() bool { return len(rec.snapshot()) >= 3 }, "acquisition")
+
+	// Another writer changing the lease key closes the holder's Done.
+	if _, err := st.Put(ctx, store.Key(lease.Prefix+LeaseName(vipAddr.Addr())), []byte("taken")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool {
+		for _, c := range rec.snapshot() {
+			if c == "AddrDel "+vipAddr.String() {
+				return true
+			}
+		}
+		return false
+	}, "address dropped promptly after lease loss")
+	cancel()
+	<-done
+}
