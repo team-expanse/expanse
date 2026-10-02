@@ -58,6 +58,20 @@ func Overall(results []Result) Health {
 	return agg
 }
 
+// blocksPlacement names the checks whose failure stops a node running workloads. The rest
+// (clock-sync, load, reconcile) are reported and alerted on, but a node failing them still takes work.
+var blocksPlacement = map[string]bool{"disk-space": true, "memory": true, "nix-store": true, "store": true}
+
+// Schedulable reports whether a node should take placements: no placement-blocking check is unhealthy.
+func Schedulable(results []Result) bool {
+	for _, r := range results {
+		if blocksPlacement[r.Name] && r.Status == Unhealthy {
+			return false
+		}
+	}
+	return true
+}
+
 func rank(h Health) int {
 	switch h {
 	case Healthy:

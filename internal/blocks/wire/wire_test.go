@@ -123,6 +123,28 @@ func TestNodesView(t *testing.T) {
 	}
 }
 
+// Placement follows the agent's schedulable= verdict, not its overall health (which counts advisory
+// checks such as clock sync); health=healthy alone is how an agent from before schedulable= says ready.
+func TestNodeReadyFollowsSchedulable(t *testing.T) {
+	cases := map[string]bool{
+		"health=unhealthy schedulable=true":                            true,
+		"health=healthy schedulable=false":                             false,
+		"health=healthy schedulable=true degraded=true writable=false": false,
+		"health=healthy": true,
+		"health=unknown": false,
+		"idle":           true,
+	}
+	for value, want := range cases {
+		st := newStore(t)
+		if _, err := st.Put(context.Background(), "/nodes/n1/status", []byte(value)); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := nodeReady(context.Background(), st, "n1"); err != nil || got != want {
+			t.Errorf("nodeReady(%q) = %t (err %v), want %t", value, got, err, want)
+		}
+	}
+}
+
 // TestNodesViewCapabilities is the regression test for PHASE-06-TASKS.md
 // Stream A's own X1 test finding: a node's real hardware capabilities
 // (internal/agent.Agent.refreshInventory's own publish) must reach the

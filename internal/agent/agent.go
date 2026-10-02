@@ -755,13 +755,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	// unreachable via §4.8.
 	go a.loop(ctx, 10*time.Second, "health", func() {
 		rep := a.healthR.RunAll(ctx)
-		val := fmt.Sprintf("health=%s", rep.Overall)
-		if rs, ok := a.store.(*raftstore.Store); ok && rs.Degraded() {
-			val += " degraded=true writable=false"
-		}
+		rs, ok := a.store.(*raftstore.Store)
 		a.status.Store(statusFromHealth(rep.Overall))
 		key := store.Key(fmt.Sprintf("/nodes/%s/status", a.cfg.NodeID))
-		if _, err := a.store.Put(ctx, key, []byte(val)); err != nil {
+		if _, err := a.store.Put(ctx, key, []byte(nodeStatusValue(rep, ok && rs.Degraded()))); err != nil {
 			a.logger.Error("write node status failed", "err", err)
 		}
 	})
@@ -1022,6 +1019,16 @@ func (a *Agent) loop(ctx context.Context, every time.Duration, name string, fn f
 			fn()
 		}
 	}
+}
+
+// nodeStatusValue is the node's /status record: overall health for display and alerts, and the
+// schedulable verdict placement reads.
+func nodeStatusValue(rep *health.Report, noQuorum bool) string {
+	val := fmt.Sprintf("health=%s schedulable=%t", rep.Overall, health.Schedulable(rep.Checks))
+	if noQuorum {
+		val += " degraded=true writable=false"
+	}
+	return val
 }
 
 func statusFromHealth(h health.Health) string {

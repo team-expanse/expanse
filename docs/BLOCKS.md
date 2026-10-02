@@ -117,7 +117,8 @@ What happened between apply and `RUNNING`:
    config from the type schema + defaults and started
    `expanse-block@<...>.service` in a hardened sandbox
    (`DynamicUser`, `ProtectSystem=strict`, `PrivateTmp`, ...).
-4. **Promotion** — the agent reported `health=healthy in_sync=true`;
+4. **Promotion** — the agent reported `health=healthy in_sync=true`
+   (and, for a VM, that its guest booted: see `docs/VMS.md`);
    the controller promoted each placement and then the block to
    `RUNNING`.
 

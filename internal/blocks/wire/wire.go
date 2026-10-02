@@ -253,8 +253,8 @@ func nodeIDs(ctx context.Context, st storeReader) ([]string, error) {
 	return ids, nil
 }
 
-// nodeReady reports whether the node's status says healthy. The agent
-// writes "idle" (or "degraded"/"error"); a missing record is not ready.
+// nodeReady reports whether the node's status lets it take placements: the agent's schedulable=
+// verdict, or health=healthy from an agent that predates it. No quorum, or no record, is not ready.
 func nodeReady(ctx context.Context, st storeReader, id string) (bool, error) {
 	e, err := st.Get(ctx, store.Key("/nodes/"+id+"/status"))
 	if err != nil {
@@ -267,14 +267,19 @@ func nodeReady(ctx context.Context, st storeReader, id string) (bool, error) {
 	if v == "idle" || v == "healthy" {
 		return true, nil
 	}
-	// Health-reporter form: "health=<overall> [degraded=true ...]" —
-	// degraded nodes are not placement candidates (§4.10.3).
+	fields := map[string]string{}
 	for _, tok := range strings.Fields(v) {
-		if strings.HasPrefix(tok, "health=") {
-			return tok[len("health="):] == "healthy", nil
+		if k, val, ok := strings.Cut(tok, "="); ok {
+			fields[k] = val
 		}
 	}
-	return false, nil
+	if fields["degraded"] == "true" {
+		return false, nil // §4.10.3: a node without quorum is not a placement candidate
+	}
+	if s, ok := fields["schedulable"]; ok {
+		return s == "true", nil
+	}
+	return fields["health"] == "healthy", nil
 }
 
 // nodeCapabilities reads the node's self-published capability list

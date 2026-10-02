@@ -25,6 +25,13 @@ History before 1.0.0 is not recorded here.
   until the next health check, 10 seconds later. It also briefly hid a node's
   lost quorum. The node's status now reflects only the node's own health
   checks. The reconcile summary moved to `/nodes/<id>/reconcile`.
+- That overwrite also hid a second bug: a node whose clock had not synced
+  could not take placements, because placement required overall health to be
+  `healthy`. That is the first minutes after boot, and every node of a
+  cluster without an NTP source. A node now stops taking new placements only
+  when a check that stops it running workloads is unhealthy: disk space,
+  memory, the Nix store or the cluster store. Clock sync, load and reconcile
+  problems still show in the node's health and alerts.
 
 ## 1.1.9 - 2026-09-30
 

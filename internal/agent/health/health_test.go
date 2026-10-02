@@ -206,3 +206,29 @@ func TestClockSyncGraceAfterBoot(t *testing.T) {
 		}
 	}
 }
+
+// Only a failing disk, memory, Nix store or cluster store stops a node taking work; clock, load and
+// reconcile problems are reported but not fatal, and an unknown result never blocks.
+func TestSchedulable(t *testing.T) {
+	r := func(name string, s Health) Result { return Result{Name: name, Status: s} }
+	cases := []struct {
+		name    string
+		results []Result
+		want    bool
+	}{
+		{"all healthy", []Result{r("disk-space", Healthy), r("clock-sync", Healthy)}, true},
+		{"clock never synced (air-gapped)", []Result{r("disk-space", Healthy), r("clock-sync", Unhealthy)}, true},
+		{"everything still unknown", []Result{r("memory", Unknown), r("store", Unknown), r("clock-sync", Unknown)}, true},
+		{"overloaded and reconcile failing", []Result{r("load", Unhealthy), r("reconcile", Unhealthy)}, true},
+		{"disk nearly full", []Result{r("disk-space", Degraded)}, true},
+		{"disk full", []Result{r("disk-space", Unhealthy)}, false},
+		{"out of memory", []Result{r("memory", Unhealthy)}, false},
+		{"nix store broken", []Result{r("nix-store", Unhealthy)}, false},
+		{"store unwritable", []Result{r("store", Unhealthy)}, false},
+	}
+	for _, c := range cases {
+		if got := Schedulable(c.results); got != c.want {
+			t.Errorf("%s: Schedulable = %t, want %t", c.name, got, c.want)
+		}
+	}
+}
