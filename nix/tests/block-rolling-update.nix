@@ -135,6 +135,7 @@ in
         assert done, f"rolling update did not complete within 120 s: {b}"
 
     with subtest("stop the client; zero bad samples, new body served"):
+        time.sleep(3)  # sample past the roll's end too; a fast roll alone leaves too few samples
         n1.execute("systemctl stop block-client.service 2>/dev/null || true")
         time.sleep(1)
         bad = int(n1.execute("grep -c SAMPLE_BAD /tmp/cl.stat || true")[1].strip() or 0)
