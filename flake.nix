@@ -255,6 +255,7 @@
           block-deploy = mkTest "block-deploy" ./nix/tests/block-deploy.nix;
           block-antiaffinity = mkTest "block-antiaffinity" ./nix/tests/block-antiaffinity.nix;
           block-reschedule = mkTest "block-reschedule" ./nix/tests/block-reschedule.nix;
+          block-stateful-partition = mkTest "block-stateful-partition" ./nix/tests/block-stateful-partition.nix;
           block-rolling-update = mkTest "block-rolling-update" ./nix/tests/block-rolling-update.nix;
           block-scale = mkTest "block-scale" ./nix/tests/block-scale.nix;
           block-singleton = mkTest "block-singleton" ./nix/tests/block-singleton.nix;

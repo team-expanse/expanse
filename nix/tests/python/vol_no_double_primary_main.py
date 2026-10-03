@@ -10,7 +10,7 @@ A control then makes a real double primary (a partitioned primary whose agent is
 demote, so the majority side promotes another node) and the same pipeline must report it. The stale
 primary has lost quorum, so it must refuse writes while the new one accepts them.
 
-Runs after cluster-common.py and vol_cluster.py; the wrapper imports vol_roles as `roles`.
+Runs after cluster-common.py, vol_cluster.py and vol_role_recorder.py; the wrapper imports vol_roles as `roles`.
 """
 
 import random
@@ -25,51 +25,11 @@ CUT_S = {"long": (35, 45), "short": (4, 9), "pair": (10, 25), "other": (10, 25)}
 HEAL_S = (8, 18)
 TOLERANCE_S = 0.05  # what clock mapping can leave over (probe accuracy is a few ms)
 MIN_HANDOFFS = 3
-LOG = "/var/tmp/roles.log"
-TOOLS = "/run/current-system/sw/bin"
-
-
-def start_recorder(m):
-    m.succeed(f"rm -f {LOG}")  # a transient unit appends to an old log instead of replacing it
-    m.succeed(
-        f"systemd-run --unit=roles --collect -p StandardOutput=file:{LOG} "
-        f"{TOOLS}/stdbuf -oL {TOOLS}/drbdsetup events2 --timestamps all"
-    )
-
-
-def stop_recorder(m):
-    m.succeed("systemctl stop roles.service")
-    return m.succeed(f"cat {LOG}")
-
-
-def offset_of(m):
-    """m's clock minus the driver's, from the probe with the shortest round trip."""
-    probes = []
-    for _ in range(8):
-        before = time.time()
-        reading = float(m.succeed("date +%s.%N"))
-        probes.append((before, reading, time.time()))
-    return roles.clock_offset(probes)
-
-
-def role_history(res, offsets, end):
-    """Each node's Primary stretches in driver time, ending the recorders."""
-    held = {}
-    for m in NODES:
-        history = roles.parse(stop_recorder(m), res)
-        assert history, f"{m.name} recorded no role for {res}"
-        held[m.name] = roles.primary_intervals([(when - offsets[m.name], role) for when, role in history], end=end)
-    return held
 
 
 def write_fails(m):
     """A direct 4 KiB write to the node's DRBD device is refused (no quorum) or never returns."""
     return m.execute(f"timeout 20 dd if=/dev/urandom of={device_of(m)} bs=4k count=1 oflag=direct conv=notrunc")[0] != 0
-
-
-def show(held, since):
-    for name, stretches in held.items():
-        print(f"{name}: Primary for {[(round(a - since, 1), round(b - since, 1)) for a, b in stretches]}")
 
 
 def dump_on_failure(res):
