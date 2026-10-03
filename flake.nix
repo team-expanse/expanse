@@ -181,6 +181,7 @@
           vol-resize = mkTest "vol-resize" ./nix/tests/vol-resize.nix;
           vol-snapshot = mkTest "vol-snapshot" ./nix/tests/vol-snapshot.nix;
           vol-drbd-nodeid-spike = mkTest "vol-drbd-nodeid-spike" ./nix/tests/vol-drbd-nodeid-spike.nix;
+          vol-drbd-tiebreaker-probe = mkTest "vol-drbd-tiebreaker-probe" ./nix/tests/vol-drbd-tiebreaker-probe.nix;
           vol-drbd-status-capture = mkTest "vol-drbd-status-capture" ./nix/tests/vol-drbd-status-capture.nix;
           vol-drbd-config = mkTest "vol-drbd-config" ./nix/tests/vol-drbd-config.nix;
           vol-lvm = mkTest "vol-lvm" ./nix/tests/vol-lvm.nix;
