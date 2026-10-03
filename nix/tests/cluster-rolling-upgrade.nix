@@ -13,7 +13,7 @@
 { pkgs, lib, ... }:
 let
   # The v1.0.0 release tag: every release since is checked as an upgrade from it (Phase 12 R2).
-  oldRev = "f2e4a02012f77c54f2838d2905a53ee09f4e89e9";
+  oldRev = "618d6e427703ad9a1bac2c8a9fe1e337f0e17e87";
   # "." (relative to the invoking shell's cwd, i.e. the repo root) rather than
   # `toString ../..`: toString on a Nix path value copies it into the store first (losing
   # .git), which fetchGit then can't clone from. Nix warns this relative form is slated
