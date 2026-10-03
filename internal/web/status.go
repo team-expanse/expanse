@@ -107,7 +107,7 @@ func heartbeatPill(n control.NodeStatus, status string) pill {
 }
 
 // nodePill condenses a node's lifecycle, self-reported degradation and
-// cordon into one badge, worst condition first.
+// cordon or drain into one badge, worst condition first.
 func nodePill(n control.NodeStatus) pill {
 	switch {
 	case n.Lifecycle == nodelc.StateFailed:
@@ -116,6 +116,8 @@ func nodePill(n control.NodeStatus) pill {
 		return pill{"Unreachable", "warn"}
 	case n.Degraded:
 		return pill{"Degraded", "warn"}
+	case strings.Contains(n.State, "draining"):
+		return pill{"Draining", "warn"}
 	case strings.Contains(n.State, "cordoned"):
 		return pill{"Cordoned", "neutral"}
 	default:

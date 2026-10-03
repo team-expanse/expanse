@@ -85,6 +85,7 @@ func TestNodePillPrefersTheWorstCondition(t *testing.T) {
 	}{
 		{control.NodeStatus{State: "leader"}, pill{Label: "Online", Tone: "ok"}},
 		{control.NodeStatus{State: "voter/cordoned"}, pill{Label: "Cordoned", Tone: "neutral"}},
+		{control.NodeStatus{State: "voter/draining"}, pill{Label: "Draining", Tone: "warn"}},
 		{control.NodeStatus{State: "voter", Degraded: true}, pill{Label: "Degraded", Tone: "warn"}},
 		{control.NodeStatus{Lifecycle: nodelc.StateUnreachable}, pill{Label: "Unreachable", Tone: "warn"}},
 		{control.NodeStatus{Lifecycle: nodelc.StateFailed, Degraded: true}, pill{Label: "Failed", Tone: "crit"}},

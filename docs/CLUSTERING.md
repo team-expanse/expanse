@@ -54,7 +54,9 @@ to the leader.
 | `expanse cluster token create/list/revoke` | Manage join tokens |
 | `expanse cluster ca rotate/status/complete` | Rotate the cluster CA (`docs/SECURITY.md` §2) |
 | `expanse ctl node list` | Nodes with role, lifecycle, cordon and last-seen |
-| `expanse ctl node cordon/uncordon/drain <id>` | Stop or resume new placements on a node |
+| `expanse ctl node cordon <id>` | Stop new placements on a node; its replicas keep running |
+| `expanse ctl node drain <id>` | Cordon a node and move its replicas, daemonsets included, elsewhere |
+| `expanse ctl node uncordon <id>` | Resume placements on a node and end any drain |
 | `expanse ctl node transfer-leadership [id]` | Move raft leadership (default: the most up-to-date follower) |
 | `expanse ctl node remove <id>` | Remove a node from raft and revoke its identity |
 | `expanse cluster leave [id]` | Same as `node remove`, defaulting to this node |

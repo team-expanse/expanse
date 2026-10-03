@@ -228,6 +228,7 @@ type ClusterNode struct {
 	RaftAddr       string                 `protobuf:"bytes,5,opt,name=raft_addr,json=raftAddr,proto3" json:"raft_addr,omitempty"`
 	ApiAddr        string                 `protobuf:"bytes,6,opt,name=api_addr,json=apiAddr,proto3" json:"api_addr,omitempty"`
 	LastSeenUnixNs int64                  `protobuf:"varint,7,opt,name=last_seen_unix_ns,json=lastSeenUnixNs,proto3" json:"last_seen_unix_ns,omitempty"`
+	Draining       bool                   `protobuf:"varint,8,opt,name=draining,proto3" json:"draining,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -309,6 +310,13 @@ func (x *ClusterNode) GetLastSeenUnixNs() int64 {
 		return x.LastSeenUnixNs
 	}
 	return 0
+}
+
+func (x *ClusterNode) GetDraining() bool {
+	if x != nil {
+		return x.Draining
+	}
+	return false
 }
 
 type ListNodesResponse struct {
@@ -4353,7 +4361,7 @@ var File_proto_node_proto protoreflect.FileDescriptor
 const file_proto_node_proto_rawDesc = "" +
 	"\n" +
 	"\x10proto/node.proto\x12\x0fexpanse.node.v1\"\x12\n" +
-	"\x10ListNodesRequest\"\xce\x01\n" +
+	"\x10ListNodesRequest\"\xea\x01\n" +
 	"\vClusterNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x1c\n" +
@@ -4361,7 +4369,8 @@ const file_proto_node_proto_rawDesc = "" +
 	"\bcordoned\x18\x04 \x01(\bR\bcordoned\x12\x1b\n" +
 	"\traft_addr\x18\x05 \x01(\tR\braftAddr\x12\x19\n" +
 	"\bapi_addr\x18\x06 \x01(\tR\aapiAddr\x12)\n" +
-	"\x11last_seen_unix_ns\x18\a \x01(\x03R\x0elastSeenUnixNs\"G\n" +
+	"\x11last_seen_unix_ns\x18\a \x01(\x03R\x0elastSeenUnixNs\x12\x1a\n" +
+	"\bdraining\x18\b \x01(\bR\bdraining\"G\n" +
 	"\x11ListNodesResponse\x122\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1c.expanse.node.v1.ClusterNodeR\x05nodes\"K\n" +
 	"\x14SetNodeCordonRequest\x12\x17\n" +

@@ -7,7 +7,8 @@
 // Lifecycle state lives on the node record (/nodes/<id>, join.NodeRecord)
 // so every CLI and the status report see one source of truth:
 //
-//	Cordoned bool  — no new placements
+//	Cordoned bool  — no new placements; existing replicas stay
+//	Draining bool  — cordoned, and its replicas move elsewhere
 //	State    string — "" (healthy) | unreachable | failed
 //
 // Removal is a human decision end-to-end: nothing here ever calls
@@ -148,7 +149,7 @@ func placeable(r join.NodeRecord) bool {
 // Info is one node's lifecycle view, as `ctl node list` shows it.
 type Info struct {
 	ID, Role, Lifecycle string
-	Cordoned            bool
+	Cordoned, Draining  bool
 	RaftAddr, APIAddr   string
 	LastSeen            time.Time // last status write, else the join time
 }
@@ -181,7 +182,7 @@ func List(ctx context.Context, st store.Store) ([]Info, error) {
 }
 
 func infoOf(r join.NodeRecord, st *store.Entry) Info {
-	in := Info{ID: r.ID, Role: r.Role, Lifecycle: r.State, Cordoned: r.Cordoned,
+	in := Info{ID: r.ID, Role: r.Role, Lifecycle: r.State, Cordoned: r.Cordoned, Draining: r.Draining,
 		RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, LastSeen: time.Unix(0, r.JoinedAt)}
 	if in.Lifecycle == "" {
 		in.Lifecycle = "healthy"
@@ -208,41 +209,48 @@ func Cordon(ctx context.Context, st *raftstore.Store, id string) error {
 	return saveRecord(ctx, st, r, e.Revision)
 }
 
-// Uncordon clears the cordon.
+// Uncordon clears the cordon and ends any drain.
 func Uncordon(ctx context.Context, st *raftstore.Store, id string) error {
 	r, e, err := loadRecord(ctx, st, id)
 	if err != nil {
 		return err
 	}
-	if !r.Cordoned {
+	if !r.Cordoned && !r.Draining {
 		return nil
 	}
-	r.Cordoned = false
+	r.Cordoned, r.Draining = false, false
 	return saveRecord(ctx, st, r, e.Revision)
 }
 
-// Drain cordons the node and verifies every desired resource on it
-// could be re-placed elsewhere (§4.8). The actual move happens when
-// the placement engine lands; drain is the gate that guarantees it
-// will be possible. Returns the number of resources that must move.
+// Drain cordons the node and marks it draining, so the block controller
+// moves its replicas elsewhere (§4.8). It first verifies another node
+// can host them. Returns the number of resources that must move.
 func Drain(ctx context.Context, st *raftstore.Store, id string, opts *Options) (int, error) {
-	if _, _, err := loadRecord(ctx, st, id); err != nil {
+	r, e, err := loadRecord(ctx, st, id)
+	if err != nil {
 		return 0, err
 	}
-	if err := Cordon(ctx, st, id); err != nil {
-		return 0, err
+	n, err := checkReplaceable(ctx, st, id, opts != nil && opts.IgnoreUnplaceable)
+	if err != nil {
+		return n, err
 	}
+	if r.Cordoned && r.Draining {
+		return n, nil
+	}
+	r.Cordoned, r.Draining = true, true
+	return n, saveRecord(ctx, st, r, e.Revision)
+}
 
-	// Resources on the node (the reconciler's per-node desired state).
+// checkReplaceable counts the node's resources and refuses when no other
+// node could host them, unless ignore is set.
+func checkReplaceable(ctx context.Context, st *raftstore.Store, id string, ignore bool) (int, error) {
 	res, err := st.List(ctx, store.Key("/node/"+id+"/resources/"))
 	if err != nil {
 		return 0, errors.Wrap(err, errors.KindUnavailable, "nodelc", "list node resources: "+err.Error())
 	}
-	if len(res) == 0 {
-		return 0, nil
+	if len(res) == 0 || ignore {
+		return len(res), nil
 	}
-
-	// Another placeable node?
 	others, err := voters(ctx, st)
 	if err != nil {
 		return 0, err
@@ -252,13 +260,8 @@ func Drain(ctx context.Context, st *raftstore.Store, id string, opts *Options) (
 			return len(res), nil
 		}
 	}
-
-	ignore := opts != nil && opts.IgnoreUnplaceable
-	if !ignore {
-		return len(res), errors.New(errors.KindConflict, "nodelc",
-			"drain: no other placeable node can host the resources; use --ignore-unplaceable to proceed anyway")
-	}
-	return len(res), nil
+	return len(res), errors.New(errors.KindConflict, "nodelc",
+		"drain: no other placeable node can host the resources; use --ignore-unplaceable to proceed anyway")
 }
 
 // Remove drains-and-purges a node from the cluster (§4.8):

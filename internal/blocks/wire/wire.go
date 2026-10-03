@@ -125,26 +125,21 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 			if err != nil {
 				return nil, scheduler.OvercommitConfig{}, err
 			}
-			// The §4.8 failure detector's state gates placement: an
-			// unreachable/failed (or cordoned) node is not a candidate,
-			// regardless of its (possibly stale) status leaf. The
-			// cordon flag travels separately — daemonsets ignore it
-			// (§4.4), so they can distinguish "cordoned but healthy"
-			// from "unreachable".
-			var cordoned bool
+			// The §4.8 detector state and cordon gate placement; the cordon and
+			// drain flags travel separately so "cordoned but up" is not "unreachable".
+			var lc lifecycle
 			if ready {
-				var placeable bool
-				placeable, cordoned, err = nodePlaceable(ctx, st, id)
-				if err != nil {
+				if lc, err = nodeLifecycle(ctx, st, id); err != nil {
 					return nil, scheduler.OvercommitConfig{}, err
 				}
-				ready = placeable
+				ready = lc.placeable
 			}
 			u := used[id]
 			views = append(views, scheduler.NodeView{
 				ID:             id,
 				Ready:          ready,
-				Cordoned:       cordoned,
+				Cordoned:       lc.cordoned,
+				Draining:       lc.draining,
 				Capabilities:   nodeCapabilities(ctx, st, id),
 				Volumes:        local,
 				HealthyVolumes: healthyLocal,
@@ -303,23 +298,29 @@ func nodeCapabilities(ctx context.Context, st storeReader, id string) []string {
 	return strings.Split(v, ",")
 }
 
-// nodePlaceable reads the node record's §4.8 detector state (written by
-// nodelc.Monitor: state "" = up, "unreachable" past 15 s silent,
-// "failed" past 5 min) and cordon flag; nodelc.placeable semantics.
-func nodePlaceable(ctx context.Context, st storeReader, id string) (placeable bool, cordoned bool, err error) {
+// lifecycle is a node record's placement state; cordoned and draining are
+// reported only for a node the §4.8 detector still sees as up.
+type lifecycle struct{ placeable, cordoned, draining bool }
+
+// nodeLifecycle reads the node record's detector state (written by
+// nodelc.Monitor) and cordon/drain flags; nodelc.placeable semantics.
+func nodeLifecycle(ctx context.Context, st storeReader, id string) (lifecycle, error) {
 	e, err := st.Get(ctx, store.Key("/nodes/"+id))
 	if err != nil {
-		return false, false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "node record")
+		return lifecycle{}, errors.Wrap(err, errors.KindInternal, "wire.nodeLifecycle", "node record")
 	}
 	var r join.NodeRecord
 	if err := json.Unmarshal(e.Value, &r); err != nil {
-		return false, false, errors.Wrap(err, errors.KindInternal, "wire.nodePlaceable", "unmarshal node record")
+		return lifecycle{}, errors.Wrap(err, errors.KindInternal, "wire.nodeLifecycle", "unmarshal node record")
 	}
-	cordoned = r.Cordoned
-	if r.Role == "witness" || r.Cordoned {
-		return false, cordoned, nil
+	if r.State == "unreachable" || r.State == "failed" {
+		return lifecycle{}, nil
 	}
-	return r.State != "unreachable" && r.State != "failed", cordoned, nil
+	return lifecycle{
+		placeable: r.Role != "witness" && !r.Cordoned,
+		cordoned:  r.Cordoned,
+		draining:  r.Draining,
+	}, nil
 }
 
 // overcommitConfig reads /config/scheduler if present, else defaults

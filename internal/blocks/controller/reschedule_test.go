@@ -172,3 +172,93 @@ func TestSingletonReplacementNeverDoublePlaces(t *testing.T) {
 		t.Error("old singleton placement not retired")
 	}
 }
+
+// A cordoned node is healthy: cordon stops new placements, it never
+// marks the node's replicas Lost or replaces them.
+func TestCordonKeepsExistingReplicas(t *testing.T) {
+	ctx := context.Background()
+	b := blockFor("web", 2)
+	st := newStore(t)
+	mustCreate(t, ctx, st, b)
+
+	nodes := nodeViews(3)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodes, testCfg(), nil
+	})
+	clk := setClock(c)
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitPlaced(t, ctx, c, "default", "web", 2)
+
+	// The wire reports a cordoned node as not placeable (Ready=false).
+	nodes[0].Ready, nodes[0].Cordoned = false, true
+	for i := 0; i < 3; i++ {
+		clk.Sleep(31 * time.Second)
+		if _, err := c.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := loadStatus(t, ctx, st, "default", "web")
+	if p := placementOn(s, "n1"); p.GetPhase() == pb.Phase_LOST || p.GetReplicaIndex() == -1 {
+		t.Errorf("replica on cordoned n1 = %+v, want kept", p)
+	}
+}
+
+// A draining node's replicas move on the next pass, no grace window.
+func TestDrainMovesReplicasPromptly(t *testing.T) {
+	ctx := context.Background()
+	b := blockFor("web", 2)
+	st := newStore(t)
+	mustCreate(t, ctx, st, b)
+	nodes := nodeViews(3)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodes, testCfg(), nil
+	})
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitPlaced(t, ctx, c, "default", "web", 2)
+	drained := placementAt(loadStatus(t, ctx, st, "default", "web"), 0).GetNodeId()
+	for i := range nodes {
+		if nodes[i].ID == drained {
+			nodes[i].Ready, nodes[i].Cordoned, nodes[i].Draining = false, true, true
+		}
+	}
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := loadStatus(t, ctx, st, "default", "web")
+	for _, p := range s.GetPlacements() {
+		if p.GetNodeId() == drained && p.GetReplicaIndex() != -1 {
+			t.Errorf("replica %d still on draining %s", p.GetReplicaIndex(), drained)
+		}
+	}
+	if got := placementAt(s, 0).GetNodeId(); got == "" || got == drained {
+		t.Errorf("replica 0 on %q, want a replacement off %s", got, drained)
+	}
+	if p := placementOn(s, drained); p.GetPhase() != pb.Phase_TERMINATED {
+		t.Errorf("drained record phase = %v, want TERMINATED", p.GetPhase())
+	}
+}
+
+// Drain stops a daemonset's replica too; cordon alone keeps it.
+func TestDrainStopsDaemonsetReplica(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mustCreate(t, ctx, st, daemonsetBlock("agent"))
+	nodes := nodeViews(3)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodes, testCfg(), nil
+	})
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	nodes[0].Ready, nodes[0].Cordoned, nodes[0].Draining = false, true, true
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p := placementOn(loadStatus(t, ctx, st, "default", "agent"), "n1"); p != nil {
+		t.Errorf("daemonset replica on draining n1 = %+v, want stopped", p)
+	}
+}

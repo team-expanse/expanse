@@ -732,10 +732,8 @@ func (a *Agent) Run(ctx context.Context) error {
 			St:         a.ctl.store,
 			ThisNodeID: a.cfg.NodeID,
 			Evict: func(nodeID string) {
-				// Placements are not scheduled until the placement
-				// engine lands; the seam stays here (§4.8 "evicts its
-				// placements").
-				a.logger.Warn("node failed; placements evicted (no placement engine yet)", "node", nodeID)
+				// Clearing the status makes the node not ready, so the block controller replaces its placements.
+				a.logger.Warn("node failed; its placements will be replaced", "node", nodeID)
 				_ = a.store.Delete(context.Background(), store.Key("/nodes/"+nodeID+"/status"), 0)
 				_ = a.store.Delete(context.Background(), store.Key("/nodes/"+nodeID+"/reconcile"), 0)
 			},

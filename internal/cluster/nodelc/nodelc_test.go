@@ -192,6 +192,45 @@ func TestCordonUncordon(t *testing.T) {
 	}
 }
 
+// Drain marks the node draining so its replicas move; uncordon ends it.
+// A refused drain leaves the node undrained.
+func TestDrainMarksDrainingUntilUncordon(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n0", "")
+	writeNode(t, ctx, st, "n1", "")
+	writeRes(t, ctx, st, "n1", "web")
+	if err := nodelc.Cordon(ctx, st, "n0"); err != nil {
+		t.Fatalf("cordon n0: %v", err)
+	}
+	if _, err := nodelc.Drain(ctx, st, "n1", nil); !errors.Is(err, errors.KindConflict) {
+		t.Fatalf("Drain err = %v, want Conflict", err)
+	}
+	if r := record(t, ctx, st, "n1"); r.Draining {
+		t.Error("refused drain marked the node draining")
+	}
+	if _, err := nodelc.Drain(ctx, st, "n1", &nodelc.Options{IgnoreUnplaceable: true}); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if r := record(t, ctx, st, "n1"); !r.Cordoned || !r.Draining {
+		t.Errorf("after drain cordoned=%t draining=%t, want both", r.Cordoned, r.Draining)
+	}
+	infos, err := nodelc.List(ctx, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range infos {
+		if in.ID == "n1" && !in.Draining {
+			t.Error("List does not report n1 draining")
+		}
+	}
+	if err := nodelc.Uncordon(ctx, st, "n1"); err != nil {
+		t.Fatalf("Uncordon: %v", err)
+	}
+	if r := record(t, ctx, st, "n1"); r.Cordoned || r.Draining {
+		t.Errorf("after uncordon cordoned=%t draining=%t, want neither", r.Cordoned, r.Draining)
+	}
+}
+
 // writeRes writes a desired resource for a node (what ApplySpec leaves
 // behind).
 func writeRes(t *testing.T, ctx context.Context, st *raftstore.Store, node, id string) {

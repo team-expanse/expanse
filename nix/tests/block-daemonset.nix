@@ -1,7 +1,7 @@
 # §8 block-daemonset: deploy node-exporter-style daemonset (V6: one
 # placement per eligible node — Ready, non-witness); assert 1 per node;
-# add a node → it gets one automatically; cordon a node → the daemonset
-# STAYS (daemonsets ignore cordon by default, §4.4).
+# add a node → it gets one automatically; cordon a node → every replica
+# STAYS past the unreachable grace; drain → they move off; uncordon ends it.
 { self }:
 { pkgs, lib, ... }:
 let

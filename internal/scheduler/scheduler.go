@@ -21,6 +21,7 @@ type NodeView struct {
 	ID           string
 	Ready        bool
 	Cordoned     bool
+	Draining     bool // cordoned and moving its replicas off
 	Witness      bool
 	FreeCPU      quantity.CPU
 	FreeMem      quantity.Bytes

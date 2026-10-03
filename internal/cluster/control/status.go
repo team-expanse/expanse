@@ -107,12 +107,14 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 			state = "leader"
 		}
 		// Lifecycle annotation (§4.8): unreachable/failed from the
-		// failure monitor, cordoned from drain/cordon.
+		// failure monitor, cordoned or draining from cordon/drain.
 		deg := false
 		if r.State != "" {
 			state += "/" + r.State
 		}
-		if r.Cordoned {
+		if r.Draining {
+			state += "/draining"
+		} else if r.Cordoned {
 			state += "/cordoned"
 		}
 		// Degraded condition (§4.10.3): the node's own status value

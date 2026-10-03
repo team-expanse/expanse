@@ -40,15 +40,15 @@ func (c *Controller) storageAvailable(volumeID string) bool {
 	return true
 }
 
-// nodeReady reports whether nodeID is present and Ready in the current
-// cluster view; absent nodes count as unreachable.
-func nodeReady(nodes []scheduler.NodeView, nodeID string) bool {
+// nodeUp reports whether nodeID is reachable (Ready, or cordoned but up) and
+// whether it is draining; absent nodes count as unreachable.
+func nodeUp(nodes []scheduler.NodeView, nodeID string) (up, draining bool) {
 	for _, n := range nodes {
 		if n.ID == nodeID {
-			return n.Ready
+			return n.Ready || n.Cordoned, n.Draining
 		}
 	}
-	return false
+	return false, false
 }
 
 // reschedulePass applies §4.4 to one block's placements. It marks Lost
@@ -72,15 +72,23 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 	now := c.hooks().now()
 
 	stateful := len(b.GetSpec().GetStorage()) > 0
-	changed, failed := false, false
+	daemonset := b.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_DAEMONSET
+	changed, failed, drained := false, false, false
 	for _, p := range status.GetPlacements() {
 		if p.GetReplicaIndex() == -1 {
 			continue // already retired: replacement handled elsewhere
 		}
-		if nodeReady(nodes, p.GetNodeId()) {
+		if up, draining := nodeUp(nodes, p.GetNodeId()); up {
 			c.unreachableMu.Lock()
 			delete(c.unreachableSince, string(e.Key)+"\x00"+p.GetNodeId())
 			c.unreachableMu.Unlock()
+			// placeDaemonset stops a draining node's daemonset replica.
+			if draining && !daemonset && (!stateful || c.storageAvailable(p.GetNodeId())) {
+				p.Phase, p.Message = pb.Phase_TERMINATED, "moved off draining node "+p.GetNodeId()
+				p.FormerIndex, p.ReplicaIndex = p.GetReplicaIndex(), -1
+				changed, drained = true, true
+				continue
+			}
 			moved, marked := c.livenessPass(ctx, b, e.Key, p, stateful)
 			changed = changed || moved || marked
 			failed = failed || marked
@@ -127,6 +135,9 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 	}
 	if failed {
 		status.PendingReason.Message = "replacing replicas that failed their liveness probe"
+	}
+	if drained {
+		status.PendingReason.Message = "moving replicas off draining nodes"
 	}
 	if err := c.persistStatus(ctx, e.Key, status); err != nil {
 		return false, err

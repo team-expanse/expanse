@@ -14,12 +14,13 @@ func TestPrintNodeListShowsCordonAndLifecycle(t *testing.T) {
 	err := printNodeList(&b, []*pb.ClusterNode{
 		{Id: "n1", Role: "voter", Lifecycle: "healthy", RaftAddr: "10.0.0.1:7444", LastSeenUnixNs: seen.UnixNano()},
 		{Id: "n2", Lifecycle: "unreachable", Cordoned: true, RaftAddr: "10.0.0.2:7444", LastSeenUnixNs: seen.UnixNano()},
+		{Id: "n3", Lifecycle: "healthy", Cordoned: true, Draining: true, RaftAddr: "10.0.0.3:7444", LastSeenUnixNs: seen.UnixNano()},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(b.String()), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[0], "ID") {
+	if len(lines) != 4 || !strings.HasPrefix(lines[0], "ID") {
 		t.Fatalf("got:\n%s", b.String())
 	}
 	for _, want := range []string{"n1", "voter", "healthy", "false", "2026-10-02T12:00:00Z"} {
@@ -31,5 +32,8 @@ func TestPrintNodeListShowsCordonAndLifecycle(t *testing.T) {
 		if !strings.Contains(lines[2], want) {
 			t.Errorf("n2 row %q missing %q", lines[2], want)
 		}
+	}
+	if !strings.Contains(lines[3], "draining") {
+		t.Errorf("n3 row %q missing draining", lines[3])
 	}
 }

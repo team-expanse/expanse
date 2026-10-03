@@ -31,7 +31,7 @@ func (s *Server) ListNodes(ctx context.Context, _ *pb.ListNodesRequest) (*pb.Lis
 	res := &pb.ListNodesResponse{}
 	for _, in := range infos {
 		res.Nodes = append(res.Nodes, &pb.ClusterNode{
-			Id: in.ID, Role: in.Role, Lifecycle: in.Lifecycle, Cordoned: in.Cordoned,
+			Id: in.ID, Role: in.Role, Lifecycle: in.Lifecycle, Cordoned: in.Cordoned, Draining: in.Draining,
 			RaftAddr: in.RaftAddr, ApiAddr: in.APIAddr, LastSeenUnixNs: in.LastSeen.UnixNano(),
 		})
 	}
@@ -54,7 +54,7 @@ func (s *Server) SetNodeCordon(ctx context.Context, req *pb.SetNodeCordonRequest
 	return &pb.SetNodeCordonResponse{}, nil
 }
 
-// DrainNode cordons a node and counts the resources that must move off it.
+// DrainNode cordons a node, marks it draining so its replicas move, and counts them.
 func (s *Server) DrainNode(ctx context.Context, req *pb.DrainNodeRequest) (*pb.DrainNodeResponse, error) {
 	st, err := s.clusterStore("DrainNode")
 	if err != nil {

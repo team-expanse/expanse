@@ -6,6 +6,21 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- `expanse ctl node cordon` no longer evicts a node's replicas. A cordoned
+  node was treated as unreachable, so 30 seconds later its replicas were
+  marked lost and replaced elsewhere. Cordon now only stops new placements.
+- `expanse ctl node drain` now moves the node's replicas, daemonsets
+  included, on the next controller pass instead of relying on that
+  eviction. `ctl node list` and the status page show the node as
+  draining, and `uncordon` ends the drain. A drain refused for lack of
+  another placeable node no longer leaves the node cordoned.
+- A daemonset replica on a cordoned node that goes silent is now dropped,
+  as on any other unreachable node, instead of being kept indefinitely.
+
 ## 1.2.2 - 2026-10-02
 
 ### Fixed

@@ -288,3 +288,37 @@ type schedulerNode struct {
 	FreeCPU int64
 	FreeMem int64
 }
+
+// Cordon and drain travel on the view only for a node that is up, so a
+// cordoned node that goes silent is still treated as unreachable.
+func TestNodesViewCordonAndDrain(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	for _, pair := range [][2]string{
+		{"/nodes/n1", `{"id":"n1","cordoned":true}`},
+		{"/nodes/n2", `{"id":"n2","cordoned":true,"state":"unreachable"}`},
+		{"/nodes/n3", `{"id":"n3","cordoned":true,"draining":true}`},
+		{"/nodes/n1/status", "idle"},
+		{"/nodes/n2/status", "idle"},
+		{"/nodes/n3/status", "idle"},
+	} {
+		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
+			t.Fatalf("put %s: %v", pair[0], err)
+		}
+	}
+	views, _, err := Nodes(st)(ctx)
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	got := map[string]scheduler.NodeView{}
+	for _, v := range views {
+		got[v.ID] = v
+	}
+	for id, want := range map[string][2]bool{"n1": {true, false}, "n2": {false, false}, "n3": {true, true}} {
+		v := got[id]
+		if v.Ready || v.Cordoned != want[0] || v.Draining != want[1] {
+			t.Errorf("%s: ready=%t cordoned=%t draining=%t, want false/%t/%t",
+				id, v.Ready, v.Cordoned, v.Draining, want[0], want[1])
+		}
+	}
+}

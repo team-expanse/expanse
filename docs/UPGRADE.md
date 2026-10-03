@@ -46,9 +46,12 @@ kernel refuses `drbdsetup secondary` with "device held open by someone,"
 and both the stop hook and the restarted agent's own step-down retry it
 forever, logged repeatedly as `leading interrupted`. This is not a
 timing fluke; it reproduced deterministically the first time this stream
-ran the test with continuous load. Stop or reschedule whatever has the
-volume open on that node before switching it, the same way you would
-drain any other stateful workload ahead of a restart.
+ran the test with continuous load. Run `expanse ctl node drain <id>`
+before switching it: the node's block replicas, daemonsets included, move
+to other nodes within a few controller periods. Wait until
+`expanse ctl block get` shows them running elsewhere, and stop anything
+else that holds the volume open on that node (a raw writer) yourself.
+Plain `cordon` is not enough; it only stops new placements.
 
 Once demotion is unblocked, do not assume Primary moves to a different
 node: unlike a hard node loss (`vol-durability.nix`, `chaos-soak.nix`),
@@ -71,6 +74,8 @@ For each node, one at a time:
 4. Wait for `expansed.service` active and the agent socket back up.
 5. Wait for quorum to read `N/majority` again and every volume to show
    `UpToDate` on every replica again before touching the next node.
+6. If you drained it, `expanse ctl node uncordon <id>` so it takes
+   placements again.
 
 Skipping step 5 (moving to the next node before the current one has
 fully rejoined) is the one thing that can cost the cluster a majority:

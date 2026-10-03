@@ -49,7 +49,7 @@ func newCtlNodeLifecycleCmds(opts *ctlOpts) []*cobra.Command {
 
 	drain := &cobra.Command{
 		Use:   "drain <node-id>",
-		Short: "Cordon a node and verify its resources can be re-placed",
+		Short: "Cordon a node and move its replicas elsewhere (uncordon ends the drain)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ignore, _ := cmd.Flags().GetBool("ignore-unplaceable")
@@ -58,7 +58,7 @@ func newCtlNodeLifecycleCmds(opts *ctlOpts) []*cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "drained %s: %d resource(s) to re-place\n", args[0], res.GetResources())
+				fmt.Fprintf(cmd.OutOrStdout(), "draining %s: %d resource(s) moving elsewhere\n", args[0], res.GetResources())
 				return nil
 			})
 		},
@@ -118,8 +118,8 @@ func newCtlNodeLifecycleCmds(opts *ctlOpts) []*cobra.Command {
 	}
 
 	return []*cobra.Command{
-		list, cordonCmd("cordon", "Cordon a node (no new placements)", true),
-		cordonCmd("uncordon", "Uncordon a node", false), drain, remove, transfer,
+		list, cordonCmd("cordon", "Cordon a node (no new placements; existing replicas stay)", true),
+		cordonCmd("uncordon", "Uncordon a node and end any drain", false), drain, remove, transfer,
 	}
 }
 
@@ -127,9 +127,17 @@ func printNodeList(w io.Writer, nodes []*pb.ClusterNode) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tROLE\tLIFECYCLE\tCORDONED\tRAFT\tAPI\tLAST-SEEN")
 	for _, n := range nodes {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\t%s\t%s\n", n.GetId(), orDash(n.GetRole()), n.GetLifecycle(),
-			n.GetCordoned(), n.GetRaftAddr(), orDash(n.GetApiAddr()),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.GetId(), orDash(n.GetRole()), n.GetLifecycle(),
+			cordonLabel(n), n.GetRaftAddr(), orDash(n.GetApiAddr()),
 			time.Unix(0, n.GetLastSeenUnixNs()).UTC().Format(time.RFC3339))
 	}
 	return tw.Flush()
+}
+
+// cordonLabel is "draining" for a drained node, else the cordon flag.
+func cordonLabel(n *pb.ClusterNode) string {
+	if n.GetDraining() {
+		return "draining"
+	}
+	return fmt.Sprint(n.GetCordoned())
 }

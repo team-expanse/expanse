@@ -73,6 +73,7 @@ message ClusterNode {
   string raft_addr = 5;
   string api_addr = 6;
   int64 last_seen_unix_ns = 7;
+  bool draining = 8;
 }
 
 message ListNodesResponse {
