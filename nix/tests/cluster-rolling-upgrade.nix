@@ -5,7 +5,7 @@
 # continuous-load legs (KV/control-plane, volume/data-plane) are kept meaningful across a
 # real switch-to-configuration.
 #
-# Every node boots a pinned older `expanse` build (oldRev below) and also carries a
+# Every node boots a pinned older `expanse` build and module (oldRev below) and also carries a
 # `specialisation.upgraded` built from the current source tree (self.packages.expanse) --
 # switched to one node at a time via the real switch-to-configuration binary, the same one
 # internal/agent/nix.ExecDriver.Switch shells out to in production.
@@ -37,6 +37,8 @@ let
     meta.mainProgram = "expanse";
   };
   expanseOld = mkExpanse oldSrc oldRev;
+  # Each generation runs its own release's module, so the old one never sees newer flags.
+  oldModule = "${oldSrc}/nix/modules/expanse.nix";
   expanseNew = self.packages.${pkgs.system}.expanse;
 
   lint = pkgs.runCommand "cluster-rolling-upgrade-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -53,7 +55,7 @@ let
   '';
   nodeCommon = idx: {
     imports = [
-      self.nixosModules.expanse
+      oldModule
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -71,6 +73,8 @@ let
     # software-only diff, pre-built into the same closure exactly like a real
     # nixos-rebuild boot preparing the next generation ahead of switch time.
     specialisation.upgraded.configuration = {
+      disabledModules = [ oldModule ];
+      imports = [ self.nixosModules.expanse ];
       nixpkgs.overlays = [
         (final: prev: { expanse = expanseNew; })
       ];
