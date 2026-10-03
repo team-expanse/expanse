@@ -106,6 +106,11 @@ safe: old- and new-version nodes interoperate over gRPC/raft for the
 whole upgrade window, old data survives being read and re-verified under
 new-version software, and the switch mechanism itself works end to end.
 
+**Two-replica tiebreakers (1.2.4).** A tiebreaker is recorded beside a volume's replicas, so
+agents older than 1.2.4 ignore it: an old agent on the tiebreaker's node does not run it, and an
+old agent holding a replica keeps quorum off. Nothing breaks; the volume simply has no partition
+protection until every node it touches runs 1.2.4 or later. Upgrade all nodes before relying on it.
+
 **`decodeCommand` rejects an unrecognized `CommandVersion` outright** — a
 v1 reader does not gracefully skip a v2 entry, it errors. A future change
 that bumps `CommandVersion` is *not* covered by this proof and needs its

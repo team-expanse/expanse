@@ -6,6 +6,20 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- A two-replica volume no longer split-brains when its primary's node is
+  cut off from the cluster. Previously the cut-off primary kept writing
+  while the other side promoted, and on reconnect DRBD saw two diverged
+  copies, so the volume needed manual recovery and the block that had
+  moved lost its storage. Two-replica volumes now get a diskless DRBD
+  tiebreaker on a spare node, which turns DRBD quorum on: the cut-off
+  side stops writing and the majority takes over. Clusters of two nodes
+  have no spare and behave as before. See `docs/STORAGE.md` §8 and, for
+  mixed-version clusters, `docs/UPGRADE.md`.
+
 ## 1.2.3 - 2026-10-03
 
 ### Fixed

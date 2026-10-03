@@ -72,6 +72,9 @@ with subtest("a SINGLETON block holds its replication-2 volume open on one node"
     wait_for(lambda: role_of(host, res) == "Primary", f"{host.name} to be the volume's primary", 120)
     host.wait_until_succeeds(f"systemctl is-active {UNIT}", timeout=60)
     host.succeed(f"findmnt /var/lib/expanse/volumes/{res}/mnt")
+    # The third node joins as a diskless tiebreaker, which turns DRBD quorum on.
+    wait_for(lambda: "peer-disk:Diskless" in drbd_status(host, res), "a connected tiebreaker", 120)
+    print(f"[{host.name}] drbd with tiebreaker:\n{drbd_status(host, res)}")
     majority = [m for m in NODES if m is not host]
     for m in NODES:
         start_recorder(m)

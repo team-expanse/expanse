@@ -10,7 +10,7 @@ rationale; this document is the operator-facing companion.
 GPT ─┬─ ESP (FAT32)             → /boot
      ├─ btrfs partition          → subvolumes @root @nix @persist @log
      └─ LVM PV → VG "expanse"    → thin pool → thin LVs
-                                     └─ DRBD 9 (protocol C, quorum majority at ≥3)
+                                     └─ DRBD 9 (protocol C, quorum majority at ≥3 members)
                                           └─ filesystem or raw (block replica)
 ```
 
@@ -197,6 +197,25 @@ below three replicas and turns on (`majority`) at three; the switch happens live
 interrupting I/O (VM-tested under continuous acked writes: `cluster-single-node-grow`). The
 alert for under-replication fires only while a spare eligible node exists, since nothing can fix it
 before then.
+
+**Two-replica volumes get a tiebreaker.** With only two members, DRBD cannot tell a dead peer from
+a network cut. A primary that is cut off would keep writing while the other side promotes, and
+the two copies would split-brain. So when a two-replica volume is `Healthy` and a spare node exists
+(live, not cordoned, not a witness, holding no copy), the controller adds that node as a third,
+*diskless* DRBD member. It stores no data and is never primary, but its vote turns quorum on: a
+cut-off primary loses quorum within seconds and its writes fail instead of diverging, while the
+other replica and the tiebreaker keep quorum and take over. `drbdadm status` shows it as
+`peer-disk:Diskless`; it does not appear in `volume list`.
+
+- A two-node cluster has no spare, so its two-replica volumes run without quorum, as before.
+- A tiebreaker whose node stays gone (10 minutes by default) is moved to another spare. If there is
+  none, it is kept: the two replicas still hold two of three votes. With one replica down *and* the
+  tiebreaker unreachable, the volume is `ReadOnly`, since DRBD stops writes with one vote of three.
+- When a replica is lost and the tiebreaker's node is the only place left for a new copy (a
+  three-node cluster), the tiebreaker steps aside and that node gets the replica. The tiebreaker
+  returns once the volume is `Healthy` again and a spare exists.
+- A volume raised to three replicas drops its tiebreaker; three diskful members have quorum on their
+  own.
 
 An explicit `--replication N` stays strict: if fewer than N eligible nodes exist, the volume
 waits, and `volume list` says why:
