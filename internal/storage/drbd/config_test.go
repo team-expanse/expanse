@@ -198,3 +198,41 @@ func TestRenderRaisesTheResyncFloor(t *testing.T) {
 		}
 	}
 }
+
+func tiebroken() Resource {
+	r := resource(3)
+	r.Members[2].Diskless = true
+	return r
+}
+
+func TestRenderGoldenWithTiebreaker(t *testing.T) {
+	got, err := tiebroken().Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "2-replicas-tiebreaker.res", got)
+}
+
+// A diskless tiebreaker carries `disk none` in its own section and counts toward quorum.
+func TestRenderTiebreakerIsDisklessAndEnablesQuorum(t *testing.T) {
+	got, err := tiebroken().Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, need := range []string{
+		"  on n3 { node-id 2; address 192.168.1.3:7793; disk none; }\n",
+		"  on n1 { node-id 0; address 192.168.1.1:7793; }\n",
+		"quorum majority;",
+	} {
+		if !strings.Contains(got, need) {
+			t.Errorf("missing %q in:\n%s", need, got)
+		}
+	}
+}
+
+func TestRenderRejectsOnlyDisklessMembers(t *testing.T) {
+	r := resource(2)
+	r.Members[0].Diskless, r.Members[1].Diskless = true, true
+	_, err := r.Render()
+	wantKind(t, err, experrors.KindInvalid)
+}

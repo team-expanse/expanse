@@ -40,6 +40,8 @@ type Allocation struct {
 	// Next is the count of never-used node-ids handed out (ids 0..Next-1).
 	Next    int            `json:"next"`
 	NodeIDs map[string]int `json:"nodeIDs"`
+	// Diskless maps quorum tiebreakers to their node-ids; they hold no data and are not replicas.
+	Diskless map[string]int `json:"diskless,omitempty"`
 	// Retired ids belonged to dropped replicas whose slot survivors may still
 	// hold; they cannot be reused until ConfirmForgotten.
 	Retired []int `json:"retired,omitempty"`
@@ -151,6 +153,9 @@ func (a *Allocator) load(ctx context.Context, name string) (Allocation, store.Re
 	if al.NodeIDs == nil {
 		al.NodeIDs = map[string]int{}
 	}
+	if al.Diskless == nil {
+		al.Diskless = map[string]int{}
+	}
 	return al, e.Revision, nil
 }
 
@@ -175,7 +180,14 @@ func (a *Allocator) AssignNodeID(ctx context.Context, name, host string) (int, e
 	return id, err
 }
 
-// RetireNode drops the host's replica and returns its node-id, which stays
+// AssignDiskless returns the host's tiebreaker node-id, giving it a fresh one on first call.
+func (a *Allocator) AssignDiskless(ctx context.Context, name, host string) (int, error) {
+	var id int
+	err := a.update(ctx, name, func(al *Allocation) (err error) { id, err = al.assignDiskless(host); return })
+	return id, err
+}
+
+// RetireNode drops the host's replica or tiebreaker and returns its node-id, which stays
 // unusable until ConfirmForgotten. Call it once the controller has declared
 // the replica lost, before running forget-peer on the survivors.
 func (a *Allocator) RetireNode(ctx context.Context, name, host string) (int, error) {
@@ -231,12 +243,34 @@ func (al *Allocation) assign(host string) (int, error) {
 	if id, ok := al.NodeIDs[host]; ok {
 		return id, nil
 	}
+	if _, ok := al.Diskless[host]; ok {
+		return 0, al.roleConflict("drbd.Allocation.assign", host, "a tiebreaker")
+	}
 	id, err := al.nextID()
 	if err != nil {
 		return 0, err
 	}
 	al.NodeIDs[host] = id
 	return id, nil
+}
+
+func (al *Allocation) assignDiskless(host string) (int, error) {
+	if id, ok := al.Diskless[host]; ok {
+		return id, nil
+	}
+	if _, ok := al.NodeIDs[host]; ok {
+		return 0, al.roleConflict("drbd.Allocation.assignDiskless", host, "a replica")
+	}
+	id, err := al.nextID()
+	if err != nil {
+		return 0, err
+	}
+	al.Diskless[host] = id
+	return id, nil
+}
+
+func (al *Allocation) roleConflict(op, host, role string) error {
+	return experrors.New(experrors.KindConflict, op, fmt.Sprintf("resource %q: host %q is already %s", al.Name, host, role))
 }
 
 // nextID prefers a never-used id; only when all 32 are spent does it recycle
@@ -257,10 +291,14 @@ func (al *Allocation) nextID() (int, error) {
 
 func (al *Allocation) retire(host string) (int, error) {
 	id, ok := al.NodeIDs[host]
+	delete(al.NodeIDs, host)
+	if !ok {
+		id, ok = al.Diskless[host]
+		delete(al.Diskless, host)
+	}
 	if !ok {
 		return 0, experrors.New(experrors.KindNotFound, "drbd.Allocation.retire", fmt.Sprintf("resource %q: host %q has no node-id", al.Name, host))
 	}
-	delete(al.NodeIDs, host)
 	al.Retired = insertSorted(al.Retired, id)
 	return id, nil
 }

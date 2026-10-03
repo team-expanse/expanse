@@ -381,3 +381,87 @@ func TestMarkInitializedIsPerVolumeAndNeedsTheVolume(t *testing.T) {
 	}
 	wantKind(t, a.MarkInitialized(context.Background(), "ghost"), experrors.KindNotFound)
 }
+
+func tiebreakerOf(t *testing.T, a *Allocator, tie string, hosts ...string) int {
+	t.Helper()
+	ctx := context.Background()
+	mustAllocate(t, a, "vol-a")
+	for _, h := range hosts {
+		if _, err := a.AssignNodeID(ctx, "vol-a", h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := a.AssignDiskless(ctx, "vol-a", tie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestAssignDisklessTakesAFreshIDOutsideTheReplicas(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	id := tiebreakerOf(t, a, "n3", "n1", "n2")
+	again, err := a.AssignDiskless(ctx, "vol-a", "n3")
+	if err != nil || id != 2 || again != id {
+		t.Errorf("got %d then %d (err %v), want 2 twice", id, again, err)
+	}
+	al, _ := a.Get(ctx, "vol-a")
+	if _, replica := al.NodeIDs["n3"]; replica || al.Diskless["n3"] != 2 || len(al.NodeIDs) != 2 {
+		t.Errorf("tiebreaker counted as a replica: %+v", al)
+	}
+}
+
+func TestDisklessAndReplicaRolesExcludeEachOther(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	tiebreakerOf(t, a, "n3", "n1", "n2")
+	_, err := a.AssignNodeID(ctx, "vol-a", "n3")
+	wantKind(t, err, experrors.KindConflict)
+	_, err = a.AssignDiskless(ctx, "vol-a", "n1")
+	wantKind(t, err, experrors.KindConflict)
+}
+
+func TestNextReplicaSkipsTheTiebreakersID(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	tie := tiebreakerOf(t, a, "n3", "n1", "n2")
+	id, err := a.AssignNodeID(ctx, "vol-a", "n4")
+	if err != nil || id == tie {
+		t.Errorf("replica got id %d (tiebreaker %d), err %v", id, tie, err)
+	}
+}
+
+// Dropping a tiebreaker retires its id like a lost replica: replicas must forget it first.
+func TestRetiringATiebreakerNeedsTheReplicasToForgetIt(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	tie := tiebreakerOf(t, a, "n3", "n1", "n2")
+	id, err := a.RetireNode(ctx, "vol-a", "n3")
+	if err != nil || id != tie {
+		t.Fatalf("RetireNode = %d, %v", id, err)
+	}
+	al, _ := a.Get(ctx, "vol-a")
+	if _, still := al.Diskless["n3"]; still || len(al.Retired) != 1 {
+		t.Errorf("tiebreaker not retired: %+v", al)
+	}
+	a.AckForgotten(ctx, "vol-a", tie, "n1")
+	a.AckForgotten(ctx, "vol-a", tie, "n2")
+	if al, _ := a.Get(ctx, "vol-a"); len(al.Forgotten) != 1 {
+		t.Errorf("not forgotten after both replicas acked: %+v", al)
+	}
+}
+
+// A tiebreaker keeps no bitmap slots, so only replicas must forget a retired id.
+func TestAckForgottenIgnoresTheTiebreaker(t *testing.T) {
+	a, ctx := newAllocator(t), context.Background()
+	tiebreakerOf(t, a, "n4", "n1", "n2", "n3")
+	dead, _ := a.RetireNode(ctx, "vol-a", "n3")
+	wantKind(t, a.AckForgotten(ctx, "vol-a", dead, "n4"), experrors.KindInvalid)
+	a.AckForgotten(ctx, "vol-a", dead, "n1")
+	a.AckForgotten(ctx, "vol-a", dead, "n2")
+	if al, _ := a.Get(ctx, "vol-a"); len(al.Forgotten) != 1 {
+		t.Errorf("forget waited on the tiebreaker: %+v", al)
+	}
+}
+
+func TestAssignDisklessUnknownVolume(t *testing.T) {
+	_, err := newAllocator(t).AssignDiskless(context.Background(), "nope", "n1")
+	wantKind(t, err, experrors.KindNotFound)
+}

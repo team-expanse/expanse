@@ -31,10 +31,12 @@ var (
 )
 
 // Member is one replica: the host it lives on, its node-id and mesh address.
+// A Diskless member stores no data and only votes in quorum (a tiebreaker).
 type Member struct {
-	Host    string
-	NodeID  int
-	Address netip.Addr
+	Host     string
+	NodeID   int
+	Address  netip.Addr
+	Diskless bool
 }
 
 // Resource is everything needed to render one /etc/drbd.d/<name>.res file.
@@ -70,7 +72,11 @@ func (r Resource) Render() (string, error) {
 		fmt.Fprintf(&b, "  handlers {\n    split-brain %q;\n  }\n", r.SplitBrainCmd)
 	}
 	for _, m := range ms {
-		fmt.Fprintf(&b, "  on %s { node-id %d; address %s; }\n", m.Host, m.NodeID, formatAddr(m.Address, r.Port))
+		disk := ""
+		if m.Diskless {
+			disk = " disk none;"
+		}
+		fmt.Fprintf(&b, "  on %s { node-id %d; address %s;%s }\n", m.Host, m.NodeID, formatAddr(m.Address, r.Port), disk)
 	}
 	if len(ms) > 1 {
 		hosts := make([]string, len(ms))
@@ -120,8 +126,9 @@ func (r Resource) validate() error {
 }
 
 func (r Resource) validateMembers(invalid func(string, ...any) error) error {
-	ids, hosts := map[int]bool{}, map[string]bool{}
+	ids, hosts, diskful := map[int]bool{}, map[string]bool{}, false
 	for _, m := range r.Members {
+		diskful = diskful || !m.Diskless
 		switch {
 		case m.NodeID < 0 || m.NodeID > maxNodeID:
 			return invalid("node-id %d outside 0..%d", m.NodeID, maxNodeID)
@@ -135,6 +142,9 @@ func (r Resource) validateMembers(invalid func(string, ...any) error) error {
 			return invalid("host %q has no address", m.Host)
 		}
 		ids[m.NodeID], hosts[m.Host] = true, true
+	}
+	if !diskful {
+		return invalid("every member is diskless")
 	}
 	return nil
 }
