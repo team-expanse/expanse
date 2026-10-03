@@ -60,6 +60,9 @@ func fresh(st *drbd.Status) bool {
 		}
 	}
 	for _, p := range st.Peers {
+		if p.Connection == drbd.ConnConnected && isDiskless(p) {
+			continue // a tiebreaker holds no data
+		}
 		if p.Connection != drbd.ConnConnected || len(p.Volumes) == 0 {
 			return false
 		}

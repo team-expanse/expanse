@@ -137,12 +137,21 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 		return ignoreMissing(err)
 	}
 	placed := slices.ContainsFunc(status.Placement, func(r storage.Replica) bool { return r.NodeID == n.Self })
-	if !placed || status.State == storage.StateDeleting {
+	if status.State == storage.StateDeleting {
 		return n.release(ctx, id, placed)
 	}
 	al, err := n.Alloc.Get(ctx, id)
-	if err != nil {
-		return ignoreMissing(err) // the leader has not allocated yet
+	if err != nil && experrors.KindOf(err) != experrors.KindNotFound {
+		return err
+	}
+	_, tiebreaker := al.Diskless[n.Self]
+	switch {
+	case !placed && tiebreaker:
+		return n.syncTiebreaker(ctx, al, spec)
+	case !placed:
+		return n.release(ctx, id, false)
+	case err != nil:
+		return nil // the leader has not allocated yet
 	}
 	d, err := n.desired(al, spec)
 	if err != nil {
@@ -176,6 +185,18 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 	return errors.Join(append(errs, n.publish(ctx, d))...)
 }
 
+// syncTiebreaker keeps this node's diskless quorum vote up. It never leads and has no
+// placement row to report into.
+func (n *Node) syncTiebreaker(ctx context.Context, al drbd.Allocation, spec storage.Spec) error {
+	n.stopLeading(al.Name)
+	d, err := n.desired(al, spec)
+	if err != nil {
+		return err
+	}
+	_, err = n.RT.Reconcile(ctx, d)
+	return err
+}
+
 // diverged reports whether the volume needs manual recovery, moving it there when
 // the kernel has reported a split-brain. Nothing here resolves it.
 func (n *Node) diverged(ctx context.Context, id string, status *storage.Status) (bool, error) {
@@ -205,13 +226,15 @@ func ignoreMissing(err error) error {
 }
 
 func (n *Node) desired(al drbd.Allocation, spec storage.Spec) (Desired, error) {
-	addrs := make(map[string]netip.Addr, len(al.NodeIDs))
-	for host := range al.NodeIDs {
-		addr, err := n.Addr(host)
-		if err != nil {
-			return Desired{}, fmt.Errorf("address of %s: %w", host, err)
+	addrs := make(map[string]netip.Addr, len(al.NodeIDs)+len(al.Diskless))
+	for _, ids := range []map[string]int{al.NodeIDs, al.Diskless} {
+		for host := range ids {
+			addr, err := n.Addr(host)
+			if err != nil {
+				return Desired{}, fmt.Errorf("address of %s: %w", host, err)
+			}
+			addrs[host] = addr
 		}
-		addrs[host] = addr
 	}
 	return FromAllocation(al, n.Self, spec.SizeBytes, n.Thin, addrs)
 }

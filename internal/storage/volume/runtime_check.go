@@ -18,7 +18,8 @@ func (r *Runtime) Verify(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if len(st.Peers) == 0 || !localUpToDate(st) || slices.ContainsFunc(st.Peers, func(p drbd.Peer) bool { return !peerInSync(p) }) {
+	replicas := slices.DeleteFunc(slices.Clone(st.Peers), isDiskless)
+	if len(replicas) == 0 || !localUpToDate(st) || slices.ContainsFunc(replicas, func(p drbd.Peer) bool { return !peerInSync(p) }) {
 		return experrors.New(experrors.KindInvalid, "volume.Verify", "every replica must be connected and in sync to verify")
 	}
 	return r.DRBD.Verify(ctx, name)
@@ -55,4 +56,9 @@ func peerInSync(p drbd.Peer) bool {
 		!slices.ContainsFunc(p.Volumes, func(v drbd.PeerVolume) bool {
 			return v.Replication != drbd.ReplEstablished || v.DiskState != drbd.DiskUpToDate
 		})
+}
+
+// isDiskless reports a connected tiebreaker: a peer whose every volume is diskless.
+func isDiskless(p drbd.Peer) bool {
+	return len(p.Volumes) > 0 && !slices.ContainsFunc(p.Volumes, func(v drbd.PeerVolume) bool { return v.DiskState != drbd.DiskDiskless })
 }

@@ -23,6 +23,7 @@ const (
 	DiskUpToDate     DiskState = "UpToDate"
 	DiskInconsistent DiskState = "Inconsistent"
 	DiskUnknown      DiskState = "DUnknown"
+	DiskDiskless     DiskState = "Diskless"
 
 	ConnConnected  Connection = "Connected"
 	ConnConnecting Connection = "Connecting"

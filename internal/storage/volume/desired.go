@@ -19,7 +19,7 @@ type Desired struct {
 	Minor     int
 	Port      int
 	Self      string
-	Members   []drbd.Member // live replicas, including Self
+	Members   []drbd.Member // live replicas and any tiebreaker, including Self
 	// Retired are node-ids of dropped replicas that this node must forget.
 	Retired []int
 }
@@ -28,22 +28,35 @@ type Desired struct {
 // addrs maps each member host to its mesh address.
 func FromAllocation(al drbd.Allocation, self string, size uint64, thin bool, addrs map[string]netip.Addr) (Desired, error) {
 	const op = "volume.FromAllocation"
-	if _, ok := al.NodeIDs[self]; !ok {
+	_, replica := al.NodeIDs[self]
+	_, tiebreaker := al.Diskless[self]
+	if !replica && !tiebreaker {
 		return Desired{}, experrors.New(experrors.KindNotFound, op, fmt.Sprintf("%q has no node-id in %q", self, al.Name))
 	}
-	ms := make([]drbd.Member, 0, len(al.NodeIDs))
-	for host, id := range al.NodeIDs {
-		addr, ok := addrs[host]
-		if !ok {
-			return Desired{}, experrors.New(experrors.KindNotFound, op, fmt.Sprintf("no address for member %q of %q", host, al.Name))
+	ms := make([]drbd.Member, 0, len(al.NodeIDs)+len(al.Diskless))
+	for _, group := range []struct {
+		ids      map[string]int
+		diskless bool
+	}{{al.NodeIDs, false}, {al.Diskless, true}} {
+		for host, id := range group.ids {
+			addr, ok := addrs[host]
+			if !ok {
+				return Desired{}, experrors.New(experrors.KindNotFound, op, fmt.Sprintf("no address for member %q of %q", host, al.Name))
+			}
+			ms = append(ms, drbd.Member{Host: host, NodeID: id, Address: addr, Diskless: group.diskless})
 		}
-		ms = append(ms, drbd.Member{Host: host, NodeID: id, Address: addr})
 	}
 	slices.SortFunc(ms, func(a, b drbd.Member) int { return a.NodeID - b.NodeID })
-	return Desired{
-		Name: al.Name, SizeBytes: size, Thin: thin, Minor: al.Minor, Port: al.Port,
-		Self: self, Members: ms, Retired: slices.Clone(al.Retired),
-	}, nil
+	d := Desired{Name: al.Name, SizeBytes: size, Thin: thin, Minor: al.Minor, Port: al.Port, Self: self, Members: ms}
+	if replica {
+		d.Retired = slices.Clone(al.Retired) // a tiebreaker keeps no bitmap slots to forget
+	}
+	return d, nil
+}
+
+// Tiebreaker reports whether this node only votes in quorum and holds none of the data.
+func (d Desired) Tiebreaker() bool {
+	return slices.ContainsFunc(d.Members, func(m drbd.Member) bool { return m.Host == d.Self && m.Diskless })
 }
 
 func (d Desired) validate() error {

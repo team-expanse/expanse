@@ -79,7 +79,11 @@ func (r *Runtime) Reconcile(ctx context.Context, d Desired) (Result, error) {
 	if err := p.prepare(); err != nil {
 		return Result{}, err
 	}
-	for _, step := range []func(context.Context) error{p.backing, p.config, p.bringUp, p.grow, p.forget} {
+	steps := []func(context.Context) error{p.backing, p.config, p.bringUp, p.grow, p.forget}
+	if d.Tiebreaker() {
+		steps = []func(context.Context) error{p.config, p.bringUp} // no data: no LV, metadata or size
+	}
+	for _, step := range steps {
 		if err := step(ctx); err != nil {
 			return p.res, err
 		}
@@ -210,8 +214,10 @@ func (p *pass) diverged() (bool, error) {
 }
 
 func (p *pass) start(ctx context.Context) error {
-	if err := p.ensureMetadata(ctx); err != nil {
-		return err
+	if !p.d.Tiebreaker() {
+		if err := p.ensureMetadata(ctx); err != nil {
+			return err
+		}
 	}
 	if err := p.DRBD.Up(ctx, p.d.Name); err != nil {
 		return err
@@ -276,8 +282,19 @@ func (p *pass) forget(ctx context.Context) error {
 	return nil
 }
 
-// Present reports whether the volume's backing LV exists on this node.
+// Present reports whether the volume's backing LV or, for a tiebreaker, its config exists on this node.
 func (r *Runtime) Present(ctx context.Context, name string) (bool, error) {
+	if has, err := r.hasLV(ctx, name); err != nil || has {
+		return has, err
+	}
+	_, err := os.Stat(r.configPath(name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (r *Runtime) hasLV(ctx context.Context, name string) (bool, error) {
 	_, err := r.LVM.Get(ctx, r.VG, name)
 	if experrors.KindOf(err) == experrors.KindNotFound {
 		return false, nil
@@ -301,7 +318,7 @@ func (r *Runtime) Remove(ctx context.Context, name string) error {
 	if err := os.Remove(r.configPath(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return experrors.Wrap(err, experrors.KindInternal, "volume.Remove", "remove config of "+name)
 	}
-	if ok, err := r.Present(ctx, name); err != nil || !ok {
+	if ok, err := r.hasLV(ctx, name); err != nil || !ok {
 		return err
 	}
 	if err := r.removeSnapshots(ctx, name); err != nil {
