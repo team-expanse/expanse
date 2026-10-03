@@ -441,10 +441,9 @@ type fakeNotLeader struct {
 	*raftstore.Store // nil: only IsLeader/Leader/AddVoter are called
 }
 
-func (f *fakeNotLeader) IsLeader() bool              { return false }
-func (f *fakeNotLeader) AddVoter(_, _ string) error  { return nil }
-func (f *fakeNotLeader) RemoveServer(_ string) error { return nil }
-func (f *fakeNotLeader) Leader() string              { return "127.0.0.1:9999" }
+func (f *fakeNotLeader) IsLeader() bool             { return false }
+func (f *fakeNotLeader) AddVoter(_, _ string) error { return nil }
+func (f *fakeNotLeader) Leader() string             { return "127.0.0.1:9999" }
 
 // TestJoinRevokedNodeRejected (§4.8): a removed node's ID is in
 // /cluster/revoked/ — any re-join under that identity is refused

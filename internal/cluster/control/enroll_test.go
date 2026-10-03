@@ -11,52 +11,8 @@ import (
 
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
-	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 )
-
-// TestLeaveGuardrails covers the safety interlocks: never remove the
-// leader, never shrink below two nodes.
-func TestLeaveGuardrails(t *testing.T) {
-	r := newRig(t, "leave-guards")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Leader cannot remove itself.
-	err := control.Leave(ctx, r.initRes.Store, "n1")
-	if err == nil {
-		t.Fatal("Leave(leader) accepted")
-	}
-	if !strings.Contains(err.Error(), "leader") {
-		t.Errorf("Leave(leader) error = %v, want leader-guard", err)
-	}
-
-	// Cannot shrink below two nodes.
-	err = control.Leave(ctx, r.initRes.Store, "n2")
-	if err == nil {
-		t.Fatal("Leave shrinking below 2 accepted")
-	}
-	if !strings.Contains(err.Error(), "2 nodes") {
-		t.Errorf("Leave quorum-guard error = %v", err)
-	}
-}
-
-// TestLeaveRemovesVoter runs a real leave on a three-node cluster:
-// RemoveServer + node-record delete, quorum preserved.
-func TestLeaveRemovesVoter(t *testing.T) {
-	r := newRig(t, "leave-voter")
-	r.enrollNode("n2", "voter")
-	r.enrollNode("n3", "voter")
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if err := control.Leave(ctx, r.initRes.Store, "n3"); err != nil {
-		t.Fatalf("Leave(n3): %v", err)
-	}
-	if _, err := r.initRes.Store.Get(ctx, store.Key(join.NodesKeyPrefix+"n3")); !errors.Is(err, errors.KindNotFound) {
-		t.Errorf("node record n3 still present (err %v)", err)
-	}
-}
 
 // TestEnrollValidation covers the fast-fail argument checks and the
 // already-a-cluster-node conflict.

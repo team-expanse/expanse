@@ -47,13 +47,20 @@ service NodeService {
   rpc HoldLease(HoldLeaseRequest) returns (stream LeaseEvent);
   // GetLease reports the stored lease state (even if expired).
   rpc GetLease(GetLeaseRequest) returns (LeaseInfo);
-  // Node lifecycle (§4.8) through the running agent: follower writes
-  // forward to the leader; RemoveNode changes raft membership, so it
-  // must reach the leader's agent.
+  // Node lifecycle (§4.8) through the running agent, from any node:
+  // writes and raft membership changes forward to the leader.
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc SetNodeCordon(SetNodeCordonRequest) returns (SetNodeCordonResponse);
   rpc DrainNode(DrainNodeRequest) returns (DrainNodeResponse);
   rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+  rpc TransferLeadership(TransferLeadershipRequest) returns (TransferLeadershipResponse);
+  // Join tokens and CA rotation through the running agent.
+  rpc CreateJoinToken(CreateJoinTokenRequest) returns (CreateJoinTokenResponse);
+  rpc ListJoinTokens(ListJoinTokensRequest) returns (ListJoinTokensResponse);
+  rpc RevokeJoinToken(RevokeJoinTokenRequest) returns (RevokeJoinTokenResponse);
+  rpc RotateCA(RotateCARequest) returns (RotateCAResponse);
+  rpc GetCARotation(GetCARotationRequest) returns (GetCARotationResponse);
+  rpc CompleteCARotation(CompleteCARotationRequest) returns (CompleteCARotationResponse);
 }
 
 message ListNodesRequest {}
@@ -96,6 +103,61 @@ message RemoveNodeRequest {
 }
 
 message RemoveNodeResponse {}
+
+// An empty `to` lets raft pick the most up-to-date follower.
+message TransferLeadershipRequest {
+  string to = 1;
+}
+
+message TransferLeadershipResponse {
+  string leader = 1; // node ID of the new leader, when known
+}
+
+message CreateJoinTokenRequest {
+  int64 ttl_seconds = 1; // 0 = default TTL
+  int32 uses = 2;        // 0 = single use
+  string for_node = 3;   // scope to recovering this enrolled node ID
+}
+
+message CreateJoinTokenResponse {
+  string token = 1;
+}
+
+message ListJoinTokensRequest {}
+
+message JoinToken {
+  string nonce = 1;
+  int64 expires_unix_ns = 2;
+  int32 uses = 3;
+  int32 max = 4;
+  string by = 5;
+}
+
+message ListJoinTokensResponse {
+  repeated JoinToken tokens = 1;
+}
+
+message RevokeJoinTokenRequest {
+  string token_or_nonce = 1;
+}
+
+message RevokeJoinTokenResponse {}
+
+message RotateCARequest {}
+
+message RotateCAResponse {}
+
+message GetCARotationRequest {}
+
+message GetCARotationResponse {
+  bool rotating = 1;
+  string fingerprint = 2;
+  repeated string pending = 3; // node IDs not yet renewed onto the new CA
+}
+
+message CompleteCARotationRequest {}
+
+message CompleteCARotationResponse {}
 
 message GetStatusRequest {}
 

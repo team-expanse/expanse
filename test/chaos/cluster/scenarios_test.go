@@ -365,7 +365,7 @@ func TestChaosLeaderChurn(t *testing.T) {
 			continue
 		}
 		next := (cur + 1 + rand.Intn(h.n-1)) % h.n
-		err := h.Node(cur).TransferLeadership(h.nodeID(next))
+		err := h.Node(cur).TransferLeadership(ctx, h.nodeID(next))
 		if err == nil {
 			transfers++
 		} else if transfers == 0 {

@@ -43,6 +43,28 @@ Ports: 7443 API + internal gRPC (mTLS), 7444 raft, 7445 memberlist,
 - **Snapshots**: bolt-backed log store + FSM snapshots; a restarted or
   rejoining node catches up via log replay or `InstallSnapshot`.
 
+## Administering a running cluster
+
+These commands go through the local agent, so run them from any node
+with every agent up. Writes and raft membership changes are forwarded
+to the leader.
+
+| Command | Does |
+|---|---|
+| `expanse cluster token create/list/revoke` | Manage join tokens |
+| `expanse cluster ca rotate/status/complete` | Rotate the cluster CA (`docs/SECURITY.md` §2) |
+| `expanse ctl node list` | Nodes with role, lifecycle, cordon and last-seen |
+| `expanse ctl node cordon/uncordon/drain <id>` | Stop or resume new placements on a node |
+| `expanse ctl node transfer-leadership [id]` | Move raft leadership (default: the most up-to-date follower) |
+| `expanse ctl node remove <id>` | Remove a node from raft and revoke its identity |
+| `expanse cluster leave [id]` | Same as `node remove`, defaulting to this node |
+
+Removing the leader is refused: transfer leadership first. Removal
+writes the revocation before changing raft membership, and the leader
+finishes any removal its caller could not, such as a node removing
+itself. The `cluster` commands above also work with the agent stopped (right
+after `cluster init`): they then open the node's store directly.
+
 ## Join security
 
 `expanse cluster token create` mints a single-use, TTL-bounded,

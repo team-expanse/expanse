@@ -76,6 +76,8 @@ type Applier interface {
 	LinearGet(ctx context.Context, k store.Key) (*store.Entry, error)
 	LinearList(ctx context.Context, prefix store.Key) ([]*store.Entry, error)
 	LinearRevision(ctx context.Context) (store.Revision, error)
+	ApplyRemoveServer(id string) error
+	ApplyTransferLeadership(to string) error
 }
 
 // NewForwardServer builds the leader-side forwarding endpoint.
@@ -135,6 +137,28 @@ func (fs *ForwardServer) LinearRead(ctx context.Context, req *pb.LinearReadReque
 			Kind: string(errors.KindInvalid), Op: "raftstore.LinearRead", Message: "empty query",
 		}}}, nil
 	}
+}
+
+// RemoveServer applies a follower's forwarded server removal.
+func (fs *ForwardServer) RemoveServer(_ context.Context, req *pb.RemoveServerRequest) (*pb.MembershipResponse, error) {
+	return membershipResponse(fs.applier.ApplyRemoveServer(req.GetId()))
+}
+
+// TransferLeadership applies a follower's forwarded leadership transfer.
+func (fs *ForwardServer) TransferLeadership(_ context.Context, req *pb.LeadershipTransferRequest) (*pb.MembershipResponse, error) {
+	return membershipResponse(fs.applier.ApplyTransferLeadership(req.GetTo()))
+}
+
+// membershipResponse reports not-leader as codes.Unavailable (the client
+// re-resolves the leader) and any other failure as a typed detail.
+func membershipResponse(err error) (*pb.MembershipResponse, error) {
+	if err == nil {
+		return &pb.MembershipResponse{}, nil
+	}
+	if errors.KindOf(err) == errors.KindUnavailable {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	return &pb.MembershipResponse{Error: errorDetail(err)}, nil
 }
 
 func entryToPB(e *store.Entry) *pb.Entry {
@@ -417,6 +441,59 @@ func (g *GRPCForwarder) linearRead(ctx context.Context, req *pb.LinearReadReques
 		return nil, errorFromDetail(e)
 	}
 	return resp, nil
+}
+
+// MembershipForwarder forwards raft membership changes from a follower to
+// the leader (raft only applies them leader-side).
+type MembershipForwarder interface {
+	ForwardRemoveServer(ctx context.Context, id string) error
+	ForwardTransferLeadership(ctx context.Context, to string) error
+}
+
+// ForwardRemoveServer implements MembershipForwarder.
+func (g *GRPCForwarder) ForwardRemoveServer(ctx context.Context, id string) error {
+	return g.forwardMembership(ctx, func(cctx context.Context, c pb.InternalStoreServiceClient) (*pb.MembershipResponse, error) {
+		return c.RemoveServer(cctx, &pb.RemoveServerRequest{Id: id})
+	})
+}
+
+// ForwardTransferLeadership implements MembershipForwarder.
+func (g *GRPCForwarder) ForwardTransferLeadership(ctx context.Context, to string) error {
+	return g.forwardMembership(ctx, func(cctx context.Context, c pb.InternalStoreServiceClient) (*pb.MembershipResponse, error) {
+		return c.TransferLeadership(cctx, &pb.LeadershipTransferRequest{To: to})
+	})
+}
+
+// membershipCallTimeout bounds one forwarded membership change, which
+// waits on a raft configuration commit or a leadership handshake.
+const membershipCallTimeout = 15 * time.Second
+
+// forwardMembership sends one membership change to the leader, retrying
+// through a leaderless window like Forward.
+func (g *GRPCForwarder) forwardMembership(ctx context.Context, call func(context.Context, pb.InternalStoreServiceClient) (*pb.MembershipResponse, error)) error {
+	const op = "raftstore.ForwardMembership"
+	return g.leaderlessRetry(ctx, 2*time.Second, func() error {
+		raftAddr := g.leaderAddr()
+		if raftAddr == "" {
+			return errors.New(errors.KindUnavailable, op, "no leader known")
+		}
+		apiAddr, ok := g.resolve(raftAddr)
+		if !ok || apiAddr == "" {
+			return errors.New(errors.KindUnavailable, op, fmt.Sprintf("no internal endpoint for leader %q", raftAddr))
+		}
+		client, err := g.client(apiAddr)
+		if err != nil {
+			return errors.Wrap(err, errors.KindUnavailable, op, "dial leader")
+		}
+		cctx, cancel := context.WithTimeout(ctx, membershipCallTimeout)
+		defer cancel()
+		resp, err := call(cctx, client)
+		if err != nil {
+			g.invalidate(apiAddr)
+			return errors.Wrap(err, errors.KindUnavailable, op, "leader unreachable or not leader; retry")
+		}
+		return errorFromDetail(resp.GetError())
+	})
 }
 
 // Close releases all cached peer connections.

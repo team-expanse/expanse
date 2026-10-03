@@ -19,15 +19,11 @@ keyed by HKDF over the cluster secret; TPM sealing is a named, deliberately defe
 
 ## 2. Rotating the cluster CA
 
-Rotation is a three-step CLI flow, run from any enrolled node. Unlike the OIDC commands below, it
-reopens the local raft store directly (the same pattern `cluster token create` uses), so **that one
-node's own `expanse` daemon must be stopped first** — the rest of the cluster is unaffected and keeps
-serving reads and writes throughout.
+Rotation is a three-step CLI flow, run from any enrolled node through its running agent. No daemon
+stops, and the cluster keeps serving reads and writes throughout.
 
 ```sh
-systemctl stop expansed
 expanse cluster ca rotate
-systemctl start expansed
 ```
 
 This generates a fresh root CA and writes it as the new primary; the old CA stays trusted alongside it
@@ -44,9 +40,7 @@ reports `rotating: primary CA fingerprint <sha256>` plus either the list of node
 confirmation that every node has caught up. Once every node has renewed, retire the old CA:
 
 ```sh
-systemctl stop expansed
 expanse cluster ca complete
-systemctl start expansed
 ```
 
 `ca complete` refuses (with a clear error) if any node is still pending, so it is safe to run

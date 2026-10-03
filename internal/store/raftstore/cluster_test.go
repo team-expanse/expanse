@@ -119,6 +119,7 @@ func (c *TestCluster) start(i int, bootstrap bool) {
 		})
 	s.SetForwarder(fwd.Forward)
 	s.SetReadForwarder(fwd)
+	s.SetMembershipForwarder(fwd)
 
 	c.apiLn = ensureListener(c.apiLn, i, ln)
 	c.srvs = ensureServer(c.srvs, i, srv)

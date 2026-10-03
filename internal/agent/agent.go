@@ -325,6 +325,7 @@ func New(cfg Config) (*Agent, error) {
 		fwd.SetDialCreds(credentials.NewTLS(tlsCfg))
 		rs.SetForwarder(fwd.Forward)
 		rs.SetReadForwarder(fwd)
+		rs.SetMembershipForwarder(fwd)
 		ctl.fwd = fwd
 		// Role (§4.9): explicit config wins; otherwise read it from the
 		// node's own cluster record. Retry while raft restores its FSM —
@@ -851,6 +852,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	srv := api.NewServer(a, a.store, a.logger)
 	srv.Blocks = a.blocks
 	srv.Catalog = a.blockCatalog
+	if a.ctl != nil {
+		srv.Cluster = &api.ClusterIdentity{ID: a.ctl.id, Secret: a.ctl.secret}
+	}
 
 	// Web management interface (ROADMAP.md Phase 2, A1/A2): TLS on
 	// config.PortUI signed by the cluster's own CA (D5). Every cluster

@@ -14,7 +14,7 @@ import (
 )
 
 // Cluster node lifecycle (§4.8) through the running agent, from any node:
-// the agent forwards follower writes to the leader.
+// the agent forwards writes and raft membership changes to the leader.
 func newCtlNodeLifecycleCmds(opts *ctlOpts) []*cobra.Command {
 	list := &cobra.Command{
 		Use:   "list",
@@ -67,7 +67,7 @@ func newCtlNodeLifecycleCmds(opts *ctlOpts) []*cobra.Command {
 
 	remove := &cobra.Command{
 		Use:   "remove <node-id>",
-		Short: "Drain, remove from raft, and revoke a node's identity (run on the leader)",
+		Short: "Remove a node from raft and revoke its identity",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			force, _ := cmd.Flags().GetBool("force")
@@ -97,9 +97,29 @@ func newCtlNodeLifecycleCmds(opts *ctlOpts) []*cobra.Command {
 	remove.Flags().String("confirm", "", "typed confirmation (non-interactive equivalent of the prompt)")
 	remove.Flags().String("reason", "", "reason, recorded in the revocation")
 
+	transfer := &cobra.Command{
+		Use:   "transfer-leadership [node-id]",
+		Short: "Move raft leadership to a node (default: the most up-to-date follower)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			to := ""
+			if len(args) == 1 {
+				to = args[0]
+			}
+			return withClient(cmd, opts, func(ctx context.Context, c pb.NodeServiceClient) error {
+				res, err := c.TransferLeadership(ctx, &pb.TransferLeadershipRequest{To: to})
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "leader is now %s\n", orDash(res.GetLeader()))
+				return nil
+			})
+		},
+	}
+
 	return []*cobra.Command{
 		list, cordonCmd("cordon", "Cordon a node (no new placements)", true),
-		cordonCmd("uncordon", "Uncordon a node", false), drain, remove,
+		cordonCmd("uncordon", "Uncordon a node", false), drain, remove, transfer,
 	}
 }
 

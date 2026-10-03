@@ -14,7 +14,6 @@ import (
 	"github.com/expanse/expanse/internal/cluster/ca"
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/errors"
-	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -209,36 +208,3 @@ func saveCAFiles(dataDir string, caPEM []byte, caCert *x509.Certificate) error {
 	}
 	return writeFileSync(filepath.Join(dataDir, CAFile), caPEM, 0o644)
 }
-
-// Leave removes a node from the cluster: raft.RemoveServer + delete
-// /nodes/<id>. Guardrails: refuse to remove the leader (transfer first
-// — T14 builds the full lifecycle) and refuse to shrink below quorum.
-func Leave(ctx context.Context, st *raftstore.Store, nodeID string) error {
-	if st.IsLeader() {
-		if nodeID == localID(st) {
-			return errors.New(errors.KindConflict, "control.Leave", "refusing to remove the leader; transfer leadership first (`expanse ctl raft transfer-leadership`)")
-		}
-	}
-	nodes, err := st.List(ctx, store.Key(join.NodesKeyPrefix))
-	if err != nil {
-		return errors.Wrap(err, errors.KindUnavailable, "control.Leave", "list nodes: "+err.Error())
-	}
-	if len(nodes) <= 2 {
-		return errors.New(errors.KindConflict, "control.Leave", "refusing to shrink below 2 nodes (no quorum redundancy)")
-	}
-	if err := st.RemoveServer(nodeID); err != nil {
-		return errors.Wrap(err, errors.KindUnavailable, "control.Leave", "RemoveServer: "+err.Error())
-	}
-	entry, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+nodeID))
-	if err == nil {
-		if err := st.Delete(ctx, store.Key(join.NodesKeyPrefix+nodeID), entry.Revision); err != nil {
-			return errors.Wrap(err, errors.KindInternal, "control.Leave", "delete node record: "+err.Error())
-		}
-	}
-	return nil
-}
-
-// storeLocalID is filled by the raftstore adapter (NodeID is not
-// exported through the generic store interface, so Leave compares
-// against the cfg-captured id passed by the CLI instead).
-func localID(st *raftstore.Store) string { return st.NodeID() }

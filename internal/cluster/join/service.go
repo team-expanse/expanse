@@ -58,7 +58,6 @@ type Store interface {
 	store.Store
 	IsLeader() bool
 	AddVoter(id, addr string) error
-	RemoveServer(id string) error
 	Leader() string
 }
 

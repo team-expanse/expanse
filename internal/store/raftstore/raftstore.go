@@ -68,9 +68,10 @@ type Store struct {
 	r         *raft.Raft
 	fsm       *FSM
 	trans     *raft.NetworkTransport
-	logs      io.Closer     // bolt log+stable store; closed after raft shutdown
-	forwarder Forwarder     // leader write-forwarding hook (set by daemon wiring)
-	readFwd   ReadForwarder // leader read-forwarding hook (linearizable reads)
+	logs      io.Closer           // bolt log+stable store; closed after raft shutdown
+	forwarder Forwarder           // leader write-forwarding hook (set by daemon wiring)
+	readFwd   ReadForwarder       // leader read-forwarding hook (linearizable reads)
+	memberFwd MembershipForwarder // leader membership-change forwarding hook
 
 	// Degraded-mode state (§4.10.3): no visible raft leader for
 	// DegradedAfter → read-only. lastLeader is the unix-nano time of the
@@ -405,6 +406,9 @@ func (s *Store) propose(ctx context.Context, c *pb.Command) (store.Revision, err
 func (s *Store) SetForwarder(f Forwarder)          { s.forwarder = f }
 func (s *Store) SetReadForwarder(rf ReadForwarder) { s.readFwd = rf }
 
+// SetMembershipForwarder routes a follower's membership changes to the leader.
+func (s *Store) SetMembershipForwarder(mf MembershipForwarder) { s.memberFwd = mf }
+
 // Watch registers a watcher under prefix (local FSM events, in revision
 // order, same semantics as boltstore).
 func (s *Store) Watch(ctx context.Context, prefix store.Key, fromRev store.Revision) (<-chan store.Event, error) {
@@ -475,28 +479,79 @@ func (s *Store) AddVoter(id, addr string) error {
 	return f.Error()
 }
 
-// RemoveServer removes a server from the cluster (node removal flow).
-func (s *Store) RemoveServer(id string) error {
-	f := s.r.RemoveServer(raft.ServerID(id), 0, applyTimeout)
-	return f.Error()
+// RemoveServer removes a server from the cluster; a follower forwards
+// the change to the leader.
+func (s *Store) RemoveServer(ctx context.Context, id string) error {
+	if !s.IsLeader() && s.memberFwd != nil {
+		return s.memberFwd.ForwardRemoveServer(ctx, id)
+	}
+	return s.ApplyRemoveServer(id)
 }
 
-// TransferLeadership attempts to move leadership to id.
-func (s *Store) TransferLeadership(id string) error {
-	// Resolve the server's raft address from the latest configuration:
-	// TimeoutNow is dialed to the ADDRESS, while the transfer targets
-	// the server ID. (Calling with the ID alone dials "n1:???"; calling
-	// with the address alone fails replState lookup.)
+// ApplyRemoveServer is the leader-only, never-forwarded RemoveServer.
+func (s *Store) ApplyRemoveServer(id string) error {
+	return membershipErr("raftstore.RemoveServer", s.r.RemoveServer(raft.ServerID(id), 0, applyTimeout).Error())
+}
+
+// TransferLeadership moves leadership to the server `to`, or to the most
+// up-to-date follower when `to` is empty; a follower forwards the request.
+func (s *Store) TransferLeadership(ctx context.Context, to string) error {
+	if !s.IsLeader() && s.memberFwd != nil {
+		return s.memberFwd.ForwardTransferLeadership(ctx, to)
+	}
+	return s.ApplyTransferLeadership(to)
+}
+
+// ApplyTransferLeadership is the leader-only, never-forwarded TransferLeadership.
+func (s *Store) ApplyTransferLeadership(to string) error {
+	const op = "raftstore.TransferLeadership"
+	if to == "" {
+		return membershipErr(op, s.r.LeadershipTransfer().Error())
+	}
+	// TimeoutNow is dialed to the server's address, so resolve it from the
+	// configuration; the transfer itself targets the ID.
 	f := s.r.GetConfiguration()
 	if err := f.Error(); err != nil {
-		return fmt.Errorf("transfer leadership %s: config: %w", id, err)
+		return membershipErr(op, err)
 	}
 	for _, srv := range f.Configuration().Servers {
-		if srv.ID == raft.ServerID(id) {
-			return s.r.LeadershipTransferToServer(srv.ID, srv.Address).Error()
+		if srv.ID == raft.ServerID(to) {
+			return membershipErr(op, s.r.LeadershipTransferToServer(srv.ID, srv.Address).Error())
 		}
 	}
-	return errors.New(errors.KindNotFound, "raftstore.TransferLeadership", "server not in configuration: "+id)
+	return errors.New(errors.KindNotFound, op, "server not in configuration: "+to)
+}
+
+// membershipErr types a raft membership error: losing leadership is
+// retryable (KindUnavailable), anything else is a conflict.
+func membershipErr(op string, err error) error {
+	switch err {
+	case nil:
+		return nil
+	case raft.ErrNotLeader, raft.ErrLeadershipLost, raft.ErrRaftShutdown, raft.ErrLeadershipTransferInProgress:
+		return errors.Wrap(err, errors.KindUnavailable, op, "not leader: "+err.Error())
+	default:
+		return errors.Wrap(err, errors.KindConflict, op, err.Error())
+	}
+}
+
+// LeaderID reports the current leader's server ID, or "" if unknown.
+func (s *Store) LeaderID() string {
+	_, id := s.r.LeaderWithID()
+	return string(id)
+}
+
+// Members lists the server IDs in the latest raft configuration.
+func (s *Store) Members() ([]string, error) {
+	f := s.r.GetConfiguration()
+	if err := f.Error(); err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, srv := range f.Configuration().Servers {
+		ids = append(ids, string(srv.ID))
+	}
+	return ids, nil
 }
 
 // Close shuts down Raft and releases resources. Safe to call once.

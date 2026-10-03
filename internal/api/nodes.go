@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -79,4 +80,24 @@ func (s *Server) RemoveNode(ctx context.Context, req *pb.RemoveNodeRequest) (*pb
 		return nil, mapErr("RemoveNode", err)
 	}
 	return &pb.RemoveNodeResponse{}, nil
+}
+
+// TransferLeadership moves raft leadership; a follower forwards it.
+func (s *Server) TransferLeadership(ctx context.Context, req *pb.TransferLeadershipRequest) (*pb.TransferLeadershipResponse, error) {
+	st, err := s.clusterStore("TransferLeadership")
+	if err != nil {
+		return nil, err
+	}
+	old := st.LeaderID()
+	if err := st.TransferLeadership(ctx, req.GetTo()); err != nil {
+		return nil, mapErr("TransferLeadership", err)
+	}
+	// The new leader is announced a beat after the handshake completes.
+	for i := 0; i < 50 && ctx.Err() == nil; i++ {
+		if id := st.LeaderID(); id != "" && id != old {
+			return &pb.TransferLeadershipResponse{Leader: id}, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return &pb.TransferLeadershipResponse{Leader: st.LeaderID()}, nil
 }

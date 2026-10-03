@@ -18,6 +18,7 @@ package nodelc
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -263,23 +264,22 @@ func Drain(ctx context.Context, st *raftstore.Store, id string, opts *Options) (
 // Remove drains-and-purges a node from the cluster (§4.8):
 //
 //	refuse if it would break quorum (≤2 voters) unless Force + typed Confirm
+//	→ write /cluster/revoked/<id>
 //	→ raft.RemoveServer
-//	→ one raft txn: write /cluster/revoked/<id> + delete /nodes/<id>
+//	→ delete /nodes/<id>
 //
 // The revocation is what rejects the node's identity hereafter: the
 // join service refuses any re-join under a revoked node ID (§4.8).
-// Removing the leader is refused — transfer leadership first.
+// Any node may run it (raft membership changes are forwarded to the
+// leader); removing the leader itself is refused.
 func Remove(ctx context.Context, st *raftstore.Store, id string, opts *Options) error {
 	if opts == nil {
 		opts = &Options{}
 	}
-	if !st.IsLeader() {
-		return errors.New(errors.KindUnavailable, "nodelc",
-			"remove: this node is not the leader — run `expanse ctl node remove` on the leader")
-	}
-	if id == st.NodeID() {
+	// Raft can't commit the revocation once the leader removes itself.
+	if id == st.LeaderID() {
 		return errors.New(errors.KindConflict, "nodelc",
-			"remove: refusing to remove the local (leader) node; transfer leadership first")
+			"remove: "+id+" is the leader; run `expanse ctl node transfer-leadership` first")
 	}
 
 	_, entry, err := loadRecord(ctx, st, id)
@@ -302,10 +302,6 @@ func Remove(ctx context.Context, st *raftstore.Store, id string, opts *Options) 
 		}
 	}
 
-	if err := st.RemoveServer(id); err != nil {
-		return errors.Wrap(err, errors.KindUnavailable, "nodelc", "RemoveServer: "+err.Error())
-	}
-
 	// The revocation write is the security-critical step — join.Join
 	// consults it before anything else, so once it lands the identity
 	// is permanently refused regardless of what happens to /nodes/<id>.
@@ -324,11 +320,18 @@ func Remove(ctx context.Context, st *raftstore.Store, id string, opts *Options) 
 		return errors.Wrap(err, errors.KindInternal, "nodelc", "revocation write: "+err.Error())
 	}
 
+	// Revoked first: a node removing itself loses its store once raft drops
+	// it, and the leader's Monitor finishes any revoked node left behind.
+	if err := st.RemoveServer(ctx, id); err != nil {
+		return errors.Wrap(err, errors.KindUnavailable, "nodelc",
+			"RemoveServer: "+err.Error()+" (the node is revoked; the leader finishes removing it)")
+	}
+
 	// Best-effort cleanup of /nodes/<id>: purely cosmetic (keeps node
 	// listings from showing a revoked node as still enrolled) now that
 	// the revocation record above is what actually enforces removal.
 	// Re-read the current revision each attempt rather than reusing the
-	// stale one captured before RemoveServer, so a racing write doesn't
+	// stale one captured before the revocation, so a racing write doesn't
 	// make this loop fail forever.
 	if entry != nil {
 		for attempt := 0; attempt < 3; attempt++ {
@@ -342,6 +345,25 @@ func Remove(ctx context.Context, st *raftstore.Store, id string, opts *Options) 
 		}
 	}
 	return nil
+}
+
+// finishRemovals drops every revoked node still in raft or on record:
+// the tail of a Remove whose caller stopped partway (leader only).
+func finishRemovals(ctx context.Context, st *raftstore.Store) {
+	revoked, err := st.List(ctx, store.Key(RevokedKeyPrefix))
+	if err != nil || len(revoked) == 0 {
+		return
+	}
+	members, _ := st.Members()
+	for _, e := range revoked {
+		id := strings.TrimPrefix(string(e.Key), RevokedKeyPrefix)
+		if slices.Contains(members, id) {
+			_ = st.ApplyRemoveServer(id)
+		}
+		if rec, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+id)); err == nil {
+			_ = st.Delete(ctx, rec.Key, rec.Revision)
+		}
+	}
 }
 
 // IsRevoked reports whether the node ID appears in /cluster/revoked/.
@@ -409,6 +431,7 @@ func (m *Monitor) Evaluate(ctx context.Context, now time.Time) []Transition {
 	if !m.St.IsLeader() {
 		return nil
 	}
+	finishRemovals(ctx, m.St)
 	unr := m.UnreachableAfter
 	if unr <= 0 {
 		unr = DefaultUnreachableAfter

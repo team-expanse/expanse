@@ -81,12 +81,20 @@ func newClusterInitCmd() *cobra.Command {
 
 // refuseIfAgentRunning stops init while expansed runs: the daemon would stay in standalone mode
 // and never serve the new cluster (anything written meanwhile is lost at its next start).
-func refuseIfAgentRunning(socket string) error {
+// agentAnswers reports whether an agent is listening on socket.
+func agentAnswers(socket string) bool {
 	conn, err := net.DialTimeout("unix", socket, time.Second)
 	if err != nil {
-		return nil
+		return false
 	}
 	_ = conn.Close()
+	return true
+}
+
+func refuseIfAgentRunning(socket string) error {
+	if !agentAnswers(socket) {
+		return nil
+	}
 	return fmt.Errorf("expansed is running (%s answers); stop it, init, then start it:\n"+
 		"  systemctl stop expansed && expanse cluster init ... && systemctl start expansed", socket)
 }
@@ -296,6 +304,7 @@ func openClusterStore(dataDir, nodeID string) (*raftstore.Store, func(), error) 
 			fwd.SetDialCreds(credentials.NewTLS(tlsCfg))
 			st.SetForwarder(fwd.Forward)
 			st.SetReadForwarder(fwd)
+			st.SetMembershipForwarder(fwd)
 		}
 	}
 	return st, func() { _ = st.Close() }, nil
@@ -357,270 +366,4 @@ func clusterStatusViaSocket(ctx context.Context, socket string) error {
 	}
 	fmt.Print(control.Render(&rep))
 	return nil
-}
-
-func newClusterLeaveCmd() *cobra.Command {
-	var dataDir, nodeID string
-	cmd := &cobra.Command{
-		Use:   "leave [node-id]",
-		Short: "Remove a node from the cluster (default: this node)",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			local, _ := os.Hostname()
-			target := nodeID
-			if len(args) == 1 {
-				target = args[0]
-			}
-			if target == "" {
-				target = local
-			}
-			st, cleanup, err := openClusterStore(dataDir, local)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			return control.Leave(cmd.Context(), st, target)
-		},
-	}
-	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
-	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID of the local node")
-	return cmd
-}
-
-// newClusterCACmd groups CA rotation commands (Phase 10 X2). Like
-// `token create`, these reopen the local raft store directly
-// (openClusterStore) rather than going through the running daemon, so
-// — exactly as documented for `token create` — the invoking node's own
-// daemon must not be holding the raft port when the command runs; the
-// other nodes of the cluster are unaffected and stay up throughout.
-func newClusterCACmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "ca", Short: "Cluster CA rotation (Phase 10 X2)"}
-	cmd.AddCommand(newClusterCARotateCmd(), newClusterCAStatusCmd(), newClusterCACompleteCmd())
-	return cmd
-}
-
-func newClusterCARotateCmd() *cobra.Command {
-	var dataDir, nodeID string
-	cmd := &cobra.Command{
-		Use:   "rotate",
-		Short: "Generate a fresh CA and start rotation (old CA stays trusted until `ca complete`)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, cleanup, err := openClusterStore(dataDir, nodeID)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			_, secret, _, err := control.LoadCluster(dataDir)
-			if err != nil {
-				return err
-			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
-			defer cancel()
-			// Reopening the raft store just now means this node is a
-			// rejoining follower with no idea yet who's leader; give it
-			// a real chance to hear from one before the actual op,
-			// rather than a short-lived CAS failing outright (mirrors
-			// `cluster status`'s own WaitForLeader use).
-			if !control.WaitForLeader(ctx, st, 30*time.Second) {
-				return fmt.Errorf("no leader reachable within 30s")
-			}
-			if _, err := control.RotateCA(ctx, st, secret, time.Now()); err != nil {
-				return err
-			}
-			fmt.Println("CA rotation started: the new CA is now primary; the old CA stays trusted. " +
-				"Every node reissues its own cert onto the new CA the next time its renewal loop ticks " +
-				"(no restart needed). Check progress with `cluster ca status`; once every node has " +
-				"caught up, run `cluster ca complete` to retire the old CA.")
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
-	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
-	return cmd
-}
-
-func newClusterCAStatusCmd() *cobra.Command {
-	var dataDir, nodeID string
-	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show CA rotation progress",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, cleanup, err := openClusterStore(dataDir, nodeID)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
-			defer cancel()
-			if !control.WaitForLeader(ctx, st, 30*time.Second) {
-				return fmt.Errorf("no leader reachable within 30s")
-			}
-			status, err := control.CARotationStatus(ctx, st)
-			if err != nil {
-				return err
-			}
-			if !status.Rotating {
-				fmt.Println("no rotation in progress")
-				return nil
-			}
-			fmt.Printf("rotating: primary CA fingerprint %s\n", status.Fingerprint)
-			if len(status.Pending) == 0 {
-				fmt.Println("every node has renewed onto the new CA; safe to run `cluster ca complete`")
-			} else {
-				fmt.Printf("pending nodes (not yet renewed): %v\n", status.Pending)
-			}
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
-	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
-	return cmd
-}
-
-func newClusterCACompleteCmd() *cobra.Command {
-	var dataDir, nodeID string
-	cmd := &cobra.Command{
-		Use:   "complete",
-		Short: "Retire the outgoing CA once every node has renewed onto the new one",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, cleanup, err := openClusterStore(dataDir, nodeID)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
-			defer cancel()
-			if !control.WaitForLeader(ctx, st, 30*time.Second) {
-				return fmt.Errorf("no leader reachable within 30s")
-			}
-			if err := control.CompleteCARotation(ctx, st); err != nil {
-				return err
-			}
-			fmt.Println("CA rotation complete: outgoing CA retired.")
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
-	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
-	return cmd
-}
-
-func newClusterTokenCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "token", Short: "Manage join tokens"}
-	cmd.AddCommand(newClusterTokenCreateCmd(), newClusterTokenListCmd(), newClusterTokenRevokeCmd())
-	return cmd
-}
-
-func newClusterTokenCreateCmd() *cobra.Command {
-	var dataDir, nodeID, ttl, forNode string
-	var uses int
-	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a join token",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, cleanup, err := openClusterStore(dataDir, nodeID)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			d, err := parseDuration(ttl)
-			if err != nil {
-				return fmt.Errorf("--ttl: %w", err)
-			}
-			_, secret, _, err := control.LoadCluster(dataDir)
-			if err != nil {
-				return err
-			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-			defer cancel()
-			if !control.WaitForLeader(ctx, st, 10*time.Second) {
-				return fmt.Errorf("no leader after 10s (quorum unavailable?)")
-			}
-			tok, err := control.CreateToken(ctx, st, clusterIDOf(dataDir), secret, d, uses, nodeID, forNode)
-			if err != nil {
-				return err
-			}
-			fmt.Println(tok)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
-	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
-	cmd.Flags().StringVar(&ttl, "ttl", "15m", "token time-to-live")
-	cmd.Flags().IntVar(&uses, "uses", 1, "max number of joins with this token")
-	cmd.Flags().StringVar(&forNode, "for-node", "", "scope this token to recovering exactly this already-enrolled node_id (required to re-join/recover an existing node; a plain token can only enroll a new one)")
-	return cmd
-}
-
-func newClusterTokenListCmd() *cobra.Command {
-	var dataDir, nodeID string
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List join tokens",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, cleanup, err := openClusterStore(dataDir, nodeID)
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-			defer cancel()
-			control.WaitForLeader(ctx, st, 10*time.Second)
-			toks, err := control.ListTokens(ctx, st)
-			if err != nil {
-				return err
-			}
-			fmt.Println("NONCE\tEXPIRES\tUSES\tMAX\tBY")
-			for _, t := range toks {
-				fmt.Printf("%s\t%s\t%d\t%d\t%s\n", t.Nonce, t.Expires.Format(time.RFC3339), t.Uses, t.Max, t.By)
-			}
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
-	cmd.Flags().StringVar(&nodeID, "node-id", "", "node ID (default: hostname)")
-	return cmd
-}
-
-func newClusterTokenRevokeCmd() *cobra.Command {
-	var dataDir string
-	cmd := &cobra.Command{
-		Use:   "revoke <token|nonce>",
-		Short: "Revoke a join token",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, cleanup, err := openClusterStore(dataDir, "")
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			_, secret, _, err := control.LoadCluster(dataDir)
-			if err != nil {
-				return err
-			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-			defer cancel()
-			if !control.WaitForLeader(ctx, st, 10*time.Second) {
-				return fmt.Errorf("no leader after 10s (quorum unavailable?)")
-			}
-			return control.RevokeToken(ctx, st, secret, args[0])
-		},
-	}
-	cmd.Flags().StringVar(&dataDir, "data-dir", "/persist/expanse", "persistent state directory")
-	return cmd
-}
-
-func clusterIDOf(dataDir string) string {
-	id, err := os.ReadFile(filepath.Join(dataDir, control.ClusterIDFile))
-	if err != nil {
-		return ""
-	}
-	return string(trimLocal(id))
-}
-
-func trimLocal(b []byte) []byte {
-	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == ' ' || b[len(b)-1] == '\r') {
-		b = b[:len(b)-1]
-	}
-	return b
 }

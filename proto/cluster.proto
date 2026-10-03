@@ -18,6 +18,23 @@ service InternalStoreService {
   // works on the leader, so a follower serving a linearizable read
   // forwards it (same pattern as Consul's consistent reads).
   rpc LinearRead(LinearReadRequest) returns (LinearReadResponse);
+  // RemoveServer / TransferLeadership: follower → leader forwarding of
+  // raft membership changes, which only the leader can apply.
+  rpc RemoveServer(RemoveServerRequest) returns (MembershipResponse);
+  rpc TransferLeadership(LeadershipTransferRequest) returns (MembershipResponse);
+}
+
+message RemoveServerRequest {
+  string id = 1;
+}
+
+// An empty `to` lets raft pick the most up-to-date follower.
+message LeadershipTransferRequest {
+  string to = 1;
+}
+
+message MembershipResponse {
+  ErrorDetail error = 1;
 }
 
 message LinearReadRequest {

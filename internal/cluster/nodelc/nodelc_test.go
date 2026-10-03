@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,7 +95,7 @@ func TestRemoveInterlockMatrix(t *testing.T) {
 		{name: "1 of 2 voters wrong confirm", voters: 2, target: "n1", force: true, confirm: "n2", wantErr: true, wantKnd: errors.KindPermission},
 		{name: "1 of 2 voters force + typed name", voters: 2, target: "n1", force: true, confirm: "n1"},
 		{name: "1 of 3 voters fine", voters: 3, target: "n1"},
-		{name: "remove self refused", voters: 2, target: "n0", wantErr: true, wantKnd: errors.KindConflict},
+		{name: "remove leader refused", voters: 3, target: "n0", wantErr: true, wantKnd: errors.KindConflict},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,6 +126,19 @@ func TestRemoveInterlockMatrix(t *testing.T) {
 				t.Errorf("IsRevoked = %v, %v; want true", rev, err)
 			}
 		})
+	}
+}
+
+// TestRemoveLeaderNamesTheTransferCommand: the refusal points at a
+// command that exists.
+func TestRemoveLeaderNamesTheTransferCommand(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	for _, id := range []string{"n0", "n1", "n2"} {
+		writeNode(t, ctx, st, id, "")
+	}
+	err := nodelc.Remove(ctx, st, "n0", nil)
+	if err == nil || !strings.Contains(err.Error(), "expanse ctl node transfer-leadership") {
+		t.Errorf("Remove(leader) = %v, want a pointer to `expanse ctl node transfer-leadership`", err)
 	}
 }
 
@@ -449,5 +463,24 @@ func TestListReportsLifecycleAndLastSeen(t *testing.T) {
 	}
 	if n2.ID != "n2" || n2.Role != "witness" || n2.Lifecycle != "healthy/degraded" || !n2.Cordoned {
 		t.Errorf("n2 = %+v, want cordoned healthy/degraded witness", n2)
+	}
+}
+
+// TestMonitorFinishesAnInterruptedRemoval: a node that removed itself
+// loses its store once raft drops it, so the leader's monitor finishes
+// the cleanup for any revoked node still on record.
+func TestMonitorFinishesAnInterruptedRemoval(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n0", "")
+	writeNode(t, ctx, st, "n3", "")
+	if _, err := st.Put(ctx, store.Key(nodelc.RevokedKeyPrefix+"n3"), []byte(`{"node_id":"n3"}`)); err != nil {
+		t.Fatal(err)
+	}
+	(&nodelc.Monitor{St: st, ThisNodeID: "n0"}).Evaluate(ctx, time.Now())
+	if _, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+"n3")); !errors.Is(err, errors.KindNotFound) {
+		t.Errorf("revoked n3 still on record: %v", err)
+	}
+	if _, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+"n0")); err != nil {
+		t.Errorf("n0 record lost: %v", err)
 	}
 }

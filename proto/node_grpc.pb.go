@@ -46,6 +46,13 @@ const (
 	NodeService_SetNodeCordon_FullMethodName      = "/expanse.node.v1.NodeService/SetNodeCordon"
 	NodeService_DrainNode_FullMethodName          = "/expanse.node.v1.NodeService/DrainNode"
 	NodeService_RemoveNode_FullMethodName         = "/expanse.node.v1.NodeService/RemoveNode"
+	NodeService_TransferLeadership_FullMethodName = "/expanse.node.v1.NodeService/TransferLeadership"
+	NodeService_CreateJoinToken_FullMethodName    = "/expanse.node.v1.NodeService/CreateJoinToken"
+	NodeService_ListJoinTokens_FullMethodName     = "/expanse.node.v1.NodeService/ListJoinTokens"
+	NodeService_RevokeJoinToken_FullMethodName    = "/expanse.node.v1.NodeService/RevokeJoinToken"
+	NodeService_RotateCA_FullMethodName           = "/expanse.node.v1.NodeService/RotateCA"
+	NodeService_GetCARotation_FullMethodName      = "/expanse.node.v1.NodeService/GetCARotation"
+	NodeService_CompleteCARotation_FullMethodName = "/expanse.node.v1.NodeService/CompleteCARotation"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -95,13 +102,20 @@ type NodeServiceClient interface {
 	HoldLease(ctx context.Context, in *HoldLeaseRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LeaseEvent], error)
 	// GetLease reports the stored lease state (even if expired).
 	GetLease(ctx context.Context, in *GetLeaseRequest, opts ...grpc.CallOption) (*LeaseInfo, error)
-	// Node lifecycle (§4.8) through the running agent: follower writes
-	// forward to the leader; RemoveNode changes raft membership, so it
-	// must reach the leader's agent.
+	// Node lifecycle (§4.8) through the running agent, from any node:
+	// writes and raft membership changes forward to the leader.
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	SetNodeCordon(ctx context.Context, in *SetNodeCordonRequest, opts ...grpc.CallOption) (*SetNodeCordonResponse, error)
 	DrainNode(ctx context.Context, in *DrainNodeRequest, opts ...grpc.CallOption) (*DrainNodeResponse, error)
 	RemoveNode(ctx context.Context, in *RemoveNodeRequest, opts ...grpc.CallOption) (*RemoveNodeResponse, error)
+	TransferLeadership(ctx context.Context, in *TransferLeadershipRequest, opts ...grpc.CallOption) (*TransferLeadershipResponse, error)
+	// Join tokens and CA rotation through the running agent.
+	CreateJoinToken(ctx context.Context, in *CreateJoinTokenRequest, opts ...grpc.CallOption) (*CreateJoinTokenResponse, error)
+	ListJoinTokens(ctx context.Context, in *ListJoinTokensRequest, opts ...grpc.CallOption) (*ListJoinTokensResponse, error)
+	RevokeJoinToken(ctx context.Context, in *RevokeJoinTokenRequest, opts ...grpc.CallOption) (*RevokeJoinTokenResponse, error)
+	RotateCA(ctx context.Context, in *RotateCARequest, opts ...grpc.CallOption) (*RotateCAResponse, error)
+	GetCARotation(ctx context.Context, in *GetCARotationRequest, opts ...grpc.CallOption) (*GetCARotationResponse, error)
+	CompleteCARotation(ctx context.Context, in *CompleteCARotationRequest, opts ...grpc.CallOption) (*CompleteCARotationResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -409,6 +423,76 @@ func (c *nodeServiceClient) RemoveNode(ctx context.Context, in *RemoveNodeReques
 	return out, nil
 }
 
+func (c *nodeServiceClient) TransferLeadership(ctx context.Context, in *TransferLeadershipRequest, opts ...grpc.CallOption) (*TransferLeadershipResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TransferLeadershipResponse)
+	err := c.cc.Invoke(ctx, NodeService_TransferLeadership_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) CreateJoinToken(ctx context.Context, in *CreateJoinTokenRequest, opts ...grpc.CallOption) (*CreateJoinTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateJoinTokenResponse)
+	err := c.cc.Invoke(ctx, NodeService_CreateJoinToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) ListJoinTokens(ctx context.Context, in *ListJoinTokensRequest, opts ...grpc.CallOption) (*ListJoinTokensResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListJoinTokensResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListJoinTokens_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RevokeJoinToken(ctx context.Context, in *RevokeJoinTokenRequest, opts ...grpc.CallOption) (*RevokeJoinTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeJoinTokenResponse)
+	err := c.cc.Invoke(ctx, NodeService_RevokeJoinToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RotateCA(ctx context.Context, in *RotateCARequest, opts ...grpc.CallOption) (*RotateCAResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RotateCAResponse)
+	err := c.cc.Invoke(ctx, NodeService_RotateCA_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetCARotation(ctx context.Context, in *GetCARotationRequest, opts ...grpc.CallOption) (*GetCARotationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCARotationResponse)
+	err := c.cc.Invoke(ctx, NodeService_GetCARotation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) CompleteCARotation(ctx context.Context, in *CompleteCARotationRequest, opts ...grpc.CallOption) (*CompleteCARotationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompleteCARotationResponse)
+	err := c.cc.Invoke(ctx, NodeService_CompleteCARotation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -456,13 +540,20 @@ type NodeServiceServer interface {
 	HoldLease(*HoldLeaseRequest, grpc.ServerStreamingServer[LeaseEvent]) error
 	// GetLease reports the stored lease state (even if expired).
 	GetLease(context.Context, *GetLeaseRequest) (*LeaseInfo, error)
-	// Node lifecycle (§4.8) through the running agent: follower writes
-	// forward to the leader; RemoveNode changes raft membership, so it
-	// must reach the leader's agent.
+	// Node lifecycle (§4.8) through the running agent, from any node:
+	// writes and raft membership changes forward to the leader.
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	SetNodeCordon(context.Context, *SetNodeCordonRequest) (*SetNodeCordonResponse, error)
 	DrainNode(context.Context, *DrainNodeRequest) (*DrainNodeResponse, error)
 	RemoveNode(context.Context, *RemoveNodeRequest) (*RemoveNodeResponse, error)
+	TransferLeadership(context.Context, *TransferLeadershipRequest) (*TransferLeadershipResponse, error)
+	// Join tokens and CA rotation through the running agent.
+	CreateJoinToken(context.Context, *CreateJoinTokenRequest) (*CreateJoinTokenResponse, error)
+	ListJoinTokens(context.Context, *ListJoinTokensRequest) (*ListJoinTokensResponse, error)
+	RevokeJoinToken(context.Context, *RevokeJoinTokenRequest) (*RevokeJoinTokenResponse, error)
+	RotateCA(context.Context, *RotateCARequest) (*RotateCAResponse, error)
+	GetCARotation(context.Context, *GetCARotationRequest) (*GetCARotationResponse, error)
+	CompleteCARotation(context.Context, *CompleteCARotationRequest) (*CompleteCARotationResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -553,6 +644,27 @@ func (UnimplementedNodeServiceServer) DrainNode(context.Context, *DrainNodeReque
 }
 func (UnimplementedNodeServiceServer) RemoveNode(context.Context, *RemoveNodeRequest) (*RemoveNodeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveNode not implemented")
+}
+func (UnimplementedNodeServiceServer) TransferLeadership(context.Context, *TransferLeadershipRequest) (*TransferLeadershipResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TransferLeadership not implemented")
+}
+func (UnimplementedNodeServiceServer) CreateJoinToken(context.Context, *CreateJoinTokenRequest) (*CreateJoinTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateJoinToken not implemented")
+}
+func (UnimplementedNodeServiceServer) ListJoinTokens(context.Context, *ListJoinTokensRequest) (*ListJoinTokensResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListJoinTokens not implemented")
+}
+func (UnimplementedNodeServiceServer) RevokeJoinToken(context.Context, *RevokeJoinTokenRequest) (*RevokeJoinTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeJoinToken not implemented")
+}
+func (UnimplementedNodeServiceServer) RotateCA(context.Context, *RotateCARequest) (*RotateCAResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RotateCA not implemented")
+}
+func (UnimplementedNodeServiceServer) GetCARotation(context.Context, *GetCARotationRequest) (*GetCARotationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCARotation not implemented")
+}
+func (UnimplementedNodeServiceServer) CompleteCARotation(context.Context, *CompleteCARotationRequest) (*CompleteCARotationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteCARotation not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -1040,6 +1152,132 @@ func _NodeService_RemoveNode_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_TransferLeadership_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransferLeadershipRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).TransferLeadership(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_TransferLeadership_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).TransferLeadership(ctx, req.(*TransferLeadershipRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_CreateJoinToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateJoinTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).CreateJoinToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_CreateJoinToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).CreateJoinToken(ctx, req.(*CreateJoinTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_ListJoinTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListJoinTokensRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListJoinTokens(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListJoinTokens_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListJoinTokens(ctx, req.(*ListJoinTokensRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RevokeJoinToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeJoinTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RevokeJoinToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RevokeJoinToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RevokeJoinToken(ctx, req.(*RevokeJoinTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RotateCA_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RotateCARequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RotateCA(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RotateCA_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RotateCA(ctx, req.(*RotateCARequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetCARotation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCARotationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetCARotation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetCARotation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetCARotation(ctx, req.(*GetCARotationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_CompleteCARotation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteCARotationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).CompleteCARotation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_CompleteCARotation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).CompleteCARotation(ctx, req.(*CompleteCARotationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1142,6 +1380,34 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveNode",
 			Handler:    _NodeService_RemoveNode_Handler,
+		},
+		{
+			MethodName: "TransferLeadership",
+			Handler:    _NodeService_TransferLeadership_Handler,
+		},
+		{
+			MethodName: "CreateJoinToken",
+			Handler:    _NodeService_CreateJoinToken_Handler,
+		},
+		{
+			MethodName: "ListJoinTokens",
+			Handler:    _NodeService_ListJoinTokens_Handler,
+		},
+		{
+			MethodName: "RevokeJoinToken",
+			Handler:    _NodeService_RevokeJoinToken_Handler,
+		},
+		{
+			MethodName: "RotateCA",
+			Handler:    _NodeService_RotateCA_Handler,
+		},
+		{
+			MethodName: "GetCARotation",
+			Handler:    _NodeService_GetCARotation_Handler,
+		},
+		{
+			MethodName: "CompleteCARotation",
+			Handler:    _NodeService_CompleteCARotation_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

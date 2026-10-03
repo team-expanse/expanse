@@ -36,7 +36,7 @@ func TestTransferLeadership(t *testing.T) {
 		t.Fatal("no follower")
 	}
 	target := c.Nodes[followerIdx]
-	if err := c.Nodes[0].TransferLeadership(c.Nodes[followerIdx].NodeID()); err != nil {
+	if err := c.Nodes[0].TransferLeadership(ctx, c.Nodes[followerIdx].NodeID()); err != nil {
 		t.Fatalf("TransferLeadership: %v", err)
 	}
 	// The transfer future resolves as the handshake completes; the new
@@ -68,7 +68,7 @@ func TestRemoveServer(t *testing.T) {
 	defer cancel()
 
 	lead := c.Leader()
-	if err := lead.RemoveServer(c.Nodes[2].NodeID()); err != nil {
+	if err := lead.RemoveServer(ctx, c.Nodes[2].NodeID()); err != nil {
 		t.Fatalf("RemoveServer: %v", err)
 	}
 	if _, err := lead.Put(ctx, store.Key("post-remove"), []byte("ok")); err != nil {
@@ -257,5 +257,80 @@ func TestApplyCommandNotLeader(t *testing.T) {
 		TimestampUnixNs: time.Now().UnixNano(),
 	}); err != nil {
 		t.Errorf("ApplyCommand on leader: %v", err)
+	}
+}
+
+// otherFollower returns a follower that is not f.
+func otherFollower(t *testing.T, c *TestCluster, f *raftstore.Store) *raftstore.Store {
+	t.Helper()
+	for _, s := range c.Nodes {
+		if s != f && !s.IsLeader() {
+			return s
+		}
+	}
+	t.Fatal("no second follower")
+	return nil
+}
+
+// TestRemoveServerViaFollower: a follower forwards the membership change
+// to the leader instead of failing with "not leader".
+func TestRemoveServerViaFollower(t *testing.T) {
+	c := NewTestCluster(t, 3)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	f := c.Follower()
+	gone := otherFollower(t, c, f)
+	if err := f.RemoveServer(ctx, gone.NodeID()); err != nil {
+		t.Fatalf("RemoveServer via follower: %v", err)
+	}
+	members, err := c.Leader().Members()
+	if err != nil {
+		t.Fatalf("Members: %v", err)
+	}
+	if len(members) != 2 || contains(members, gone.NodeID()) {
+		t.Errorf("members = %v, want 2 without %s", members, gone.NodeID())
+	}
+}
+
+// TestTransferLeadershipViaFollower: a follower can ask for leadership to
+// move to itself; the request is forwarded to the current leader.
+func TestTransferLeadershipViaFollower(t *testing.T) {
+	c := NewTestCluster(t, 3)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	f := c.Follower()
+	if err := f.TransferLeadership(ctx, f.NodeID()); err != nil {
+		t.Fatalf("TransferLeadership via follower: %v", err)
+	}
+	for start := time.Now(); !f.IsLeader(); time.Sleep(20 * time.Millisecond) {
+		if time.Since(start) > 5*time.Second {
+			t.Fatalf("%s did not become leader", f.NodeID())
+		}
+	}
+	if got := f.LeaderID(); got != f.NodeID() {
+		t.Errorf("LeaderID = %q, want %q", got, f.NodeID())
+	}
+}
+
+// TestTransferLeadershipToAnyone: an empty target lets raft pick the
+// most up-to-date follower.
+func TestTransferLeadershipToAnyone(t *testing.T) {
+	c := NewTestCluster(t, 3)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	old := c.Leader()
+	if err := old.TransferLeadership(ctx, ""); err != nil {
+		t.Fatalf("TransferLeadership: %v", err)
+	}
+	for start := time.Now(); ; time.Sleep(20 * time.Millisecond) {
+		if id := old.LeaderID(); id != "" && id != old.NodeID() {
+			break
+		}
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("leadership did not move")
+		}
 	}
 }

@@ -76,6 +76,15 @@ type Server struct {
 	// minimal builds (no block catalog configured).
 	Blocks  pb.BlockServiceServer
 	Catalog pb.CatalogServiceServer
+	// Cluster is this node's enrollment, needed to mint and verify join
+	// tokens and seal CAs; nil outside cluster mode.
+	Cluster *ClusterIdentity
+}
+
+// ClusterIdentity is the cluster ID and secret a node holds once enrolled.
+type ClusterIdentity struct {
+	ID     string
+	Secret []byte
 }
 
 // NewServer creates the NodeService server.

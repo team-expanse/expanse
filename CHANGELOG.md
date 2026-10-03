@@ -6,6 +6,29 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- `expanse cluster token create/list/revoke` and `cluster ca
+  rotate/status/complete` now go through the running agent, so they work
+  from any node without stopping `expansed`. With the agent stopped (right
+  after `cluster init`) they still open the store directly.
+- `expanse ctl node remove` and `cluster leave` work from any node: a
+  follower forwards the raft membership change to the leader. Previously
+  `remove` had to run on the leader and `cluster leave` only worked when
+  the CLI happened to become leader.
+- A node removing itself is now fully removed. Removal writes the
+  revocation before leaving raft, and the leader finishes any removal
+  that stopped partway.
+- `cluster leave` now revokes the node's identity, the same as
+  `ctl node remove` (it previously only deleted the node record).
+
+### Added
+
+- `expanse ctl node transfer-leadership [node-id]`. The "transfer
+  leadership first" errors pointed to a command that did not exist.
+
 ## 1.2.1 - 2026-10-02
 
 ### Fixed
