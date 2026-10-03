@@ -218,14 +218,19 @@ func (p *Promoter) stepDownOnce(ctx context.Context, res string) error {
 // Lead keeps res primary here for as long as this node can hold the volume's
 // lease, re-acquiring it after any loss, and returns once ctx ends. The volume is
 // demoted before the lease is given up. A demotion that fails leaves the record to
-// expire, so nobody else is admitted while this node may still be writing. A
+// expire, so nobody else is admitted while this node may still be writing; once it
+// is free again, the node takes it back and keeps the volume it could not let go. A
 // restarted node takes back its own live record (AcquireReclaiming) but first
 // demotes whatever role the previous agent left behind.
 func (p *Promoter) Lead(ctx context.Context, mgr *lease.Manager, name, res string, ttl time.Duration, opt HoldOptions) error {
 	for {
 		err := p.stepDown(res)
-		if err == nil && ctx.Err() == nil {
+		switch {
+		case ctx.Err() != nil:
+		case err == nil:
 			err = p.holdLease(ctx, mgr, name, res, ttl, opt)
+		default:
+			err = p.holdStuck(ctx, mgr, name, res, ttl, opt, err)
 		}
 		if ctx.Err() != nil {
 			return err
@@ -243,6 +248,20 @@ func (p *Promoter) holdLease(ctx context.Context, mgr *lease.Manager, name, res 
 	held, err := mgr.AcquireReclaiming(ctx, name, ttl)
 	if err != nil {
 		return unlessStopped(ctx, err)
+	}
+	err = p.Hold(ctx, res, held, opt)
+	p.giveUp(mgr, held, err)
+	return err
+}
+
+// holdStuck holds a volume that could not be demoted, but only when its lease is
+// free now; otherwise it returns stepErr so the demotion is retried.
+func (p *Promoter) holdStuck(ctx context.Context, mgr *lease.Manager, name, res string, ttl time.Duration, opt HoldOptions, stepErr error) error {
+	tctx, cancel := context.WithTimeout(ctx, p.poll())
+	held, err := mgr.AcquireReclaiming(tctx, name, ttl)
+	cancel()
+	if err != nil {
+		return stepErr
 	}
 	err = p.Hold(ctx, res, held, opt)
 	p.giveUp(mgr, held, err)

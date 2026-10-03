@@ -673,3 +673,28 @@ func TestLeadResumesAtOnceOnItsOwnLiveRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLeadHoldsAVolumeItCannotDemoteOnceTheLeaseIsFree(t *testing.T) {
+	r := newLeaderRig(t, status(drbd.RolePrimary, true, drbd.DiskUpToDate)) // a workload still has it open
+	r.drbd.secondaryFails = 1 << 30
+	r.p.StepDownTimeout = 20 * time.Millisecond
+	other, err := r.other.TryAcquire(context.Background(), leaseName, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.lead(HoldOptions{})
+	t.Cleanup(func() { r.stop(t) })
+	waitFor(t, "a few failed demotions", func() bool { return r.tr.count("secondary") >= 3 })
+	if got := r.holder(t); got != "n2" {
+		t.Fatalf("lease holder %q; another node's live lease must not be taken", got)
+	}
+	if err := r.other.Release(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the free lease to be taken", func() bool { return r.holder(t) == "n1" })
+	settled := r.tr.count("release")
+	time.Sleep(50 * time.Millisecond)
+	if got := r.tr.count("release"); got != settled {
+		t.Errorf("still releasing the device (%d -> %d) while holding its lease", settled, got)
+	}
+}

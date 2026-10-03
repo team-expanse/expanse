@@ -19,6 +19,11 @@ History before 1.0.0 is not recorded here.
   side stops writing and the majority takes over. Clusters of two nodes
   have no spare and behave as before. See `docs/STORAGE.md` §8 and, for
   mixed-version clusters, `docs/UPGRADE.md`.
+- A postgres primary cut off by a network partition now rejoins as a
+  replica once the network heals. Its volume could not be released while
+  postgres still had it open, and the agent kept retrying that release
+  forever, unmounting the filesystem each time, so postgres was never told
+  to step down. The node now keeps the volume once its lease is free again.
 
 ### Added
 
