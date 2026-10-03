@@ -30,7 +30,7 @@ func (c *Controller) rebuildReplicas(ctx context.Context, id string, spec *stora
 	if err != nil {
 		return
 	}
-	lost := c.lostHosts(status.Placement, meshed)
+	lost := c.lostHosts(placementHosts(status.Placement), meshed)
 	switch status.State {
 	case storage.StateHealthy, storage.StateDegraded, storage.StateReadOnly, storage.StateUnderReplicated:
 	default:
@@ -52,6 +52,10 @@ func (c *Controller) rebuildReplicas(ctx context.Context, id string, spec *stora
 	}
 	switch {
 	case len(al.NodeIDs) < spec.Replication && liveMembersHealthy(status.Placement, meshed):
+		if _, tb := al.Diskless[spare]; tb {
+			c.dropTiebreaker(ctx, id, spare, "its node is needed for a replica")
+			return
+		}
 		c.addReplica(ctx, id, spare)
 	case len(lost) > 0:
 		c.retireReplica(ctx, id, lost[0])
@@ -123,12 +127,21 @@ func hasHealthyReplica(placement []storage.Replica, meshed map[string]bool) bool
 	return slices.ContainsFunc(placement, func(r storage.Replica) bool { return r.Healthy && meshed[r.NodeID] })
 }
 
+func placementHosts(placement []storage.Replica) []string {
+	hosts := make([]string, len(placement))
+	for i, r := range placement {
+		hosts[i] = r.NodeID
+	}
+	return hosts
+}
+
 // spareNode is the lowest-id node that can take a replica and holds none of this volume.
 func (c *Controller) spareNode(ctx context.Context, meshed map[string]bool, placement []storage.Replica) string {
-	holders := make([]string, len(placement))
-	for i, r := range placement {
-		holders[i] = r.NodeID
-	}
+	return c.spareBeside(ctx, meshed, placementHosts(placement))
+}
+
+// spareBeside is the node spareNode would pick when holders are the nodes to avoid.
+func (c *Controller) spareBeside(ctx context.Context, meshed map[string]bool, holders []string) string {
 	class := storage.DefaultStorageClass()
 	class.Replication = 1
 	chosen, err := storage.SelectNodes(class, c.storageNodes(ctx, meshed), holders)
@@ -141,19 +154,19 @@ func (c *Controller) spareNode(ctx context.Context, meshed map[string]bool, plac
 // lostHosts are the placement's nodes that have been gone for LostAfter. The clock
 // starts when this controller first sees a node down, so a new leader restarts the
 // wait rather than giving up on a replica early.
-func (c *Controller) lostHosts(placement []storage.Replica, meshed map[string]bool) []string {
+func (c *Controller) lostHosts(hosts []string, meshed map[string]bool) []string {
 	var lost []string
-	for _, r := range placement {
-		if meshed[r.NodeID] {
+	for _, host := range hosts {
+		if meshed[host] {
 			continue
 		}
-		since, seen := c.downSince[r.NodeID]
+		since, seen := c.downSince[host]
 		if !seen {
 			since = c.opts.Now()
-			c.downSince[r.NodeID] = since
+			c.downSince[host] = since
 		}
 		if c.opts.Now().Sub(since) >= c.opts.LostAfter {
-			lost = append(lost, r.NodeID)
+			lost = append(lost, host)
 		}
 	}
 	slices.Sort(lost)

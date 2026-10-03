@@ -103,7 +103,7 @@ func TestDerivedStateCountsMembersAgainstTheTarget(t *testing.T) {
 		{2, 3, 3, storage.StateDegraded},
 		{1, 3, 3, storage.StateReadOnly},
 	} {
-		if got := derivedState(tc.healthy, tc.members, tc.target); got != tc.want {
+		if got := derivedState(tc.healthy, tc.members, tc.target, noTiebreaker); got != tc.want {
 			t.Errorf("derivedState(%d healthy, %d members, target %d) = %s, want %s",
 				tc.healthy, tc.members, tc.target, got, tc.want)
 		}

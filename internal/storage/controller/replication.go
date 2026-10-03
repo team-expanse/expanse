@@ -17,11 +17,27 @@ func writeQuorum(members int) int {
 	return members/2 + 1
 }
 
+// vote is a diskless tiebreaker's say in DRBD quorum.
+type vote int
+
+const (
+	noTiebreaker vote = iota
+	tiebreakerDown
+	tiebreakerUp
+)
+
 // derivedState is the volume state its healthy count implies, given its current
-// members and target. Quorum follows the members, as DRBD's does.
-func derivedState(healthy, members, target int) storage.VolumeState {
+// members and target. Quorum follows the members and the tiebreaker, as DRBD's does.
+func derivedState(healthy, members, target int, tb vote) storage.VolumeState {
+	voters, votes := members, healthy
+	if tb != noTiebreaker {
+		voters++
+	}
+	if tb == tiebreakerUp {
+		votes++
+	}
 	switch {
-	case healthy < writeQuorum(members):
+	case votes < writeQuorum(voters):
 		return storage.StateReadOnly
 	case healthy < members:
 		return storage.StateDegraded
@@ -41,7 +57,7 @@ func (c *Controller) enforceReplication(ctx context.Context, volID string, spec 
 			healthy++
 		}
 	}
-	want := derivedState(healthy, len(status.Placement), spec.Replication)
+	want := derivedState(healthy, len(status.Placement), spec.Replication, c.tiebreakerVote(ctx, volID, meshed))
 	if c.shouldAlert(ctx, want, status, meshed) {
 		c.emitAlert(AlertEvent{
 			VolID: volID, Kind: "under-replication", Have: healthy, Want: spec.Replication,

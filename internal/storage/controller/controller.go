@@ -165,6 +165,7 @@ func (c *Controller) reconcileVolume(ctx context.Context, id string, meshed map[
 	}
 	c.enforceReplication(ctx, id, &spec, &status, rev, meshed)
 	c.rebuildReplicas(ctx, id, &spec, meshed)
+	c.tiebreak(ctx, id, &spec, meshed)
 }
 
 // processVolumeOps consumes operator requests written by

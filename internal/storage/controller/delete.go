@@ -26,6 +26,10 @@ func (c *Controller) finalizeDelete(ctx context.Context, volID string, spec *sto
 		return
 	}
 	if c.opts.Alloc != nil {
+		if err := c.markTiebreakersGone(ctx, volID); err != nil {
+			c.log.Warn("cannot mark the tiebreaker of a deleted volume gone; will retry", "vol", volID, "err", err)
+			return
+		}
 		if err := c.opts.Alloc.Release(ctx, volID); err != nil && experrors.KindOf(err) != experrors.KindNotFound {
 			c.log.Warn("cannot release the allocation of a deleted volume; will retry", "vol", volID, "err", err)
 			return
@@ -38,4 +42,22 @@ func (c *Controller) finalizeDelete(ctx context.Context, volID string, spec *sto
 	_ = c.opts.St.Delete(ctx, storage.SpecKey(volID), 0)
 	_ = c.opts.St.Delete(ctx, storage.StatusKey(volID), 0)
 	c.log.Info("volume deleted", "vol", volID, "name", spec.Name)
+}
+
+// markTiebreakersGone tells each tiebreaker's node to take the volume down: it has no
+// placement row for a deletion to wait on, and the records are about to go.
+func (c *Controller) markTiebreakersGone(ctx context.Context, volID string) error {
+	al, err := c.opts.Alloc.Get(ctx, volID)
+	if experrors.KindOf(err) == experrors.KindNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for host := range al.Diskless {
+		if err := storage.PutGone(ctx, c.opts.St, host, volID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
