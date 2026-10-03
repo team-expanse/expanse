@@ -253,6 +253,21 @@ with subtest("observation: the heal while the cut-off node is still Primary"):
     time.sleep(10)
     note("status after n2 demotes", flat(status(n1)))
 
+with subtest("the agent's dry-run adjust sees the StandAlone link and adjust reconnects it"):
+    for m in DISKFUL:
+        rc, out = sh(m, "drbdadm -d adjust r0")
+        note(f"dry-run adjust on {m.name}", f"rc={rc} out={out!r}")
+        assert rc == 0 and out.strip(), f"{m.name}: dry-run adjust shows nothing to do"
+    for m in (n2, n1):
+        rc, out = sh(m, "drbdadm adjust r0")
+        note(f"adjust on {m.name}", f"rc={rc} out={out!r}")
+        assert rc == 0, f"adjust failed on {m.name}: {out}"
+    wait_until(lambda: status(n1).count("connection:Connected") == 2, "n1 to reconnect to both peers", 60)
+    wait_until(lambda: "replication:Established" in status(n2) and "SyncTarget" not in status(n2), "n2 resync", 120)
+    clean, oos = verify_clean(n1)
+    note("verify after reconnect", f"{clean} out-of-sync={oos}")
+    assert clean, f"replicas differ after reconnect: {oos}"
+
 print("=" * 72)
 for experiment, observed in findings:
     print(f"{experiment}: {observed}")
