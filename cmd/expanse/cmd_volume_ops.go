@@ -14,6 +14,7 @@ import (
 
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/storage"
+	"github.com/expanse/expanse/internal/storage/drbd"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -23,7 +24,12 @@ type volEntry struct {
 	spec  *pb.VolumeSpec
 	st    *pb.VolumeStatus
 	snaps []storage.SnapshotRecord
+	// tiebreakers are the diskless quorum members, which hold no data and so are not in Placement.
+	tiebreakers []string
 }
+
+// drbdAllocPrefix must match the drbd package's per-resource allocation prefix.
+const drbdAllocPrefix = "/drbd/vol/"
 
 // loadVolumes indexes all volumes by name from the local store copy (Stale), so
 // inspect and list still answer when the control plane has no leader.
@@ -63,6 +69,9 @@ func loadVolumes(ctx context.Context, cl pb.NodeServiceClient) (map[string]*volE
 			}
 		}
 	}
+	if err := attachTiebreakers(ctx, cl, out); err != nil {
+		return nil, err
+	}
 	// Key by name; fall back to the ID for half-written volumes.
 	byName := map[string]*volEntry{}
 	for _, v := range out {
@@ -73,6 +82,26 @@ func loadVolumes(ctx context.Context, cl pb.NodeServiceClient) (map[string]*volE
 		byName[key] = v
 	}
 	return byName, nil
+}
+
+// attachTiebreakers reads each volume's DRBD allocation for its diskless members.
+func attachTiebreakers(ctx context.Context, cl pb.NodeServiceClient, vols map[string]*volEntry) error {
+	res, err := cl.ListKeyValue(ctx, &pb.ListKeyValueRequest{Prefix: drbdAllocPrefix, Stale: true})
+	if err != nil {
+		return err
+	}
+	for _, e := range res.GetEntries() {
+		v := vols[strings.TrimPrefix(e.GetKey(), drbdAllocPrefix)]
+		var al drbd.Allocation
+		if v == nil || json.Unmarshal(e.GetValue(), &al) != nil {
+			continue
+		}
+		for host := range al.Diskless {
+			v.tiebreakers = append(v.tiebreakers, host)
+		}
+		sort.Strings(v.tiebreakers)
+	}
+	return nil
 }
 
 // resolveVol finds one volume by name (or ID).
@@ -320,6 +349,9 @@ func printInspect(w io.Writer, v *volEntry) {
 	fmt.Fprintf(w, "  replicas: %s\n", replicaSummary(v))
 	fmt.Fprintf(w, "  primary:  %s\n", v.st.GetPrimary())
 	fmt.Fprintf(w, "  size:     %s\n", humanBytes(v.spec.GetSizeBytes()))
+	if tb := tiebreakerStr(v); tb != "" {
+		fmt.Fprintf(w, "  tiebreaker: %s\n", tb)
+	}
 	fmt.Fprintf(w, "  %-16s %-12s %-8s %-10s %-12s %s\n", "REPLICA", "ROLE", "HEALTHY", "SYNC", "OUT OF SYNC", "LAST SEEN")
 	for _, p := range v.st.GetPlacement() {
 		seen := "never"
@@ -334,6 +366,17 @@ func printInspect(w io.Writer, v *volEntry) {
 			fmt.Fprintf(w, "  %-16s %-12s %s\n", s.Name, s.Node, relTime(s.CreatedAt.UnixNano()))
 		}
 	}
+}
+
+// tiebreakerStr names the diskless quorum members; "none" flags a two-copy volume a partition can split.
+func tiebreakerStr(v *volEntry) string {
+	if len(v.tiebreakers) > 0 {
+		return strings.Join(v.tiebreakers, ",")
+	}
+	if v.spec.GetReplication() == 2 {
+		return "none (no spare node; a partition can split this volume)"
+	}
+	return ""
 }
 
 // syncStr is a resync's progress or a running verify, "-" when the replica is idle.

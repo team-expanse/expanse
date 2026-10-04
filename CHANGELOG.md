@@ -20,6 +20,11 @@ History before 1.0.0 is not recorded here.
   have no spare and behave as before. See `docs/STORAGE.md` §8 and, for
   mixed-version clusters, `docs/UPGRADE.md`.
 
+### Added
+
+- `expanse ctl volume inspect` shows a two-replica volume's tiebreaker
+  node, or `none` when no spare node exists to hold one.
+
 ## 1.2.3 - 2026-10-03
 
 ### Fixed

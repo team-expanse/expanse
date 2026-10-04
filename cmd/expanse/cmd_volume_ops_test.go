@@ -645,3 +645,45 @@ func TestTwoInSyncReplicasOfThreeCanBeVerified(t *testing.T) {
 		t.Fatalf("checkInSync = %v; two in-sync replicas are enough to compare", err)
 	}
 }
+
+func TestLoadVolumesAttachesTheTiebreakerFromTheDRBDAllocation(t *testing.T) {
+	fs := snapStore(t, nil)
+	fs.kv["/drbd/vol/vol-abc"] = []byte(`{"name":"vol-abc","nodeIDs":{"n1":0,"n2":1},"diskless":{"n3":2}}`)
+	opts, stop := serveCLI(t, fs)
+	defer stop()
+	conn, err := dial(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	vols, err := loadVolumes(context.Background(), pb.NewNodeServiceClient(conn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vols["db"].tiebreakers; len(got) != 1 || got[0] != "n3" {
+		t.Errorf("tiebreakers %v, want [n3]", got)
+	}
+}
+
+func TestInspectNamesTheTiebreakerOfATwoReplicaVolume(t *testing.T) {
+	cases := map[string]struct {
+		tiebreakers []string
+		replication int32
+		want        string
+	}{
+		"held":         {[]string{"n3"}, 2, "tiebreaker: n3"},
+		"none":         {nil, 2, "tiebreaker: none"},
+		"three copies": {nil, 3, ""},
+	}
+	for name, tc := range cases {
+		v := fixtureVolume(t)
+		v.spec.Replication = tc.replication
+		v.tiebreakers = tc.tiebreakers
+		var buf bytes.Buffer
+		printInspect(&buf, v)
+		got := buf.String()
+		if tc.want == "" && strings.Contains(got, "tiebreaker") || tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Errorf("%s: inspect, want %q:\n%s", name, tc.want, got)
+		}
+	}
+}

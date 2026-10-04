@@ -205,7 +205,8 @@ the two copies would split-brain. So when a two-replica volume is `Healthy` and 
 *diskless* DRBD member. It stores no data and is never primary, but its vote turns quorum on: a
 cut-off primary loses quorum within seconds and its writes fail instead of diverging, while the
 other replica and the tiebreaker keep quorum and take over. `drbdadm status` shows it as
-`peer-disk:Diskless`; it does not appear in `volume list`.
+`peer-disk:Diskless`; it does not appear in `volume list`, but `volume inspect` names its node on a
+`tiebreaker:` line (`none` when a two-replica volume has no spare to use).
 
 - A two-node cluster has no spare, so its two-replica volumes run without quorum, as before.
 - A tiebreaker whose node stays gone (10 minutes by default) is moved to another spare. If there is
