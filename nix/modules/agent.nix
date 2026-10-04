@@ -334,6 +334,8 @@ in
         ExecStopPost = "-${pkgs.drbd}/bin/drbdadm secondary all";
         Restart = "always";
         RestartSec = "5s";
+        # 78: the node was removed from its cluster; restarting cannot help.
+        RestartPreventExitStatus = "78";
         # A graceful stop demotes every volume first (up to 30 s each).
         TimeoutStopSec = "60s";
         WatchdogSec = "60s";

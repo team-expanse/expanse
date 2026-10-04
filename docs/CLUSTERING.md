@@ -64,7 +64,15 @@ to the leader.
 Removing the leader is refused: transfer leadership first. Removal
 writes the revocation before changing raft membership, and the leader
 finishes any removal its caller could not, such as a node removing
-itself. The `cluster` commands above also work with the agent stopped (right
+itself. Drain a node before removing it so its replicas move first.
+
+The removed node finds its revocation in its own copy of the store. It then stops every
+block replica it still runs, demotes its volumes, and its agent exits with status 78, which
+systemd does not restart. The agent logs who removed the node and why, and records the
+removal in `removed.json` in its data directory, so it refuses to start again. The node's
+identity stays revoked: reinstall the machine to add it back.
+
+The `cluster` commands above also work with the agent stopped (right
 after `cluster init`): they then open the node's store directly.
 
 ## Join security

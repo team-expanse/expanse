@@ -223,6 +223,7 @@ type Agent struct {
 	pgCtl *pgha.Controller
 
 	status   atomic.Value // string
+	removed  atomic.Bool  // the node was removed from its cluster
 	shutdown atomic.Value // chan struct{}
 	stopFn   func()
 }
@@ -630,6 +631,12 @@ func indexNL(b []byte) int {
 // Run runs the agent until ctx is done or Shutdown is called: reconcile
 // loop, inventory loop, health/status loop, gRPC server, sd_notify.
 func (a *Agent) Run(ctx context.Context) error {
+	if rev, err := RemovedFrom(a.cfg.DataDir); err != nil || rev != nil {
+		if err != nil {
+			return err
+		}
+		return removedError(a.cfg.DataDir, rev)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	a.stopFn = cancel
 	defer cancel()
@@ -645,6 +652,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}()
 
 	a.status.Store("idle")
+	go a.watchRemoval(ctx)
 
 	witness := a.ctl != nil && a.ctl.role == "witness"
 	if witness {
@@ -933,6 +941,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.recon.Stop()
 	if err := a.store.Close(); err != nil {
 		a.logger.Error("store close failed", "err", err)
+	}
+	if a.removed.Load() {
+		rev, err := RemovedFrom(a.cfg.DataDir)
+		if err != nil || rev == nil {
+			return ErrRemoved
+		}
+		return removedError(a.cfg.DataDir, rev)
 	}
 	return nil
 }

@@ -260,6 +260,7 @@
           block-rolling-update = mkTest "block-rolling-update" ./nix/tests/block-rolling-update.nix;
           block-scale = mkTest "block-scale" ./nix/tests/block-scale.nix;
           block-singleton = mkTest "block-singleton" ./nix/tests/block-singleton.nix;
+          node-removed = mkTest "node-removed" ./nix/tests/node-removed.nix;
           block-daemonset = mkTest "block-daemonset" ./nix/tests/block-daemonset.nix;
           block-liveness = mkTest "block-liveness" ./nix/tests/block-liveness.nix;
           block-delete = mkTest "block-delete" ./nix/tests/block-delete.nix;

@@ -8,7 +8,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -182,7 +184,9 @@ type Reconciler struct {
 	stop    chan struct{}
 	stopped chan struct{}
 
-	frozen atomic.Bool // reconcile freeze (§4.10.4)
+	frozen  atomic.Bool // reconcile freeze (§4.10.4)
+	retired atomic.Bool // the node left the cluster; nothing is applied again
+	tickMu  sync.Mutex  // one Tick or Retire at a time
 }
 
 type resBackoff struct {
@@ -247,6 +251,9 @@ func (r *Reconciler) SetDryRun(on bool) {
 // reach quorum: availability over consistency for what already runs,
 // consistency for changes.
 func (r *Reconciler) Freeze(on bool) {
+	if r.retired.Load() {
+		return
+	}
 	if r.frozen.Swap(on) != on {
 		r.logger.Info("reconcile freeze toggled", "frozen", on)
 	}
@@ -254,6 +261,41 @@ func (r *Reconciler) Freeze(on bool) {
 
 // Frozen reports the current freeze state.
 func (r *Reconciler) Frozen() bool { return r.frozen.Load() }
+
+// Retire freezes the reconciler for good and deletes every resource it applied or
+// the local store copy desires, dependents first: the node has left the cluster.
+func (r *Reconciler) Retire(ctx context.Context) {
+	r.retired.Store(true)
+	r.frozen.Store(true)
+	r.tickMu.Lock()
+	defer r.tickMu.Unlock()
+	r.mu.Lock()
+	all := maps.Clone(r.applied)
+	clear(r.applied)
+	r.mu.Unlock()
+	if local, _, err := r.loadDesired(store.WithStale(ctx)); err == nil {
+		maps.Copy(all, local)
+	} else {
+		r.logger.Warn("retire: local desired state unreadable", "err", err)
+	}
+	order, err := topoSort(all)
+	if err != nil {
+		order = slices.Collect(maps.Keys(all))
+	}
+	slices.Reverse(order)
+	for _, id := range order {
+		res := all[id]
+		d, ok := r.managers[res.Type()].(Deleter)
+		if !ok {
+			continue
+		}
+		if err := d.Delete(ctx, res); err != nil {
+			r.logger.Warn("retire: delete failed", "id", id, "err", err)
+		} else {
+			r.logger.Info("retire: removed resource", "id", id, "type", res.Type())
+		}
+	}
+}
 
 // Run runs the loop until ctx is canceled: periodic ticks, debounced
 // watch-triggered ticks, and one immediate tick at startup.
@@ -328,6 +370,8 @@ func (r *Reconciler) watchDesired(ctx context.Context) {
 // Tick runs one reconciliation round. It is safe to call concurrently with
 // the loop; only one tick runs at a time (a coarse loop lock serializes).
 func (r *Reconciler) Tick(ctx context.Context) error {
+	r.tickMu.Lock()
+	defer r.tickMu.Unlock()
 	// §4.10.4 reconcile freeze: skip the round entirely — no desired
 	// state is applied, no status is written (status writes would fail
 	// anyway on a non-quorum node).

@@ -16,6 +16,12 @@ History before 1.0.0 is not recorded here.
   that did not exist yet, and a refused request went unnoticed. It reports
   a refusal, and a request still queued after `--wait-timeout` (2m).
   `--no-wait` keeps the old behaviour.
+- A node removed from the cluster no longer keeps running its block
+  replicas. Its agent carried on with no quorum and treated the removal
+  like a network partition, so the replicas ran twice, once on the
+  removed node and once where the cluster replaced them. The removed
+  node now stops its workloads and its agent exits for good, logging who
+  removed it and why. See `docs/CLUSTERING.md`.
 
 ## 1.2.4 - 2026-10-03
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -497,20 +498,30 @@ type flakyStore struct {
 }
 
 func (s *flakyStore) List(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
-	if s.failList.Load() {
+	if s.failList.Load() && !store.StaleFrom(ctx) {
 		return nil, fmt.Errorf("unavailable: linear read rpc failed")
 	}
 	return s.Store.List(ctx, prefix)
 }
 
-// deletingManager counts the resources the reconciler tears down.
+// deletingManager counts the resources the reconciler tears down, in order.
 type deletingManager struct {
 	fakeManager
 	deletes atomic.Int64
+	deps    map[string][]string
+	mu      sync.Mutex
+	order   []string
+}
+
+func (m *deletingManager) Load(id string, spec []byte) (Resource, error) {
+	return &fakeResource{id: id, typ: "fake", deps: m.deps[id]}, nil
 }
 
 func (m *deletingManager) Delete(ctx context.Context, r Resource) error {
 	m.deletes.Add(1)
+	m.mu.Lock()
+	m.order = append(m.order, r.ID())
+	m.mu.Unlock()
 	return nil
 }
 
@@ -635,5 +646,39 @@ func TestReadinessIsOmittedWhenNotReported(t *testing.T) {
 	yes := true
 	if res, _ := tickWithReadiness(t, &yes); !contains(res, " ready=true") {
 		t.Errorf("resource status = %q, want ready=true", res)
+	}
+}
+
+func TestRetireTearsDownEveryResourceDependentsFirstAndFreezes(t *testing.T) {
+	r, s, m := newDeletingReconciler(t)
+	m.deps = map[string][]string{"unit": {"mount"}}
+	ctx := context.Background()
+	putDesired(t, s, "n1", "mount", "")
+	putDesired(t, s, "n1", "unit", "")
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.failList.Store(true) // a removed node has no leader to read from
+	r.Retire(ctx)
+	if got, want := m.order, []string{"unit", "mount"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("deleted %v, want %v", got, want)
+	}
+	if !r.Frozen() {
+		t.Error("a retired reconciler still runs ticks")
+	}
+	s.failList.Store(false)
+	_ = r.Tick(ctx)
+	if n := m.deletes.Load(); n != 2 {
+		t.Errorf("a tick after Retire touched resources again: %d deletes", n)
+	}
+}
+
+func TestRetireAfterARestartTearsDownWhatTheLocalCopyDesires(t *testing.T) {
+	r, s, m := newDeletingReconciler(t)
+	putDesired(t, s, "n1", "vm", "")
+	s.failList.Store(true)
+	r.Retire(context.Background())
+	if got := m.order; !reflect.DeepEqual(got, []string{"vm"}) {
+		t.Fatalf("deleted %v, want the locally desired [vm]", got)
 	}
 }

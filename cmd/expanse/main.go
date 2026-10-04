@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/expanse/expanse/internal/agent"
 	"github.com/expanse/expanse/internal/logging"
 
 	"github.com/spf13/cobra"
@@ -60,6 +62,9 @@ func main() {
 	rc := newRootCmd(ctx)
 	if err := rc.cmd.ExecuteContext(ctx); err != nil {
 		logging.Default().Error("fatal", "err", err)
+		if errors.Is(err, agent.ErrRemoved) {
+			os.Exit(agent.ExitRemoved)
+		}
 		os.Exit(1)
 	}
 }

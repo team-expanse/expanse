@@ -1,0 +1,104 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/expanse/expanse/internal/cluster/nodelc"
+	"github.com/expanse/expanse/internal/store"
+)
+
+// ErrRemoved stops the agent of a node that was removed from its cluster.
+var ErrRemoved = errors.New("this node was removed from the cluster")
+
+// ExitRemoved is the agent's exit status once removed; the unit does not restart on it.
+const ExitRemoved = 78
+
+// removedMarker, in the data dir, keeps a removed node's agent from starting again.
+const removedMarker = "removed.json"
+
+// removalPoll is how often the agent looks for its own revocation.
+var removalPoll = 5 * time.Second
+
+// watchRemoval looks for this node's revocation in the local store copy, which a
+// removed node still has, and retires the node once it appears.
+func (a *Agent) watchRemoval(ctx context.Context) {
+	t := time.NewTicker(removalPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if rev := a.revocation(ctx); rev != nil {
+			a.retire(ctx, rev)
+			return
+		}
+	}
+}
+
+func (a *Agent) revocation(ctx context.Context) *nodelc.Revocation {
+	e, err := a.store.Get(store.WithStale(ctx), store.Key(nodelc.RevokedKeyPrefix+a.cfg.NodeID))
+	if err != nil {
+		return nil
+	}
+	var rev nodelc.Revocation
+	if json.Unmarshal(e.Value, &rev) != nil {
+		rev = nodelc.Revocation{NodeID: a.cfg.NodeID}
+	}
+	return &rev
+}
+
+// retire stops every workload this node runs and the agent with it: the rest of the
+// cluster has already replaced them, so running on would duplicate them.
+func (a *Agent) retire(ctx context.Context, rev *nodelc.Revocation) {
+	a.logger.Error("this node was removed from the cluster; stopping its workloads and the agent",
+		"by", rev.By, "reason", rev.Reason)
+	a.status.Store("removed")
+	a.recon.Retire(ctx)
+	if err := writeRemovedMarker(a.cfg.DataDir, rev); err != nil {
+		a.logger.Error("removed marker not written", "err", err)
+	}
+	a.removed.Store(true)
+	a.Shutdown("removed from the cluster")
+}
+
+func writeRemovedMarker(dir string, rev *nodelc.Revocation) error {
+	raw, err := json.Marshal(rev)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, removedMarker), raw, 0o600)
+}
+
+// RemovedFrom reads the removal recorded in a data dir, or nil when there is none.
+func RemovedFrom(dir string) (*nodelc.Revocation, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, removedMarker))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var rev nodelc.Revocation
+	if err := json.Unmarshal(raw, &rev); err != nil {
+		return nil, fmt.Errorf("%s: %w", removedMarker, err)
+	}
+	return &rev, nil
+}
+
+// removedError explains a removal and what brings the machine back.
+func removedError(dir string, rev *nodelc.Revocation) error {
+	why := ""
+	if rev.Reason != "" {
+		why = " (" + rev.Reason + ")"
+	}
+	return fmt.Errorf("%w by %s%s; its identity is revoked, so reinstall the machine to add it back (%s records the removal)",
+		ErrRemoved, rev.By, why, filepath.Join(dir, removedMarker))
+}
