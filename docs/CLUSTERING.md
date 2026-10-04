@@ -66,7 +66,9 @@ writes the revocation before changing raft membership, and the leader
 finishes any removal its caller could not, such as a node removing
 itself. Drain a node before removing it so its replicas move first.
 
-The removed node finds its revocation in its own copy of the store. It then stops every
+The removed node finds its revocation in its own copy of the store. A node that was down or
+cut off when it was removed never receives it: while it has no quorum it asks its peers'
+join endpoints (port 7446) every 30 seconds, and a peer with quorum answers. It then stops every
 block replica it still runs, demotes its volumes, and its agent exits with status 78, which
 systemd does not restart. The agent logs who removed the node and why, and records the
 removal in `removed.json` in its data directory, so it refuses to start again. The node's

@@ -119,3 +119,67 @@ func TestANodeNeverRemovedHasNoMarker(t *testing.T) {
 		t.Errorf("RemovedFrom = %+v, %v; want nothing", rev, err)
 	}
 }
+
+// fastRemovalChecks makes the agent look for its removal, locally and with its peers, at once.
+func fastRemovalChecks(t *testing.T) {
+	t.Helper()
+	poll, ask := removalPoll, removalAsk
+	t.Cleanup(func() { removalPoll, removalAsk = poll, ask })
+	removalPoll, removalAsk = 50*time.Millisecond, 50*time.Millisecond
+}
+
+func TestANodeCutOffWhileItWasRemovedLearnsItFromAPeerAndStops(t *testing.T) {
+	fastRemovalChecks(t)
+	dir := t.TempDir()
+	a, m := newRemovableAgent(t, dir)
+	if _, err := a.store.Put(context.Background(), a.recon.DesiredPrefix()+"web-0", []byte("type: unit\n")); err != nil {
+		t.Fatal(err)
+	}
+	a.askPeers = func(context.Context) (*nodelc.Revocation, error) {
+		return &nodelc.Revocation{NodeID: "n1", By: "n2", Reason: "decommissioned"}, nil
+	}
+	if err := runUntilStopped(t, a); !errors.Is(err, ErrRemoved) {
+		t.Fatalf("Run returned %v, want ErrRemoved", err)
+	}
+	if m.deleted.Load() != 1 {
+		t.Errorf("deleted %d units, want the one the node ran", m.deleted.Load())
+	}
+	if rev, err := RemovedFrom(dir); err != nil || rev == nil || rev.By != "n2" {
+		t.Errorf("marker = %+v, %v; want the revocation by n2", rev, err)
+	}
+}
+
+func TestANodeWhosePeersCannotAnswerKeepsRunning(t *testing.T) {
+	fastRemovalChecks(t)
+	a, m := newRemovableAgent(t, t.TempDir())
+	var asked atomic.Int32
+	a.askPeers = func(context.Context) (*nodelc.Revocation, error) {
+		asked.Add(1)
+		return nil, errors.New("no peer could answer")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run returned %v, want a clean stop", err)
+	}
+	if asked.Load() == 0 || m.deleted.Load() != 0 {
+		t.Errorf("asked %d times and deleted %d units; want it to ask and keep its units", asked.Load(), m.deleted.Load())
+	}
+}
+
+func TestPeersAreAskedAtMostOncePerInterval(t *testing.T) {
+	fastRemovalChecks(t)
+	removalAsk = time.Hour
+	a, _ := newRemovableAgent(t, t.TempDir())
+	var asked atomic.Int32
+	a.askPeers = func(context.Context) (*nodelc.Revocation, error) {
+		asked.Add(1)
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_ = a.Run(ctx)
+	if asked.Load() != 1 {
+		t.Errorf("asked %d times in half a second, want once an hour", asked.Load())
+	}
+}

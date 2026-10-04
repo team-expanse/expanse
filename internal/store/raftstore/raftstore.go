@@ -554,6 +554,21 @@ func (s *Store) Members() ([]string, error) {
 	return ids, nil
 }
 
+// PeerAddrs lists the raft addresses of the other servers in the latest configuration.
+func (s *Store) PeerAddrs() ([]string, error) {
+	f := s.r.GetConfiguration()
+	if err := f.Error(); err != nil {
+		return nil, err
+	}
+	var addrs []string
+	for _, srv := range f.Configuration().Servers {
+		if string(srv.ID) != s.cfg.NodeID {
+			addrs = append(addrs, string(srv.Address))
+		}
+	}
+	return addrs, nil
+}
+
 // Close shuts down Raft and releases resources. Safe to call once.
 func (s *Store) Close() error {
 	s.stopWatchOff.Do(func() { close(s.stopWatch) })

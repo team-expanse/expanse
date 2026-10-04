@@ -21,7 +21,8 @@ History before 1.0.0 is not recorded here.
   like a network partition, so the replicas ran twice, once on the
   removed node and once where the cluster replaced them. The removed
   node now stops its workloads and its agent exits for good, logging who
-  removed it and why. See `docs/CLUSTERING.md`.
+  removed it and why. A node removed while it was down or cut off learns
+  of it from a peer once it is back. See `docs/CLUSTERING.md`.
 
 ## 1.2.4 - 2026-10-03
 

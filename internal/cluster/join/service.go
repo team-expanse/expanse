@@ -356,3 +356,19 @@ func (s *Service) sealedCAKey(activeCA *ca.CA) []byte {
 	}
 	return s.SealedCAKey
 }
+
+// Removal tells a node whether it was removed, from a linearizable read: only
+// a peer with quorum answers, so a stale "no" can never come back.
+func (s *Service) Removal(ctx context.Context, req *pb.RemovalRequest) (*pb.RemovalResponse, error) {
+	if req.GetNodeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "join.Removal: node_id is required")
+	}
+	switch e, err := s.St.Get(ctx, store.Key(RevokedKeyPrefix+req.GetNodeId())); {
+	case err == nil:
+		return &pb.RemovalResponse{Removed: true, Revocation: e.Value}, nil
+	case errors.Is(err, errors.KindNotFound):
+		return &pb.RemovalResponse{}, nil
+	default:
+		return nil, status.Error(codes.Unavailable, "join.Removal: "+err.Error())
+	}
+}

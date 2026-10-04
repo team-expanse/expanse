@@ -95,6 +95,18 @@ service JoinService {
   // the same single-use token cannot both succeed (§10 "Join race on
   // the same token").
   rpc Join(JoinRequest) returns (JoinResponse);
+  // Removal: whether node_id was removed, from a linearizable read, so a node
+  // cut off while it was removed can still learn of it (no client cert needed).
+  rpc Removal(RemovalRequest) returns (RemovalResponse);
+}
+
+message RemovalRequest {
+  string node_id = 1;
+}
+
+message RemovalResponse {
+  bool removed = 1;
+  bytes revocation = 2; // the /cluster/revoked/<id> record (JSON) when removed
 }
 
 message JoinRequest {

@@ -1,5 +1,5 @@
-# A node removed from the cluster while it runs a block replica stops that
-# replica and says it was removed, rather than carrying on unaware.
+# A node removed from the cluster while it runs a block replica stops that replica and
+# says it was removed, whether it was connected at the time or cut off and reconnected.
 { self }:
 { pkgs, lib, ... }:
 let
@@ -27,6 +27,7 @@ in
     n1 = mkNode "n1" "00000001";
     n2 = mkNode "n2" "00000002";
     n3 = mkNode "n3" "00000003";
+    n4 = mkNode "n4" "00000004";
   };
 
   testScript = ''

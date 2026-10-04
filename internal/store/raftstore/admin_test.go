@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -332,5 +333,37 @@ func TestTransferLeadershipToAnyone(t *testing.T) {
 		if time.Since(start) > 5*time.Second {
 			t.Fatal("leadership did not move")
 		}
+	}
+}
+
+func TestPeerAddrsListsTheOtherServers(t *testing.T) {
+	c := NewTestCluster(t, 3)
+	want := []string{c.raftAddr(0), c.raftAddr(2)}
+	sort.Strings(want)
+	var got []string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		var err error
+		if got, err = c.Nodes[1].PeerAddrs(); err != nil {
+			t.Fatal(err)
+		}
+		if sort.Strings(got); slices.Equal(got, want) {
+			return
+		}
+	}
+	t.Errorf("PeerAddrs = %v, want %v", got, want)
+}
+
+// A removed server never sees its removal, so it still knows whom to ask about it.
+func TestARemovedServerStillKnowsItsPeers(t *testing.T) {
+	c := NewTestCluster(t, 3)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	removed := otherFollower(t, c, nil)
+	if err := c.Leader().RemoveServer(ctx, removed.NodeID()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := removed.PeerAddrs()
+	if err != nil || len(got) != 2 {
+		t.Errorf("PeerAddrs = %v, %v; want the two servers it was removed from", got, err)
 	}
 }

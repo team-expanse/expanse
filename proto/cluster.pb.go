@@ -633,6 +633,102 @@ func (x *ErrorDetail) GetMessage() string {
 	return ""
 }
 
+type RemovalRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemovalRequest) Reset() {
+	*x = RemovalRequest{}
+	mi := &file_proto_cluster_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemovalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemovalRequest) ProtoMessage() {}
+
+func (x *RemovalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cluster_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemovalRequest.ProtoReflect.Descriptor instead.
+func (*RemovalRequest) Descriptor() ([]byte, []int) {
+	return file_proto_cluster_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RemovalRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+type RemovalResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Removed       bool                   `protobuf:"varint,1,opt,name=removed,proto3" json:"removed,omitempty"`
+	Revocation    []byte                 `protobuf:"bytes,2,opt,name=revocation,proto3" json:"revocation,omitempty"` // the /cluster/revoked/<id> record (JSON) when removed
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemovalResponse) Reset() {
+	*x = RemovalResponse{}
+	mi := &file_proto_cluster_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemovalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemovalResponse) ProtoMessage() {}
+
+func (x *RemovalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_cluster_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemovalResponse.ProtoReflect.Descriptor instead.
+func (*RemovalResponse) Descriptor() ([]byte, []int) {
+	return file_proto_cluster_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RemovalResponse) GetRemoved() bool {
+	if x != nil {
+		return x.Removed
+	}
+	return false
+}
+
+func (x *RemovalResponse) GetRevocation() []byte {
+	if x != nil {
+		return x.Revocation
+	}
+	return nil
+}
+
 type JoinRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`                      // Raft server ID / cert CN
@@ -648,7 +744,7 @@ type JoinRequest struct {
 
 func (x *JoinRequest) Reset() {
 	*x = JoinRequest{}
-	mi := &file_proto_cluster_proto_msgTypes[9]
+	mi := &file_proto_cluster_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -660,7 +756,7 @@ func (x *JoinRequest) String() string {
 func (*JoinRequest) ProtoMessage() {}
 
 func (x *JoinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cluster_proto_msgTypes[9]
+	mi := &file_proto_cluster_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -673,7 +769,7 @@ func (x *JoinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
 func (*JoinRequest) Descriptor() ([]byte, []int) {
-	return file_proto_cluster_proto_rawDescGZIP(), []int{9}
+	return file_proto_cluster_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *JoinRequest) GetNodeId() string {
@@ -741,7 +837,7 @@ type JoinResponse struct {
 
 func (x *JoinResponse) Reset() {
 	*x = JoinResponse{}
-	mi := &file_proto_cluster_proto_msgTypes[10]
+	mi := &file_proto_cluster_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -753,7 +849,7 @@ func (x *JoinResponse) String() string {
 func (*JoinResponse) ProtoMessage() {}
 
 func (x *JoinResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cluster_proto_msgTypes[10]
+	mi := &file_proto_cluster_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -766,7 +862,7 @@ func (x *JoinResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
 func (*JoinResponse) Descriptor() ([]byte, []int) {
-	return file_proto_cluster_proto_rawDescGZIP(), []int{10}
+	return file_proto_cluster_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *JoinResponse) GetCaCert() []byte {
@@ -837,7 +933,7 @@ type JoinPeer struct {
 
 func (x *JoinPeer) Reset() {
 	*x = JoinPeer{}
-	mi := &file_proto_cluster_proto_msgTypes[11]
+	mi := &file_proto_cluster_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -849,7 +945,7 @@ func (x *JoinPeer) String() string {
 func (*JoinPeer) ProtoMessage() {}
 
 func (x *JoinPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_cluster_proto_msgTypes[11]
+	mi := &file_proto_cluster_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -862,7 +958,7 @@ func (x *JoinPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinPeer.ProtoReflect.Descriptor instead.
 func (*JoinPeer) Descriptor() ([]byte, []int) {
-	return file_proto_cluster_proto_rawDescGZIP(), []int{11}
+	return file_proto_cluster_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *JoinPeer) GetId() string {
@@ -931,7 +1027,14 @@ const file_proto_cluster_proto_rawDesc = "" +
 	"\vErrorDetail\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x0e\n" +
 	"\x02op\x18\x02 \x01(\tR\x02op\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xc2\x01\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\")\n" +
+	"\x0eRemovalRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"K\n" +
+	"\x0fRemovalResponse\x12\x18\n" +
+	"\aremoved\x18\x01 \x01(\bR\aremoved\x12\x1e\n" +
+	"\n" +
+	"revocation\x18\x02 \x01(\fR\n" +
+	"revocation\"\xc2\x01\n" +
 	"\vJoinRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x10\n" +
 	"\x03csr\x18\x02 \x01(\fR\x03csr\x12\x14\n" +
@@ -961,9 +1064,10 @@ const file_proto_cluster_proto_rawDesc = "" +
 	"\n" +
 	"LinearRead\x12%.expanse.cluster.v1.LinearReadRequest\x1a&.expanse.cluster.v1.LinearReadResponse\x12_\n" +
 	"\fRemoveServer\x12'.expanse.cluster.v1.RemoveServerRequest\x1a&.expanse.cluster.v1.MembershipResponse\x12k\n" +
-	"\x12TransferLeadership\x12-.expanse.cluster.v1.LeadershipTransferRequest\x1a&.expanse.cluster.v1.MembershipResponse2X\n" +
+	"\x12TransferLeadership\x12-.expanse.cluster.v1.LeadershipTransferRequest\x1a&.expanse.cluster.v1.MembershipResponse2\xac\x01\n" +
 	"\vJoinService\x12I\n" +
-	"\x04Join\x12\x1f.expanse.cluster.v1.JoinRequest\x1a .expanse.cluster.v1.JoinResponseB\"Z github.com/expanse/expanse/protob\x06proto3"
+	"\x04Join\x12\x1f.expanse.cluster.v1.JoinRequest\x1a .expanse.cluster.v1.JoinResponse\x12R\n" +
+	"\aRemoval\x12\".expanse.cluster.v1.RemovalRequest\x1a#.expanse.cluster.v1.RemovalResponseB\"Z github.com/expanse/expanse/protob\x06proto3"
 
 var (
 	file_proto_cluster_proto_rawDescOnce sync.Once
@@ -977,7 +1081,7 @@ func file_proto_cluster_proto_rawDescGZIP() []byte {
 	return file_proto_cluster_proto_rawDescData
 }
 
-var file_proto_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_proto_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_proto_cluster_proto_goTypes = []any{
 	(*RemoveServerRequest)(nil),       // 0: expanse.cluster.v1.RemoveServerRequest
 	(*LeadershipTransferRequest)(nil), // 1: expanse.cluster.v1.LeadershipTransferRequest
@@ -988,10 +1092,12 @@ var file_proto_cluster_proto_goTypes = []any{
 	(*EntryList)(nil),                 // 6: expanse.cluster.v1.EntryList
 	(*ForwardCommandResponse)(nil),    // 7: expanse.cluster.v1.ForwardCommandResponse
 	(*ErrorDetail)(nil),               // 8: expanse.cluster.v1.ErrorDetail
-	(*JoinRequest)(nil),               // 9: expanse.cluster.v1.JoinRequest
-	(*JoinResponse)(nil),              // 10: expanse.cluster.v1.JoinResponse
-	(*JoinPeer)(nil),                  // 11: expanse.cluster.v1.JoinPeer
-	(*Command)(nil),                   // 12: expanse.store.v1.Command
+	(*RemovalRequest)(nil),            // 9: expanse.cluster.v1.RemovalRequest
+	(*RemovalResponse)(nil),           // 10: expanse.cluster.v1.RemovalResponse
+	(*JoinRequest)(nil),               // 11: expanse.cluster.v1.JoinRequest
+	(*JoinResponse)(nil),              // 12: expanse.cluster.v1.JoinResponse
+	(*JoinPeer)(nil),                  // 13: expanse.cluster.v1.JoinPeer
+	(*Command)(nil),                   // 14: expanse.store.v1.Command
 }
 var file_proto_cluster_proto_depIdxs = []int32{
 	8,  // 0: expanse.cluster.v1.MembershipResponse.error:type_name -> expanse.cluster.v1.ErrorDetail
@@ -1000,19 +1106,21 @@ var file_proto_cluster_proto_depIdxs = []int32{
 	8,  // 3: expanse.cluster.v1.LinearReadResponse.error:type_name -> expanse.cluster.v1.ErrorDetail
 	5,  // 4: expanse.cluster.v1.EntryList.entries:type_name -> expanse.cluster.v1.Entry
 	8,  // 5: expanse.cluster.v1.ForwardCommandResponse.error:type_name -> expanse.cluster.v1.ErrorDetail
-	11, // 6: expanse.cluster.v1.JoinResponse.peers:type_name -> expanse.cluster.v1.JoinPeer
-	12, // 7: expanse.cluster.v1.InternalStoreService.ForwardCommand:input_type -> expanse.store.v1.Command
+	13, // 6: expanse.cluster.v1.JoinResponse.peers:type_name -> expanse.cluster.v1.JoinPeer
+	14, // 7: expanse.cluster.v1.InternalStoreService.ForwardCommand:input_type -> expanse.store.v1.Command
 	3,  // 8: expanse.cluster.v1.InternalStoreService.LinearRead:input_type -> expanse.cluster.v1.LinearReadRequest
 	0,  // 9: expanse.cluster.v1.InternalStoreService.RemoveServer:input_type -> expanse.cluster.v1.RemoveServerRequest
 	1,  // 10: expanse.cluster.v1.InternalStoreService.TransferLeadership:input_type -> expanse.cluster.v1.LeadershipTransferRequest
-	9,  // 11: expanse.cluster.v1.JoinService.Join:input_type -> expanse.cluster.v1.JoinRequest
-	7,  // 12: expanse.cluster.v1.InternalStoreService.ForwardCommand:output_type -> expanse.cluster.v1.ForwardCommandResponse
-	4,  // 13: expanse.cluster.v1.InternalStoreService.LinearRead:output_type -> expanse.cluster.v1.LinearReadResponse
-	2,  // 14: expanse.cluster.v1.InternalStoreService.RemoveServer:output_type -> expanse.cluster.v1.MembershipResponse
-	2,  // 15: expanse.cluster.v1.InternalStoreService.TransferLeadership:output_type -> expanse.cluster.v1.MembershipResponse
-	10, // 16: expanse.cluster.v1.JoinService.Join:output_type -> expanse.cluster.v1.JoinResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
+	11, // 11: expanse.cluster.v1.JoinService.Join:input_type -> expanse.cluster.v1.JoinRequest
+	9,  // 12: expanse.cluster.v1.JoinService.Removal:input_type -> expanse.cluster.v1.RemovalRequest
+	7,  // 13: expanse.cluster.v1.InternalStoreService.ForwardCommand:output_type -> expanse.cluster.v1.ForwardCommandResponse
+	4,  // 14: expanse.cluster.v1.InternalStoreService.LinearRead:output_type -> expanse.cluster.v1.LinearReadResponse
+	2,  // 15: expanse.cluster.v1.InternalStoreService.RemoveServer:output_type -> expanse.cluster.v1.MembershipResponse
+	2,  // 16: expanse.cluster.v1.InternalStoreService.TransferLeadership:output_type -> expanse.cluster.v1.MembershipResponse
+	12, // 17: expanse.cluster.v1.JoinService.Join:output_type -> expanse.cluster.v1.JoinResponse
+	10, // 18: expanse.cluster.v1.JoinService.Removal:output_type -> expanse.cluster.v1.RemovalResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
 	7,  // [7:7] is the sub-list for extension type_name
 	7,  // [7:7] is the sub-list for extension extendee
 	0,  // [0:7] is the sub-list for field type_name
@@ -1045,7 +1153,7 @@ func file_proto_cluster_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_cluster_proto_rawDesc), len(file_proto_cluster_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

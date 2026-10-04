@@ -259,7 +259,8 @@ var InternalStoreService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	JoinService_Join_FullMethodName = "/expanse.cluster.v1.JoinService/Join"
+	JoinService_Join_FullMethodName    = "/expanse.cluster.v1.JoinService/Join"
+	JoinService_Removal_FullMethodName = "/expanse.cluster.v1.JoinService/Removal"
 )
 
 // JoinServiceClient is the client API for JoinService service.
@@ -277,6 +278,9 @@ type JoinServiceClient interface {
 	// the same single-use token cannot both succeed (§10 "Join race on
 	// the same token").
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
+	// Removal: whether node_id was removed, from a linearizable read, so a node
+	// cut off while it was removed can still learn of it (no client cert needed).
+	Removal(ctx context.Context, in *RemovalRequest, opts ...grpc.CallOption) (*RemovalResponse, error)
 }
 
 type joinServiceClient struct {
@@ -291,6 +295,16 @@ func (c *joinServiceClient) Join(ctx context.Context, in *JoinRequest, opts ...g
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JoinResponse)
 	err := c.cc.Invoke(ctx, JoinService_Join_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *joinServiceClient) Removal(ctx context.Context, in *RemovalRequest, opts ...grpc.CallOption) (*RemovalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemovalResponse)
+	err := c.cc.Invoke(ctx, JoinService_Removal_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -312,6 +326,9 @@ type JoinServiceServer interface {
 	// the same single-use token cannot both succeed (§10 "Join race on
 	// the same token").
 	Join(context.Context, *JoinRequest) (*JoinResponse, error)
+	// Removal: whether node_id was removed, from a linearizable read, so a node
+	// cut off while it was removed can still learn of it (no client cert needed).
+	Removal(context.Context, *RemovalRequest) (*RemovalResponse, error)
 	mustEmbedUnimplementedJoinServiceServer()
 }
 
@@ -324,6 +341,9 @@ type UnimplementedJoinServiceServer struct{}
 
 func (UnimplementedJoinServiceServer) Join(context.Context, *JoinRequest) (*JoinResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Join not implemented")
+}
+func (UnimplementedJoinServiceServer) Removal(context.Context, *RemovalRequest) (*RemovalResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Removal not implemented")
 }
 func (UnimplementedJoinServiceServer) mustEmbedUnimplementedJoinServiceServer() {}
 func (UnimplementedJoinServiceServer) testEmbeddedByValue()                     {}
@@ -364,6 +384,24 @@ func _JoinService_Join_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _JoinService_Removal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemovalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(JoinServiceServer).Removal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: JoinService_Removal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(JoinServiceServer).Removal(ctx, req.(*RemovalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // JoinService_ServiceDesc is the grpc.ServiceDesc for JoinService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -374,6 +412,10 @@ var JoinService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Join",
 			Handler:    _JoinService_Join_Handler,
+		},
+		{
+			MethodName: "Removal",
+			Handler:    _JoinService_Removal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

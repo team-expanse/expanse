@@ -226,6 +226,9 @@ type Agent struct {
 	removed  atomic.Bool  // the node was removed from its cluster
 	shutdown atomic.Value // chan struct{}
 	stopFn   func()
+
+	// askPeers asks the cluster whether this node was removed; nil when single-node.
+	askPeers func(context.Context) (*nodelc.Revocation, error)
 }
 
 // New creates the agent: opens the store, registers managers, wires
@@ -360,6 +363,9 @@ func New(cfg Config) (*Agent, error) {
 		invMu:  sync.Mutex{},
 	}
 	a.status.Store("starting")
+	if ctl != nil {
+		a.askPeers = ctl.askRemoval
+	}
 
 	// Reconciler + managers.
 	r := reconcile.New(st, reconcile.Options{
