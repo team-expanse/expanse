@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 
 	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
@@ -27,9 +26,6 @@ const Type = "volume-mount"
 
 // DefaultBase is the host mount root for volume devices.
 const DefaultBase = "/var/lib/expanse/volumes"
-
-// unmountGrace is how long a busy mount is given before it is detached lazily.
-const unmountGrace = 5 * time.Second
 
 // blankProbeBytes is how much of the device must read as zero before it may be formatted.
 const blankProbeBytes = 1 << 20
@@ -86,10 +82,9 @@ type Volumes interface {
 
 // Manager converges volume-mount resources.
 type Manager struct {
-	Base  string // host mount root (default DefaultBase)
-	Run   Runner
-	DRBD  Volumes
-	Grace time.Duration // wait before a busy unmount goes lazy
+	Base string // host mount root (default DefaultBase)
+	Run  Runner
+	DRBD Volumes
 }
 
 // New builds the manager; a nil runner shells out.
@@ -97,7 +92,7 @@ func New(runner Runner, dr Volumes, base string) *Manager {
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	return &Manager{Base: base, Run: runner, DRBD: dr, Grace: unmountGrace}
+	return &Manager{Base: base, Run: runner, DRBD: dr}
 }
 
 // HostPath is the canonical host mount point for a volume's device.
@@ -234,22 +229,15 @@ func (m *Manager) Delete(ctx context.Context, r reconcile.Resource) error {
 }
 
 // Release unmounts a volume, and succeeds when it is not mounted. It is the
-// volume.Consumer the promoter runs before every demotion.
+// volume.Consumer the promoter runs before every demotion. A busy mount stays put:
+// detaching it lazily would hide the volume from the workload still using it.
 func (m *Manager) Release(ctx context.Context, volID string) error {
 	host := HostPath(m.Base, volID)
 	src, err := m.mountedFrom(ctx, host)
 	if err != nil || src == "" {
 		return err
 	}
-	if _, err := m.Run.Run(ctx, "umount", host); err == nil {
-		return nil
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(m.Grace):
-	}
-	if _, err := m.Run.Run(ctx, "umount", "-l", host); err != nil {
+	if _, err := m.Run.Run(ctx, "umount", host); err != nil {
 		return fmt.Errorf("umount %s: %w", host, err)
 	}
 	return nil

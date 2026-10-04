@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
@@ -107,9 +106,7 @@ func (f fakeDRBD) Status(context.Context, string) (*drbd.Status, error) {
 }
 
 func manager(h *fakeHost, role drbd.Role) *Manager {
-	m := New(h, fakeDRBD{role: role}, "")
-	m.Grace = time.Millisecond
-	return m
+	return New(h, fakeDRBD{role: role}, "")
 }
 
 func spec(fs string) Resource {
@@ -359,33 +356,19 @@ func TestReleaseOfAnUnmountedVolumeRunsNoUnmount(t *testing.T) {
 	}
 }
 
-func TestReleaseFallsBackToALazyUnmountWhenBusy(t *testing.T) {
+// A lazy unmount would hide the volume from a workload still running on it.
+func TestReleaseOfABusyMountFailsAndKeepsItMounted(t *testing.T) {
 	h := newHost()
 	h.busy = true
 	m := manager(h, drbd.RolePrimary)
 	if err := m.attach(context.Background(), spec("ext4")); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Release(context.Background(), volID); err != nil {
-		t.Fatal(err)
+	if err := m.Release(context.Background(), volID); err == nil {
+		t.Fatal("releasing a busy mount must fail")
 	}
-	if !h.ran("umount -l "+HostPath("", volID)) || len(h.mounted) != 0 {
-		t.Fatalf("lazy fallback not used: %v", h.calls)
-	}
-}
-
-func TestReleaseStopsWaitingWhenCancelled(t *testing.T) {
-	h := newHost()
-	h.busy = true
-	m := manager(h, drbd.RolePrimary)
-	m.Grace = time.Minute
-	if err := m.attach(context.Background(), spec("ext4")); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := m.Release(ctx, volID); err == nil {
-		t.Fatal("a cancelled release must report failure")
+	if h.ran("umount -l") || len(h.mounted) != 1 {
+		t.Fatalf("busy mount was detached: %v", h.calls)
 	}
 }
 

@@ -20,10 +20,11 @@ History before 1.0.0 is not recorded here.
   have no spare and behave as before. See `docs/STORAGE.md` §8 and, for
   mixed-version clusters, `docs/UPGRADE.md`.
 - A postgres primary cut off by a network partition now rejoins as a
-  replica once the network heals. Its volume could not be released while
-  postgres still had it open, and the agent kept retrying that release
-  forever, unmounting the filesystem each time, so postgres was never told
-  to step down. The node now keeps the volume once its lease is free again.
+  replica once the network heals. While postgres still had its volume
+  open, the agent detached the filesystem from under it and then retried
+  the release forever, so postgres never saw the role change telling it to
+  step down. A busy volume now stays mounted, and the node takes it back
+  once its lease is free again.
 
 ### Added
 
