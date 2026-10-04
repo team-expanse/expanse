@@ -190,6 +190,8 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	resize.Flags().StringVar(&sizeStr, "size", "", "new size (e.g. 20Gi)")
 
 	var snapName, restoreName string
+	var noWait bool
+	var waitTimeout time.Duration
 	snapshot := &cobra.Command{
 		Use:   "snapshot <name>",
 		Short: "Snapshot a volume on its primary node (crash-consistent)",
@@ -206,12 +208,24 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 				if err := putOp(ctx, cl, "snapshot", v.id, map[string]string{"target": args[0], "name": snapName}); err != nil {
 					return err
 				}
-				fmt.Fprintf(c.OutOrStdout(), "snapshot %q of volume %q requested; it is taken on the primary (%s)\n", snapName, args[0], v.st.GetPrimary())
+				if noWait {
+					fmt.Fprintf(c.OutOrStdout(), "snapshot %q of volume %q requested; it is taken on the primary (%s)\n", snapName, args[0], v.st.GetPrimary())
+					return nil
+				}
+				waitCtx, cancel := context.WithTimeout(c.Context(), waitTimeout)
+				defer cancel()
+				node, err := waitForSnapshot(waitCtx, cl, v, snapName)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(c.OutOrStdout(), "snapshot %q of volume %q taken on %s\n", snapName, args[0], node)
 				return nil
 			})
 		},
 	}
 	snapshot.Flags().StringVar(&snapName, "name", "", "snapshot name (lowercase letters, digits, dashes)")
+	snapshot.Flags().BoolVar(&noWait, "no-wait", false, "return once the request is queued, before the primary takes the snapshot")
+	snapshot.Flags().DurationVar(&waitTimeout, "wait-timeout", 2*time.Minute, "how long to wait for the primary to take the snapshot")
 
 	restore := &cobra.Command{
 		Use:   "restore <name>",
@@ -296,6 +310,41 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 	move.Flags().StringVar(&toNode, "to", "", "destination node (must hold a replica)")
 
 	return append([]*cobra.Command{del, resize, snapshot, restore, insp, move, diverged}, append(newVolumeCheckCmds(opts), newVolumeLostCmds(opts)...)...)
+}
+
+// snapshotPoll is how often the CLI looks for a requested snapshot.
+const snapshotPoll = 250 * time.Millisecond
+
+// waitForSnapshot waits for the primary to carry out a snapshot request and names the
+// node holding it. The node records the snapshot before dropping the request, so a
+// request gone with no record was refused.
+func waitForSnapshot(ctx context.Context, cl pb.NodeServiceClient, v *volEntry, name string) (string, error) {
+	for {
+		pending, err := cl.GetKeyValue(ctx, &pb.GetKeyValueRequest{Key: "/volumes/_ops/snapshot/" + v.id})
+		if err == nil && !pending.GetFound() {
+			return snapshotHolder(ctx, cl, v, name)
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("snapshot %q of volume %q is still queued: the primary (%s) has not taken it yet; "+
+				"it is taken when the primary gets to it, and `volume inspect %s` lists it then", name, nameOf(v), v.st.GetPrimary(), nameOf(v))
+		case <-time.After(snapshotPoll):
+		}
+	}
+}
+
+// snapshotHolder reads which node recorded a snapshot once its request is done.
+func snapshotHolder(ctx context.Context, cl pb.NodeServiceClient, v *volEntry, name string) (string, error) {
+	res, err := cl.GetKeyValue(ctx, &pb.GetKeyValueRequest{Key: "/volumes/" + v.id + "/snapshots/" + name})
+	if err != nil {
+		return "", err
+	}
+	var r storage.SnapshotRecord
+	if !res.GetFound() || json.Unmarshal(res.GetValue(), &r) != nil {
+		return "", fmt.Errorf("the primary (%s) refused snapshot %q of volume %q; its agent log says why (journalctl -u expansed)",
+			v.st.GetPrimary(), name, nameOf(v))
+	}
+	return r.Node, nil
 }
 
 func (v *volEntry) snapshot(name string) (storage.SnapshotRecord, bool) {

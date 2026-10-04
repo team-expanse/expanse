@@ -75,6 +75,9 @@ not a live read:
 expanse ctl volume snapshot <volume-name> --name <snapshot-name>
 ```
 
+The command returns once the primary has taken the snapshot, and names the node that holds it
+(`--no-wait` returns as soon as the request is queued; `--wait-timeout` sets how long to wait).
+
 A thin snapshot LV starts inactive; activate it before reading:
 
 ```sh

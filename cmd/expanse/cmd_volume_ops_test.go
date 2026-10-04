@@ -24,6 +24,8 @@ type fakeStore struct {
 	pb.UnimplementedNodeServiceServer
 	kv   map[string][]byte
 	puts []string // keys in the order they were written
+	// onPut, when set, plays the agent's part after each write.
+	onPut func(key string)
 }
 
 func (f *fakeStore) GetKeyValue(_ context.Context, r *pb.GetKeyValueRequest) (*pb.GetKeyValueResponse, error) {
@@ -37,6 +39,9 @@ func (f *fakeStore) GetKeyValue(_ context.Context, r *pb.GetKeyValueRequest) (*p
 func (f *fakeStore) PutKeyValue(_ context.Context, r *pb.PutKeyValueRequest) (*pb.PutKeyValueResponse, error) {
 	f.kv[r.GetKey()] = r.GetValue()
 	f.puts = append(f.puts, r.GetKey())
+	if f.onPut != nil {
+		f.onPut(r.GetKey())
+	}
 	return &pb.PutKeyValueResponse{}, nil
 }
 
@@ -284,11 +289,56 @@ func snapStore(t *testing.T, held map[string]string) *fakeStore {
 
 func TestSnapshotQueuesAnOpNamingTheSnapshot(t *testing.T) {
 	fs := snapStore(t, nil)
-	if err := runVolume(t, fs, "snapshot", "db", "--name", "before"); err != nil {
+	if err := runVolume(t, fs, "snapshot", "db", "--name", "before", "--no-wait"); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := string(fs.kv["/volumes/_ops/snapshot/vol-abc"]), `"name":"before"`; !strings.Contains(got, want) {
 		t.Errorf("op %q lacks %s", got, want)
+	}
+}
+
+const snapOpKey = "/volumes/_ops/snapshot/vol-abc"
+
+// primaryTakes makes the fake agent carry out a snapshot request: it records the
+// snapshot when take is true, and drops the request either way, as the node does.
+func primaryTakes(fs *fakeStore, take bool) {
+	fs.onPut = func(key string) {
+		if key != snapOpKey {
+			return
+		}
+		if take {
+			fs.kv["/volumes/vol-abc/snapshots/before"] = []byte(`{"name":"before","node":"n1"}`)
+		}
+		delete(fs.kv, snapOpKey)
+	}
+}
+
+func TestSnapshotWaitsUntilThePrimaryHasTakenIt(t *testing.T) {
+	fs := snapStore(t, nil)
+	primaryTakes(fs, true)
+	out := runVolumeOut(t, fs, "snapshot", "db", "--name", "before")
+	if !strings.Contains(out, `snapshot "before" of volume "db" taken on n1`) {
+		t.Errorf("output %q does not say the snapshot was taken on n1", out)
+	}
+}
+
+func TestSnapshotFailsWhenThePrimaryDropsTheRequestWithoutTakingIt(t *testing.T) {
+	fs := snapStore(t, nil)
+	primaryTakes(fs, false)
+	err := runVolume(t, fs, "snapshot", "db", "--name", "before")
+	if err == nil || !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "n1") {
+		t.Errorf("want a refusal naming the primary n1, got %v", err)
+	}
+}
+
+func TestSnapshotGivesUpWaitingButLeavesTheRequestQueued(t *testing.T) {
+	fs := snapStore(t, nil)
+	err := runVolume(t, fs, "snapshot", "db", "--name", "before", "--wait-timeout", "300ms")
+	if err == nil || !strings.Contains(err.Error(), "still queued") {
+		t.Errorf("want a still-queued error, got %v", err)
+	}
+	if _, ok := fs.kv[snapOpKey]; !ok {
+		t.Error("the request was withdrawn; it should stay queued for the primary")
 	}
 }
 

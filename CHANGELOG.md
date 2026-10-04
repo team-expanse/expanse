@@ -6,6 +6,17 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- `expanse ctl volume snapshot` now waits until the primary has taken the
+  snapshot and names the node that holds it. It used to return as soon as
+  the request was queued, so a script could read or back up a snapshot
+  that did not exist yet, and a refused request went unnoticed. It reports
+  a refusal, and a request still queued after `--wait-timeout` (2m).
+  `--no-wait` keeps the old behaviour.
+
 ## 1.2.4 - 2026-10-03
 
 ### Fixed

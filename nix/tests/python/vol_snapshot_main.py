@@ -45,8 +45,10 @@ with subtest("volume created, replicated and holding A"):
     ref_a = checksum(primary, dev, SIZE_MIB)
 
 with subtest("snapshot: recorded, held by the primary, an LV on it"):
-    n1.succeed("expanse ctl volume snapshot vsnap --name snapa")
-    wait_for(lambda: snapshot_listed(n1), "the snapshot to be recorded", 60)
+    # The command returns only once the primary has taken the snapshot.
+    out = n1.succeed("expanse ctl volume snapshot vsnap --name snapa")
+    assert f"taken on {primary.name}" in out, f"snapshot output does not name the primary {primary.name}:\n{out}"
+    assert snapshot_listed(n1), "the command returned before the snapshot was recorded"
     inspect = n1.succeed("expanse ctl volume inspect vsnap")
     assert re.search(rf"{SNAP}\s+{primary.name}\b", inspect), f"snapshot not held by the primary {primary.name}:\n{inspect}"
     origin = primary.succeed(f"lvs --noheadings -o origin {VG}/{res}-snap-{SNAP}").strip()
