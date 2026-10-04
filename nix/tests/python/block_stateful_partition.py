@@ -75,6 +75,10 @@ with subtest("a SINGLETON block holds its replication-2 volume open on one node"
     # The third node joins as a diskless tiebreaker, which turns DRBD quorum on.
     wait_for(lambda: "peer-disk:Diskless" in drbd_status(host, res), "a connected tiebreaker", 120)
     print(f"[{host.name}] drbd with tiebreaker:\n{drbd_status(host, res)}")
+    spare = next(m for m in NODES if m.name not in volume_row(n1, VOL)["nodes"])
+    inspect = n1.succeed(f"expanse ctl volume inspect {VOL} 2>&1")
+    if f"tiebreaker: {spare.name}" not in inspect:
+        raise AssertionError(f"inspect does not name {spare.name} as the tiebreaker:\n{inspect}")
     majority = [m for m in NODES if m is not host]
     for m in NODES:
         start_recorder(m)
