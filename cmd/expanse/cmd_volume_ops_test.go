@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	pbproto "google.golang.org/protobuf/proto"
 
 	"github.com/expanse/expanse/internal/storage"
+	"github.com/expanse/expanse/internal/testsock"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -59,8 +59,7 @@ func (f *fakeStore) ListKeyValue(_ context.Context, r *pb.ListKeyValueRequest) (
 // it plus a shutdown func.
 func serveCLI(t *testing.T, store *fakeStore) (*ctlOpts, func()) {
 	t.Helper()
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "agent.sock")
+	sock := testsock.Path(t, "agent.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

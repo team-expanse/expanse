@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 // unitManager stands in for the block units a node runs, and counts what is torn down.
@@ -39,7 +39,7 @@ func (m *unitManager) Delete(context.Context, reconcile.Resource) error {
 
 func newRemovableAgent(t *testing.T, dir string) (*Agent, *unitManager) {
 	t.Helper()
-	a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: filepath.Join(dir, "a.sock")})
+	a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: testsock.Path(t, "a.sock")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +70,9 @@ func runUntilStopped(t *testing.T, a *Agent) error {
 }
 
 func TestARemovedNodeTearsDownItsWorkloadsAndStops(t *testing.T) {
-	defer func(d time.Duration) { removalPoll = d }(removalPoll)
-	removalPoll = 50 * time.Millisecond
 	dir := t.TempDir()
 	a, m := newRemovableAgent(t, dir)
+	a.removalPoll = 50 * time.Millisecond
 	if _, err := a.store.Put(context.Background(), a.recon.DesiredPrefix()+"web-0", []byte("type: unit\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -91,9 +90,8 @@ func TestARemovedNodeTearsDownItsWorkloadsAndStops(t *testing.T) {
 }
 
 func TestAnotherNodesRevocationLeavesThisOneRunning(t *testing.T) {
-	defer func(d time.Duration) { removalPoll = d }(removalPoll)
-	removalPoll = 50 * time.Millisecond
 	a, _ := newRemovableAgent(t, t.TempDir())
+	a.removalPoll = 50 * time.Millisecond
 	revoke(t, a.store, "n2")
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -121,17 +119,14 @@ func TestANodeNeverRemovedHasNoMarker(t *testing.T) {
 }
 
 // fastRemovalChecks makes the agent look for its removal, locally and with its peers, at once.
-func fastRemovalChecks(t *testing.T) {
-	t.Helper()
-	poll, ask := removalPoll, removalAsk
-	t.Cleanup(func() { removalPoll, removalAsk = poll, ask })
-	removalPoll, removalAsk = 50*time.Millisecond, 50*time.Millisecond
+func fastRemovalChecks(a *Agent) {
+	a.removalPoll, a.removalAsk = 50*time.Millisecond, 50*time.Millisecond
 }
 
 func TestANodeCutOffWhileItWasRemovedLearnsItFromAPeerAndStops(t *testing.T) {
-	fastRemovalChecks(t)
 	dir := t.TempDir()
 	a, m := newRemovableAgent(t, dir)
+	fastRemovalChecks(a)
 	if _, err := a.store.Put(context.Background(), a.recon.DesiredPrefix()+"web-0", []byte("type: unit\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -150,8 +145,8 @@ func TestANodeCutOffWhileItWasRemovedLearnsItFromAPeerAndStops(t *testing.T) {
 }
 
 func TestANodeWhosePeersCannotAnswerKeepsRunning(t *testing.T) {
-	fastRemovalChecks(t)
 	a, m := newRemovableAgent(t, t.TempDir())
+	fastRemovalChecks(a)
 	var asked atomic.Int32
 	a.askPeers = func(context.Context) (*nodelc.Revocation, error) {
 		asked.Add(1)
@@ -168,9 +163,9 @@ func TestANodeWhosePeersCannotAnswerKeepsRunning(t *testing.T) {
 }
 
 func TestPeersAreAskedAtMostOncePerInterval(t *testing.T) {
-	fastRemovalChecks(t)
-	removalAsk = time.Hour
 	a, _ := newRemovableAgent(t, t.TempDir())
+	fastRemovalChecks(a)
+	a.removalAsk = time.Hour
 	var asked atomic.Int32
 	a.askPeers = func(context.Context) (*nodelc.Revocation, error) {
 		asked.Add(1)

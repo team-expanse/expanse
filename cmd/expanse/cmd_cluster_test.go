@@ -2,13 +2,14 @@ package main
 
 import (
 	"net"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 func TestInitRefusesWhileTheAgentRuns(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := testsock.Path(t, "agent.sock")
 	if err := refuseIfAgentRunning(sock); err != nil {
 		t.Fatalf("no agent listening, got %v", err)
 	}

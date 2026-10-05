@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/blocks/wire"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	"github.com/expanse/expanse/internal/testsock"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -55,7 +55,7 @@ func TestBlockAPIServedOnAgentSocket(t *testing.T) {
 	})
 	blk.Nodes = wire.Nodes(st)
 
-	socket := filepath.Join(t.TempDir(), "agent.sock")
+	socket := testsock.Path(t, "agent.sock")
 	srv := NewServer(nil /* agent: unused by block RPCs */, st,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv.Blocks = blk

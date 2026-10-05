@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/testsock"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -45,7 +46,7 @@ func (f *fakeAgent) TransferLeadership(_ context.Context, r *pb.TransferLeadersh
 // serveFakeAgent serves f on a unix socket and returns its path.
 func serveFakeAgent(t *testing.T, f *fakeAgent) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := testsock.Path(t, "agent.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +114,7 @@ func TestTransferLeadershipNamesTheNewLeader(t *testing.T) {
 
 func TestTokenCreateWithoutAnAgentOpensTheStore(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(dir, strings.Repeat("t", 100))) // too long for a socket path
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +129,7 @@ func TestTokenCreateWithoutAnAgentOpensTheStore(t *testing.T) {
 	}
 	_ = res.Store.Close()
 
-	noAgent := filepath.Join(t.TempDir(), "agent.sock")
+	noAgent := testsock.Path(t, "agent.sock")
 	out := run(t, newClusterTokenCmd(), "create", "--socket", noAgent, "--data-dir", dir)
 	if !strings.HasPrefix(strings.TrimSpace(out), "expanse-join-") {
 		t.Errorf("output = %q, want a join token", out)

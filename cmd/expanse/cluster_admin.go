@@ -65,7 +65,7 @@ func serveOfflineAPI(ctx context.Context, dataDir, nodeID string) (string, func(
 		closeStore()
 		return "", nil, fmt.Errorf("no leader reachable within 30s (quorum unavailable?)")
 	}
-	dir, err := os.MkdirTemp("", "expanse-cli-")
+	dir, err := os.MkdirTemp("/tmp", "expanse-cli-") // not TMPDIR: a long one overflows the socket path
 	if err != nil {
 		closeStore()
 		return "", nil, err

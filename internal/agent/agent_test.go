@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/expanse/expanse/internal/testsock"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -23,7 +24,7 @@ func startTestAgent(t *testing.T) (pb.NodeServiceClient, func()) {
 	cfg := Config{
 		NodeID:  "test-node",
 		DataDir: dir,
-		Socket:  filepath.Join(dir, "run", "agent.sock"),
+		Socket:  testsock.Path(t, "agent.sock"),
 		Period:  10 * time.Second, // slow: tests drive ticks explicitly
 	}
 	a, err := New(cfg)
@@ -280,7 +281,7 @@ func TestVolumeStorageIsWiredOnlyWhenAVolumeGroupIsConfigured(t *testing.T) {
 	newAgent := func(vg string) *Agent {
 		t.Helper()
 		dir := t.TempDir()
-		a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: filepath.Join(dir, "a.sock"), StorageVG: vg})
+		a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: testsock.Path(t, "a.sock"), StorageVG: vg})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +310,7 @@ func (s *slowStopper) Run(ctx context.Context, _ time.Duration) {
 
 func TestRunWaitsForTheVolumeNodeToStopBeforeReturning(t *testing.T) {
 	dir := t.TempDir()
-	a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: filepath.Join(dir, "a.sock"), StorageVG: "vg0"})
+	a, err := New(Config{NodeID: "n1", DataDir: dir, Socket: testsock.Path(t, "a.sock"), StorageVG: "vg0"})
 	if err != nil {
 		t.Fatal(err)
 	}

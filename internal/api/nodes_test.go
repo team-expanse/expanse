@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	"github.com/expanse/expanse/internal/testsock"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -56,7 +56,7 @@ func serveNodeAPI(t *testing.T, ids ...string) pb.NodeServiceClient {
 		t.Fatalf("init CA trust: %v", err)
 	}
 
-	socket := filepath.Join(t.TempDir(), "agent.sock")
+	socket := testsock.Path(t, "agent.sock")
 	srv := NewServer(nil, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv.Cluster = &ClusterIdentity{ID: testClusterID, Secret: secret}
 	go func() { _ = srv.Serve(ctx, socket) }()
