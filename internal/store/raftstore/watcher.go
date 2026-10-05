@@ -78,6 +78,7 @@ func (w *watchBroadcaster) broadcast(events []store.Event) {
 		if wd.closed {
 			continue
 		}
+	events:
 		for _, ev := range events {
 			var key []byte
 			if ev.Entry != nil {
@@ -94,7 +95,7 @@ func (w *watchBroadcaster) broadcast(events []store.Event) {
 				wd.closed = true
 				close(wd.ch)
 				delete(w.watchers, wd)
-				break
+				break events
 			}
 		}
 	}
