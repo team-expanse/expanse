@@ -6,6 +6,23 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.2.6 - 2026-10-05
+
+### Fixed
+
+- A replica of a block with storage is no longer replaced on another node
+  unless some other node holds a healthy copy of its volume. The check
+  always passed before, so a replica on a failed node could be restarted
+  elsewhere with no data, for example a postgres replica, whose volumes
+  are not replicated. Such a replica now waits, keeping its place, and
+  starts again when its node comes back; it also stays on a draining node
+  for the same reason. The block reports "waiting for another node to
+  hold a healthy copy of the volumes".
+- A block that lists `spec.secrets` is now refused with "secrets are not
+  supported yet". It used to be accepted, but nothing stored or delivered
+  the secrets, so the workload started without them. Remove the entries
+  to apply the block.
+
 ## 1.2.5 - 2026-10-04
 
 ### Fixed
