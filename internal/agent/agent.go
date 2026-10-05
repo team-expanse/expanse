@@ -229,6 +229,8 @@ type Agent struct {
 
 	// askPeers asks the cluster whether this node was removed; nil when single-node.
 	askPeers func(context.Context) (*nodelc.Revocation, error)
+	// removalPoll and removalAsk pace watchRemoval: the local check and asking the peers.
+	removalPoll, removalAsk time.Duration
 }
 
 // New creates the agent: opens the store, registers managers, wires
@@ -361,6 +363,9 @@ func New(cfg Config) (*Agent, error) {
 		ctl:    ctl,
 		logger: logger,
 		invMu:  sync.Mutex{},
+
+		removalPoll: defaultRemovalPoll,
+		removalAsk:  defaultRemovalAsk,
 	}
 	a.status.Store("starting")
 	if ctl != nil {

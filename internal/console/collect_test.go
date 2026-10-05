@@ -70,7 +70,7 @@ func TestParseStatusValue(t *testing.T) {
 
 func TestHeartbeatGivesHealthWithoutRunningChecks(t *testing.T) {
 	f := &fakeAgent{statusValue: "health=healthy", clusterErr: status.Error(codes.FailedPrecondition, "not a cluster-mode agent")}
-	c := &Collector{Options: Options{Timeout: time.Second}}
+	c := &Collector{Options: Options{Timeout: time.Second}, checksAt: time.Now()} // cached: no background fetch
 	var in Info
 	in.NodeID = "n1"
 	c.collectAgent(context.Background(), f, &in)

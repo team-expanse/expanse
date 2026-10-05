@@ -27,16 +27,16 @@ const ExitRemoved = 78
 // removedMarker, in the data dir, keeps a removed node's agent from starting again.
 const removedMarker = "removed.json"
 
-// removalPoll is how often the agent looks for its own revocation.
-var removalPoll = 5 * time.Second
+// defaultRemovalPoll is how often the agent looks for its own revocation.
+const defaultRemovalPoll = 5 * time.Second
 
-// removalAsk is how often the agent asks its peers whether it was removed.
-var removalAsk = 30 * time.Second
+// defaultRemovalAsk is how often the agent asks its peers whether it was removed.
+const defaultRemovalAsk = 30 * time.Second
 
 // watchRemoval looks for this node's revocation in the local store copy, which a
 // removed node still has, and else asks its peers; it retires the node once found.
 func (a *Agent) watchRemoval(ctx context.Context) {
-	t := time.NewTicker(removalPoll)
+	t := time.NewTicker(a.removalPoll)
 	defer t.Stop()
 	var asked time.Time
 	for {
@@ -46,7 +46,7 @@ func (a *Agent) watchRemoval(ctx context.Context) {
 		case <-t.C:
 		}
 		rev := a.revocation(ctx)
-		if rev == nil && a.askPeers != nil && time.Since(asked) >= removalAsk {
+		if rev == nil && a.askPeers != nil && time.Since(asked) >= a.removalAsk {
 			asked = time.Now()
 			rev = a.peersRevocation(ctx)
 		}

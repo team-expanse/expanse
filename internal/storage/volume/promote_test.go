@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -67,7 +68,12 @@ func (g *gateDRBD) Status(context.Context, string) (*drbd.Status, error) {
 	if g.missing {
 		return nil, experrors.New(experrors.KindNotFound, "fake", "not configured")
 	}
-	cp := g.st
+	cp := g.st // clone the slices: set() mutates them after we unlock
+	cp.Volumes = slices.Clone(g.st.Volumes)
+	cp.Peers = slices.Clone(g.st.Peers)
+	for i := range cp.Peers {
+		cp.Peers[i].Volumes = slices.Clone(cp.Peers[i].Volumes)
+	}
 	return &cp, nil
 }
 
