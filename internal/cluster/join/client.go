@@ -32,7 +32,8 @@ func (c *Client) ClientTLSConfig() *tls.Config {
 	fp := c.CAFingerprint
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, //nolint:gosec — verified in VerifyPeerCertificate when pinned
+		InsecureSkipVerify: true, //nolint:gosec // verified in VerifyPeerCertificate when pinned
+		// No ClientSessionCache: every join is a full handshake, so this callback always runs.
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			if fp == "" {
 				return nil // TOFU

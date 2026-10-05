@@ -304,7 +304,7 @@ func (b *Bundle) VerifyNode(cert *x509.Certificate, now time.Time) error {
 	return nil
 }
 
-// VerifyPeerCN returns a tls.VerifyPeerCertificate callback that checks the
+// VerifyPeerCN returns a peer-certificate check (install it with OnEveryHandshake) that checks the
 // leaf certificate's Common Name against the currently known node IDs.
 // Membership changes take effect on the next handshake without restarting
 // the listener. Chain and expiry verification are still performed by the
@@ -332,12 +332,24 @@ func VerifyPeerCN(knownNodes func() []string) func([][]byte, [][]*x509.Certifica
 // CA(s) on both sides, plus the CN-membership check.
 func TLSConfig(bundle *Bundle, ownCert tls.Certificate, knownNodes func() []string) *tls.Config {
 	return &tls.Config{
-		MinVersion:            tls.VersionTLS13,
-		ClientAuth:            tls.RequireAndVerifyClientCert,
-		ClientCAs:             bundle.Pool(),
-		RootCAs:               bundle.Pool(),
-		Certificates:          []tls.Certificate{ownCert},
-		VerifyPeerCertificate: VerifyPeerCN(knownNodes),
+		MinVersion:       tls.VersionTLS13,
+		ClientAuth:       tls.RequireAndVerifyClientCert,
+		ClientCAs:        bundle.Pool(),
+		RootCAs:          bundle.Pool(),
+		Certificates:     []tls.Certificate{ownCert},
+		VerifyConnection: OnEveryHandshake(VerifyPeerCN(knownNodes)),
+	}
+}
+
+// OnEveryHandshake adapts a peer-certificate check to VerifyConnection, which unlike
+// VerifyPeerCertificate also runs on a resumed session (a removed node's old ticket).
+func OnEveryHandshake(check func([][]byte, [][]*x509.Certificate) error) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		raw := make([][]byte, len(cs.PeerCertificates))
+		for i, c := range cs.PeerCertificates {
+			raw[i] = c.Raw
+		}
+		return check(raw, cs.VerifiedChains)
 	}
 }
 
@@ -371,7 +383,7 @@ func TLSConfigDynamic(bundle BundleSource, cert CertSource, knownNodes func() []
 		cfg := base.Clone()
 		cfg.ClientCAs = b.Pool()
 		cfg.RootCAs = b.Pool()
-		cfg.VerifyPeerCertificate = VerifyPeerCN(knownNodes)
+		cfg.VerifyConnection = OnEveryHandshake(VerifyPeerCN(knownNodes))
 		return cfg, nil
 	}
 	return base
@@ -381,10 +393,10 @@ func TLSConfigDynamic(bundle BundleSource, cert CertSource, knownNodes func() []
 // identity and trust bundle as TLSConfigDynamic (see its doc).
 func PeerTLSConfigDynamic(bundle BundleSource, cert CertSource, knownNodes func() []string) *tls.Config {
 	return &tls.Config{
-		MinVersion:            tls.VersionTLS13,
-		GetClientCertificate:  func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return cert() },
-		InsecureSkipVerify:    true,
-		VerifyPeerCertificate: verifyPeerChainAndCNDynamic(bundle, knownNodes),
+		MinVersion:           tls.VersionTLS13,
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return cert() },
+		InsecureSkipVerify:   true, //nolint:gosec // chain and CN are verified in VerifyConnection
+		VerifyConnection:     OnEveryHandshake(verifyPeerChainAndCNDynamic(bundle, knownNodes)),
 	}
 }
 
@@ -517,8 +529,8 @@ func PeerTLSConfig(bundle *Bundle, ownCert tls.Certificate, knownNodes func() []
 		Certificates: []tls.Certificate{ownCert},
 		// Chain + CN verification runs in the callback; Go's built-in
 		// IP/hostname matching is disabled for the reason above.
-		InsecureSkipVerify:    true,
-		VerifyPeerCertificate: VerifyPeerChainAndCN(bundle, knownNodes),
+		InsecureSkipVerify: true, //nolint:gosec // chain and CN are verified in VerifyConnection
+		VerifyConnection:   OnEveryHandshake(VerifyPeerChainAndCN(bundle, knownNodes)),
 	}
 }
 
