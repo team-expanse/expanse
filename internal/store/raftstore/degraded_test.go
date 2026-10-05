@@ -211,10 +211,7 @@ func TestWitnessVotes(t *testing.T) {
 	c := NewTestCluster(t, 3)
 	ctx := t.Context()
 
-	// Node 2 is the witness: full voter, zero capacity (its record
-	// carries role=witness; there is no placement engine yet, so
-	// "never placed" is enforced by the agent skipping reconcile and
-	// the scheduler, which will filter on this field).
+	// Node 2 is the witness: a full voter that the scheduler never places work on.
 	rec := []byte(`{"id":"n2","raft_addr":"` + c.Nodes[2].Leader() + `","role":"witness","joined_at":1}`)
 	if _, err := c.Leader().Put(ctx, store.Key("/nodes/n2"), rec); err != nil {
 		t.Fatalf("write witness record: %v", err)
