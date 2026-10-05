@@ -111,7 +111,7 @@ func TestKill9MidWrite(t *testing.T) {
 			t.Fatalf("iteration %d: store failed to open after SIGKILL: %v", i, err)
 		}
 		acked, err := os.ReadFile(ackPath)
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) { // no file: killed before any write was acknowledged
 			t.Fatal(err)
 		}
 		var lastRev store.Revision
