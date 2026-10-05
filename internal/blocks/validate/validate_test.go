@@ -90,7 +90,6 @@ func validBlock() *pb.Block {
 func baseCtx() Context {
 	return Context{
 		Catalog:           &fakeCatalog{types: []string{"web/nginx", "db/redis"}},
-		SecretsExist:      func(names []string) []string { return nil },
 		Existing:          []string{"other", "cache"},
 		NodeCount:         5,
 		KnownCapabilities: []string{"kvm", "nvidia"},
@@ -541,29 +540,16 @@ func TestV19ConfigSchema(t *testing.T) {
 	}
 }
 
-func TestV20SecretsExist(t *testing.T) {
-	ctx := baseCtx()
+// No cluster secrets store exists yet, so a block naming secrets is refused rather than run without them.
+func TestV20SecretsAreRefusedUntilThereIsASecretsStore(t *testing.T) {
 	b := validBlock()
 	b.Spec.Secrets = []*pb.SecretRef{{Name: "tls-cert", Path: "/run/secrets/tls"}}
-	if errs := Validate(b, ctx); byRule(errs, "V20") != nil {
-		t.Fatalf("existing secret failed V20: %v", byRule(errs, "V20"))
-	}
-
-	ctx.SecretsExist = func(names []string) []string { return []string{"tls-cert"} }
-	e := byRule(Validate(b, ctx), "V20")
+	e := byRule(Validate(b, baseCtx()), "V20")
 	if e == nil {
-		t.Fatal("expected V20 failure for missing secret")
+		t.Fatal("a block naming a secret was accepted, but nothing would deliver the secret")
 	}
-	// V20: message must name the missing secret.
-	if !strings.Contains(e.Message, "tls-cert") {
-		t.Errorf("V20 message %q does not name the missing secret", e.Message)
-	}
-
-	// nil SecretsExist is permissive by contract (TODO: real secrets store).
-	ctx2 := baseCtx()
-	ctx2.SecretsExist = nil
-	if errs := Validate(b, ctx2); byRule(errs, "V20") != nil {
-		t.Fatalf("nil SecretsExist should be permissive: %v", byRule(errs, "V20"))
+	if !strings.Contains(e.Message, "tls-cert") || !strings.Contains(e.Message, "not supported") {
+		t.Errorf("V20 message %q should name the secret and say secrets are not supported yet", e.Message)
 	}
 }
 

@@ -106,6 +106,5 @@ extension point, not built this phase (`.plan/PHASE-08-TASKS.md` D4) — `restic
 manual or externally-scheduled command today. A shipped block's own secret-shaped config fields
 (e.g. `iscsi/target`'s `chapPassword`, `db/postgres`'s replication/superuser passwords) are
 ordinary plaintext values on the block spec, already covered by the generation backup (§2, X4) —
-not V20's separate per-block secrets store (`internal/blocks/validate`'s still-stub
-`SecretsExist`), which remains an open TODO from Phase 6 that no shipped block type actually
-exercises today (`.plan/PHASE-08-TASKS.md` D3).
+not a separate secrets store: there is none yet, so a block that names `spec.secrets` is
+refused (V20) rather than run without them (`.plan/PHASE-08-TASKS.md` D3).

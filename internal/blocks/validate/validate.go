@@ -10,14 +10,10 @@
 // Rules that need knowledge beyond the block itself read it from Context:
 //
 //	V3/V19   Catalog (type existence, config JSON-Schema validation)
-//	V20      Context.SecretsExist callback
 //	V2       Context.Existing (blocks already in the namespace)
 //	V12      Context.NodeCount
 //	V13/V18/V23  Context.SharedClasses / KnownCapabilities / Devices
 //	V24      Context.DependsOn (existing blocks' dependency edges)
-//
-// TODO(Phase 06): a real secrets store for V20 — Context.SecretsExist is a
-// callback, nil means permissive. This is an open TODO, not a silent gap.
 package validate
 
 import (
@@ -60,9 +56,6 @@ type Context struct {
 	// Catalog backs V3/V19. Admission must always wire a real catalog;
 	// nil skips V3/V19 (used only by tests of catalog-free paths).
 	Catalog Catalog
-	// SecretsExist returns the subset of names that do not exist. nil is
-	// permissive (TODO(Phase 06): real secrets store).
-	SecretsExist func(names []string) []string
 	// Existing lists block names already present in the same namespace,
 	// excluding the block being validated (V2).
 	Existing []string
@@ -107,7 +100,7 @@ func Validate(b *pb.Block, ctx Context) []ValidationError {
 	add(v17(b))
 	add(v18(b, ctx))
 	add(v19(b, ctx))
-	add(v20(b, ctx))
+	add(v20(b))
 	add(v21(b))
 	add(v22(b))
 	add(v23(b, ctx))
@@ -508,19 +501,12 @@ func v19(b *pb.Block, ctx Context) []ValidationError {
 	return errs
 }
 
-// --- V20: referenced secrets exist; message names the missing secret ---
+// --- V20: secrets; there is no cluster secrets store yet, so none can be delivered ---
 
-func v20(b *pb.Block, ctx Context) []ValidationError {
-	if ctx.SecretsExist == nil {
-		return nil // TODO(Phase 06): real secrets store; nil is permissive by contract
-	}
-	names := make([]string, 0, len(b.GetSpec().GetSecrets()))
-	for _, s := range b.GetSpec().GetSecrets() {
-		names = append(names, s.GetName())
-	}
+func v20(b *pb.Block) []ValidationError {
 	var errs []ValidationError
-	for _, missing := range ctx.SecretsExist(names) {
-		errs = append(errs, verr("V20", "referenced secret %q does not exist", missing))
+	for _, s := range b.GetSpec().GetSecrets() {
+		errs = append(errs, verr("V20", "spec.secrets %q: secrets are not supported yet; remove it", s.GetName()))
 	}
 	return errs
 }

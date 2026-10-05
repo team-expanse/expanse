@@ -1564,7 +1564,7 @@ func (x *Backup) GetPostHook() string {
 // (never env vars, never files in /nix/store — §5.3).
 type SecretRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // must exist in the cluster (V20)
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // refused until a secrets store exists (V20)
 	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

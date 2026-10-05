@@ -251,7 +251,7 @@ message Backup {
 // SecretRef mounts a cluster secret into the block via systemd credentials
 // (never env vars, never files in /nix/store — §5.3).
 message SecretRef {
-  string name = 1; // must exist in the cluster (V20)
+  string name = 1; // refused until a secrets store exists (V20)
   string path = 2;
 }
 
