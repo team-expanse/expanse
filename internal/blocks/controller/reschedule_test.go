@@ -4,10 +4,14 @@ package controller
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/expanse/expanse/internal/scheduler"
+	"github.com/expanse/expanse/internal/storage"
+	"github.com/expanse/expanse/internal/store/raftstore"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -63,65 +67,139 @@ func TestStatelessRescheduleAfterGrace(t *testing.T) {
 	}
 }
 
-// Stateful blocks wait for the StorageAvailable hook before a
-// replacement is scheduled — the gate must actually block.
-func TestStatefulRescheduleGatedOnStorageAvailable(t *testing.T) {
-	ctx := context.Background()
+// statefulDB is a two-replica block with its own volume per replica, placed on three nodes.
+func statefulDB(t *testing.T) (*Controller, *raftstore.Store, []scheduler.NodeView, *fakeClock) {
+	t.Helper()
 	b := blockFor("db", 2)
 	b.Spec.Storage = append(b.Spec.Storage, &pb.Storage{Name: "data", Size: "1Gi"})
 	st := newStore(t)
-	mustCreate(t, ctx, st, b)
-
+	mustCreate(t, context.Background(), st, b)
 	nodes := nodeViews(3)
-	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
-		return nodes, testCfg(), nil
-	})
+	c := fixedNodes(st, nodes)
 	clk := setClock(c)
-	avail := false
-	c.StorageAvailable = func(string) bool { return avail }
-	if _, err := c.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
-	waitPlaced(t, ctx, c, "default", "db", 2)
+	reconcile(t, c)
+	waitPlaced(t, context.Background(), c, "default", "db", 2)
+	return c, st, nodes, clk
+}
 
-	// Fail whichever node holds index 0, then burn the grace period.
-	downID := placementAt(loadStatus(t, ctx, st, "default", "db"), 0).GetNodeId()
+// holdCopy gives node a healthy copy of replica idx's volume.
+func holdCopy(nodes []scheduler.NodeView, node string, idx int) {
 	for i := range nodes {
-		if nodes[i].ID == downID {
-			nodes[i].Ready = false
+		if nodes[i].ID == node {
+			nodes[i].HealthyVolumes = append(nodes[i].HealthyVolumes, storage.BlockReplicaVolumeName("default", "db", "data", idx))
 		}
 	}
-	if _, err := c.Reconcile(ctx); err != nil {
-		t.Fatal(err)
+}
+
+func setReady(nodes []scheduler.NodeView, node string, ready bool) {
+	for i := range nodes {
+		if nodes[i].ID == node {
+			nodes[i].Ready = ready
+		}
 	}
+}
+
+// loseReplica0 takes down the node running replica 0 and lets the grace period pass.
+func loseReplica0(t *testing.T, c *Controller, st *raftstore.Store, nodes []scheduler.NodeView, clk *fakeClock) string {
+	t.Helper()
+	down := placementAt(loadStatus(t, context.Background(), st, "default", "db"), 0).GetNodeId()
+	setReady(nodes, down, false)
+	reconcile(t, c)
 	clk.Sleep(31 * time.Second)
-	if _, err := c.Reconcile(ctx); err != nil {
-		t.Fatal(err)
-	}
-	s := loadStatus(t, ctx, st, "default", "db")
-	if p := placementOn(s, downID); p.GetPhase() != pb.Phase_LOST {
-		t.Errorf("n1 placement phase = %v, want Lost after grace", p.GetPhase())
-	}
-	if p := placementOn(s, downID); p.GetReplicaIndex() != 0 {
-		t.Errorf("down-node index = %d, want still 0 (gate held: no replacement)", p.GetReplicaIndex())
-	}
-	for _, p := range s.GetPlacements() {
-		if p.GetReplicaIndex() != -1 && p.GetNodeId() != downID && p.GetReplicaIndex() == 0 {
-			t.Error("duplicate index-0 replacement while storage unavailable")
+	reconcile(t, c)
+	return down
+}
+
+func otherNode(nodes []scheduler.NodeView, not ...string) string {
+	for _, n := range nodes {
+		if !slices.Contains(not, n.ID) {
+			return n.ID
 		}
+	}
+	return ""
+}
+
+// A stateful replica is not replaced until another reachable node holds a healthy copy of
+// its volume: the replacement has nothing to run on otherwise.
+func TestStatefulReplacementWaitsForAHealthyCopyElsewhere(t *testing.T) {
+	c, st, nodes, clk := statefulDB(t)
+	ctx := context.Background()
+	down := placementAt(loadStatus(t, ctx, st, "default", "db"), 0).GetNodeId()
+	holdCopy(nodes, down, 0) // the only copy is on the node that goes down
+	loseReplica0(t, c, st, nodes, clk)
+
+	s := loadStatus(t, ctx, st, "default", "db")
+	if p := placementOn(s, down); p.GetPhase() != pb.Phase_LOST || p.GetReplicaIndex() != 0 {
+		t.Fatalf("%s placement = %+v, want Lost and still replica 0", down, p)
 	}
 	if hasRetired(s) {
-		t.Error("index retired while storage unavailable — gate did not block")
+		t.Fatal("replica 0 retired with no healthy copy of its volume elsewhere")
+	}
+	if !strings.Contains(s.GetPendingReason().GetMessage(), "healthy copy") {
+		t.Errorf("pending reason = %q, want it to say it waits for a healthy copy", s.GetPendingReason().GetMessage())
 	}
 
-	// Storage confirms availability: replacement proceeds.
-	avail = true
-	if _, err := c.Reconcile(ctx); err != nil {
-		t.Fatal(err)
+	holdCopy(nodes, otherNode(nodes, down), 0)
+	reconcile(t, c)
+	reconcile(t, c)
+	if repl := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); repl == nil || repl.GetNodeId() == down {
+		t.Errorf("replacement = %+v, want moved off %s once a copy exists elsewhere", repl, down)
 	}
-	s = loadStatus(t, ctx, st, "default", "db")
-	if repl := placementAt(s, 0); repl == nil || repl.GetNodeId() == downID {
-		t.Errorf("replacement after storage-available = %+v, want moved off %s", repl, downID)
+}
+
+// A replica held for want of a copy runs again on its own node once that node returns.
+func TestAHeldStatefulReplicaResumesWhenItsNodeReturns(t *testing.T) {
+	c, st, nodes, clk := statefulDB(t)
+	ctx := context.Background()
+	down := loseReplica0(t, c, st, nodes, clk)
+	if p := placementOn(loadStatus(t, ctx, st, "default", "db"), down); p.GetPhase() != pb.Phase_LOST {
+		t.Fatalf("%s placement = %+v, want Lost", down, p)
+	}
+
+	setReady(nodes, down, true)
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p.GetNodeId() != down || p.GetPhase() == pb.Phase_LOST {
+		t.Errorf("replica 0 = %+v, want back on %s and no longer Lost", p, down)
+	}
+}
+
+// A copy of another replica's volume, or one on a node that is itself down, does not count.
+func TestStatefulReplacementIgnoresCopiesThatCannotServeIt(t *testing.T) {
+	c, st, nodes, clk := statefulDB(t)
+	ctx := context.Background()
+	s0 := loadStatus(t, ctx, st, "default", "db")
+	down, peer := placementAt(s0, 0).GetNodeId(), placementAt(s0, 1).GetNodeId()
+	spare := otherNode(nodes, down, peer)
+	holdCopy(nodes, peer, 1)
+	holdCopy(nodes, spare, 0)
+	setReady(nodes, spare, false)
+	loseReplica0(t, c, st, nodes, clk)
+
+	if s := loadStatus(t, ctx, st, "default", "db"); hasRetired(s) {
+		t.Fatalf("replica 0 retired with no reachable copy of its volume: %v", s.GetPlacements())
+	}
+}
+
+// A replica on a draining node stays put until its volume has a healthy copy elsewhere.
+func TestDrainKeepsAStatefulReplicaWithoutACopyElsewhere(t *testing.T) {
+	c, st, nodes, _ := statefulDB(t)
+	ctx := context.Background()
+	from := placementAt(loadStatus(t, ctx, st, "default", "db"), 0).GetNodeId()
+	for i := range nodes {
+		if nodes[i].ID == from {
+			nodes[i].Ready, nodes[i].Cordoned, nodes[i].Draining = false, true, true
+		}
+	}
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p.GetNodeId() != from {
+		t.Fatalf("replica 0 = %+v, want kept on draining %s: no copy of its volume elsewhere", p, from)
+	}
+
+	holdCopy(nodes, otherNode(nodes, from), 0)
+	reconcile(t, c)
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p == nil || p.GetNodeId() == from {
+		t.Errorf("replica 0 = %+v, want moved off draining %s", p, from)
 	}
 }
 

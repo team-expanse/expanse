@@ -67,11 +67,8 @@ type Controller struct {
 	leaseMu   sync.Mutex
 	held      map[string]*lease.Held
 
-	// Node-failure rescheduling (T17): §4.4 knobs and seams. Grace
-	// defaults to DefaultUnreachableGrace when zero; StorageAvailable
-	// defaults to true (Phase 06 wires the real volume check).
+	// Node-failure rescheduling (T17): grace defaults to DefaultUnreachableGrace when zero.
 	UnreachableGrace time.Duration
-	StorageAvailable func(volumeID string) bool
 	unreachableMu    sync.Mutex
 	unreachableSince map[string]time.Time // blockKey\x00nodeID → first unreachable
 }

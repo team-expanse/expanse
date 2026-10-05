@@ -4,7 +4,7 @@ package controller
 // becomes unreachable, wait unreachable_grace (default 30 s) so
 // transient blips do not churn placements; then mark that node's
 // placements Lost; then replace them — immediately for stateless
-// blocks, behind the StorageAvailable hook for stateful blocks (the
+// blocks, behind storageAvailable for stateful blocks (the
 // "never schedule a replacement while the original node might still be
 // running it" rule, §4.4), and behind the singleton lease re-acquisition
 // for singleton blocks (the old holder's lease will have expired).
@@ -20,6 +20,7 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/health"
 	"github.com/expanse/expanse/internal/scheduler"
+	expstorage "github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -28,16 +29,35 @@ import (
 // on an unreachable node is marked Lost.
 const DefaultUnreachableGrace = 30 * time.Second
 
-// storageAvailable reports whether a stateful block's volumes are
-// available for a replacement replica. Phase06 TODO wire-up: this is
-// the explicit seam for the storage layer's volume-availability
-// confirmation; the default returns true (optimistic), matching the
-// spec's Phase 06 deferral — NOT a silent gap.
-func (c *Controller) storageAvailable(volumeID string) bool {
-	if c.StorageAvailable != nil {
-		return c.StorageAvailable(volumeID)
+// storageAvailable reports whether another reachable node holds a healthy copy of every
+// volume replica idx uses; DRBD quorum keeps the old node from writing once one takes over.
+func storageAvailable(b *pb.Block, idx int32, from string, nodes []scheduler.NodeView) bool {
+	names := replicaVolumes(b, idx)
+	for _, n := range nodes {
+		if n.ID != from && n.Ready && !n.Draining && !n.Witness && !slices.ContainsFunc(names, func(v string) bool {
+			return !slices.Contains(n.HealthyVolumes, v)
+		}) {
+			return true
+		}
 	}
-	return true
+	return false
+}
+
+// replicaVolumes names the volumes replica idx runs on: shared by every placement of a
+// singleton or daemonset, one per replica otherwise.
+func replicaVolumes(b *pb.Block, idx int32) []string {
+	ns, name := b.GetMetadata().GetNamespace(), b.GetMetadata().GetName()
+	kind := b.GetSpec().GetStrategy().GetKind()
+	shared := kind == pb.StrategyKind_SINGLETON || kind == pb.StrategyKind_DAEMONSET
+	var out []string
+	for _, s := range b.GetSpec().GetStorage() {
+		if shared {
+			out = append(out, expstorage.BlockVolumeName(ns, name, s.GetName()))
+		} else {
+			out = append(out, expstorage.BlockReplicaVolumeName(ns, name, s.GetName(), int(idx)))
+		}
+	}
+	return out
 }
 
 // nodeUp reports whether nodeID is reachable (Ready, or cordoned but up) and
@@ -54,7 +74,7 @@ func nodeUp(nodes []scheduler.NodeView, nodeID string) (up, draining bool) {
 // reschedulePass applies §4.4 to one block's placements. It marks Lost
 // placements (after the grace period) and retires them (frees the
 // replica index) only when a replacement is actually permitted:
-// immediately for stateless blocks, behind StorageAvailable for stateful
+// immediately for stateless blocks, behind storageAvailable for stateful
 // ones. The caller then schedules replacements through the normal
 // strategy dispatch — which is where the singleton lease gate applies
 // (the old holder's lease will have expired by then per the Phase 03
@@ -73,7 +93,7 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 
 	stateful := len(b.GetSpec().GetStorage()) > 0
 	daemonset := b.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_DAEMONSET
-	changed, failed, drained := false, false, false
+	changed, failed, drained, waiting := false, false, false, false
 	for _, p := range status.GetPlacements() {
 		if p.GetReplicaIndex() == -1 {
 			continue // already retired: replacement handled elsewhere
@@ -82,14 +102,18 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 			c.unreachableMu.Lock()
 			delete(c.unreachableSince, string(e.Key)+"\x00"+p.GetNodeId())
 			c.unreachableMu.Unlock()
+			if p.GetPhase() == pb.Phase_LOST { // held for want of a copy: its node is back
+				p.Phase, p.Message = pb.Phase_SCHEDULING, ""
+				changed = true
+			}
 			// placeDaemonset stops a draining node's daemonset replica.
-			if draining && !daemonset && (!stateful || c.storageAvailable(p.GetNodeId())) {
+			if draining && !daemonset && (!stateful || storageAvailable(b, p.GetReplicaIndex(), p.GetNodeId(), nodes)) {
 				p.Phase, p.Message = pb.Phase_TERMINATED, "moved off draining node "+p.GetNodeId()
 				p.FormerIndex, p.ReplicaIndex = p.GetReplicaIndex(), -1
 				changed, drained = true, true
 				continue
 			}
-			moved, marked := c.livenessPass(ctx, b, e.Key, p, stateful)
+			moved, marked := c.livenessPass(ctx, b, e.Key, p, stateful && !storageAvailable(b, p.GetReplicaIndex(), p.GetNodeId(), nodes))
 			changed = changed || moved || marked
 			failed = failed || marked
 			continue
@@ -112,11 +136,8 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 		// §4.4 steps 3–4: retire (free the index) only when a replacement
 		// is permitted now. Gate-blocked Lost records re-enter here on
 		// every pass, so a later storage-available signal unblocks them.
-		if stateful && !c.storageAvailable(p.GetNodeId()) {
-			// Volume not confirmed available elsewhere: keep the Lost
-			// record, keep the index — no replacement while the original
-			// node might still be running the replica. (Phase 06 wires
-			// the real volume check; see storageAvailable.)
+		if stateful && !storageAvailable(b, p.GetReplicaIndex(), p.GetNodeId(), nodes) {
+			waiting = true // keep the Lost record and its index: a replacement has no data yet
 			continue
 		}
 		p.ReplicaIndex = -1 // retire: index freed for the replacement
@@ -139,6 +160,9 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 	if drained {
 		status.PendingReason.Message = "moving replicas off draining nodes"
 	}
+	if waiting {
+		status.PendingReason.Message = "waiting for another node to hold a healthy copy of the volumes"
+	}
 	if err := c.persistStatus(ctx, e.Key, status); err != nil {
 		return false, err
 	}
@@ -147,7 +171,7 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 
 // livenessPass marks p FAILED once its own node gives up restarting it, then retires it so
 // the replacement lands elsewhere (behind the storage gate). A daemonset replica stays put.
-func (c *Controller) livenessPass(ctx context.Context, b *pb.Block, k store.Key, p *pb.PlacementStatus, stateful bool) (moved, marked bool) {
+func (c *Controller) livenessPass(ctx context.Context, b *pb.Block, k store.Key, p *pb.PlacementStatus, noCopy bool) (moved, marked bool) {
 	if p.GetPhase() != pb.Phase_FAILED {
 		rec, err := health.LivenessFailedOn(ctx, c.St, k, p.GetReplicaIndex(), p.GetNodeId())
 		if err != nil && c.Logger != nil {
@@ -162,7 +186,7 @@ func (c *Controller) livenessPass(ctx context.Context, b *pb.Block, k store.Key,
 	if b.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_DAEMONSET {
 		return false, marked
 	}
-	if stateful && !c.storageAvailable(p.GetNodeId()) {
+	if noCopy {
 		return false, marked
 	}
 	p.FormerIndex, p.ReplicaIndex = p.GetReplicaIndex(), -1
