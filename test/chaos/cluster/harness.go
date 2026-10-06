@@ -258,16 +258,16 @@ func (h *Harness) Put(ctx context.Context, k store.Key, v []byte) (store.Revisio
 	}
 }
 
-// Get reads a key linearizably through the current leader.
-func (h *Harness) Get(ctx context.Context, k store.Key) (*store.Entry, error) {
+// List reads a prefix linearizably through the current leader.
+func (h *Harness) List(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if lead := h.Leader(); lead != nil {
-			e, err := lead.Get(ctx, k)
+			es, err := lead.List(ctx, prefix)
 			if err == nil {
-				return e, nil
+				return es, nil
 			}
 		}
 		select {
@@ -382,21 +382,21 @@ func (w *Writer) AckedCount() int {
 	return len(w.acked)
 }
 
-// VerifyAcked reads every acked write back through the leader: present,
-// same value, revision not lower. Any regression is data loss (§6
-// random-kill invariant).
+// VerifyAcked reads every acked write back through the leader in one list: present,
+// same value, revision not lower. Any regression is data loss (§6 random-kill invariant).
 func (w *Writer) VerifyAcked(ctx context.Context) error {
-	w.mu.Lock()
-	snapshot := make(map[store.Key]acked, len(w.acked))
-	for k, a := range w.acked {
-		snapshot[k] = a
+	entries, err := w.h.List(ctx, "/chaos/")
+	if err != nil {
+		return fmt.Errorf("verify: list /chaos/: %w", err)
 	}
-	w.mu.Unlock()
-	for k, a := range snapshot {
-		e, err := w.h.Get(ctx, k)
-		if err != nil {
-			return fmt.Errorf("verify %s: %w", k, err)
-		}
+	got := make(map[store.Key]*store.Entry, len(entries))
+	for _, e := range entries {
+		got[e.Key] = e
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for k, a := range w.acked {
+		e := got[k]
 		if e == nil {
 			return fmt.Errorf("verify %s: acked write missing", k)
 		}
