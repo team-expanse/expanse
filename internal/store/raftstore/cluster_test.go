@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,17 +27,18 @@ type TestCluster struct {
 	Nodes  []*raftstore.Store
 	dirs   []string
 	ports  []int // raft ports, stable across restarts
+	api    []int // api ports, picked on first start and kept for restarts
 	apiLn  []net.Listener
 	srvs   []*grpc.Server
 	fwd    []*raftstore.GRPCForwarder
 	dead   []bool
-	deadMu sync.Mutex
+	deadMu sync.Mutex // guards dead and api
 }
 
 // freePort grabs an ephemeral TCP port. Races are theoretically possible;
 // they are vanishingly rare on loopback and the subsequent listen failure
 // is loud.
-func freePort(t *testing.T) int {
+var freePort = func(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -53,6 +55,7 @@ func NewTestCluster(t *testing.T, n int) *TestCluster {
 	for i := 0; i < n; i++ {
 		c.dirs = append(c.dirs, t.TempDir())
 		c.ports = append(c.ports, freePort(t))
+		c.api = append(c.api, 0)
 		c.dead = append(c.dead, false)
 	}
 	c.start(0, true) // bootstrap node 0
@@ -78,8 +81,11 @@ func (c *TestCluster) raftAddr(i int) string {
 	return fmt.Sprintf("127.0.0.1:%d", c.ports[i])
 }
 
+// apiAddr is node i's internal endpoint; port 0 until its first start.
 func (c *TestCluster) apiAddr(i int) string {
-	return fmt.Sprintf("127.0.0.1:%d", c.ports[i]+1000) // distinct, stable
+	c.deadMu.Lock()
+	defer c.deadMu.Unlock()
+	return fmt.Sprintf("127.0.0.1:%d", c.api[i])
 }
 
 // start opens node i's store and its internal gRPC forward endpoint.
@@ -101,6 +107,9 @@ func (c *TestCluster) start(i int, bootstrap bool) {
 	if err != nil {
 		c.t.Fatalf("api listen %d: %v", i, err)
 	}
+	c.deadMu.Lock()
+	c.api[i] = ln.Addr().(*net.TCPAddr).Port
+	c.deadMu.Unlock()
 	srv := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
 	pb.RegisterInternalStoreServiceServer(srv, raftstore.NewForwardServer(s))
 	go srv.Serve(ln) //nolint:errcheck — test server
@@ -111,7 +120,7 @@ func (c *TestCluster) start(i int, bootstrap bool) {
 		func() string { return s.Leader() },
 		func(raftAddr string) (string, bool) {
 			for j := range c.ports {
-				if c.raftAddr(j) == raftAddr {
+				if c.raftAddr(j) == raftAddr && !strings.HasSuffix(c.apiAddr(j), ":0") {
 					return c.apiAddr(j), true
 				}
 			}
