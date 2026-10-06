@@ -128,20 +128,48 @@ func blockSpecs() []*pb.Block {
 	return out
 }
 
-// startControllers runs a controller on every raft node. Only the
-// leader acts (Reconcile no-ops elsewhere), so leadership failover
-// hands placement to the survivor's controller automatically.
-func startControllers(h *cluster.Harness, sim *simNodes, interval, grace time.Duration) {
-	for i := 0; i < 3; i++ {
-		i := i
-		c := controller.New(h.Node(i), func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
-			views, cfg := sim.snapshot()
-			return views, cfg, nil
-		})
-		c.Interval = interval
-		c.UnreachableGrace = grace
-		go c.Run(context.Background())
+// controllers runs one block controller per raft node. Only the leader
+// acts (Reconcile no-ops elsewhere), so failover hands placement over.
+type controllers struct {
+	h               *cluster.Harness
+	sim             *simNodes
+	interval, grace time.Duration
+	mu              sync.Mutex
+	cancel          [3]context.CancelFunc
+}
+
+func startControllers(t *testing.T, h *cluster.Harness, sim *simNodes, interval, grace time.Duration) *controllers {
+	c := &controllers{h: h, sim: sim, interval: interval, grace: grace}
+	for i := range c.cancel {
+		c.restart(i)
 	}
+	t.Cleanup(func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		for _, cancel := range c.cancel {
+			cancel()
+		}
+	})
+	return c
+}
+
+// restart replaces node i's controller with one bound to its current
+// store; call it after Harness.Restart, which opens a new store.
+func (c *controllers) restart(i int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ctl := controller.New(c.h.Node(i), func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		views, cfg := c.sim.snapshot()
+		return views, cfg, nil
+	})
+	ctl.Interval = c.interval
+	ctl.UnreachableGrace = c.grace
+	c.mu.Lock()
+	if c.cancel[i] != nil {
+		c.cancel[i]()
+	}
+	c.cancel[i] = cancel
+	c.mu.Unlock()
+	go ctl.Run(ctx)
 }
 
 // blockKey mirrors the controller's desired-state key layout.
@@ -379,7 +407,7 @@ func TestChaosBlocksRandomKill(t *testing.T) {
 		killEvery = 60 * time.Second
 	}
 
-	startControllers(h, sim, interval, grace)
+	ctl := startControllers(t, h, sim, interval, grace)
 
 	deploy(t, ctx, h, blocks)
 
@@ -409,6 +437,7 @@ func TestChaosBlocksRandomKill(t *testing.T) {
 		}
 		time.Sleep(killEvery / 2)
 		h.Restart(victim)
+		ctl.restart(victim)
 		sim.setReady(victim, true)
 	}
 
@@ -428,4 +457,36 @@ func TestChaosBlocksRandomKill(t *testing.T) {
 	}
 	t.Logf("blocks-chaos: %d kill/restart cycles, %d checker sweeps, 0 violations",
 		kills, chk.checks)
+}
+
+// A node restarted mid-scenario must reconcile once it wins leadership,
+// as a restarted expanse process would (otherwise placement silently stalls).
+func TestRestartedLeaderKeepsPlacing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("chaos: skipped in -short")
+	}
+	h := cluster.NewHarness(t, 3)
+	sim := newSimNodes(nSimNodes)
+	ctl := startControllers(t, h, sim, 250*time.Millisecond, time.Second)
+
+	h.Kill(0)
+	h.Restart(0)
+	ctl.restart(0)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for h.LeaderIndex() != 0 {
+		if l := h.Leader(); l != nil {
+			_ = l.ApplyTransferLeadership("n0") // retried until n0 leads
+		}
+		if ctx.Err() != nil {
+			t.Fatal("n0 never became leader")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	blocks := blockSpecs()[:1]
+	deploy(t, ctx, h, blocks)
+	if err := waitRecovered(t, h, []string{blocks[0].GetMetadata().GetName()}, 10*time.Second); err != nil {
+		t.Fatalf("restarted leader n0: %v", err)
+	}
 }
