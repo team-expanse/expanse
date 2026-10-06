@@ -54,7 +54,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
 				resp, err := c.List(ctx, &pb.ListBlocksRequest{Namespace: *nsFlag(cmd)})
 				if err != nil {
-					return fmt.Errorf("List: %w", err)
+					return fmt.Errorf("list: %w", err)
 				}
 				return emit(opts, func() {
 					w := cmd.OutOrStdout()
@@ -82,7 +82,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
 				b, err := c.Get(ctx, &pb.GetBlockRequest{Namespace: *ns, Name: args[0]})
 				if err != nil {
-					return fmt.Errorf("Get: %w", err)
+					return fmt.Errorf("get: %w", err)
 				}
 				return emit(opts, func() { printBlockStatus(cmd.OutOrStdout(), b, time.Now()) }, b)
 			})
@@ -116,7 +116,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 				// zero Context; type/schema rules (V3/V19/V20) need the
 				// server-side catalog and are checked on real apply.
 				if ves := validate.Validate(b, validate.Context{}); len(ves) > 0 {
-					return fmt.Errorf("dry-run rejected: %v", ves[0])
+					return fmt.Errorf("dry-run rejected: %w", ves[0])
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "dry-run: %s/%s accepted (no changes written)\n",
 					b.GetMetadata().GetNamespace(), b.GetMetadata().GetName())
@@ -130,7 +130,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 					return nil
 				}
 				if _, err := c.Create(ctx, b); err != nil {
-					return fmt.Errorf("Create: %w", err)
+					return fmt.Errorf("create: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "created %s/%s\n",
 					b.GetMetadata().GetNamespace(), b.GetMetadata().GetName())
@@ -151,7 +151,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 			wait, _ := cmd.Flags().GetBool("wait")
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
 				if _, err := c.Delete(ctx, &pb.DeleteBlockRequest{Namespace: *ns, Name: args[0]}); err != nil {
-					return fmt.Errorf("Delete: %w", err)
+					return fmt.Errorf("delete: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "deleted %s/%s\n", *ns, args[0])
 				if wait {
@@ -175,7 +175,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
 				b, err := c.Scale(ctx, &pb.ScaleRequest{Namespace: *ns, Name: args[0], Replicas: n})
 				if err != nil {
-					return fmt.Errorf("Scale: %w", err)
+					return fmt.Errorf("scale: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "scaled %s/%s to %d replicas\n",
 					b.GetMetadata().GetNamespace(), b.GetMetadata().GetName(), n)
@@ -196,7 +196,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
 				b, err := c.Restart(ctx, &pb.RestartRequest{Namespace: *ns, Name: args[0], Replica: replica})
 				if err != nil {
-					return fmt.Errorf("Restart: %w", err)
+					return fmt.Errorf("restart: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "restart requested for %s/%s (replica %d)\n",
 					b.GetMetadata().GetNamespace(), b.GetMetadata().GetName(), replica)
@@ -215,13 +215,13 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
 				stream, err := c.Watch(ctx, &pb.WatchBlocksRequest{Namespace: *ns, Name: args[0]})
 				if err != nil {
-					return fmt.Errorf("Watch: %w", err)
+					return fmt.Errorf("watch: %w", err)
 				}
 				w := cmd.OutOrStdout()
 				for {
 					ev, err := stream.Recv()
 					if err != nil {
-						return nil // stream closed (context deadline/cancel)
+						return nil //nolint:nilerr // stream closed (context deadline/cancel)
 					}
 					if ev.GetBlock() != nil {
 						fmt.Fprintf(w, "%s  %-8s  phase=%s\n",
@@ -258,7 +258,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
 				resp, err := c.Explain(ctx, &pb.ExplainRequest{Namespace: *ns, Name: args[0]})
 				if err != nil {
-					return fmt.Errorf("Explain: %w", err)
+					return fmt.Errorf("explain: %w", err)
 				}
 				fmt.Fprint(cmd.OutOrStdout(), service.RenderExplain(resp))
 				return nil

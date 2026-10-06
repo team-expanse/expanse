@@ -431,7 +431,7 @@ func assertDeterministic(t *testing.T, log [][]byte) {
 		}
 		return f.StateHash()
 	}
-	if run() != run() {
+	if first, second := run(), run(); first != second {
 		t.Error("same log, different hashes across two runs")
 	}
 }

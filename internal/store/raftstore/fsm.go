@@ -304,7 +304,7 @@ func (f *FSM) canonicalLocked() []byte {
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 
 	var buf bytes.Buffer
-	be := func(v uint64) { binary.Write(&buf, binary.BigEndian, v) }
+	be := func(v uint64) { _ = binary.Write(&buf, binary.BigEndian, v) } // a bytes.Buffer never fails
 	be(uint64(f.revision))
 	be(uint64(len(keys)))
 	for _, k := range keys {

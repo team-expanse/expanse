@@ -2,6 +2,7 @@ package vip
 
 import (
 	"context"
+	stderrors "errors"
 	"io"
 	"log/slog"
 	"net/netip"
@@ -251,7 +252,7 @@ func (h *Holder) Run(ctx context.Context) error {
 					h.log(h.cfg.Logger.Info, "acquired VIP lease")
 					h.onAcquired()
 					state = st
-				} else if err == lease.ErrNotAcquired {
+				} else if stderrors.Is(err, lease.ErrNotAcquired) {
 					h.log(h.cfg.Logger.Debug, "lease held elsewhere")
 					// Preferred-but-held: retry exactly at the recorded
 					// expiry (+ slippage) instead of the next blind tick

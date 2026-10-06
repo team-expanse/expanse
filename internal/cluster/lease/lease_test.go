@@ -412,7 +412,7 @@ func TestGuardHelperFences(t *testing.T) {
 	m := lease.NewManager(pst, "node-a")
 
 	stopped := make(chan error, 1)
-	partitionedAt := time.Time{}
+	var partitionedAt time.Time
 	go func() {
 		err := lease.Guard(context.Background(), m, "vip:10.43.0.1", lease.DefaultTTL, func(fctx context.Context) error {
 			<-fctx.Done()

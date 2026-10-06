@@ -194,9 +194,9 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		fail("size", "Size: "+errText(err))
 		return
 	}
-	repl := 0
+	var repl int64
 	if replStr != "" {
-		if repl, err = strconv.Atoi(replStr); err != nil {
+		if repl, err = strconv.ParseInt(replStr, 10, 32); err != nil {
 			fail("replication", "Replication must be a whole number.")
 			return
 		}

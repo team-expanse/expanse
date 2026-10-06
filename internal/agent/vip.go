@@ -10,11 +10,12 @@ package agent
 import (
 	"context"
 	"fmt"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"io"
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/network/vip"

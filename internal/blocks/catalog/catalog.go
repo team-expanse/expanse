@@ -16,6 +16,7 @@ package catalog
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -197,8 +198,8 @@ func (c *Catalog) ValidateConfig(t string, config *structpb.Struct) []string {
 	if err == nil {
 		return nil
 	}
-	e, ok := err.(*jsonschema.ValidationError)
-	if !ok {
+	var e *jsonschema.ValidationError
+	if !stderrors.As(err, &e) {
 		return []string{fmt.Sprintf("/: %v", err)}
 	}
 	return fieldErrors("/", e)

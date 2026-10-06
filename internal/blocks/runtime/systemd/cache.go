@@ -103,7 +103,7 @@ func NewCache(path string) (*Cache, error) {
 		// Torn cache (power loss mid-write) is recoverable: entries are
 		// pure memoization. Log-and-reset, not a hard failure — the
 		// node just rebuilds the closures.
-		return c, nil
+		return c, nil //nolint:nilerr // see above
 	}
 	return c, nil
 }
@@ -185,15 +185,15 @@ func writeFileSync(path string, b []byte, perm os.FileMode) error {
 	name := tmp.Name()
 	defer os.Remove(name)
 	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

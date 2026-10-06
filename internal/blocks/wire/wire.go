@@ -16,8 +16,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"strings"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/errors"
@@ -27,7 +28,6 @@ import (
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
-	pbproto "google.golang.org/protobuf/proto"
 )
 
 // DefaultCapacity is the conservative per-node capacity used until
@@ -177,7 +177,7 @@ func volumeLocality(ctx context.Context, st storeReader) (all, healthy map[strin
 			continue
 		}
 		var spb pb.VolumeSpec
-		if pbproto.Unmarshal(se.Value, &spb) != nil {
+		if proto.Unmarshal(se.Value, &spb) != nil {
 			continue
 		}
 		te, err := st.Get(ctx, expstorage.StatusKey(id))
@@ -185,7 +185,7 @@ func volumeLocality(ctx context.Context, st storeReader) (all, healthy map[strin
 			continue
 		}
 		var tpb pb.VolumeStatus
-		if pbproto.Unmarshal(te.Value, &tpb) != nil {
+		if proto.Unmarshal(te.Value, &tpb) != nil {
 			continue
 		}
 		spec := expstorage.SpecFromProto(&spb)

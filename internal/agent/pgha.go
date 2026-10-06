@@ -12,13 +12,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/blocks/controller"
 	"github.com/expanse/expanse/internal/blocks/pgha"

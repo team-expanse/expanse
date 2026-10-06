@@ -122,6 +122,7 @@ func (e *Exec) Connect(ctx context.Context, res string) error { return e.adm(ctx
 func (e *Exec) ConnectDiscarding(ctx context.Context, res string) error {
 	return e.adm(ctx, "connect", res, "--discard-my-data")
 }
+
 func (e *Exec) Disconnect(ctx context.Context, res string) error {
 	return e.adm(ctx, "disconnect", res)
 }

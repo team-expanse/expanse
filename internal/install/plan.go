@@ -238,7 +238,7 @@ func stageSnapshot(rc *RunContext) error {
 	if err := rc.run("mount", "-o", "subvolid=5", dev, top); err != nil {
 		return err
 	}
-	defer rc.run("umount", top)
+	defer func() { _ = rc.run("umount", top) }()
 	return rc.run("btrfs", "subvolume", "snapshot", "-r", filepath.Join(top, "@root"), filepath.Join(top, blankSnapshot))
 }
 

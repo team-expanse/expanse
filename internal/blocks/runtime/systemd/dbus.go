@@ -34,7 +34,7 @@ func (d *DBUSAPI) Close() { d.conn.Close() }
 func (d *DBUSAPI) UnitState(ctx context.Context, unit string) (load, active, sub string, err error) {
 	props, err := d.conn.GetUnitPropertiesContext(ctx, unit)
 	if err != nil {
-		return "not-found", "inactive", "dead", nil
+		return "not-found", "inactive", "dead", nil //nolint:nilerr // an unloaded unit, as documented
 	}
 	return strProp(props["LoadState"]), strProp(props["ActiveState"]), strProp(props["SubState"]), nil
 }

@@ -39,7 +39,7 @@ func (n *Node) runOps(ctx context.Context, d Desired) error {
 func (n *Node) runOp(ctx context.Context, kind, id string, do func(name string) error) error {
 	entry, err := n.St.Get(ctx, opKey(kind, id))
 	if err != nil {
-		return nil // nothing queued
+		return ignoreMissing(err) // missing: nothing queued
 	}
 	var op snapshotOp
 	if err := json.Unmarshal(entry.Value, &op); err != nil {
@@ -52,7 +52,7 @@ func (n *Node) runOp(ctx context.Context, kind, id string, do func(name string) 
 // runBareOp is runOp for a request that carries no argument.
 func (n *Node) runBareOp(ctx context.Context, key store.Key, kind, id string, do func() error) error {
 	if _, err := n.St.Get(ctx, key); err != nil {
-		return nil // nothing queued
+		return ignoreMissing(err) // missing: nothing queued
 	}
 	return n.settle(ctx, key, kind, id, do())
 }

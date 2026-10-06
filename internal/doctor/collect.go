@@ -75,7 +75,7 @@ func CollectLive(ctx context.Context, peers []Peer, vips []netip.Addr, blocks []
 			d := net.Dialer{Timeout: 2 * time.Second}
 			conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(p.Overlay.String(), strconv.Itoa(port)))
 			if err == nil {
-				conn.Close()
+				_ = conn.Close()
 			}
 			m[port] = err
 		}

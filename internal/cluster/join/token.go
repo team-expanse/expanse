@@ -42,7 +42,7 @@ import (
 )
 
 // TokenPrefix is the scheme marker of every join token.
-const TokenPrefix = "expanse-join-"
+const TokenPrefix = "expanse-join-" //nolint:gosec // a scheme marker, not a credential
 
 // DefaultTokenTTL is the default token lifetime: 15 minutes.
 const DefaultTokenTTL = 15 * time.Minute

@@ -205,8 +205,6 @@ type L7 struct {
 	rr        atomic.Uint64
 	transport http.RoundTripper
 	initOnce  sync.Once
-	server    http.Server
-	closed    atomic.Bool
 }
 
 // RoutesFrom returns a Routes func building from the pool table each

@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 	"net/http"
-	_ "net/http/pprof" // registers /debug/pprof/* on http.DefaultServeMux, served only when --pprof-addr is set
+	_ "net/http/pprof" //nolint:gosec // opt-in: registers /debug/pprof/* on http.DefaultServeMux, served only when --pprof-addr is set
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -42,7 +43,7 @@ func newAgentCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if pprofAddr != "" {
 				go func() {
-					if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+					if err := (&http.Server{Addr: pprofAddr, ReadHeaderTimeout: 10 * time.Second}).ListenAndServe(); err != nil {
 						fmt.Fprintf(os.Stderr, "pprof listener on %s failed: %v\n", pprofAddr, err)
 					}
 				}()

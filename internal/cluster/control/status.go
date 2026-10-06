@@ -78,7 +78,7 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 	}
 
 	if gen, err := st.Get(ctx, store.Key(GenerationKey)); err == nil {
-		fmt.Sscanf(string(gen.Value), "%d", &rep.Generation)
+		_, _ = fmt.Sscanf(string(gen.Value), "%d", &rep.Generation)
 	}
 
 	entries, err := st.List(ctx, store.Key(join.NodesKeyPrefix))

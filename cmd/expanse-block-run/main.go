@@ -32,6 +32,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -219,7 +220,7 @@ func runEcho(ctx context.Context, args []string) error {
 	fmt.Printf("expanse-block-run: echo serving on :%s\n", port)
 	select {
 	case err := <-errCh:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		return nil

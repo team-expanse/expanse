@@ -151,7 +151,7 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 	case !placed:
 		return n.release(ctx, id, false)
 	case err != nil:
-		return nil // the leader has not allocated yet
+		return nil //nolint:nilerr // the leader has not allocated yet
 	}
 	d, err := n.desired(al, spec)
 	if err != nil {

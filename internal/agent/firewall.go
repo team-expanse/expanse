@@ -9,11 +9,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"net"
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/network/addrplan"
 	"github.com/expanse/expanse/internal/network/mesh"

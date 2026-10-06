@@ -33,7 +33,7 @@ func Serve(ctx context.Context, l Listener, cid uint32, publish func(string)) er
 			return err
 		}
 		msg, _ := io.ReadAll(io.LimitReader(conn, maxMessage))
-		conn.Close()
+		_ = conn.Close()
 		if peer != cid {
 			continue // another guest on this host, or a stale one
 		}
@@ -48,7 +48,7 @@ func Serve(ctx context.Context, l Listener, cid uint32, publish func(string)) er
 // CIDFor is an instance's first-choice guest CID: stable across restarts, spread across the range.
 func CIDFor(instance string) uint32 {
 	h := fnv.New32a()
-	h.Write([]byte(instance))
+	_, _ = h.Write([]byte(instance)) // a hash never fails to write
 	return MinCID + h.Sum32()%(MaxCID-MinCID+1)
 }
 

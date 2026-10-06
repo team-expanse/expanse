@@ -45,8 +45,10 @@ func TestServePublishesEachChangeOnce(t *testing.T) {
 		{7, "X_SYSTEMD_UNIT_ACTIVE=getty.target"},
 		{7, "X_SYSTEMD_UNIT_INACTIVE=multi-user.target"},
 	})
-	want := []string{"booting", "not ready: guest started, waiting for multi-user.target",
-		"ready: multi-user.target reached", "not ready: guest shutting down"}
+	want := []string{
+		"booting", "not ready: guest started, waiting for multi-user.target",
+		"ready: multi-user.target reached", "not ready: guest shutting down",
+	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("published %q, want %q", got, want)
 	}

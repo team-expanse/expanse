@@ -34,7 +34,7 @@ func (c *Client) ClientTLSConfig() *tls.Config {
 		MinVersion:         tls.VersionTLS13,
 		InsecureSkipVerify: true, //nolint:gosec // verified in VerifyPeerCertificate when pinned
 		// No ClientSessionCache: every join is a full handshake, so this callback always runs.
-		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error { //nolint:gosec // see above
 			if fp == "" {
 				return nil // TOFU
 			}

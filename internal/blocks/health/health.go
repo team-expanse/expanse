@@ -80,7 +80,7 @@ func (TCPProber) Probe(ctx context.Context, t Target) Result {
 	if err != nil {
 		return Result{OK: false, Detail: err.Error(), At: start, Latency: time.Since(start)}
 	}
-	conn.Close()
+	_ = conn.Close()
 	return Result{OK: true, Detail: "connected", At: start, Latency: time.Since(start)}
 }
 
@@ -277,7 +277,7 @@ func Passing(ctx context.Context, st store.Store, blockKey store.Key, replicaInd
 	}
 	var rec Record
 	if json.Unmarshal(e.Value, &rec) != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // an unreadable record is not passing
 	}
 	return rec.OK && rec.Node == node, nil
 }
@@ -371,7 +371,7 @@ func retire(ctx context.Context, st store.Store, key store.Key, node string) err
 		Node string `json:"node"`
 	}
 	if json.Unmarshal(e.Value, &rec) != nil || rec.Node != node {
-		return nil
+		return nil //nolint:nilerr // unreadable or another node's: not ours to clear
 	}
 	ops := []store.Op{{Kind: store.OpCheck, Key: key, Expect: e.Revision}, {Kind: store.OpDelete, Key: key}}
 	if _, err := st.Txn(ctx, ops); err != nil {
@@ -463,7 +463,7 @@ func (r *Runner) ProbeOnce(ctx context.Context) {
 // write publishes and stamps the last-write clock.
 func (r *Runner) write(ctx context.Context, rec Record) {
 	if r.Publisher != nil {
-		_ = r.Publisher(ctx, rec) //nolint: probe writes retry next tick; never fatal
+		_ = r.Publisher(ctx, rec) // probe writes retry next tick; never fatal
 	}
 	r.last = r.now()
 }

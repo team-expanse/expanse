@@ -144,8 +144,10 @@ func TestSyncConvergesATiebreakerWithoutLeadingOrPublishing(t *testing.T) {
 	r.setPrimary(t, "n1") // even a confused controller cannot make a tiebreaker lead
 	behind := peerOf(0, drbd.ConnConnected, drbd.ReplEstablished, drbd.DiskUpToDate)
 	behind.Role, behind.Volumes[0].OutOfSyncKiB = drbd.RoleSecondary, 8
-	r.drbd.st[vol] = &drbd.Status{Name: vol, Role: drbd.RoleSecondary, Peers: []drbd.Peer{behind},
-		Volumes: []drbd.Volume{{DiskState: drbd.DiskDiskless, Quorum: true}}}
+	r.drbd.st[vol] = &drbd.Status{
+		Name: vol, Role: drbd.RoleSecondary, Peers: []drbd.Peer{behind},
+		Volumes: []drbd.Volume{{DiskState: drbd.DiskDiskless, Quorum: true}},
+	}
 	before := r.status(t)
 	r.mustSync(t)
 	if len(r.conv.desired) != 1 || !r.conv.desired[0].Tiebreaker() || len(r.conv.desired[0].Members) != 3 {

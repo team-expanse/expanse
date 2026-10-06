@@ -319,7 +319,7 @@ func (l *L4) handle(client net.Conn) {
 
 	done := make(chan struct{}, 2)
 	go func() {
-		copyStream(backend, client)
+		_ = copyStream(backend, client)
 		// Client is done sending: half-close toward the backend so a
 		// pipelined peer sees EOF without tearing the reverse path.
 		if tc, ok := backend.(*net.TCPConn); ok {
@@ -328,7 +328,7 @@ func (l *L4) handle(client net.Conn) {
 		done <- struct{}{}
 	}()
 	go func() {
-		copyStream(client, backend)
+		_ = copyStream(client, backend)
 		if tc, ok := client.(*net.TCPConn); ok {
 			_ = tc.CloseWrite()
 		}

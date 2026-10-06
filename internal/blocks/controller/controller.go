@@ -21,10 +21,11 @@ package controller
 
 import (
 	"context"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
 	"github.com/expanse/expanse/internal/errors"

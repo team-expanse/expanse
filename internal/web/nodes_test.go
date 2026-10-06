@@ -3,11 +3,12 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"github.com/expanse/expanse/internal/cluster/control"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/expanse/expanse/internal/cluster/control"
 
 	"github.com/expanse/expanse/internal/agent/health"
 	"github.com/expanse/expanse/internal/agent/inventory"

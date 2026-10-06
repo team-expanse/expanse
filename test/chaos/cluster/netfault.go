@@ -149,14 +149,6 @@ func (f *faultNet) track(src int, c net.Conn) {
 	f.conns[src][c] = struct{}{}
 }
 
-func (f *faultNet) untrack(src int, c net.Conn) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if m := f.conns[src]; m != nil {
-		delete(m, c)
-	}
-}
-
 // chaosStream is a per-node raft.StreamLayer whose dials pass the shared
 // faultNet filter. It embeds a plain TCP listener on the node's raft port.
 type chaosStream struct {
@@ -199,12 +191,4 @@ func (l *slowLogStore) StoreLogs(entries []*raft.Log) error {
 		time.Sleep(d)
 	}
 	return l.LogStore.StoreLogs(entries)
-}
-
-// describe returns a human-readable summary of the current fault state
-// (used in scenario logs).
-func (f *faultNet) describe() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return fmt.Sprintf("partition=%v loss=%.2f", f.group, f.loss)
 }

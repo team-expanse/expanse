@@ -175,7 +175,7 @@ func (a *Agent) listenL7(ln net.Listener, svcKey string) (io.Closer, error) {
 		// wired but fails closed until then.
 		GetCertificate: proxy.NoCertYet,
 	}
-	srv := &http.Server{Handler: l7.Handler()}
+	srv := &http.Server{Handler: l7.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			a.logger.Warn("l7 listener exited", "service", svcKey, "err", err)

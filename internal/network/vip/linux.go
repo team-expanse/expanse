@@ -1,6 +1,7 @@
 package vip
 
 import (
+	stderrors "errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -70,7 +71,7 @@ func addrIPNet(p netip.Prefix) *net.IPNet {
 
 func addAddr(link netlink.Link, p netip.Prefix) error {
 	a := &netlink.Addr{IPNet: addrIPNet(p)}
-	if err := netlink.AddrAdd(link, a); err != nil && err != unix.EEXIST {
+	if err := netlink.AddrAdd(link, a); err != nil && !stderrors.Is(err, unix.EEXIST) {
 		return err
 	}
 	return nil
@@ -79,7 +80,7 @@ func addAddr(link netlink.Link, p netip.Prefix) error {
 func delAddr(link netlink.Link, p netip.Prefix) error {
 	a := &netlink.Addr{IPNet: addrIPNet(p)}
 	err := netlink.AddrDel(link, a)
-	if err != nil && err != unix.ENOENT {
+	if err != nil && !stderrors.Is(err, unix.ENOENT) {
 		// Address already gone is fine — that is the goal state.
 		return err
 	}

@@ -21,10 +21,12 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"sort"
 	"strings"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/blocks/logs"
 	"github.com/expanse/expanse/internal/blocks/validate"
@@ -322,7 +324,7 @@ func (s *Server) namesInNamespace(ctx context.Context, ns, exclude string) []str
 func generationCurrent(ctx context.Context, st store.Store) (uint64, error) {
 	e, err := st.Get(ctx, "/cluster/generation")
 	if err != nil {
-		if errors.Is(err, errors.KindNotFound) || err == store.ErrNotFound {
+		if errors.Is(err, errors.KindNotFound) || stderrors.Is(err, store.ErrNotFound) {
 			return 0, nil
 		}
 		return 0, errors.Wrap(err, errors.KindInternal, "blocks.service", "read generation")

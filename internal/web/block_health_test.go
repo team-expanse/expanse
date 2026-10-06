@@ -48,8 +48,10 @@ func TestBlockFragmentShowsReplicaHealthAndFailedNodes(t *testing.T) {
 				{ReplicaIndex: 1, NodeId: "node-b", Phase: pb.Phase_STARTING, Health: &pb.ReplicaHealth{
 					Readiness: &pb.ProbeResult{Ok: false, Detail: "503 Service Unavailable", AtUnixNs: probed},
 				}},
-				{ReplicaIndex: -1, FormerIndex: 1, NodeId: "node-c", Phase: pb.Phase_FAILED,
-					Message: "liveness probe failed after 5 restarts: refused"},
+				{
+					ReplicaIndex: -1, FormerIndex: 1, NodeId: "node-c", Phase: pb.Phase_FAILED,
+					Message: "liveness probe failed after 5 restarts: refused",
+				},
 			},
 		},
 	})

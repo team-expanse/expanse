@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -396,7 +395,7 @@ func (w *Writer) VerifyAcked(ctx context.Context) error {
 	for k, a := range snapshot {
 		e, err := w.h.Get(ctx, k)
 		if err != nil {
-			return fmt.Errorf("verify %s: %v", k, err)
+			return fmt.Errorf("verify %s: %w", k, err)
 		}
 		if e == nil {
 			return fmt.Errorf("verify %s: acked write missing", k)
@@ -435,7 +434,6 @@ func (h *Harness) RandomLiveNode() int {
 
 // snapshotDir is unused today but keeps TempDir layout obvious for
 // debugging: raft files live under <DataDir>/raft.
-func (h *Harness) raftDir(i int) string { return filepath.Join(h.dirs[i], "raft") }
 
 // Close shuts down every live node (idempotent; used by t.Cleanup).
 func (h *Harness) Close() {

@@ -147,7 +147,7 @@ func loadOrCreateKey(path string) (wgtypes.Key, error) {
 			return wgtypes.Key{}, errors.New(errors.KindInternal, "mesh.writeKey", openErr.Error())
 		}
 		if _, wErr := f.WriteString(k.String()); wErr != nil || f.Sync() != nil || f.Close() != nil {
-			f.Close()
+			_ = f.Close()
 			return wgtypes.Key{}, errors.New(errors.KindInternal, "mesh.writeKey", "persisting "+path)
 		}
 		// Crash-consistency: the key is written ONCE and must survive a

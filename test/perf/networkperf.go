@@ -66,7 +66,7 @@ func startL7Fixture() (*l7Fixture, error) {
 		if err != nil {
 			return nil, err
 		}
-		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("hello"))
 		})}
 		go func() { _ = srv.Serve(ln) }()
@@ -105,7 +105,7 @@ func startL7Fixture() (*l7Fixture, error) {
 			return net.JoinHostPort(host, fmt.Sprint(ports[b.ReplicaIndex]))
 		},
 	}
-	hs := &http.Server{Handler: l7.Handler()}
+	hs := &http.Server{Handler: l7.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = hs.Serve(ln) }()
 	closers = append(closers, func() { _ = hs.Close() })
 
@@ -228,7 +228,7 @@ func measureL4ThroughputRatio() (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprint(streamBytes))
 		_, _ = w.Write(body)
 	})}

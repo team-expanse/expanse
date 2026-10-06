@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -28,14 +29,14 @@ func Serve(ctx context.Context, addr string, tlsCfg *tls.Config, collector prome
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
 	}()
 	err = srv.Serve(ln)
 	if err != nil && ctx.Err() != nil {
-		return nil // shutting down, not a real failure
+		return nil //nolint:nilerr // shutting down, not a real failure
 	}
 	return err
 }

@@ -244,19 +244,19 @@ func RenderExplain(r *pb.ExplainResponse) string {
 	for _, re := range r.GetReplicas() {
 		sb.WriteString("\n")
 		if re.GetNode() != "" {
-			sb.WriteString(fmt.Sprintf("  Replica %d: placed on %s (%s)\n",
-				re.GetReplicaIndex(), re.GetNode(), re.GetPhase().String()))
+			fmt.Fprintf(&sb, "  Replica %d: placed on %s (%s)\n",
+				re.GetReplicaIndex(), re.GetNode(), re.GetPhase().String())
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("  Replica %d: Pending\n", re.GetReplicaIndex()))
+		fmt.Fprintf(&sb, "  Replica %d: Pending\n", re.GetReplicaIndex())
 		sb.WriteString("\n    Node        Filter result                                      Score\n")
 		for _, n := range re.GetNodes() {
 			if n.GetOk() {
-				sb.WriteString(fmt.Sprintf("    %-11s %-50s %.0f (%s)\n",
-					n.GetNode(), "✓", n.GetScore(), n.GetScoreDetail()))
+				fmt.Fprintf(&sb, "    %-11s %-50s %.0f (%s)\n",
+					n.GetNode(), "✓", n.GetScore(), n.GetScoreDetail())
 			} else {
-				sb.WriteString(fmt.Sprintf("    %-11s %-50s —\n",
-					n.GetNode(), "✗ "+n.GetReason()))
+				fmt.Fprintf(&sb, "    %-11s %-50s —\n",
+					n.GetNode(), "✗ "+n.GetReason())
 			}
 		}
 		if sug := re.GetSuggestion(); sug != "" {

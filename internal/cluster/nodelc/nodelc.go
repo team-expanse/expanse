@@ -182,8 +182,10 @@ func List(ctx context.Context, st store.Store) ([]Info, error) {
 }
 
 func infoOf(r join.NodeRecord, st *store.Entry) Info {
-	in := Info{ID: r.ID, Role: r.Role, Lifecycle: r.State, Cordoned: r.Cordoned, Draining: r.Draining,
-		RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, LastSeen: time.Unix(0, r.JoinedAt)}
+	in := Info{
+		ID: r.ID, Role: r.Role, Lifecycle: r.State, Cordoned: r.Cordoned, Draining: r.Draining,
+		RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, LastSeen: time.Unix(0, r.JoinedAt),
+	}
 	if in.Lifecycle == "" {
 		in.Lifecycle = "healthy"
 	}
@@ -347,7 +349,7 @@ func Remove(ctx context.Context, st *raftstore.Store, id string, opts *Options) 
 			}
 		}
 	}
-	return nil
+	return nil //nolint:nilerr // the /nodes cleanup above is best effort
 }
 
 // finishRemovals drops every revoked node still in raft or on record:

@@ -22,6 +22,7 @@ import (
 // mention it casually in sensitive code).
 func AssertNoStaleReads(dir string) []string {
 	var violations []string
+	//nolint:gosec,nilerr // a test-time scan of this repo's own source; unreadable files are skipped
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			if err == nil && info.IsDir() && info.Name() == "testdata" {

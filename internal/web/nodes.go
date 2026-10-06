@@ -117,7 +117,7 @@ func (s *Server) handleNodesEvents(w http.ResponseWriter, r *http.Request) {
 	send := func() error {
 		nodes, rep, err := s.loadNodes(r.Context())
 		if err != nil {
-			return nil // transient; the next write retries
+			return nil //nolint:nilerr // transient; the next write retries
 		}
 		var buf bytes.Buffer
 		if err := s.renderFragment(&buf, "nodes-fragment", nodesListData{Nodes: nodes, Report: rep}); err != nil {

@@ -549,9 +549,11 @@ func TestWritePGConfOverwritesAnExistingConf(t *testing.T) {
 	if strings.Contains(string(got), "9999") {
 		t.Errorf("stale port survived overwrite: %s", got)
 	}
-	for _, want := range []string{"port = 5432", "shared_buffers = 256MB", "max_wal_senders = 10",
+	for _, want := range []string{
+		"port = 5432", "shared_buffers = 256MB", "max_wal_senders = 10",
 		"unix_socket_directories = '/mnt/pg/.expanse-postgres/sock'",
-		"synchronous_standby_names = 'ANY 1 (*)'"} {
+		"synchronous_standby_names = 'ANY 1 (*)'",
+	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("postgresql.conf missing %q:\n%s", want, got)
 		}

@@ -24,7 +24,7 @@ func startGuestWatch(instance string) (*guestWatch, error) {
 	}
 	l, err := vmready.ListenVsock(cid)
 	if err != nil {
-		vhost.Close()
+		_ = vhost.Close()
 		return nil, err
 	}
 	return &guestWatch{vhost: vhost, cid: cid, l: l}, nil
@@ -39,8 +39,8 @@ func (w *guestWatch) serve(ctx context.Context, instance string) {
 }
 
 func (w *guestWatch) close() {
-	w.vhost.Close()
-	w.l.Close()
+	_ = w.vhost.Close()
+	_ = w.l.Close()
 }
 
 // publishGuestStatus sets the unit's status text, which the agent reads back as the replica's readiness.

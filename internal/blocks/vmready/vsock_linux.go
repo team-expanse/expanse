@@ -37,12 +37,12 @@ func ClaimCID(instance string) (*os.File, uint32, error) {
 			return f, cid, nil
 		}
 		if errno != unix.EADDRINUSE {
-			f.Close()
+			_ = f.Close()
 			return nil, 0, fmt.Errorf("set guest CID %d: %w", cid, errno)
 		}
 		cid = NextCID(cid)
 	}
-	f.Close()
+	_ = f.Close()
 	return nil, 0, fmt.Errorf("no free guest CID after %d attempts from %d", claimAttempts, CIDFor(instance))
 }
 
@@ -56,11 +56,11 @@ func ListenVsock(port uint32) (*VsockListener, error) {
 		return nil, fmt.Errorf("vsock socket: %w", err)
 	}
 	if err := c.Bind(&unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: port}); err != nil {
-		c.Close()
+		_ = c.Close()
 		return nil, fmt.Errorf("vsock bind port %d: %w", port, err)
 	}
 	if err := c.Listen(16); err != nil {
-		c.Close()
+		_ = c.Close()
 		return nil, fmt.Errorf("vsock listen port %d: %w", port, err)
 	}
 	return &VsockListener{c: c}, nil
@@ -74,11 +74,11 @@ func (l *VsockListener) Accept(ctx context.Context) (io.ReadCloser, uint32, erro
 	}
 	vm, ok := sa.(*unix.SockaddrVM)
 	if !ok {
-		conn.Close()
+		_ = conn.Close()
 		return nil, 0, errors.New("vsock accept: peer is not a vsock address")
 	}
 	if err := conn.SetDeadline(time.Now().Add(readTimeout)); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, 0, err
 	}
 	return conn, vm.CID, nil

@@ -338,7 +338,7 @@ func (p *Proxy) StreamLogs(ctx context.Context, req *pb.LogsRequest, send func(*
 			line, err := stream.Recv()
 			if err != nil {
 				if ctx.Err() != nil {
-					return nil
+					return nil //nolint:nilerr // the caller stopped following
 				}
 				break // this replica's stream ended; next replica
 			}

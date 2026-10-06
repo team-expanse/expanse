@@ -60,8 +60,11 @@ func (c *Controller) promoteBlock(ctx context.Context, e store.Entry) error {
 	k := e.Key
 	sk := statusKey(k)
 	se, err := c.St.Get(ctx, sk)
-	if err != nil {
+	if errors.KindOf(err) == errors.KindNotFound {
 		return nil // no status yet: nothing placed
+	}
+	if err != nil {
+		return err
 	}
 	var status pb.BlockStatus
 	if err := proto.Unmarshal(se.Value, &status); err != nil {

@@ -2,6 +2,7 @@ package raftstore
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -174,7 +175,7 @@ func Open(cfg Config) (*Store, error) {
 		// rejoin its existing log instead of clobbering it.
 		hasState, err := raft.HasExistingState(logStore, stableStore, snapshots)
 		if err != nil {
-			s.Close()
+			_ = s.Close()
 			return nil, fmt.Errorf("check existing state: %w", err)
 		}
 		if !hasState {
@@ -185,7 +186,7 @@ func Open(cfg Config) (*Store, error) {
 				}},
 			}
 			if err := r.BootstrapCluster(bc).Error(); err != nil {
-				s.Close()
+				_ = s.Close()
 				return nil, fmt.Errorf("bootstrap cluster: %w", err)
 			}
 		}
@@ -383,7 +384,7 @@ func (s *Store) propose(ctx context.Context, c *pb.Command) (store.Revision, err
 	}
 	f := s.r.Apply(b, applyTimeout)
 	if err := f.Error(); err != nil {
-		if err == raft.ErrNotLeader {
+		if stderrors.Is(err, raft.ErrNotLeader) {
 			if fwd := s.forwarder; fwd != nil {
 				return fwd(ctx, c)
 			}
@@ -525,10 +526,11 @@ func (s *Store) ApplyTransferLeadership(to string) error {
 // membershipErr types a raft membership error: losing leadership is
 // retryable (KindUnavailable), anything else is a conflict.
 func membershipErr(op string, err error) error {
-	switch err {
-	case nil:
+	switch {
+	case err == nil:
 		return nil
-	case raft.ErrNotLeader, raft.ErrLeadershipLost, raft.ErrRaftShutdown, raft.ErrLeadershipTransferInProgress:
+	case stderrors.Is(err, raft.ErrNotLeader), stderrors.Is(err, raft.ErrLeadershipLost),
+		stderrors.Is(err, raft.ErrRaftShutdown), stderrors.Is(err, raft.ErrLeadershipTransferInProgress):
 		return errors.Wrap(err, errors.KindUnavailable, op, "not leader: "+err.Error())
 	default:
 		return errors.Wrap(err, errors.KindConflict, op, err.Error())

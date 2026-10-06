@@ -17,10 +17,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/quantity"
@@ -404,7 +405,7 @@ func soleNode(nodes map[string]bool) string {
 func (c *Controller) requestVolume(ctx context.Context, ns, name, vname string, s *pb.Storage, preferredNode string) error {
 	size, err := quantity.ParseBytes(s.GetSize())
 	if err != nil {
-		return nil
+		return fmt.Errorf("volume %s: size: %w", vname, err)
 	}
 	vspec := &pb.VolumeSpec{
 		Name:          vname,
@@ -415,7 +416,7 @@ func (c *Controller) requestVolume(ctx context.Context, ns, name, vname string, 
 	}
 	raw, err := pbproto.Marshal(vspec)
 	if err != nil {
-		return nil
+		return fmt.Errorf("volume %s: %w", vname, err)
 	}
 	if _, err := c.opts.St.Put(ctx, storage.PendingCreateKey(vname), raw); err != nil {
 		return err

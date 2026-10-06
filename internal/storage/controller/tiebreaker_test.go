@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/expanse/expanse/internal/storage"
-	"github.com/expanse/expanse/internal/store"
 )
 
 func (r *rebuildRig) tiebreakers(id string) []string {
@@ -18,13 +17,6 @@ func (r *rebuildRig) tiebreakers(id string) []string {
 func (r *rebuildRig) assignTiebreaker(id, host string) {
 	r.t.Helper()
 	if _, err := r.alloc.AssignDiskless(context.Background(), id, host); err != nil {
-		r.t.Fatal(err)
-	}
-}
-
-func (r *rebuildRig) unmesh(node string) {
-	r.t.Helper()
-	if err := r.st.Delete(context.Background(), store.Key("/nodes/"+node+"/network.wgPublicKey"), 0); err != nil {
 		r.t.Fatal(err)
 	}
 }

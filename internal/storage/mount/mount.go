@@ -174,7 +174,7 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 	dev, err := m.device(ctx, spec.VolID)
 	if err != nil {
 		o.Details["reason"] = err.Error()
-		return o, nil
+		return o, nil //nolint:nilerr // reported as degraded, with the reason
 	}
 	if isRaw(spec.Filesystem) {
 		o.Health, o.InSync = reconcile.HealthHealthy, true

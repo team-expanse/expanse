@@ -2,6 +2,7 @@ package raftstore
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"sync"
 	"time"
@@ -45,10 +46,10 @@ func (s *Store) ApplyCommand(ctx context.Context, c *pb.Command) (store.Revision
 	}
 	f := s.r.Apply(b, applyTimeout)
 	if err := f.Error(); err != nil {
-		if err == raft.ErrNotLeader {
+		if stderrors.Is(err, raft.ErrNotLeader) {
 			return 0, errors.New(errors.KindUnavailable, "raftstore.ApplyCommand", "not leader")
 		}
-		if err == raft.ErrRaftShutdown {
+		if stderrors.Is(err, raft.ErrRaftShutdown) {
 			return 0, errors.Wrap(err, errors.KindUnavailable, "raftstore.ApplyCommand", "raft unavailable")
 		}
 		if ctx.Err() != nil {
@@ -210,18 +211,7 @@ func errorDetail(err error) *pb.ErrorDetail {
 }
 
 func asTyped(err error, target **errors.Error) bool {
-	for err != nil {
-		if e, ok := err.(*errors.Error); ok {
-			*target = e
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
+	return stderrors.As(err, target)
 }
 
 func errorFromDetail(d *pb.ErrorDetail) error {

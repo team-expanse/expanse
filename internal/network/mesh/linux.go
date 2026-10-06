@@ -210,7 +210,7 @@ func (c *LinuxController) RemovePeer(publicKey string) error {
 	}
 	link, linkErr := netlink.LinkByName(c.iface)
 	if linkErr != nil {
-		return nil // interface gone; routes went with it
+		return nil //nolint:nilerr // interface gone; routes went with it
 	}
 	for _, p := range doomed {
 		_ = netlink.RouteDel(&netlink.Route{

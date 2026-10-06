@@ -106,17 +106,6 @@ func (h *UpdateHooks) sleep(d time.Duration) {
 // revision in Reason prevents retry loops until the spec changes again.
 const abortCondition = "UpdateAborted"
 
-// updateNeeded reports whether any placement is not at the block's
-// current revision (its §5.2 target generation).
-func updateNeeded(status *pb.BlockStatus, target int64) bool {
-	for _, p := range status.GetPlacements() {
-		if p.GetGeneration() != target {
-			return true
-		}
-	}
-	return false
-}
-
 // updatePass performs at most one §5.2 action for a block and reports
 // whether the status record changed. target is the block's store
 // revision; want the desired replica count.

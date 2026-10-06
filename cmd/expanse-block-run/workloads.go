@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -303,7 +304,7 @@ func execWorkload(ctx context.Context, bin string, argv []string, extraEnv ...st
 	cmd.Stderr = os.Stderr
 	err = cmd.Run()
 	if ctx.Err() != nil {
-		return nil // deliberate stop
+		return nil //nolint:nilerr // deliberate stop
 	}
 	return err
 }
@@ -460,7 +461,7 @@ func runStaticSite(ctx context.Context, instance string, args []string) error {
 	fmt.Printf("expanse-block-run: static-site serving on :%s\n", port)
 	select {
 	case err := <-errCh:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		return nil
@@ -860,7 +861,7 @@ func runWhoami(ctx context.Context, index int, args []string) error {
 		w.Header().Set("X-Seen-XFF", r.Header.Get("X-Forwarded-For"))
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fmt.Sprintf("%sreplica-%d\n", greeting, index)))
+		_, _ = fmt.Fprintf(w, "%sreplica-%d\n", greeting, index)
 	})
 	srv := &http.Server{
 		Addr:              ":" + port,
@@ -872,7 +873,7 @@ func runWhoami(ctx context.Context, index int, args []string) error {
 	fmt.Printf("expanse-block-run: whoami(replica-%d) serving on :%s\n", index, port)
 	select {
 	case err := <-errCh:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		return nil
@@ -1309,7 +1310,7 @@ func runVM(ctx context.Context, instance string, args []string) error {
 
 	path, err := resolveBin("qemu-kvm")
 	if err != nil {
-		tap.Close()
+		_ = tap.Close()
 		_ = deleteLink(tapName)
 		return fmt.Errorf("vm/instance: %w", err)
 	}
@@ -1318,13 +1319,13 @@ func runVM(ctx context.Context, instance string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		tap.Close()
+		_ = tap.Close()
 		_ = deleteLink(tapName)
 		return fmt.Errorf("vm/instance: start qemu-kvm: %w", err)
 	}
 	// qemu has its own inherited copy of the fd (via fork/exec) as soon
 	// as Start returns; closing our own copy here does not affect it.
-	tap.Close()
+	_ = tap.Close()
 	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d memMiB=%d)\n", instance, dev, mac, cpus, memMiB)
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
@@ -1336,7 +1337,7 @@ func runVM(ctx context.Context, instance string, args []string) error {
 	err = cmd.Wait()
 	_ = deleteLink(tapName)
 	if ctx.Err() != nil {
-		return nil // deliberate stop
+		return nil //nolint:nilerr // deliberate stop
 	}
 	return err
 }
@@ -1435,7 +1436,7 @@ func ipLink(ip string, args ...string) error {
 func deleteLink(name string) error {
 	link, err := netlink.LinkByName(name)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // no such link: nothing to remove
 	}
 	return netlink.LinkDel(link)
 }
@@ -1550,7 +1551,8 @@ func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string)
 // initdb a fresh primary (and create the replicator role + initial
 // database) or pg_basebackup from the elected primary as a standby.
 func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, database, replPassword, superPassword, slot,
-	sharedBuffers string, maxWalSenders, maxReplicationSlots int) error {
+	sharedBuffers string, maxWalSenders, maxReplicationSlots int,
+) error {
 	kind, host, peerport, err := waitForPGRole(ctx, roleFile, pgBootstrapTimeout, time.Second)
 	if err != nil {
 		return err

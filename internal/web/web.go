@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/version"
@@ -261,7 +262,7 @@ func setOIDCCookies(w http.ResponseWriter, state, nonce string) {
 
 func clearOIDCCookies(w http.ResponseWriter) {
 	for _, name := range []string{oidcStateCookie, oidcNonceCookie} {
-		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: oidcCookiePath, MaxAge: -1, Secure: true, SameSite: http.SameSiteLaxMode})
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: oidcCookiePath, MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 	}
 }
 
@@ -285,7 +286,7 @@ func setAuthCookies(w http.ResponseWriter, sess *auth.Session) {
 		Name: sessionCookie, Value: sess.ID, Path: "/",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
 	})
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // double-submit CSRF: the page's script must read it
 		Name: csrfCookie, Value: sess.CSRFToken, Path: "/",
 		HttpOnly: false, Secure: true, SameSite: http.SameSiteStrictMode,
 	})
@@ -293,7 +294,7 @@ func setAuthCookies(w http.ResponseWriter, sess *auth.Session) {
 
 func clearAuthCookies(w http.ResponseWriter) {
 	for _, name := range []string{sessionCookie, csrfCookie} {
-		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, Secure: true, SameSite: http.SameSiteStrictMode})
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	}
 }
 
@@ -356,7 +357,7 @@ func (s *Server) Serve(ctx context.Context, addr string, tlsCfg *tls.Config) err
 		return fmt.Errorf("web: listen %s: %w", addr, err)
 	}
 	go s.events.run(ctx, s.store)
-	httpSrv := &http.Server{Handler: s.mux}
+	httpSrv := &http.Server{Handler: s.mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		_ = httpSrv.Close()

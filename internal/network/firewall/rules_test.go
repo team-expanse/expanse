@@ -109,14 +109,6 @@ func keyStr(k []byte) string {
 	return fmt.Sprintf("%x", k)
 }
 
-func portSet(name string, ports ...uint16) map[string]bool {
-	m := map[string]bool{}
-	for _, p := range ports {
-		m[portKey(p)] = true
-	}
-	return m
-}
-
 func TestBootstrapShape(t *testing.T) {
 	f := newFakeConn()
 	if err := Bootstrap(f); err != nil {
@@ -184,10 +176,10 @@ func TestSyncDiffsOnly(t *testing.T) {
 	}
 	var dels, adds int
 	for _, op := range f.ops {
-		switch {
-		case op == "delElem cluster_peers 10.42.3.1", op == "delElem block_tcp_ports 80":
+		switch op {
+		case "delElem cluster_peers 10.42.3.1", "delElem block_tcp_ports 80":
 			dels++
-		case op == "flush":
+		case "flush":
 		default:
 			if op[:7] == "addElem" {
 				adds++

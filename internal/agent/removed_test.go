@@ -28,6 +28,7 @@ func (m *unitManager) Load(id string, _ []byte) (reconcile.Resource, error) { re
 func (m *unitManager) Observe(context.Context, reconcile.Resource) (reconcile.Observed, error) {
 	return reconcile.Observed{Exists: true}, nil
 }
+
 func (m *unitManager) Plan(context.Context, reconcile.Resource, reconcile.Observed) ([]reconcile.Action, error) {
 	return nil, nil
 }

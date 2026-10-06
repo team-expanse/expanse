@@ -25,21 +25,37 @@ linters:
           disabled: true
         - name: unused-parameter
           disabled: true
+    staticcheck:
+      checks:
+        - all
+        # The defaults' style checks, plus two quick-fixes that only
+        # restate a condition or selector a reviewer chose to spell out.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1001 # De Morgan's law
+        - -QF1008 # embedded field in selector
     errcheck:
       exclude-functions:
         # CLI/table output to stdout: nothing sensible to do on failure.
+        - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
         - fmt.Println
 
   exclusions:
     rules:
-      # Tests: fixture setup and best-effort cleanup.
+      # Tests: fixture setup and best-effort cleanup; httptest bodies are
+      # in-memory buffers with nothing to leak.
       - path: _test\.go
         linters:
           - errcheck
           - gosec
           - errorlint
+          - bodyclose
       # The shared conformance suite and perf harness are test code in
       # regular files (imported across packages).
       - path: internal/store/conformance/
@@ -49,14 +65,16 @@ linters:
       - path: test/perf/
         linters:
           - errcheck
-      # Deferred Close: cleanup on best-effort paths.
-      - source: "defer .*\\.Close\\(\\)"
+      # Deferred Close/Remove: cleanup on best-effort paths.
+      - source: "defer .*\\.Close\\(\\)|defer (os\\.Remove|os\\.RemoveAll|unix\\.Close)\\("
         linters:
           - errcheck
-      # G204: subprocesses with variable args is the design (nix CLI,
+      # G204/G702: subprocesses with variable args is the design (nix CLI,
       #   exec driver); inputs come from operator config, not network.
       # G304: reading /proc/sysfs paths built from config keys is the
       #   design.
+      # G301: workload and spec directories are shared with workloads that
+      #   run as other users (see writeRoleFile).
       # G302/G306: declarative file modes (0644 etc.) come from desired
       #   state; 0600 is not always what the operator asked for.
       # G703: store paths are operator-provided config, not user input.
@@ -65,7 +83,7 @@ linters:
       # G103: unsafe in the TUI is confined to terminal sizing.
       - linters:
           - gosec
-        text: "G(204|304|302|306|703|115|404|103):"
+        text: "G(204|702|304|301|302|306|703|115|404|103):"
       # KindOf/Is deliberately walk the chain with assertions (this
       # package defines the error model others use).
       - path: internal/errors/

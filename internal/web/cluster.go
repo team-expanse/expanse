@@ -89,7 +89,7 @@ func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
 	send := func() error {
 		rep, err := s.getClusterReport(r.Context())
 		if err != nil {
-			return nil // transient read error; the next event retries
+			return nil //nolint:nilerr // transient read error; the next event retries
 		}
 		var buf bytes.Buffer
 		if err := s.renderFragment(&buf, "cluster-fragment", rep); err != nil {

@@ -28,8 +28,10 @@ func TestBlockStatusTableShowsReplicaHealthByNode(t *testing.T) {
 					Readiness: &pb.ProbeResult{Ok: true, Detail: "200 OK", AtUnixNs: probed}, Restarts: 1,
 					Liveness: &pb.ProbeResult{Ok: true, Detail: "timeout", AtUnixNs: probed},
 				}},
-				{ReplicaIndex: -1, FormerIndex: 1, NodeId: "node-c", Phase: pb.Phase_FAILED,
-					Message: "liveness probe failed after 5 restarts: refused"},
+				{
+					ReplicaIndex: -1, FormerIndex: 1, NodeId: "node-c", Phase: pb.Phase_FAILED,
+					Message: "liveness probe failed after 5 restarts: refused",
+				},
 			},
 		},
 	}

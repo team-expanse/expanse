@@ -196,7 +196,7 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 	send := func() error {
 		data, err := s.loadHealthOverview(ctx)
 		if err != nil {
-			return nil // transient read error; the next tick/event retries
+			return nil //nolint:nilerr // transient read error; the next tick/event retries
 		}
 		var buf bytes.Buffer
 		if err := s.renderFragment(&buf, "health-fragment", data); err != nil {

@@ -8,7 +8,8 @@ import (
 
 func TestNodeStatusValue(t *testing.T) {
 	rep := &health.Report{Overall: health.Unhealthy, Checks: []health.Result{
-		{Name: "disk-space", Status: health.Healthy}, {Name: "clock-sync", Status: health.Unhealthy}}}
+		{Name: "disk-space", Status: health.Healthy}, {Name: "clock-sync", Status: health.Unhealthy},
+	}}
 	if got, want := nodeStatusValue(rep, false), "health=unhealthy schedulable=true"; got != want {
 		t.Errorf("nodeStatusValue = %q, want %q", got, want)
 	}

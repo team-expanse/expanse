@@ -12,6 +12,7 @@ package apply
 import (
 	"bytes"
 	"encoding/json"
+	stderrors "errors"
 	"io"
 
 	"github.com/expanse/expanse/internal/errors"
@@ -29,7 +30,7 @@ func Parse(r io.Reader) (*pb.Block, error) {
 	}
 	var doc any
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
-	if err := dec.Decode(&doc); err != nil && err != io.EOF {
+	if err := dec.Decode(&doc); err != nil && !stderrors.Is(err, io.EOF) {
 		return nil, errors.Wrap(err, errors.KindInvalid, "apply.Parse", "parse YAML")
 	}
 	if doc == nil {

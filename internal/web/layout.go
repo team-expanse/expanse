@@ -279,7 +279,7 @@ func isHTMX(r *http.Request) bool {
 func (s *Server) done(w http.ResponseWriter, r *http.Request, kind, text, redirect string) {
 	if !isHTMX(r) {
 		setFlash(w, kind, text)
-		http.Redirect(w, r, redirect, http.StatusSeeOther)
+		http.Redirect(w, r, redirect, http.StatusSeeOther) //nolint:gosec // every caller passes a fixed same-site path
 		return
 	}
 	if redirect != "" && redirect != r.Header.Get("HX-Current-URL") && !strings.HasSuffix(r.Header.Get("HX-Current-URL"), redirect) {

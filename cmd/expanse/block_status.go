@@ -34,7 +34,7 @@ func printBlockStatus(w io.Writer, b *pb.Block, now time.Time) {
 	for _, p := range s.GetPlacements() {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", replicaOf(p), p.GetNodeId(), p.GetPhase(), replicaHealthCols(p, now))
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 // replicaOf names the replica a placement serves, or served before it was retired.

@@ -339,29 +339,43 @@ func seedPreviewStore(t *testing.T, st store.Store) {
 		status storage.Status
 		snaps  []storage.SnapshotRecord
 	}{
-		{storage.Spec{ID: "vol-01", Name: "postgres-data", SizeBytes: 200 << 30, Class: "default", Replication: 3},
+		{
+			storage.Spec{ID: "vol-01", Name: "postgres-data", SizeBytes: 200 << 30, Class: "default", Replication: 3},
 			storage.Status{State: storage.StateHealthy, Primary: "n1", Placement: []storage.Replica{
 				{NodeID: "n1", Role: storage.RolePrimary, Healthy: true, LastSeen: now.Add(-4 * time.Second)},
 				{NodeID: "n2", Role: storage.RoleSecondary, Healthy: true, LastSeen: now.Add(-6 * time.Second)},
 				{NodeID: "n3", Role: storage.RoleSecondary, Healthy: true, LastSeen: now.Add(-3 * time.Minute)},
 			}},
-			[]storage.SnapshotRecord{{Name: "nightly-0926", Node: "n1", CreatedAt: now.Add(-20 * time.Hour)}, {Name: "before-upgrade", Node: "n1", CreatedAt: now.Add(-5 * 24 * time.Hour)}}},
-		{storage.Spec{ID: "vol-02", Name: "media", SizeBytes: 2 << 40, Class: "bulk", Replication: 2},
+			[]storage.SnapshotRecord{{Name: "nightly-0926", Node: "n1", CreatedAt: now.Add(-20 * time.Hour)}, {Name: "before-upgrade", Node: "n1", CreatedAt: now.Add(-5 * 24 * time.Hour)}},
+		},
+		{
+			storage.Spec{ID: "vol-02", Name: "media", SizeBytes: 2 << 40, Class: "bulk", Replication: 2},
 			storage.Status{State: storage.StateResyncing, Primary: "n2", Placement: []storage.Replica{
 				{NodeID: "n2", Role: storage.RolePrimary, Healthy: true, LastSeen: now.Add(-2 * time.Second)},
 				{NodeID: "n1", Role: storage.RoleSecondary, Healthy: true, SyncPercent: 43.5, OutOfSyncKiB: 812_000_000, LastSeen: now.Add(-2 * time.Second)},
-			}}, nil},
-		{storage.Spec{ID: "vol-03", Name: "cache", SizeBytes: 40 << 30, Class: "default", Replication: 2},
+			}},
+			nil,
+		},
+		{
+			storage.Spec{ID: "vol-03", Name: "cache", SizeBytes: 40 << 30, Class: "default", Replication: 2},
 			storage.Status{State: storage.StateDegraded, Primary: "n1", Placement: []storage.Replica{
 				{NodeID: "n1", Role: storage.RolePrimary, Healthy: true, LastSeen: now.Add(-1 * time.Second)},
 				{NodeID: "n3", Role: storage.RoleSecondary, Healthy: false, OutOfSyncKiB: 5_120_000, LastSeen: now.Add(-14 * time.Minute)},
-			}}, nil},
-		{storage.Spec{ID: "vol-04", Name: "scratch", SizeBytes: 10 << 30, Class: "default", Replication: 3},
+			}},
+			nil,
+		},
+		{
+			storage.Spec{ID: "vol-04", Name: "scratch", SizeBytes: 10 << 30, Class: "default", Replication: 3},
 			storage.Status{State: storage.StateUnderReplicated, Primary: "n2", Placement: []storage.Replica{
 				{NodeID: "n2", Role: storage.RolePrimary, Healthy: true, LastSeen: now.Add(-1 * time.Second)},
-			}}, nil},
-		{storage.Spec{ID: "vol-05", Name: "legacy", SizeBytes: 5 << 30, Class: "default", Replication: 2},
-			storage.Status{State: storage.StateFailed, Primary: ""}, nil},
+			}},
+			nil,
+		},
+		{
+			storage.Spec{ID: "vol-05", Name: "legacy", SizeBytes: 5 << 30, Class: "default", Replication: 2},
+			storage.Status{State: storage.StateFailed, Primary: ""},
+			nil,
+		},
 	}
 	for _, v := range vols {
 		if err := storage.SaveSpec(ctx, st, v.spec); err != nil {

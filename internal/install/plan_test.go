@@ -63,11 +63,13 @@ func TestRunCommandOutputGoesToOut(t *testing.T) {
 func TestStageConfigWritesToPersistWithHardwareConfig(t *testing.T) {
 	mnt := t.TempDir()
 	var ran []string
-	rc := &RunContext{Config: DefaultConfig(), Layout: LayoutSingle, TargetFlake: "/flake", Mount: mnt,
+	rc := &RunContext{
+		Config: DefaultConfig(), Layout: LayoutSingle, TargetFlake: "/flake", Mount: mnt,
 		Exec: func(name string, args ...string) error {
 			ran = append(ran, name+" "+strings.Join(args, " "))
 			return nil
-		}}
+		},
+	}
 	if err := os.MkdirAll(filepath.Join(mnt, "persist/expanse"), 0o755); err != nil {
 		t.Fatal(err)
 	}

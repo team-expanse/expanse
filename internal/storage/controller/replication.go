@@ -82,10 +82,10 @@ func (c *Controller) enforceReplication(ctx context.Context, volID string, spec 
 // shouldAlert: a short volume alerts once out of Creating, except when it is short
 // only by design and no spare node exists to grow it.
 func (c *Controller) shouldAlert(ctx context.Context, want storage.VolumeState, status *storage.Status, meshed map[string]bool) bool {
-	switch {
-	case want == storage.StateHealthy:
+	switch want {
+	case storage.StateHealthy:
 		return false
-	case want == storage.StateUnderReplicated:
+	case storage.StateUnderReplicated:
 		return c.spareNode(ctx, meshed, status.Placement) != ""
 	}
 	return status.State != storage.StateCreating

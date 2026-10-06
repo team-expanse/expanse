@@ -18,9 +18,10 @@ package wire
 import (
 	"context"
 	"encoding/json"
-	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"strings"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/blocks/controller"
 	"github.com/expanse/expanse/internal/blocks/pgha"
