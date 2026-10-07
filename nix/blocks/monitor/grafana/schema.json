@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["prometheusUrl", "adminPassword"],
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port the Grafana web UI listens on"
+    },
+    "prometheusUrl": {
+      "type": "string",
+      "pattern": "^https?://",
+      "description": "URL of the Prometheus to query, e.g. the monitor/prometheus block's VIP: http://10.0.0.50:9090"
+    },
+    "adminPassword": {
+      "type": "string",
+      "minLength": 8,
+      "description": "Password for Grafana's admin user; applied when Grafana first creates its database"
+    },
+    "anonymousViewer": {
+      "type": "boolean",
+      "description": "Let anyone who can reach the port view dashboards without logging in"
+    }
+  }
+}

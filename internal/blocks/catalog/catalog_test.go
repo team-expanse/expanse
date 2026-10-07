@@ -540,3 +540,36 @@ func TestVMInstanceGuestReadyConfig(t *testing.T) {
 		t.Errorf("guestReady \"sometimes\" errors = %v, want one naming /guestReady", errs)
 	}
 }
+
+func TestShippedMonitoringBlocksValidate(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	cases := []struct {
+		typ     string
+		cfg     map[string]any
+		wantErr string // "" = valid
+	}{
+		{"monitor/prometheus", nil, ""},
+		{"monitor/prometheus", map[string]any{"metricsToken": "t", "scrapeInterval": "2s", "retention": "30d"}, ""},
+		{"monitor/prometheus", map[string]any{"scrapeInterval": "five"}, "/scrapeInterval"},
+		{"monitor/grafana", map[string]any{"prometheusUrl": "http://10.0.0.50:9090", "adminPassword": "correct-horse"}, ""},
+		{"monitor/grafana", map[string]any{"adminPassword": "correct-horse"}, "prometheusUrl"},
+		{"monitor/grafana", map[string]any{"prometheusUrl": "10.0.0.50:9090", "adminPassword": "correct-horse"}, "/prometheusUrl"},
+		{"monitor/grafana", map[string]any{"prometheusUrl": "http://p:9090", "adminPassword": "short"}, "/adminPassword"},
+	}
+	for _, tc := range cases {
+		var cfg *structpb.Struct
+		if tc.cfg != nil {
+			cfg = mustStruct(t, tc.cfg)
+		}
+		errs := c.ValidateConfig(tc.typ, cfg)
+		switch {
+		case tc.wantErr == "" && len(errs) != 0:
+			t.Errorf("%s %v rejected: %v", tc.typ, tc.cfg, errs)
+		case tc.wantErr != "" && (len(errs) == 0 || !strings.Contains(strings.Join(errs, ";"), tc.wantErr)):
+			t.Errorf("%s %v = %v, want an error naming %s", tc.typ, tc.cfg, errs, tc.wantErr)
+		}
+	}
+}

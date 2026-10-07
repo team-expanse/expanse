@@ -9,7 +9,8 @@
 // The binary resolves the block type to a workload (shipped types in
 // workloads.go):
 //   - util/echo: stdlib HTTP echo server
-//   - web/nginx, db/redis, monitor/node-exporter, ai/ollama: upstream
+//   - web/nginx, db/redis, monitor/node-exporter, monitor/prometheus,
+//     monitor/grafana, ai/ollama: upstream
 //     binaries from PATH (config → flags/generated conf)
 //   - web/static-site: native Go file server from the config index
 //   - share/smb: upstream smbd, config generated from spec.config plus
@@ -93,6 +94,16 @@ func main() {
 		}
 	case "monitor/node-exporter":
 		if err := runNodeExporter(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "monitor/prometheus":
+		if err := runPrometheus(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "monitor/grafana":
+		if err := runGrafana(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

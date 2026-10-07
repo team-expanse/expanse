@@ -1,0 +1,5 @@
+port: 9090
+scrapeInterval: 5s
+retention: 15d
+nodeExporterPort: 9100
+scrapeNodeExporter: true

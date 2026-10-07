@@ -86,7 +86,53 @@ unreachable flag (the last panel reflects `ExpanseNodeUnreachable`'s own signal,
 provisioned and rendering real data through Grafana's own `/api/ds/query`, not just "the JSON
 exists" (`.plan/PHASE-09-TASKS.md` X3).
 
-## 5. The in-cluster UI, with no Prometheus or Grafana at all
+## 5. Or run them as blocks
+
+`monitor/prometheus` and `monitor/grafana` run the same pieces inside the cluster. The Prometheus
+block scrapes every voter's `/metrics` (one job per node, `server_name` set to the node ID, the
+cluster CA bundle handed over by the bridge and updated through a CA rotation) and node-exporter on
+every node, and evaluates the shipped alert rules unmodified. The Grafana block provisions the
+`expanse-prometheus` datasource and the shipped dashboard.
+
+```yaml
+apiVersion: expanse.io/v1
+kind: Block
+metadata: { name: prometheus, namespace: default }
+spec:
+  type: monitor/prometheus
+  replicas: 1
+  strategy: { kind: SINGLETON }
+  storage:
+    - { name: tsdb, size: 10Gi, replication: 3, mountPath: /var/lib/prometheus }
+  config:
+    metricsToken: <the token from `expanse ctl metrics set-token`>
+    scrapeInterval: 5s        # the default; keep it at or below 5s (section 2)
+    retention: 15d
+    nodeExporterPort: 9100    # where your monitor/node-exporter daemonset listens
+---
+apiVersion: expanse.io/v1
+kind: Block
+metadata: { name: grafana, namespace: default }
+spec:
+  type: monitor/grafana
+  replicas: 1
+  strategy: { kind: SINGLETON }
+  storage:
+    - { name: data, size: 1Gi, replication: 3, mountPath: /var/lib/grafana }
+  config:
+    prometheusUrl: http://<prometheus block address>:9090
+    adminPassword: <at least 8 characters>
+```
+
+Without `metricsToken` the Prometheus block scrapes only node-exporter and itself, since the
+cluster stores the token only as a hash. The token sits in the block's config the same way
+`db/postgres` passwords do. Give the Prometheus block a VIP (`expose: EXPOSE_VIP`) so Grafana's
+`prometheusUrl` survives a failover. Grafana applies `adminPassword` only when it first creates
+its database; change it later in Grafana itself. Neither block configures Alertmanager (section 3).
+Like every binary-backed block, the workload execs the upstream binary from the system PATH, so
+add `pkgs.prometheus` and `pkgs.grafana` to `environment.systemPackages` on nodes that may run them.
+
+## 6. The in-cluster UI, with no Prometheus or Grafana at all
 
 Every node's own web UI has a live `/health` page (reached the same way as `/cluster`, `/blocks`,
 `/volumes`) showing node checks, resource/block health, volume health, quorum, and the same set of
@@ -96,7 +142,7 @@ signals `/metrics` exports, through the same in-process calls, so it can never d
 Prometheus would show — it is simply available with zero external tooling configured
 (`.plan/PHASE-09-TASKS.md` X4).
 
-## 6. What is not covered
+## 7. What is not covered
 
 Alertmanager notification routing (§3). TPM-backed credential storage and OIDC for the web UI are
 Phase 10 scope, not this phase's. The `warning`-severity rules' pending windows are deliberately

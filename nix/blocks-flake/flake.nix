@@ -17,6 +17,8 @@
     packages.x86_64-linux.web-whoami = ./stubs/web-whoami;
     packages.x86_64-linux.db-redis = ./stubs/db-redis;
     packages.x86_64-linux.monitor-node-exporter = ./stubs/monitor-node-exporter;
+    packages.x86_64-linux.monitor-prometheus = ./stubs/monitor-prometheus;
+    packages.x86_64-linux.monitor-grafana = ./stubs/monitor-grafana;
     packages.x86_64-linux.web-static-site = ./stubs/web-static-site;
     packages.x86_64-linux.ai-ollama = ./stubs/ai-ollama;
     packages.x86_64-linux.share-smb = ./stubs/share-smb;

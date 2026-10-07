@@ -1,0 +1,5 @@
+name: grafana
+version: 1.0.0
+description: Grafana — the shipped Expanse cluster-health dashboard, provisioned against a monitor/prometheus block
+icon: grafana
+capabilities: []

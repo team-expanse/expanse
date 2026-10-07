@@ -66,6 +66,14 @@ func cfgPort(m map[string]any) string {
 	return "0" // ephemeral: replicas may share a node
 }
 
+// cfgPortOr is cfgPort with def when unset: catalog defaults never reach --config.
+func cfgPortOr(m map[string]any, def string) string {
+	if p := cfgPort(m); p != "0" {
+		return p
+	}
+	return def
+}
+
 // cfgBool reads a boolean config key, defaulting to def when absent.
 func cfgBool(m map[string]any, k string, def bool) bool {
 	if v, ok := m[k].(bool); ok {

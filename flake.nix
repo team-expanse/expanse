@@ -265,6 +265,7 @@
           block-liveness = mkTest "block-liveness" ./nix/tests/block-liveness.nix;
           block-delete = mkTest "block-delete" ./nix/tests/block-delete.nix;
           block-catalog = mkTest "block-catalog" ./nix/tests/block-catalog.nix;
+          block-monitoring = mkTest "block-monitoring" ./nix/tests/block-monitoring.nix;
 
           # Probe (Phase 6 D1): not a gate.
           vm-nested-kvm-probe =

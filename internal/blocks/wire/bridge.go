@@ -107,6 +107,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, errors.KindInternal, "bridge.Sync", "list blocks")
 	}
+	var scrape []string // built once, only when a monitor/prometheus block exists
 	for _, e := range entries {
 		if !blockkey.IsSpec(e.Key) {
 			continue
@@ -128,11 +129,20 @@ func (b *Bridge) Sync(ctx context.Context) error {
 			continue
 		}
 		ns, name := splitBlockKey(string(e.Key))
+		var extra []string
+		if blk.GetSpec().GetType() == PrometheusType {
+			if scrape == nil {
+				if scrape, err = scrapeArgs(ctx, b.St); err != nil {
+					return err
+				}
+			}
+			extra = scrape
+		}
 		for _, p := range status.GetPlacements() {
 			if p.GetReplicaIndex() < 0 || p.GetNodeId() == "" || p.GetPhase() == pb.Phase_LOST {
 				continue
 			}
-			spec, err := replicaSpec(&blk, ns, name, int(p.GetReplicaIndex()), vols)
+			spec, err := replicaSpec(&blk, ns, name, int(p.GetReplicaIndex()), vols, extra...)
 			if err != nil {
 				continue
 			}
@@ -267,7 +277,7 @@ func blockStorageVolumeName(blk *pb.Block, ns, name string, st *pb.Storage, idx 
 // value is real for the host-level bind mount §4.7 already performs
 // (proven by share-colocation.nix), but is not a path any block's own
 // sandboxed process can see.
-func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volumeRef) ([]byte, error) {
+func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volumeRef, extra ...string) ([]byte, error) {
 	spec := systemd.Spec{
 		Namespace: ns,
 		Name:      name,
@@ -326,6 +336,7 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 		// on the same volume-readiness check as BindPaths itself.
 		spec.Args = append(spec.Args, "--mount", st.GetName()+"="+host)
 	}
+	spec.Args = append(spec.Args, extra...)
 	return json.Marshal(spec)
 }
 

@@ -1,0 +1,5 @@
+name: prometheus
+version: 1.0.0
+description: Prometheus — scrapes every node's agent and node-exporter, evaluates the shipped Expanse alert rules, TSDB on a volume
+icon: prometheus
+capabilities: []

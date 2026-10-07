@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port the Prometheus web UI and API listen on"
+    },
+    "scrapeInterval": {
+      "type": "string",
+      "pattern": "^[0-9]+(ms|s|m)$",
+      "description": "Scrape and rule-evaluation interval; keep at 5s or below for the 30s alert budget (docs/OBSERVABILITY.md)"
+    },
+    "retention": {
+      "type": "string",
+      "pattern": "^[0-9]+(h|d|w|y)$",
+      "description": "How long to keep samples, e.g. 15d"
+    },
+    "metricsToken": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The cluster metrics bearer token (expanse ctl metrics set-token); without it the agents' /metrics are not scraped"
+    },
+    "nodeExporterPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Port the monitor/node-exporter daemonset listens on, scraped on every node"
+    },
+    "scrapeNodeExporter": {
+      "type": "boolean",
+      "description": "Scrape node-exporter on every node"
+    }
+  }
+}
