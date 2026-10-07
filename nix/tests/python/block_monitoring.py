@@ -121,11 +121,11 @@ with subtest("Grafana deploys pointed at the Prometheus block"):
     wait_phase(n1, "grafana", ["RUNNING"], 180)
     _, g_ip = host_of("grafana")
     GRAFANA = f"http://{g_ip}:{GRAFANA_PORT}"
-    n1.wait_until_succeeds(f"curl -sf {GRAFANA}/api/health | grep -q '\"database\": \"ok\"'", timeout=120)
+    n1.wait_until_succeeds(f"curl -sf {GRAFANA}/api/health | grep '\"database\": \"ok\"' >/dev/null", timeout=120)
 
 with subtest("the shipped dashboard is provisioned"):
     n1.wait_until_succeeds(
-        f"curl -sf -u admin:{ADMIN_PW} {GRAFANA}/api/dashboards/uid/expanse-health | grep -q 'Node Health'",
+        f"curl -sf -u admin:{ADMIN_PW} {GRAFANA}/api/dashboards/uid/expanse-health | grep 'Node Health' >/dev/null",
         timeout=60,
     )
 
