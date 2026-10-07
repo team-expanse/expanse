@@ -15,6 +15,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/expanse/expanse/proto"
@@ -392,6 +393,10 @@ func (s *Server) StreamEvents(req *pb.StreamEventsRequest, stream pb.NodeService
 	ch, err := s.store.Watch(ctx, prefix, cur)
 	if err != nil {
 		return mapErr("StreamEvents", err)
+	}
+	// Headers tell the client the watch is live; writes after this are never missed.
+	if err := stream.SendHeader(metadata.MD{}); err != nil {
+		return err
 	}
 	s.logger.Info("events stream open", "prefix", string(prefix))
 	for ev := range ch {

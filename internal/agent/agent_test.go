@@ -35,18 +35,10 @@ func startTestAgent(t *testing.T) (pb.NodeServiceClient, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { runErr <- a.Run(ctx) }()
 
-	// Wait for the socket.
 	socket := cfg.Socket
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(socket); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			cancel()
-			t.Fatal("agent socket never appeared")
-		}
-		time.Sleep(20 * time.Millisecond)
+	if err := testsock.Accepting(socket, 5*time.Second); err != nil {
+		cancel()
+		t.Fatal(err)
 	}
 	conn, err := grpc.NewClient("unix://"+filepath.ToSlash(socket),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -124,11 +116,14 @@ func TestAgentEndToEnd(t *testing.T) {
 		t.Fatalf("apply: %+v", resp)
 	}
 
-	// The watch-triggered tick converges the file quickly.
-	waitFor(t, "file convergence", 10*time.Second, func() bool {
-		data, err := os.ReadFile(target)
-		return err == nil && string(data) == "e2e"
+	// The watch-triggered tick converges the file; health and counts land when the tick ends.
+	waitFor(t, "converging tick to complete", 10*time.Second, func() bool {
+		st, err := c.GetStatus(ctx, &pb.GetStatusRequest{})
+		return err == nil && st.ChangesApplied >= 1
 	})
+	if data, err := os.ReadFile(target); err != nil || string(data) != "e2e" {
+		t.Fatalf("file after converging tick: %q, %v", data, err)
+	}
 
 	// ListResources / GetResource see it, healthy.
 	lr, err := c.ListResources(ctx, &pb.ListResourcesRequest{})
@@ -174,9 +169,15 @@ func TestAgentEndToEnd(t *testing.T) {
 	}
 
 	// StreamEvents: watch fires on a store write (the delete below).
-	evStream, err := c.StreamEvents(ctx, &pb.StreamEventsRequest{})
+	sctx, cancelStream := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelStream()
+	evStream, err := c.StreamEvents(sctx, &pb.StreamEventsRequest{})
 	if err != nil {
 		t.Fatalf("StreamEvents: %v", err)
+	}
+	// Headers arrive once the server's watch is live, so the delete cannot be missed.
+	if _, err := evStream.Header(); err != nil {
+		t.Fatalf("StreamEvents header: %v", err)
 	}
 
 	// DeleteResource: removes the file and desired state.

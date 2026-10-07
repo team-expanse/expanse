@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"testing"
 	"time"
 
@@ -64,13 +63,8 @@ func TestBlockAPIServedOnAgentSocket(t *testing.T) {
 	defer cancel()
 	go func() { _ = srv.Serve(ctx, socket) }()
 
-	// Wait for the socket.
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socket); err == nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	if err := testsock.Accepting(socket, 10*time.Second); err != nil {
+		t.Fatal(err)
 	}
 	conn, err := grpc.NewClient("unix://"+socket,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))

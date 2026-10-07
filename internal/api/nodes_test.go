@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -60,11 +59,8 @@ func serveNodeAPI(t *testing.T, ids ...string) pb.NodeServiceClient {
 	srv := NewServer(nil, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv.Cluster = &ClusterIdentity{ID: testClusterID, Secret: secret}
 	go func() { _ = srv.Serve(ctx, socket) }()
-	for i := 0; i < 500; i++ {
-		if _, err := os.Stat(socket); err == nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	if err := testsock.Accepting(socket, 10*time.Second); err != nil {
+		t.Fatal(err)
 	}
 	conn, err := grpc.NewClient("unix://"+socket, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
