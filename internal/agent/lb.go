@@ -147,6 +147,7 @@ func (a *Agent) lbListen(p netip.Prefix, exposedPort int32, svcKey string) (io.C
 		Resolve: func(b proxy.Backend, port int32) string {
 			return a.lbResolve(b, port)
 		},
+		DialFrom: dialFromVIP(a.cfg.NodeID, p.Addr()),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -161,6 +162,17 @@ func (a *Agent) lbListen(p netip.Prefix, exposedPort int32, svcKey string) (io.C
 		cancel()
 		return nil
 	}), nil
+}
+
+// dialFromVIP sources connections to this node's own backends from the VIP,
+// so a SINGLETON backend sees the same peer address on whichever node serves it.
+func dialFromVIP(self string, vip netip.Addr) func(proxy.Backend) netip.Addr {
+	return func(b proxy.Backend) netip.Addr {
+		if b.NodeID == self {
+			return vip
+		}
+		return netip.Addr{}
+	}
 }
 
 // listenL7 serves one VIP:port with the reverse proxy (T13/T14): Host

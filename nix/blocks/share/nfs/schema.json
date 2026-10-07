@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port Ganesha listens on. When exposed with network.ports[].expose: EXPOSE_VIP, keep it different from the exposed port (2049) and set it as target_port"
+    },
+    "pseudo": {
+      "type": "string",
+      "pattern": "^/[A-Za-z0-9._/-]*$",
+      "description": "NFSv4 pseudo path clients mount, e.g. vip:/share"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._-][A-Za-z0-9._/-]*$",
+      "description": "Exported directory, relative to the block's mountPath (never the volume root, which holds .nfs-state)"
+    },
+    "readOnly": {
+      "type": "boolean",
+      "description": "Export read-only"
+    },
+    "squash": {
+      "enum": ["root", "none", "all"],
+      "description": "Map client root (root), nobody (none) or every user (all) to the anonymous uid"
+    },
+    "gracePeriod": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 3600,
+      "description": "Seconds after a start or failover during which clients reclaim their opens and locks"
+    }
+  }
+}

@@ -61,7 +61,10 @@ The VIP holder's listener slot is shared by the L4 and L7 balancers,
 both driven by one pool table snapshotted from the store (`Pool`,
 atomic swap — readers hold the old snapshot, in-flight requests never
 see a torn table). L4 splices TCP connections round-robin across
-healthy backends with drain-on-removal; L7 is an `httputil.ReverseProxy`
+healthy backends with drain-on-removal. A backend on the VIP holder's
+own node is dialed from the VIP address, so a SINGLETON backend sees the
+same peer address on whichever node serves it (NFS clients reclaim their
+state by it); remote backends see the holder's node address. L7 is an `httputil.ReverseProxy`
 routing by Host header (`<block>.<ns>.expanse.local`) and declared path
 prefixes, injecting `X-Forwarded-For`/`X-Forwarded-Host`, retrying
 idempotent methods on connection errors only (max 2). Backends are a

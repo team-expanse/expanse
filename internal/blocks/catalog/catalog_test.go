@@ -573,3 +573,34 @@ func TestShippedMonitoringBlocksValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestShippedNFSBlockValidates(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	cases := []struct {
+		cfg     map[string]any
+		wantErr string // "" = valid
+	}{
+		{nil, ""},
+		{map[string]any{"port": 12049, "pseudo": "/media", "path": "pub", "squash": "none", "gracePeriod": 30}, ""},
+		{map[string]any{"squash": "some"}, "/squash"},
+		{map[string]any{"pseudo": "media"}, "/pseudo"},
+		{map[string]any{"path": "/etc"}, "/path"},
+		{map[string]any{"gracePeriod": 1}, "/gracePeriod"},
+	}
+	for _, tc := range cases {
+		var cfg *structpb.Struct
+		if tc.cfg != nil {
+			cfg = mustStruct(t, tc.cfg)
+		}
+		errs := c.ValidateConfig("share/nfs", cfg)
+		switch {
+		case tc.wantErr == "" && len(errs) != 0:
+			t.Errorf("%v rejected: %v", tc.cfg, errs)
+		case tc.wantErr != "" && (len(errs) == 0 || !strings.Contains(strings.Join(errs, ";"), tc.wantErr)):
+			t.Errorf("%v = %v, want an error naming %s", tc.cfg, errs, tc.wantErr)
+		}
+	}
+}

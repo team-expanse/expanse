@@ -15,6 +15,8 @@
 //   - web/static-site: native Go file server from the config index
 //   - share/smb: upstream smbd, config generated from spec.config plus
 //     the bound volume's mountPath (via mountPaths/firstMount)
+//   - share/nfs: upstream NFS-Ganesha (nfs.go), one NFSv4 export with its
+//     client-recovery state on the bound volume
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -119,6 +121,11 @@ func main() {
 		}
 	case "share/smb":
 		if err := runSMB(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "share/nfs":
+		if err := runNFS(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

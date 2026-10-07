@@ -1,0 +1,8 @@
+# Not 2049: exposed with EXPOSE_VIP, clients connect to VIP:2049, so
+# Ganesha listens elsewhere (target_port) like share/smb's smbd.
+port: 12049
+pseudo: /share
+path: share
+readOnly: false
+squash: root
+gracePeriod: 90

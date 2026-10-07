@@ -246,10 +246,10 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | `defaults.yaml` | fallback values for unset config keys |
 | `module.nix` | NixOS closure the unit runs from |
 
-The shipped thirteen: `util/echo`, `web/nginx`, `web/static-site`,
+The shipped fourteen: `util/echo`, `web/nginx`, `web/static-site`,
 `web/whoami`, `db/redis`, `db/postgres`, `monitor/node-exporter`,
 `monitor/prometheus`, `monitor/grafana`, `ai/ollama`, `share/smb`,
-`iscsi/target`, `vm/instance`. Inspect them
+`share/nfs` ([`NFS.md`](NFS.md)), `iscsi/target`, `vm/instance`. Inspect them
 with:
 
 ```console

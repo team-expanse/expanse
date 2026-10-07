@@ -206,6 +206,7 @@
           # ROADMAP.md Phase 3 (SMB and NFS).
           share-colocation = mkTest "share-colocation" ./nix/tests/share-colocation.nix;
           share-smb = mkTest "share-smb" ./nix/tests/share-smb.nix;
+          share-nfs = mkTest "share-nfs" ./nix/tests/share-nfs.nix;
           # share-smb-failover (Stream B2, X2) is deliberately not wired
           # in here: it fails on a still-unresolved post-failover
           # ACCESS_DENIED bug (PHASE-03-TASKS.md Stream B2, paused).

@@ -22,6 +22,7 @@
     packages.x86_64-linux.web-static-site = ./stubs/web-static-site;
     packages.x86_64-linux.ai-ollama = ./stubs/ai-ollama;
     packages.x86_64-linux.share-smb = ./stubs/share-smb;
+    packages.x86_64-linux.share-nfs = ./stubs/share-nfs;
     packages.x86_64-linux.iscsi-target = ./stubs/iscsi-target;
     packages.x86_64-linux.db-postgres = ./stubs/db-postgres;
     packages.x86_64-linux.vm-instance = ./stubs/vm-instance;

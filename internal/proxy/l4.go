@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,6 +66,8 @@ type L4 struct {
 	Key     string       // service key "<namespace>/<name>"
 	Mode    BalancerMode // default round-robin
 	Resolve Resolver     // required
+	// DialFrom is the local address to dial b from; the zero Addr lets the kernel pick.
+	DialFrom func(b Backend) netip.Addr
 
 	MaxPerBackend int           // 0 = unlimited
 	DrainTimeout  time.Duration // default 30 s
@@ -297,7 +300,7 @@ func (l *L4) handle(client net.Conn) {
 		}
 		b := healthy[idx]
 		addr := l.Resolve(b, svc.TargetPort)
-		c, err := net.DialTimeout("tcp", addr, l.dialTimeout())
+		c, err := l.dialer(b).Dial("tcp", addr)
 		if err == nil {
 			backend, chosen = c, b
 			break
@@ -339,6 +342,17 @@ func (l *L4) handle(client net.Conn) {
 }
 
 // pickAt applies the configured algorithm to a candidate list.
+// dialer is the backend dialer for b, bound to DialFrom's address when set.
+func (l *L4) dialer(b Backend) *net.Dialer {
+	d := &net.Dialer{Timeout: l.dialTimeout()}
+	if l.DialFrom != nil {
+		if from := l.DialFrom(b); from.IsValid() {
+			d.LocalAddr = &net.TCPAddr{IP: from.AsSlice()}
+		}
+	}
+	return d
+}
+
 func (l *L4) pickAt(cands []Backend, srcIP string) int {
 	if len(cands) == 0 {
 		return -1

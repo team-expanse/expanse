@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -475,3 +476,43 @@ func TestDrainStopsNewWorkImmediately(t *testing.T) {
 
 // compile-time check that *Pool satisfies TableSource.
 var _ TableSource = (*Pool)(nil)
+
+func TestDialFromBindsTheBackendConnectionsSourceAddress(t *testing.T) {
+	tbl := &fakeTable{}
+	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { backend.Close() })
+	seen := make(chan string, 1)
+	go func() {
+		c, err := backend.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		seen <- c.RemoteAddr().(*net.TCPAddr).IP.String()
+	}()
+	tbl.setOne(Backend{ReplicaIndex: 0, NodeID: "n1"})
+	l4 := &L4{
+		Pool: tbl, Key: "default/web", DialTimeout: 2 * time.Second,
+		Resolve:  func(Backend, int32) string { return backend.Addr().String() },
+		DialFrom: func(Backend) netip.Addr { return netip.MustParseAddr("127.0.0.7") },
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l4.Close(); ln.Close() })
+	go func() { _ = l4.Serve(context.Background(), ln) }()
+
+	dialProxy(t, ln.Addr().String())
+	select {
+	case got := <-seen:
+		if got != "127.0.0.7" {
+			t.Fatalf("backend saw source %s, want 127.0.0.7", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("proxy never dialed the backend")
+	}
+}

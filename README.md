@@ -28,6 +28,8 @@ The project site is [expanseos.org](https://expanseos.org).
   automatic failover. [`docs/DATABASE.md`](docs/DATABASE.md).
 - **iSCSI** — an LIO target over a replicated volume with VIP failover.
   [`docs/ISCSI.md`](docs/ISCSI.md).
+- **NFS** — an NFSv4.1 export (NFS-Ganesha) over a replicated volume; clients
+  reclaim their state on failover. [`docs/NFS.md`](docs/NFS.md).
 - **Virtualized workloads** — QEMU/KVM blocks with disks on replicated
   volumes, restarting elsewhere on node loss. [`docs/VMS.md`](docs/VMS.md).
 - **Networking** — a WireGuard mesh, per-node nftables, and L4/L7 load
@@ -48,10 +50,10 @@ The project site is [expanseos.org](https://expanseos.org).
 - **Agent internals** — the desired-state reconcile loop every node runs.
   [`docs/AGENT.md`](docs/AGENT.md).
 
-**Paused, not built:** SMB/NFS file shares (Samba deploy works; failover
-has an open bug) and an on-prem LLM subsystem (no accelerator hardware
-available to validate against yet). Both are independent of everything above
-and can resume any time; nothing else depends on them.
+**Paused, not built:** SMB failover (Samba deploy works; failover has an open
+bug) and an on-prem LLM subsystem (no accelerator hardware available to
+validate against yet). Both are independent of everything above and can
+resume any time; nothing else depends on them.
 
 ## Quickstart
 
@@ -82,6 +84,7 @@ including forming and joining a cluster afterward:
 | [`docs/BLOCKS.md`](docs/BLOCKS.md) | Deploying and scaling services |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | The Postgres block |
 | [`docs/ISCSI.md`](docs/ISCSI.md) | The iSCSI target block |
+| [`docs/NFS.md`](docs/NFS.md) | The NFS export block |
 | [`docs/VMS.md`](docs/VMS.md) | The virtual machine block |
 | [`docs/NETWORKING.md`](docs/NETWORKING.md) | Mesh, firewall, load balancing |
 | [`docs/WEB-UI.md`](docs/WEB-UI.md) | The browser console |
