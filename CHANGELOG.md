@@ -6,6 +6,37 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.3.0 - 2026-10-07
+
+### Added
+
+- `share/nfs` block: one NFSv4.1/4.2 export of a replicated volume,
+  served by NFS-Ganesha behind an external VIP. When the serving node
+  fails, the export moves with the volume and clients reclaim their opens
+  and locks during the grace period, so a writer with a file held open
+  carries on without remounting. See `docs/NFS.md`.
+- `monitor/prometheus` block: scrapes every node's agent over the
+  cluster's mutual TLS and the `monitor/node-exporter` daemonset, loads
+  the shipped alert rules and keeps its data on a volume.
+- `monitor/grafana` block: comes with the Expanse Prometheus datasource
+  and the shipped dashboard already set up.
+
+### Changed
+
+- A VIP connection to a backend on the same node now comes from the VIP
+  instead of the node's own address, so the backend sees one source
+  address for a client before and after a failover.
+
+### Fixed
+
+- A node removed from the cluster could get back in by resuming an
+  earlier TLS session, because a resumed session skipped the membership
+  check. Every handshake, resumed or not, is now checked.
+- The cluster store no longer panics when a slow watcher is dropped
+  partway through delivering a change.
+- `expanse` commands that run without an agent no longer fail when
+  `TMPDIR` is a long path, which made the socket path too long.
+
 ## 1.2.6 - 2026-10-05
 
 ### Fixed
