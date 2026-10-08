@@ -36,6 +36,8 @@ The project site is [expanseos.org](https://expanseos.org).
   objects and keys survive failover. [`docs/S3.md`](docs/S3.md).
 - **Virtualized workloads** — QEMU/KVM blocks with disks on replicated
   volumes, restarting elsewhere on node loss. [`docs/VMS.md`](docs/VMS.md).
+- **Pando** — a guest image that runs the Pando app platform in a VM block;
+  Pando and its apps survive failover. [`docs/PANDO.md`](docs/PANDO.md).
 - **Networking** — a WireGuard mesh, per-node nftables, and L4/L7 load
   balancing with VIP failover. [`docs/NETWORKING.md`](docs/NETWORKING.md).
 - **Web UI** — a browser-based cluster console (HTMX/SSE), OIDC login.
@@ -92,6 +94,7 @@ including forming and joining a cluster afterward:
 | [`docs/NFS.md`](docs/NFS.md) | The NFS export block |
 | [`docs/S3.md`](docs/S3.md) | The S3 object storage block |
 | [`docs/VMS.md`](docs/VMS.md) | The virtual machine block |
+| [`docs/PANDO.md`](docs/PANDO.md) | Pando in a virtual machine block |
 | [`docs/NETWORKING.md`](docs/NETWORKING.md) | Mesh, firewall, load balancing |
 | [`docs/WEB-UI.md`](docs/WEB-UI.md) | The browser console |
 | [`docs/BACKUP.md`](docs/BACKUP.md) | Backup and disaster recovery |

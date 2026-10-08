@@ -1,0 +1,81 @@
+# Pando 0.3.0's release compose file (docker-compose.yml at tag v0.3.0, comments dropped),
+# with the pando service pinned to the published image. Source: https://github.com/trypando/pando
+services:
+  pando:
+    image: trypando/pando:0.3.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      buildkit:
+        condition: service_started
+    environment:
+      PANDO_DATABASE_URL: postgres://pando:${POSTGRES_PASSWORD:-pando}@postgres:5432/pando?sslmode=disable
+      PANDO_ADMIN_PASSWORD: ${PANDO_ADMIN_PASSWORD:-}
+      PANDO_BUILDKIT_ADDRESS: tcp://buildkit:1234
+      PANDO_SERVER_BASE_DOMAIN: ${PANDO_BASE_DOMAIN:-localtest.me}
+      PANDO_SERVER_PROXY_UPSTREAM: http://pando:8080
+      PANDO_RECONCILER_BACKOFF: ${PANDO_RECONCILER_BACKOFF:-}
+      PANDO_RECONCILER_FAILURE_WINDOW: ${PANDO_RECONCILER_FAILURE_WINDOW:-}
+      PANDO_RECONCILER_FAILURE_THRESHOLD: ${PANDO_RECONCILER_FAILURE_THRESHOLD:-}
+      PANDO_RECONCILER_GC_INTERVAL: ${PANDO_RECONCILER_GC_INTERVAL:-}
+      PANDO_APPS_CPU_MILLIS: ${PANDO_APPS_CPU_MILLIS:-}
+      PANDO_APPS_MEMORY_BYTES: ${PANDO_APPS_MEMORY_BYTES:-}
+      PANDO_APPS_DISK_BYTES: ${PANDO_APPS_DISK_BYTES:-}
+      PANDO_SERVER_PORT_RANGE_START: ${PANDO_APP_PORT_START:-9000}
+      PANDO_SERVER_PORT_RANGE_END: ${PANDO_APP_PORT_END:-9019}
+    command: ["serve"]
+    ports:
+      - "${PANDO_PORT:-8080}:8080"
+      - "${PANDO_APP_PORT_START:-9000}-${PANDO_APP_PORT_END:-9019}:${PANDO_APP_PORT_START:-9000}-${PANDO_APP_PORT_END:-9019}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - pando-data:/var/lib/pando
+      - traefik-dynamic:/etc/traefik/dynamic
+    restart: unless-stopped
+  traefik:
+    image: traefik:v3.2
+    profiles: ["traefik"]
+    command:
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--api.insecure=false"
+      - "--log.level=INFO"
+    ports:
+      - "${TRAEFIK_PORT:-8088}:80"
+    volumes:
+      - traefik-dynamic:/etc/traefik/dynamic:ro
+    depends_on:
+      - pando
+    restart: unless-stopped
+  buildkit:
+    image: moby/buildkit:v0.17.2-rootless
+    command:
+      - --addr
+      - tcp://0.0.0.0:1234
+      - --oci-worker-no-process-sandbox
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    volumes:
+      - buildkit-cache:/home/user/.local/share/buildkit
+    restart: unless-stopped
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pando
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pando}
+      POSTGRES_DB: pando
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pando -d pando"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  pando-data:
+  postgres-data:
+  buildkit-cache:
+  traefik-dynamic:

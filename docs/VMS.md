@@ -75,6 +75,8 @@ boot device before first start, or seed a prebuilt cloud image onto the raw volu
 `dd`/`qemu-img convert` against the volume's `/dev/drbdN` device from any node while it is DRBD
 primary and the block is not yet deployed). Neither is built or tested by this project's own VM
 suite; both are the same "document, don't build" treatment Phase 5's D6 gave backup hooks.
+[`PANDO.md`](PANDO.md) is a worked, VM-tested example of the second: a prebuilt image written onto a
+pre-created volume, BIOS-booted with no `bootKernel`.
 
 **Validated guest OS: a minimal NixOS netboot image only** (R3) — every VM test in this project
 (`vm-instance.nix`, `vm-instance-failover.nix`, `vm-instance-fs-integrity.nix`,

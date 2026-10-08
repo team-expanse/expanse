@@ -38,6 +38,10 @@
         # Installer ISO: `nix build .#iso`
         packages.iso = isoSystem.config.system.build.isoImage;
 
+        # A disk image for a vm/instance block running Pando (docs/PANDO.md): `nix build .#pando-guest-image`
+        packages.${if system == "x86_64-linux" then "pando-guest-image" else null} =
+          import ./nix/guests/pando/image.nix { inherit nixpkgs system; };
+
         devShells.default = pkgs.callPackage ./nix/devshell.nix { };
 
         checks = {
@@ -294,6 +298,8 @@
 
           # Stream D: vertical slice -- X3/X4 proven together, one kill, black-box (no internal-state waits).
           vm-instance-vertical-slice = mkTest "vm-instance-vertical-slice" ./nix/tests/vm-instance-vertical-slice.nix;
+          # docs/PANDO.md: the Pando guest image on a vm/instance, across a crash of its node.
+          pando-guest = mkTest "pando-guest" ./nix/tests/pando-guest.nix;
 
           # Six nodes, two VM workloads serving from replicated disks: forming and failover timings. Not a gate.
           cluster-vm-workloads = mkTest "cluster-vm-workloads" ./nix/tests/cluster-vm-workloads.nix;
@@ -377,6 +383,7 @@
       })
     // {
       nixosModules.expanse = import ./nix/modules/expanse.nix;
+      nixosModules.pando-guest = import ./nix/guests/pando/module.nix;
 
       # Reference node config for `nixos-install --flake <ref>#expanse-node`
       # (the unattended installer instead generates a standalone
