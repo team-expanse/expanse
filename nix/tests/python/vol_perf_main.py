@@ -197,25 +197,32 @@ try:
         res_seq, res_rand = replicated_id("vseq", 3), replicated_id("vrand", 3)
         axis_res = {"R1": replicated_id("vr1", 1), "R2": replicated_id("vr2", 2), "R3": replicated_id("vr3", 3)}
         node = primaries(res_seq)[0]
-        for res in [res_rand, *axis_res.values()]:
-            assert primaries(res) == [node], f"{res} is primary on {primaries(res)}, not {node.name}"
+        # Placement spreads replicas (and so primaries) across nodes; vrand has a replica everywhere.
+        if primaries(res_rand) != [node]:
+            n1.succeed(f"expanse ctl volume move-primary vrand --to {node.name}")
+            wait_for(lambda: primaries(res_rand) == [node], f"vrand's primary to move to {node.name}")
+        # R1 and R2 never share a node under spreading, so each axis volume is driven from its own primary.
+        axis_on = {label: primaries(res)[0] for label, res in axis_res.items()}
+        print("axis primaries: " + ", ".join(f"{label} on {m.name}" for label, m in axis_on.items()))
         assert node.succeed(f"lvs --noheadings -o lv_layout {VG}/{res_seq}").strip() == "thin,sparse", "the volume is not thin"
         dev_seq, dev_rand = device_for(node, res_seq), device_for(node, res_rand)
         print(f"{node.name} is primary of both; devices {dev_seq}, {dev_rand}")
 
     with subtest("local baselines: thin and thick LVs of the same size on the primary"):
         local = {"thin-seq": lv_thin(node, "thin_seq"), "thin-rand": lv_thin(node, "thin_rand"),
-                 "thick-seq": lv_thick(node, "thick_seq"), "thick-rand": lv_thick(node, "thick_rand"), "axis": lv_thin(node, "thin_axis", AXIS_MIB)}
+                 "thick-seq": lv_thick(node, "thick_seq"), "thick-rand": lv_thick(node, "thick_rand"), "axis": lv_thin(axis_on["R1"], "thin_axis", AXIS_MIB)}
 
     with subtest("the same writes at 1, 2 and 3 replicas, with the CPU each machine spent"):
         idle_cpu_report()
-        devices = {"local": local["axis"], **{label: device_for(node, res) for label, res in axis_res.items()}}
-        for dev in devices.values():
-            one_pass(node, dev, "seq")
+        # local sits beside R1, so R1/local is replication's overhead on one machine.
+        devices = {"local": (axis_on["R1"], local["axis"]),
+                   **{label: (axis_on[label], device_for(axis_on[label], res)) for label, res in axis_res.items()}}
+        for m, dev in devices.values():
+            one_pass(m, dev, "seq")
         rates = {}
         for profile in ("seqwrite", "randwrite"):
-            for label, dev in devices.items():
-                result, cpu = fio_watching_cpu(dev, node, profile)
+            for label, (m, dev) in devices.items():
+                result, cpu = fio_watching_cpu(dev, m, profile)
                 rates[profile, label] = pass_metric("seq" if profile == "seqwrite" else "rand", result)
                 busiest = ", ".join(f"{name} us+sy {c['us'] + c['sy']:.0f}% wa {c['wa']:.0f}% st {c['st']:.0f}%" for name, c in cpu.items())
                 print(f"axis {profile} {label}: {result.bw_bytes / 1048576:.1f} MiB/s, {result.iops:.0f} iops; cpu: {busiest}")
