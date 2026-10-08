@@ -1,2 +1,2 @@
 # The release version: flake.nix and installed nodes (expanse-node.nix) both read it.
-"1.4.0"
+"1.5.0"
