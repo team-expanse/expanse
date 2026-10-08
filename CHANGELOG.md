@@ -6,6 +6,24 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.4.0 - 2026-10-07
+
+### Added
+
+- `storage/s3` block: an S3-compatible object store on Garage, with its
+  metadata, objects and keys on a replicated volume behind a VIP. It
+  creates the configured access key and buckets, and every acknowledged
+  object survives a crash of the serving node. See `docs/S3.md`.
+- `db/mariadb` block: one MariaDB server on a replicated volume behind a
+  VIP. Its root password, database and application account are set from
+  the block's config on every start, and every committed transaction
+  survives a crash of the serving node. See `docs/MARIADB.md`.
+- Pando guest image: `nix build .#pando-guest-image` builds a NixOS disk
+  image running Pando, its Postgres and BuildKit under Docker, to run in
+  a `vm/instance` block, and `nixosModules.pando-guest` builds a
+  customized one. Pando and the apps it hosts come back on a survivor
+  when the node running the guest fails. See `docs/PANDO.md`.
+
 ## 1.3.0 - 2026-10-07
 
 ### Added
