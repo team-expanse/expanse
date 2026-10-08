@@ -682,3 +682,61 @@ func TestRetireAfterARestartTearsDownWhatTheLocalCopyDesires(t *testing.T) {
 		t.Fatalf("deleted %v, want the locally desired [vm]", got)
 	}
 }
+
+func TestDeletedResourceLosesItsStatusRecord(t *testing.T) {
+	r, _ := newDepReconciler(t, map[string][]string{"a": {}, "b": {}})
+	ctx := context.Background()
+	putDesired(t, r.store, "n1", "a", "")
+	putDesired(t, r.store, "n1", "b", "")
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.store.Get(ctx, r.StatusPrefix()+"a"); err != nil {
+		t.Fatalf("no status record for a after its tick: %v", err)
+	}
+	e, err := r.store.Get(ctx, r.DesiredPrefix()+"a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.store.Delete(ctx, e.Key, e.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The controller promotes replicas from these records; a stale one would outlive its block.
+	if _, err := r.store.Get(ctx, r.StatusPrefix()+"a"); err == nil {
+		t.Errorf("status record for deleted resource a remains")
+	}
+	if _, err := r.store.Get(ctx, r.StatusPrefix()+"b"); err != nil {
+		t.Errorf("status record for desired resource b was removed: %v", err)
+	}
+}
+
+func TestStatusRecordLeakedBeforeARestartIsRemoved(t *testing.T) {
+	r, _ := newDepReconciler(t, map[string][]string{"a": {}})
+	ctx := context.Background()
+	putDesired(t, r.store, "n1", "a", "")
+	if _, err := r.store.Put(ctx, r.StatusPrefix()+"block-replica:default/gone/0", []byte("health=healthy in_sync=true")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.store.Get(ctx, r.StatusPrefix()+"block-replica:default/gone/0"); err == nil {
+		t.Errorf("status record with no desired resource remains")
+	}
+}
+
+func TestUnreadableDesiredStateKeepsStatusRecords(t *testing.T) {
+	r, s, _ := newDeletingReconciler(t)
+	ctx := context.Background()
+	if _, err := s.Put(ctx, r.StatusPrefix()+"a", []byte("health=healthy in_sync=true")); err != nil {
+		t.Fatal(err)
+	}
+	s.failList.Store(true)
+	_ = r.Tick(ctx)
+	if _, err := s.Get(ctx, r.StatusPrefix()+"a"); err != nil {
+		t.Errorf("status record removed on an unreadable tick: %v", err)
+	}
+}

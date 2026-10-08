@@ -6,6 +6,31 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- `web/caddy` block: Caddy as a web server and reverse proxy with automatic
+  HTTPS, on a replicated volume behind a VIP serving 80 and 443. Its
+  certificates, ACME account and internal CA survive a crash of the serving
+  node. See `docs/CADDY.md`.
+- `net/haproxy` block: HAProxy as a TCP and HTTP load balancer, run as
+  stateless replicas behind a VIP, with health-checked servers, a stats page
+  and Prometheus metrics. See `docs/HAPROXY.md`.
+
+### Changed
+
+- A block's VIP now serves every `EXPOSE_VIP` port, each forwarding to its own
+  `targetPort`. Before, only the first exposed port was served.
+
+### Fixed
+
+- Deleting a block left its replicas' status records in the store. The
+  controller promotes replicas from these records, so a block recreated with
+  the same name could be marked running from the old ones. Each node now
+  removes records whose resource it no longer runs, including ones already
+  left behind.
+
 ## 1.4.0 - 2026-10-07
 
 ### Added

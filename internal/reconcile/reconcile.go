@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -423,6 +424,7 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 		r.applied[id] = res
 	}
 	r.mu.Unlock()
+	r.sweepStatus(tctx, resources, errs)
 
 	order, err := topoSort(resources)
 	if err != nil {
@@ -648,6 +650,28 @@ func (r *Reconciler) recordStatus(ctx context.Context, st *Status) {
 	val += fmt.Sprintf(" actions=%d error=%q updated=%d", st.Actions, st.Error, st.UpdatedAt.UnixNano())
 	if _, err := r.store.Put(ctx, key, []byte(val)); err != nil {
 		r.logger.Error("record status failed", "id", st.ResourceID, "err", err)
+	}
+}
+
+// sweepStatus deletes status records whose resource is no longer desired, including ones
+// left from before a restart; the controller promotes replicas from these records.
+func (r *Reconciler) sweepStatus(ctx context.Context, resources map[string]Resource, errs map[string]error) {
+	entries, err := r.store.List(ctx, r.StatusPrefix())
+	if err != nil {
+		r.logger.Warn("status sweep skipped", "err", err)
+		return
+	}
+	for _, e := range entries {
+		id := strings.TrimPrefix(string(e.Key), string(r.StatusPrefix()))
+		if _, ok := resources[id]; ok {
+			continue
+		}
+		if _, ok := errs[id]; ok {
+			continue
+		}
+		if err := r.store.Delete(ctx, e.Key, e.Revision); err != nil {
+			r.logger.Warn("status sweep: delete failed", "id", id, "err", err)
+		}
 	}
 }
 
