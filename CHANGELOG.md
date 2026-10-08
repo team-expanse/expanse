@@ -6,7 +6,7 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
-## Unreleased
+## 1.6.0 - 2026-10-08
 
 ### Added
 
