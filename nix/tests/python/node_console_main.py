@@ -37,7 +37,8 @@ try:
         screen(r"https://[0-9.]+:8443")
         screen("not in a cluster yet")
         screen(r"expanse cluster init --expect 1")
-        screen("HEALTHY|DEGRADED|UNHEALTHY")
+        # UNKNOWN: clock-sync is unknown while chrony synchronises after boot (no NTP in the test).
+        screen("HEALTHY|DEGRADED|UNHEALTHY|UNKNOWN")
         screen(r"CPU +.*threads")
         screen(r"Memory +[0-9.]+ [KMG]iB free of")
         assert "login:" not in tty1(), tty1()
@@ -65,7 +66,7 @@ try:
         screen(r"Role +leader")
         screen(r"Quorum +1/1")
         # Health comes from the heartbeat key, so it shows while the agent is up, cluster or not.
-        screen(r"Health +(HEALTHY|DEGRADED|UNHEALTHY)", timeout=60)
+        screen(r"Health +(HEALTHY|DEGRADED|UNHEALTHY|UNKNOWN)", timeout=60)
         assert "agent not running" not in tty1(), tty1()
         machine.screenshot("console-clustered")
 
