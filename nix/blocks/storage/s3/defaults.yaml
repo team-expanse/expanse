@@ -1,0 +1,7 @@
+# Not 3900: exposed with EXPOSE_VIP, clients connect to VIP:3900, so
+# Garage listens elsewhere (target_port) like share/nfs's Ganesha.
+port: 13900
+rpcPort: 13901
+adminPort: 13903
+region: garage
+buckets: []

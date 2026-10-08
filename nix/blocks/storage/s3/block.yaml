@@ -1,0 +1,5 @@
+name: s3
+version: 1.0.0
+description: S3-compatible object storage (Garage) — active/passive over a DRBD-backed volume, metadata and objects on the volume
+icon: s3
+capabilities: []

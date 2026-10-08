@@ -17,6 +17,8 @@
 //     the bound volume's mountPath (via mountPaths/firstMount)
 //   - share/nfs: upstream NFS-Ganesha (nfs.go), one NFSv4 export with its
 //     client-recovery state on the bound volume
+//   - storage/s3: upstream Garage (garage.go), single-node S3 with every
+//     piece of its state on the bound volume
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -126,6 +128,11 @@ func main() {
 		}
 	case "share/nfs":
 		if err := runNFS(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "storage/s3":
+		if err := runS3(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

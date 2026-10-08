@@ -30,6 +30,8 @@ The project site is [expanseos.org](https://expanseos.org).
   [`docs/ISCSI.md`](docs/ISCSI.md).
 - **NFS** — an NFSv4.1 export (NFS-Ganesha) over a replicated volume; clients
   reclaim their state on failover. [`docs/NFS.md`](docs/NFS.md).
+- **S3 object storage** — Garage over a replicated volume behind a VIP;
+  objects and keys survive failover. [`docs/S3.md`](docs/S3.md).
 - **Virtualized workloads** — QEMU/KVM blocks with disks on replicated
   volumes, restarting elsewhere on node loss. [`docs/VMS.md`](docs/VMS.md).
 - **Networking** — a WireGuard mesh, per-node nftables, and L4/L7 load
@@ -85,6 +87,7 @@ including forming and joining a cluster afterward:
 | [`docs/DATABASE.md`](docs/DATABASE.md) | The Postgres block |
 | [`docs/ISCSI.md`](docs/ISCSI.md) | The iSCSI target block |
 | [`docs/NFS.md`](docs/NFS.md) | The NFS export block |
+| [`docs/S3.md`](docs/S3.md) | The S3 object storage block |
 | [`docs/VMS.md`](docs/VMS.md) | The virtual machine block |
 | [`docs/NETWORKING.md`](docs/NETWORKING.md) | Mesh, firewall, load balancing |
 | [`docs/WEB-UI.md`](docs/WEB-UI.md) | The browser console |

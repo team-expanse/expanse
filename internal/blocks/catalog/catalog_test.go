@@ -604,3 +604,48 @@ func TestShippedNFSBlockValidates(t *testing.T) {
 		}
 	}
 }
+
+func TestShippedS3BlockValidates(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	key := map[string]any{
+		"accessKeyId":     "GK0123456789abcdef01234567",
+		"secretAccessKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	with := func(k string, v any) map[string]any {
+		m := map[string]any{k: v}
+		for k2, v2 := range key {
+			if k2 != k {
+				m[k2] = v2
+			}
+		}
+		return m
+	}
+	cases := []struct {
+		cfg     map[string]any
+		wantErr string // "" = valid
+	}{
+		{key, ""},
+		{with("buckets", []any{"media", "logs.2026"}), ""},
+		{nil, "accessKeyId"},
+		{with("accessKeyId", "AKIAEXAMPLE"), "/accessKeyId"},
+		{with("secretAccessKey", "short"), "/secretAccessKey"},
+		{with("buckets", []any{"Bad_Name"}), "/buckets"},
+		{with("region", "EU West"), "/region"},
+	}
+	for _, tc := range cases {
+		var cfg *structpb.Struct
+		if tc.cfg != nil {
+			cfg = mustStruct(t, tc.cfg)
+		}
+		errs := c.ValidateConfig("storage/s3", cfg)
+		switch {
+		case tc.wantErr == "" && len(errs) != 0:
+			t.Errorf("%v rejected: %v", tc.cfg, errs)
+		case tc.wantErr != "" && (len(errs) == 0 || !strings.Contains(strings.Join(errs, ";"), tc.wantErr)):
+			t.Errorf("%v = %v, want an error naming %s", tc.cfg, errs, tc.wantErr)
+		}
+	}
+}
