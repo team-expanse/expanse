@@ -246,8 +246,9 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | `defaults.yaml` | fallback values for unset config keys |
 | `module.nix` | NixOS closure the unit runs from |
 
-The shipped fifteen: `util/echo`, `web/nginx`, `web/static-site`,
-`web/whoami`, `db/redis`, `db/postgres`, `monitor/node-exporter`,
+The shipped sixteen: `util/echo`, `web/nginx`, `web/static-site`,
+`web/whoami`, `db/redis`, `db/postgres`, `db/mariadb`
+([`MARIADB.md`](MARIADB.md)), `monitor/node-exporter`,
 `monitor/prometheus`, `monitor/grafana`, `ai/ollama`, `share/smb`,
 `share/nfs` ([`NFS.md`](NFS.md)), `storage/s3` ([`S3.md`](S3.md)),
 `iscsi/target`, `vm/instance`. Inspect them with:

@@ -19,6 +19,8 @@
 //     client-recovery state on the bound volume
 //   - storage/s3: upstream Garage (garage.go), single-node S3 with every
 //     piece of its state on the bound volume
+//   - db/mariadb: upstream mariadbd (mariadb.go), its datadir on the bound
+//     volume and its accounts converged by an init file on every start
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -133,6 +135,11 @@ func main() {
 		}
 	case "storage/s3":
 		if err := runS3(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "db/mariadb":
+		if err := runMariaDB(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

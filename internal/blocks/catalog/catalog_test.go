@@ -649,3 +649,46 @@ func TestShippedS3BlockValidates(t *testing.T) {
 		}
 	}
 }
+
+func TestShippedMariaDBBlockValidates(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	with := func(kv ...any) map[string]any {
+		m := map[string]any{"rootPassword": "rootsecret"}
+		for i := 0; i+1 < len(kv); i += 2 {
+			m[kv[i].(string)] = kv[i+1]
+		}
+		return m
+	}
+	cases := []struct {
+		cfg     map[string]any
+		wantErr string // "" = valid
+	}{
+		{with(), ""},
+		{with("database", "app", "user", "app", "password", "apppass", "port", 13306, "bufferPool", "1G"), ""},
+		{nil, "rootPassword"},
+		{with("rootPassword", "short"), "/rootPassword"},
+		{with("database", "a-b"), "/database"},
+		{with("user", "o'brien"), "/user"},
+		{with("bufferPool", "lots"), "/bufferPool"},
+		{with("maxConnections", 0), "/maxConnections"},
+		{with("user", "app", "database", "app"), "password"},
+		{with("user", "app", "password", "apppass"), "database"},
+		{with("password", "apppass"), "user"},
+	}
+	for _, tc := range cases {
+		var cfg *structpb.Struct
+		if tc.cfg != nil {
+			cfg = mustStruct(t, tc.cfg)
+		}
+		errs := c.ValidateConfig("db/mariadb", cfg)
+		switch {
+		case tc.wantErr == "" && len(errs) != 0:
+			t.Errorf("%v rejected: %v", tc.cfg, errs)
+		case tc.wantErr != "" && (len(errs) == 0 || !strings.Contains(strings.Join(errs, ";"), tc.wantErr)):
+			t.Errorf("%v = %v, want an error naming %s", tc.cfg, errs, tc.wantErr)
+		}
+	}
+}

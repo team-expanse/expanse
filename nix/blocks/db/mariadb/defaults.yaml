@@ -1,0 +1,5 @@
+# Not 3306: exposed with EXPOSE_VIP, clients connect to VIP:3306, so
+# mariadbd listens elsewhere (target_port) like storage/s3's Garage.
+port: 13306
+bufferPool: 128M
+maxConnections: 151

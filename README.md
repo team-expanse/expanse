@@ -26,6 +26,8 @@ The project site is [expanseos.org](https://expanseos.org).
   singleton, and daemonset placement. [`docs/BLOCKS.md`](docs/BLOCKS.md).
 - **Database** — a Postgres block with streaming replication and
   automatic failover. [`docs/DATABASE.md`](docs/DATABASE.md).
+- **MariaDB** — a MariaDB over a replicated volume behind a VIP; every
+  committed row survives failover. [`docs/MARIADB.md`](docs/MARIADB.md).
 - **iSCSI** — an LIO target over a replicated volume with VIP failover.
   [`docs/ISCSI.md`](docs/ISCSI.md).
 - **NFS** — an NFSv4.1 export (NFS-Ganesha) over a replicated volume; clients
@@ -85,6 +87,7 @@ including forming and joining a cluster afterward:
 | [`docs/STORAGE.md`](docs/STORAGE.md) | Replicated volumes, repair, split-brain recovery |
 | [`docs/BLOCKS.md`](docs/BLOCKS.md) | Deploying and scaling services |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | The Postgres block |
+| [`docs/MARIADB.md`](docs/MARIADB.md) | The MariaDB block |
 | [`docs/ISCSI.md`](docs/ISCSI.md) | The iSCSI target block |
 | [`docs/NFS.md`](docs/NFS.md) | The NFS export block |
 | [`docs/S3.md`](docs/S3.md) | The S3 object storage block |

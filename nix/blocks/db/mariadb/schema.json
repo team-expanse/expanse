@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rootPassword"],
+  "dependentRequired": {
+    "user": ["password", "database"],
+    "password": ["user"]
+  },
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "TCP port mariadbd listens on. When exposed with network.ports[].expose: EXPOSE_VIP, keep it different from the exposed port (3306) and set it as target_port"
+    },
+    "rootPassword": {
+      "type": "string",
+      "minLength": 8,
+      "description": "Password for root@localhost and root@'%'; applied on every start"
+    },
+    "database": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_]{1,64}$",
+      "description": "Database created on start if missing"
+    },
+    "user": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_]{1,64}$",
+      "description": "Application account, granted all privileges on database; needs password and database"
+    },
+    "password": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Password for user; applied on every start"
+    },
+    "bufferPool": {
+      "type": "string",
+      "pattern": "^[0-9]+[KMG]?$",
+      "description": "innodb_buffer_pool_size, e.g. 512M; keep it inside the block's memory request"
+    },
+    "maxConnections": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "max_connections"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+name: mariadb
+version: 1.0.0
+description: MariaDB — active/passive over a DRBD-backed volume, every commit synced before it is acknowledged
+icon: mariadb
+capabilities: []
