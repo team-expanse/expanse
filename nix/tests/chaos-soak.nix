@@ -45,6 +45,8 @@ let
 in
 {
   name = "expanse-chaos-soak";
+  # The soak alone is an hour, the driver's default timeout; leave room for forming and checks.
+  globalTimeout = 3600 + 900;
 
   nodes = {
     n1 = { ... }: nodeCommon 1;
