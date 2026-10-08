@@ -132,13 +132,13 @@ def wait_replicated_on(res, timeout=300):
     wait_for(lambda: len(primaries(res)) == 1 and fully_replicated(primaries(res)[0], res), "every replica to be UpToDate", timeout)
 
 
-def resync_measured(primary, victim, res, prepare=lambda: None):
+def resync_measured(primary, victim, res, prepare=lambda: None, done=wait_replicated_on):
     """Invalidate victim's copy and time the copy back; returns (seconds, bytes the victim received)."""
     prepare()
     before, start = rx_bytes(victim), time.time()
     victim.succeed(f"drbdadm invalidate {res}")
     wait_for(lambda: not fully_replicated(primary, res), "the invalidation to reach the primary", 30)
-    wait_replicated_on(res)
+    done(res)
     return time.time() - start, rx_bytes(victim) - before
 
 
@@ -281,12 +281,20 @@ try:
         rate = mib_per_s(SIZE_MIB * 1024 * 1024, plain_s)
         print(f"full resync: {plain_bytes / 1048576:.0f} MiB received in {plain_s:.0f}s = {rate:.1f} MiB/s")
         measured["vol_resync_mbps"] = rate
-        # the agent would adjust a net option the config file does not carry away again mid-resync
-        victim.succeed("systemctl stop expansed.service")
-        csums_s, csums_bytes = resync_measured(node, victim, res_seq, lambda: set_csums(victim, res_seq))
+        # csums-alg reaches every peer, and any agent's adjust would clear it (the file lacks it);
+        # a source without it matches no checksum, so every agent stays stopped for this run.
+        # A stopping agent demotes its primary, so the resync is judged from the victim's side.
+        for m in NODES:
+            m.succeed("systemctl stop expansed.service")
+        csums_s, csums_bytes = resync_measured(
+            node, victim, res_seq, lambda: set_csums(victim, res_seq),
+            lambda res: wait_for(lambda: fully_replicated(victim, res), "the victim to be UpToDate", 300))
         print(f"full resync with csums-alg={CSUMS_ALG}: {csums_bytes / 1048576:.0f} MiB received in {csums_s:.0f}s")
-        victim.succeed("systemctl start expansed.service")
-        wait_agent_ready(victim)
+        for m in NODES:
+            m.succeed("systemctl start expansed.service")
+        for m in NODES:
+            wait_agent_ready(m)
+        wait_replicated_on(res_seq)
         assert csums_bytes < plain_bytes / 2, f"csums-alg saved nothing: {csums_bytes} of {plain_bytes} bytes"
 
     with subtest(f"failover: {FAILOVER_ROUNDS} hard kills of the primary, kill to next successful write"):
