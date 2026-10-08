@@ -1,0 +1,4 @@
+# Not 80/443: exposed with EXPOSE_VIP, clients connect to VIP:80 and
+# VIP:443, so Caddy listens elsewhere (target_port) like storage/s3.
+port: 18080
+httpsPort: 18443

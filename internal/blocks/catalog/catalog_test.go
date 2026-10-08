@@ -692,3 +692,109 @@ func TestShippedMariaDBBlockValidates(t *testing.T) {
 		}
 	}
 }
+
+// validateCases checks each config against typ's schema; wantErr "" means valid.
+func validateCases(t *testing.T, typ string, cases []struct {
+	cfg     map[string]any
+	wantErr string
+},
+) {
+	t.Helper()
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	for _, tc := range cases {
+		var cfg *structpb.Struct
+		if tc.cfg != nil {
+			cfg = mustStruct(t, tc.cfg)
+		}
+		errs := c.ValidateConfig(typ, cfg)
+		switch {
+		case tc.wantErr == "" && len(errs) != 0:
+			t.Errorf("%v rejected: %v", tc.cfg, errs)
+		case tc.wantErr != "" && (len(errs) == 0 || !strings.Contains(strings.Join(errs, ";"), tc.wantErr)):
+			t.Errorf("%v = %v, want an error naming %s", tc.cfg, errs, tc.wantErr)
+		}
+	}
+}
+
+func TestShippedCaddyBlockValidates(t *testing.T) {
+	site := func(kv ...any) map[string]any {
+		m := map[string]any{"host": "app.example.com", "reverseProxy": []any{"10.0.0.5:8080"}}
+		for i := 0; i+1 < len(kv); i += 2 {
+			if kv[i+1] == nil {
+				delete(m, kv[i].(string))
+			} else {
+				m[kv[i].(string)] = kv[i+1]
+			}
+		}
+		return m
+	}
+	sites := func(s ...map[string]any) map[string]any {
+		l := []any{}
+		for _, x := range s {
+			l = append(l, x)
+		}
+		return map[string]any{"sites": l}
+	}
+	validateCases(t, "web/caddy", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{sites(site()), ""},
+		{sites(site("tls", "internal"), site("host", "plain.example.com", "tls", "off", "reverseProxy", nil, "respond", "ok")), ""},
+		{map[string]any{"caddyfile": ":18080 {\n\trespond ok\n}\n"}, ""},
+		{map[string]any{"sites": []any{site()}, "email": "ops@example.com", "port": 18080, "httpsPort": 18443}, ""},
+		{nil, "sites"},
+		{map[string]any{"sites": []any{}}, "/sites"},
+		{sites(site("host", "bad host")), "/sites/0/host"},
+		{sites(site("tls", "maybe")), "/sites/0/tls"},
+		{sites(site("reverseProxy", nil)), "/sites/0"},
+		{sites(site("respond", "ok")), "/sites/0/reverseProxy"},
+		{sites(site("reverseProxy", []any{"no port"})), "/sites/0/reverseProxy/0"},
+		{sites(site("respond", "two\nlines", "reverseProxy", nil)), "/sites/0/respond"},
+		{map[string]any{"sites": []any{site()}, "caddyfile": "x"}, "/sites"},
+		{map[string]any{"sites": []any{site()}, "email": "not-an-email"}, "/email"},
+	})
+}
+
+func TestShippedHAProxyBlockValidates(t *testing.T) {
+	fe := func(kv ...any) map[string]any {
+		m := map[string]any{"name": "web", "port": 18080, "servers": []any{"10.0.0.5:8080", "app2.lan:8080"}}
+		for i := 0; i+1 < len(kv); i += 2 {
+			if kv[i+1] == nil {
+				delete(m, kv[i].(string))
+			} else {
+				m[kv[i].(string)] = kv[i+1]
+			}
+		}
+		return m
+	}
+	fes := func(f ...map[string]any) map[string]any {
+		l := []any{}
+		for _, x := range f {
+			l = append(l, x)
+		}
+		return map[string]any{"frontends": l}
+	}
+	validateCases(t, "net/haproxy", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{fes(fe()), ""},
+		{fes(fe("mode", "tcp", "balance", "leastconn", "check", false), fe("name", "api", "port", 18081, "checkPath", "/healthz")), ""},
+		{map[string]any{"config": "global\n\tmaxconn 100\n"}, ""},
+		{map[string]any{"frontends": []any{fe()}, "statsPort": 18404, "maxconn": 4096}, ""},
+		{nil, "frontends"},
+		{map[string]any{"frontends": []any{}}, "/frontends"},
+		{fes(fe("name", "bad name")), "/frontends/0/name"},
+		{fes(fe("mode", "udp")), "/frontends/0/mode"},
+		{fes(fe("balance", "random-ish")), "/frontends/0/balance"},
+		{fes(fe("servers", []any{})), "/frontends/0/servers"},
+		{fes(fe("servers", []any{"10.0.0.5"})), "/frontends/0/servers/0"},
+		{fes(fe("port", nil)), "port"},
+		{fes(fe("checkPath", "no-slash")), "/frontends/0/checkPath"},
+		{map[string]any{"frontends": []any{fe()}, "config": "x"}, "/frontends"},
+	})
+}

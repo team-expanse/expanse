@@ -21,6 +21,10 @@
 //     piece of its state on the bound volume
 //   - db/mariadb: upstream mariadbd (mariadb.go), its datadir on the bound
 //     volume and its accounts converged by an init file on every start
+//   - web/caddy: upstream caddy (caddy.go), its certificates on the bound
+//     volume and its Caddyfile generated from spec.config.sites
+//   - net/haproxy: upstream haproxy (haproxy.go), stateless, haproxy.cfg
+//     generated from spec.config.frontends
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -140,6 +144,16 @@ func main() {
 		}
 	case "db/mariadb":
 		if err := runMariaDB(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "web/caddy":
+		if err := runCaddy(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "net/haproxy":
+		if err := runHAProxy(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

@@ -1,0 +1,5 @@
+name: caddy
+version: 1.0.0
+description: Caddy web server and reverse proxy — automatic HTTPS, its certificates on a replicated volume behind a VIP
+icon: caddy
+capabilities: []

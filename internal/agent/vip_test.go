@@ -131,3 +131,25 @@ func TestVIPPassKeepsExistingHoldersOnScanFailure(t *testing.T) {
 		t.Fatal("vipPass wiped vipCands on a scan failure")
 	}
 }
+
+func TestVIPPortsListsEveryExposedPortWithItsTarget(t *testing.T) {
+	b := &pb.Block{Spec: &pb.BlockSpec{Network: &pb.Network{Ports: []*pb.Port{
+		{Name: "http", Port: 80, TargetPort: 18080, Expose: pb.Expose_EXPOSE_VIP},
+		{Name: "admin", Port: 2019, TargetPort: 2019},
+		{Name: "https", Port: 443, TargetPort: 18443, Expose: pb.Expose_EXPOSE_VIP},
+		{Name: "dns", Port: 53, Expose: pb.Expose_EXPOSE_VIP}, // no target: same port
+	}}}}
+	got := vipPorts(b)
+	want := []vipPort{{exposed: 80, target: 18080}, {exposed: 443, target: 18443}, {exposed: 53, target: 53}}
+	if len(got) != len(want) {
+		t.Fatalf("vipPorts = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("vipPorts[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if vipPorts(&pb.Block{}) != nil {
+		t.Errorf("a block without ports has VIP ports")
+	}
+}

@@ -1,0 +1,5 @@
+name: haproxy
+version: 1.0.0
+description: HAProxy TCP and HTTP load balancer — stateless replicas behind a VIP, health-checked backends
+icon: haproxy
+capabilities: []

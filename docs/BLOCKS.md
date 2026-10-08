@@ -82,6 +82,11 @@ until its probe passes on its own node. `tcp` and `http` probes run;
 instead (see `docs/VMS.md`). A port exposed on a VIP requires a
 readiness probe.
 
+A block may expose several ports on its VIP, such as 80 and 443. They
+share the block's one VIP address, and each forwards to its own
+`targetPort`. HTTP routes (`httpRoutes`) apply to the first exposed
+port only; the others are plain TCP.
+
 A liveness probe runs the same way. When it fails `failureThreshold`
 times in a row, the node restarts the replica's unit in place, then
 waits a backoff (10 s, doubling up to 5 min) plus `initialDelaySeconds`
@@ -246,8 +251,9 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | `defaults.yaml` | fallback values for unset config keys |
 | `module.nix` | NixOS closure the unit runs from |
 
-The shipped sixteen: `util/echo`, `web/nginx`, `web/static-site`,
-`web/whoami`, `db/redis`, `db/postgres`, `db/mariadb`
+The shipped eighteen: `util/echo`, `web/nginx`, `web/static-site`,
+`web/whoami`, `web/caddy` ([`CADDY.md`](CADDY.md)), `net/haproxy`
+([`HAPROXY.md`](HAPROXY.md)), `db/redis`, `db/postgres`, `db/mariadb`
 ([`MARIADB.md`](MARIADB.md)), `monitor/node-exporter`,
 `monitor/prometheus`, `monitor/grafana`, `ai/ollama`, `share/smb`,
 `share/nfs` ([`NFS.md`](NFS.md)), `storage/s3` ([`S3.md`](S3.md)),

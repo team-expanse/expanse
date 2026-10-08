@@ -25,6 +25,8 @@
     packages.x86_64-linux.share-nfs = ./stubs/share-nfs;
     packages.x86_64-linux.storage-s3 = ./stubs/storage-s3;
     packages.x86_64-linux.db-mariadb = ./stubs/db-mariadb;
+    packages.x86_64-linux.web-caddy = ./stubs/web-caddy;
+    packages.x86_64-linux.net-haproxy = ./stubs/net-haproxy;
     packages.x86_64-linux.iscsi-target = ./stubs/iscsi-target;
     packages.x86_64-linux.db-postgres = ./stubs/db-postgres;
     packages.x86_64-linux.vm-instance = ./stubs/vm-instance;

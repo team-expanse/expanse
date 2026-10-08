@@ -28,6 +28,11 @@ The project site is [expanseos.org](https://expanseos.org).
   automatic failover. [`docs/DATABASE.md`](docs/DATABASE.md).
 - **MariaDB** — a MariaDB over a replicated volume behind a VIP; every
   committed row survives failover. [`docs/MARIADB.md`](docs/MARIADB.md).
+- **Caddy** — a web server and reverse proxy with automatic HTTPS; its
+  certificates survive failover. [`docs/CADDY.md`](docs/CADDY.md).
+- **HAProxy** — a TCP and HTTP load balancer for services inside or outside
+  the cluster, as stateless replicas behind a VIP.
+  [`docs/HAPROXY.md`](docs/HAPROXY.md).
 - **iSCSI** — an LIO target over a replicated volume with VIP failover.
   [`docs/ISCSI.md`](docs/ISCSI.md).
 - **NFS** — an NFSv4.1 export (NFS-Ganesha) over a replicated volume; clients
@@ -90,6 +95,8 @@ including forming and joining a cluster afterward:
 | [`docs/BLOCKS.md`](docs/BLOCKS.md) | Deploying and scaling services |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | The Postgres block |
 | [`docs/MARIADB.md`](docs/MARIADB.md) | The MariaDB block |
+| [`docs/CADDY.md`](docs/CADDY.md) | The Caddy web server block |
+| [`docs/HAPROXY.md`](docs/HAPROXY.md) | The HAProxy load balancer block |
 | [`docs/ISCSI.md`](docs/ISCSI.md) | The iSCSI target block |
 | [`docs/NFS.md`](docs/NFS.md) | The NFS export block |
 | [`docs/S3.md`](docs/S3.md) | The S3 object storage block |

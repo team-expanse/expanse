@@ -103,6 +103,54 @@ func (a *Agent) lookupNodeIP(nodeID string) string {
 	return ""
 }
 
+// lbListenAll binds every VIP port of a block. The first may be L7 (http_routes
+// belong to it); later ports are L4 splices to their own target ports.
+func (a *Agent) lbListenAll(p netip.Prefix, ports []vipPort, svcKey string) (io.Closer, error) {
+	var all multiCloser
+	for i, port := range ports {
+		var c io.Closer
+		var err error
+		if i == 0 {
+			c, err = a.lbListen(p, port.exposed, svcKey)
+		} else {
+			c, err = a.lbListenL4(p, port, svcKey)
+		}
+		if err != nil {
+			_ = all.Close()
+			return nil, err
+		}
+		all = append(all, c)
+	}
+	return all, nil
+}
+
+// multiCloser closes each listener of one VIP.
+type multiCloser []io.Closer
+
+func (m multiCloser) Close() error {
+	for _, c := range m {
+		_ = c.Close()
+	}
+	return nil
+}
+
+// lbListenL4 serves one of a block's later VIP ports as an L4 splice to port.target.
+func (a *Agent) lbListenL4(p netip.Prefix, port vipPort, svcKey string) (io.Closer, error) {
+	ln, err := net.Listen("tcp", net.JoinHostPort(p.Addr().String(), strconv.Itoa(int(port.exposed))))
+	if err != nil {
+		return nil, err
+	}
+	return a.serveL4(ln, p, svcKey, a.l4Mode(a.lbPool.Table().Service(svcKey)), port.target), nil
+}
+
+// l4Mode is round-robin, except db/postgres, whose replicas are not interchangeable (D2).
+func (a *Agent) l4Mode(svc *proxy.Service) proxy.BalancerMode {
+	if svc != nil && svc.Type == pgha.BlockType {
+		return proxy.PrimaryOnly
+	}
+	return proxy.RoundRobin
+}
+
 // lbListen builds the listener seam one VIP holder serves: bind
 // VIP:exposedPort and load-balance to the pool's healthy backends for
 // svcKey. The returned Closer stops the accept loop; established
@@ -136,14 +184,16 @@ func (a *Agent) lbListen(p netip.Prefix, exposedPort int32, svcKey string) (io.C
 	// stateless block's are — route only to whichever one the pg-primary
 	// election lease currently names, instead of §4.3's default
 	// round-robin-across-all-healthy algorithm.
-	mode := proxy.RoundRobin
-	if svc != nil && svc.Type == pgha.BlockType {
-		mode = proxy.PrimaryOnly
-	}
+	return a.serveL4(ln, p, svcKey, a.l4Mode(svc), 0), nil
+}
+
+// serveL4 splices ln's connections to svcKey's backends; target 0 means the service's target port.
+func (a *Agent) serveL4(ln net.Listener, p netip.Prefix, svcKey string, mode proxy.BalancerMode, target int32) io.Closer {
 	l4 := &proxy.L4{
-		Pool: a.lbPool,
-		Key:  svcKey,
-		Mode: mode,
+		Pool:       a.lbPool,
+		Key:        svcKey,
+		Mode:       mode,
+		TargetPort: target,
 		Resolve: func(b proxy.Backend, port int32) string {
 			return a.lbResolve(b, port)
 		},
@@ -161,7 +211,7 @@ func (a *Agent) lbListen(p netip.Prefix, exposedPort int32, svcKey string) (io.C
 		_ = ln.Close()
 		cancel()
 		return nil
-	}), nil
+	})
 }
 
 // dialFromVIP sources connections to this node's own backends from the VIP,

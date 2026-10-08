@@ -78,11 +78,15 @@ func (a *Agent) vipLoop(ctx context.Context) {
 
 // vipBlock is one desired VIP extracted from a block spec.
 type vipBlock struct {
-	prefix      netip.Prefix
-	scope       vip.Scope
-	exposedPort int32 // port the VIP listens on
-	targetPort  int32 // local replica port the VIP forwards to
-	blockKey    string
+	prefix   netip.Prefix
+	scope    vip.Scope
+	ports    []vipPort // every EXPOSE_VIP port, in spec order
+	blockKey string
+}
+
+// vipPort is one port the VIP listens on and the replica port it forwards to.
+type vipPort struct {
+	exposed, target int32
 }
 
 func (a *Agent) vipPass(ctx context.Context) {
@@ -157,8 +161,8 @@ func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string
 				b.Status = &st
 			}
 		}
-		port := firstVIPPort(&b)
-		if port == nil {
+		ports := vipPorts(&b)
+		if len(ports) == 0 {
 			continue
 		}
 		blockRef := k[len("/blocks/"):]
@@ -173,28 +177,27 @@ func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string
 			a.logger.Warn("vip allocation failed", "block", blockRef, "err", err)
 			continue
 		}
-		target := port.GetTargetPort()
-		if target == 0 {
-			target = port.GetPort()
-		}
 		key := pfx.String()
-		desired[key] = vipBlock{
-			prefix: pfx, scope: scope,
-			exposedPort: port.GetPort(), targetPort: target,
-			blockKey: k,
-		}
+		desired[key] = vipBlock{prefix: pfx, scope: scope, ports: ports, blockKey: k}
 		cands[key] = readyCandidates(&b)
 	}
 	return desired, cands, nil
 }
 
-func firstVIPPort(b *pb.Block) *pb.Port {
+// vipPorts lists a block's EXPOSE_VIP ports; an unset target port means the same port.
+func vipPorts(b *pb.Block) []vipPort {
+	var out []vipPort
 	for _, p := range b.GetSpec().GetNetwork().GetPorts() {
-		if p.GetExpose() == pb.Expose_EXPOSE_VIP {
-			return p
+		if p.GetExpose() != pb.Expose_EXPOSE_VIP {
+			continue
 		}
+		target := p.GetTargetPort()
+		if target == 0 {
+			target = p.GetPort()
+		}
+		out = append(out, vipPort{exposed: p.GetPort(), target: target})
 	}
-	return nil
+	return out
 }
 
 // readyCandidates maps placements to §4.2 preference candidates: a
@@ -224,10 +227,10 @@ func (a *Agent) startHolder(ctx context.Context, key string, vb vipBlock) *holde
 		return nil
 	}
 	seams.Listen = func(p netip.Prefix) (io.Closer, error) {
-		// Bind VIP:exposedPort and load-balance across ALL healthy
+		// Bind every VIP:port and load-balance across ALL healthy
 		// backends cluster-wide (§4.3, wired to the lb pool's atomic
 		// table — T10/T11). Fails over with the lease.
-		return a.lbListen(p, vb.exposedPort, strings.TrimPrefix(vb.blockKey, "/blocks/"))
+		return a.lbListenAll(p, vb.ports, strings.TrimPrefix(vb.blockKey, "/blocks/"))
 	}
 	hc := vip.HolderConfig{
 		Leases: a.leaseManager(),

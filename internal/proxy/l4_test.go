@@ -516,3 +516,33 @@ func TestDialFromBindsTheBackendConnectionsSourceAddress(t *testing.T) {
 		t.Fatal("proxy never dialed the backend")
 	}
 }
+
+func TestL4TargetPortOverridesTheServicePort(t *testing.T) {
+	tbl := &fakeTable{}
+	b1 := newFakeBackend(t, "n1")
+	tbl.setOne(backendFor(b1, 0))
+	var asked atomic.Int32
+	l4 := &L4{
+		Pool: tbl, Key: "default/web", TargetPort: 8443, DialTimeout: 2 * time.Second,
+		Resolve: func(b Backend, target int32) string {
+			asked.Store(target)
+			return b1.ln.Addr().String()
+		},
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = l4.Serve(ctx, ln) }()
+	r, _ := dialProxy(t, ln.Addr().String())
+	if got := readReply(t, r); got != "backend-n1" {
+		t.Fatalf("reply %q", got)
+	}
+	// A block's second VIP port forwards to its own target, not the first port's 8080.
+	if got := asked.Load(); got != 8443 {
+		t.Errorf("resolved target port %d, want 8443", got)
+	}
+}

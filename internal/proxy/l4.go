@@ -66,6 +66,8 @@ type L4 struct {
 	Key     string       // service key "<namespace>/<name>"
 	Mode    BalancerMode // default round-robin
 	Resolve Resolver     // required
+	// TargetPort, when nonzero, is dialed instead of the service's (a block's later VIP ports).
+	TargetPort int32
 	// DialFrom is the local address to dial b from; the zero Addr lets the kernel pick.
 	DialFrom func(b Backend) netip.Addr
 
@@ -299,7 +301,11 @@ func (l *L4) handle(client net.Conn) {
 			break
 		}
 		b := healthy[idx]
-		addr := l.Resolve(b, svc.TargetPort)
+		target := svc.TargetPort
+		if l.TargetPort != 0 {
+			target = l.TargetPort
+		}
+		addr := l.Resolve(b, target)
 		c, err := l.dialer(b).Dial("tcp", addr)
 		if err == nil {
 			backend, chosen = c, b
