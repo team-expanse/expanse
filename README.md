@@ -33,6 +33,9 @@ The project site is [expanseos.org](https://expanseos.org).
 - **HAProxy** — a TCP and HTTP load balancer for services inside or outside
   the cluster, as stateless replicas behind a VIP.
   [`docs/HAPROXY.md`](docs/HAPROXY.md).
+- **Forgejo** — a Git forge with its repositories, issues and database on a
+  replicated volume behind a VIP; every acknowledged push survives failover.
+  [`docs/FORGEJO.md`](docs/FORGEJO.md).
 - **iSCSI** — an LIO target over a replicated volume with VIP failover.
   [`docs/ISCSI.md`](docs/ISCSI.md).
 - **NFS** — an NFSv4.1 export (NFS-Ganesha) over a replicated volume; clients
@@ -97,6 +100,7 @@ including forming and joining a cluster afterward:
 | [`docs/MARIADB.md`](docs/MARIADB.md) | The MariaDB block |
 | [`docs/CADDY.md`](docs/CADDY.md) | The Caddy web server block |
 | [`docs/HAPROXY.md`](docs/HAPROXY.md) | The HAProxy load balancer block |
+| [`docs/FORGEJO.md`](docs/FORGEJO.md) | The Forgejo Git forge block |
 | [`docs/ISCSI.md`](docs/ISCSI.md) | The iSCSI target block |
 | [`docs/NFS.md`](docs/NFS.md) | The NFS export block |
 | [`docs/S3.md`](docs/S3.md) | The S3 object storage block |

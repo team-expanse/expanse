@@ -6,6 +6,15 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- `dev/forgejo` block: Forgejo as a Git forge on a replicated volume behind a
+  VIP serving HTTP and SSH. Its repositories, SQLite database, SSH host key and
+  secrets survive a crash of the serving node, including a push acknowledged
+  just before it. See `docs/FORGEJO.md`.
+
 ## 1.5.0 - 2026-10-08
 
 ### Added

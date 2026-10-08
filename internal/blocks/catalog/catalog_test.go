@@ -798,3 +798,36 @@ func TestShippedHAProxyBlockValidates(t *testing.T) {
 		{map[string]any{"frontends": []any{fe()}, "config": "x"}, "/frontends"},
 	})
 }
+
+func TestShippedForgejoBlockValidates(t *testing.T) {
+	cfg := func(kv ...any) map[string]any {
+		m := map[string]any{
+			"rootURL": "http://git.example.com/", "adminUser": "gitadmin",
+			"adminPassword": "s3cret-pass", "adminEmail": "ops@example.com",
+		}
+		for i := 0; i+1 < len(kv); i += 2 {
+			if kv[i+1] == nil {
+				delete(m, kv[i].(string))
+			} else {
+				m[kv[i].(string)] = kv[i+1]
+			}
+		}
+		return m
+	}
+	validateCases(t, "dev/forgejo", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{cfg(), ""},
+		{cfg("rootURL", "https://git.example.com:8443/forge", "publicSSHPort", 22, "allowRegistration", true), ""},
+		{cfg("settings", map[string]any{"database": map[string]any{"DB_TYPE": "mysql", "MAX_OPEN_CONNS": 10}}), ""},
+		{nil, "rootURL"},
+		{cfg("rootURL", "git.example.com"), "/rootURL"},
+		{cfg("adminPassword", "short"), "/adminPassword"},
+		{cfg("adminUser", "a b"), "/adminUser"},
+		{cfg("sshPort", 22), "/sshPort"},
+		{cfg("settings", map[string]any{"bad section": map[string]any{"K": "v"}}), "/settings"},
+		{cfg("settings", map[string]any{"server": map[string]any{"K": "a\nb"}}), "/settings/server/K"},
+		{cfg("settings", map[string]any{"server": "v"}), "/settings/server"},
+	})
+}

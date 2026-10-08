@@ -1,0 +1,5 @@
+name: forgejo
+version: 1.0.0
+description: Forgejo Git forge — repositories, issues and its database on a replicated volume behind a VIP
+icon: git
+capabilities: []

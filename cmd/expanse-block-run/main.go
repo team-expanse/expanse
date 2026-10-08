@@ -25,6 +25,8 @@
 //     volume and its Caddyfile generated from spec.config.sites
 //   - net/haproxy: upstream haproxy (haproxy.go), stateless, haproxy.cfg
 //     generated from spec.config.frontends
+//   - dev/forgejo: upstream forgejo (forgejo.go), its repositories, SQLite
+//     database and secrets on the bound volume, app.ini from spec.config
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -154,6 +156,11 @@ func main() {
 		}
 	case "net/haproxy":
 		if err := runHAProxy(ctx, instance, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "dev/forgejo":
+		if err := runForgejo(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

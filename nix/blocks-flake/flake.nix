@@ -27,6 +27,7 @@
     packages.x86_64-linux.db-mariadb = ./stubs/db-mariadb;
     packages.x86_64-linux.web-caddy = ./stubs/web-caddy;
     packages.x86_64-linux.net-haproxy = ./stubs/net-haproxy;
+    packages.x86_64-linux.dev-forgejo = ./stubs/dev-forgejo;
     packages.x86_64-linux.iscsi-target = ./stubs/iscsi-target;
     packages.x86_64-linux.db-postgres = ./stubs/db-postgres;
     packages.x86_64-linux.vm-instance = ./stubs/vm-instance;

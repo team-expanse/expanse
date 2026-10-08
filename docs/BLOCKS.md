@@ -251,9 +251,9 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | `defaults.yaml` | fallback values for unset config keys |
 | `module.nix` | NixOS closure the unit runs from |
 
-The shipped eighteen: `util/echo`, `web/nginx`, `web/static-site`,
+The shipped nineteen: `util/echo`, `web/nginx`, `web/static-site`,
 `web/whoami`, `web/caddy` ([`CADDY.md`](CADDY.md)), `net/haproxy`
-([`HAPROXY.md`](HAPROXY.md)), `db/redis`, `db/postgres`, `db/mariadb`
+([`HAPROXY.md`](HAPROXY.md)), `dev/forgejo` ([`FORGEJO.md`](FORGEJO.md)), `db/redis`, `db/postgres`, `db/mariadb`
 ([`MARIADB.md`](MARIADB.md)), `monitor/node-exporter`,
 `monitor/prometheus`, `monitor/grafana`, `ai/ollama`, `share/smb`,
 `share/nfs` ([`NFS.md`](NFS.md)), `storage/s3` ([`S3.md`](S3.md)),

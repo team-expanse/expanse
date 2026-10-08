@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rootURL", "adminUser", "adminPassword", "adminEmail"],
+  "properties": {
+    "rootURL": {
+      "type": "string",
+      "pattern": "^https?://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$",
+      "description": "URL users browse to, such as http://git.example.com/; clone URLs and links are built from it"
+    },
+    "adminUser": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,40}$",
+      "description": "Administrator account, created on first start; Forgejo reserves some names, such as admin"
+    },
+    "adminPassword": {
+      "type": "string",
+      "minLength": 8,
+      "description": "The administrator's password; applied on every start"
+    },
+    "adminEmail": {
+      "type": "string",
+      "pattern": "^[^@\\s]+@[^@\\s]+$",
+      "description": "The administrator's email address"
+    },
+    "allowRegistration": {
+      "type": "boolean",
+      "description": "Let anyone who reaches Forgejo register an account"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535,
+      "description": "Forgejo's HTTP port. When exposed with EXPOSE_VIP, keep it different from the exposed port (80) and set it as target_port"
+    },
+    "sshPort": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535,
+      "description": "Port Forgejo's built-in SSH server listens on, behind the exposed SSH port"
+    },
+    "publicSSHPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "SSH port shown in clone URLs: the port exposed on the VIP"
+    },
+    "settings": {
+      "type": "object",
+      "description": "Extra app.ini settings by section, applied after the block's own, such as {\"database\": {\"DB_TYPE\": \"mysql\"}}",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_.-]+$" },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": { "pattern": "^[A-Za-z0-9_.-]+$" },
+        "additionalProperties": {
+          "type": ["string", "number", "boolean"],
+          "pattern": "^[^\\n\\r]*$"
+        }
+      }
+    }
+  }
+}

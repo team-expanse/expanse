@@ -1,0 +1,6 @@
+# Not 80/2222: exposed with EXPOSE_VIP, clients connect to VIP:80 and
+# VIP:2222, so Forgejo listens elsewhere (target_port) like web/caddy.
+port: 13000
+sshPort: 12222
+publicSSHPort: 2222
+allowRegistration: false
