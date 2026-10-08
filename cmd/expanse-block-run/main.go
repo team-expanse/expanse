@@ -27,6 +27,8 @@
 //     generated from spec.config.frontends
 //   - dev/forgejo: upstream forgejo (forgejo.go), its repositories, SQLite
 //     database and secrets on the bound volume, app.ini from spec.config
+//   - util/restic-backup: upstream restic (restic.go), streaming thin
+//     snapshots of the listed volumes whose DRBD primary is on this node
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -164,6 +166,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
+	case "util/restic-backup":
+		if err := runRestic(ctx, spec.Namespace, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
 	case "iscsi/target":
 		if err := runISCSITarget(ctx, instance, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
@@ -189,9 +196,10 @@ func main() {
 
 // spec mirrors the agent's systemd.Spec (the fields the helper needs).
 type spec struct {
-	Type  string   `json:"type"`
-	Args  []string `json:"args,omitempty"`
-	Index int      `json:"index"`
+	Namespace string   `json:"namespace"`
+	Type      string   `json:"type"`
+	Args      []string `json:"args,omitempty"`
+	Index     int      `json:"index"`
 }
 
 // loadSpec reads the desired-state JSON the agent wrote for this

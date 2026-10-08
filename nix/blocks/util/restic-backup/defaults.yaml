@@ -1,0 +1,7 @@
+# The status endpoint every replica serves: / as JSON, /healthz for readiness.
+port: 18900
+interval: 24h
+keep:
+  daily: 7
+  weekly: 4
+  monthly: 6

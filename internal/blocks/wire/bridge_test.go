@@ -712,6 +712,22 @@ func TestReplicaSpecVMInstanceRunsAsRoot(t *testing.T) {
 	}
 }
 
+// util/restic-backup snapshots LVs and reads their devices, which DynamicUser cannot.
+func TestReplicaSpecResticBackupRunsAsRoot(t *testing.T) {
+	blk := &pb.Block{Spec: &pb.BlockSpec{Type: "util/restic-backup"}}
+	raw, err := replicaSpec(blk, "default", "backup", 0, map[string]volumeRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec systemd.Spec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if !spec.RunAsRoot {
+		t.Error("util/restic-backup must run as root")
+	}
+}
+
 // flakyReads fails reads under prefix the way a follower does during a leader election.
 type flakyReads struct {
 	store.Store

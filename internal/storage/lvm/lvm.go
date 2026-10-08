@@ -288,3 +288,26 @@ func (e *Exec) List(ctx context.Context, vg string) ([]LV, error) {
 	}
 	return parseLVs(out)
 }
+
+// Find returns the volume with this name in whichever group holds it.
+func (e *Exec) Find(ctx context.Context, name string) (LV, error) {
+	const op = "lvm.Find"
+	if err := checkNames(op, name); err != nil {
+		return LV{}, err
+	}
+	out, err := e.run(ctx, "lvs", "--noheadings", "--units", "b", "--nosuffix", "--separator", sep,
+		"--options", lvFields, "--select", "lv_name="+name)
+	if err != nil {
+		return LV{}, err
+	}
+	lvs, err := parseLVs(out)
+	switch {
+	case err != nil:
+		return LV{}, err
+	case len(lvs) == 0:
+		return LV{}, experrors.New(experrors.KindNotFound, op, "no volume "+name)
+	case len(lvs) > 1:
+		return LV{}, malformed(op, "want one volume named %s, got %d", name, len(lvs))
+	}
+	return lvs[0], nil
+}

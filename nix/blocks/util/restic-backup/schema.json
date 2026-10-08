@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repository", "password", "volumes"],
+  "properties": {
+    "repository": {
+      "type": "string",
+      "pattern": "^[^\\n\\r]+$",
+      "description": "restic repository, such as s3:http://10.0.0.40:3900/backups"
+    },
+    "password": {
+      "type": "string",
+      "pattern": "^[^\\n\\r]+$",
+      "description": "Password that encrypts the repository; without it the backups cannot be read"
+    },
+    "env": {
+      "type": "object",
+      "description": "Extra environment for restic, such as AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+        "not": {"enum": ["RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE", "RESTIC_PASSWORD", "RESTIC_PASSWORD_FILE", "RESTIC_PASSWORD_COMMAND"]}
+      },
+      "additionalProperties": {"type": "string", "pattern": "^[^\\n\\r]*$"}
+    },
+    "volumes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Volumes to back up: <block>/<storage> in this block's namespace, or a volume name",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(/[a-z0-9]([a-z0-9.-]*[a-z0-9])?)?$"
+      }
+    },
+    "interval": {
+      "type": "string",
+      "pattern": "^([0-9]+(\\.[0-9]+)?(s|m|h))+$",
+      "description": "Time between backups of each volume, at least 1m, such as 6h"
+    },
+    "keep": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Snapshots kept per volume, as restic forget --keep-* counts",
+      "properties": {
+        "last": {"type": "integer", "minimum": 1},
+        "hourly": {"type": "integer", "minimum": 1},
+        "daily": {"type": "integer", "minimum": 1},
+        "weekly": {"type": "integer", "minimum": 1},
+        "monthly": {"type": "integer", "minimum": 1},
+        "yearly": {"type": "integer", "minimum": 1}
+      }
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535,
+      "description": "Port of each replica's status endpoint"
+    }
+  }
+}

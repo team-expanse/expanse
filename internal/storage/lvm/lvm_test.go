@@ -130,6 +130,29 @@ func TestGetRejectsAnUnexpectedRowCount(t *testing.T) {
 	}
 }
 
+// Find looks a volume up by name in every group: a block process does not know the node's group.
+func TestFindSearchesEveryGroup(t *testing.T) {
+	f := newFake("  vol-a1|vg9|1048576|Vwi-a-tz--|pool||1.00|\n", "", 0)
+	lv, err := f.Find(ctx, "vol-a1")
+	if err != nil || lv.VG != "vg9" {
+		t.Fatalf("got %+v, %v", lv, err)
+	}
+	want := []string{
+		"lvm", "lvs", "--noheadings", "--units", "b", "--nosuffix", "--separator", "|",
+		"--options", "lv_name,vg_name,lv_size,lv_attr,pool_lv,origin,data_percent,metadata_percent",
+		"--select", "lv_name=vol-a1",
+	}
+	if !reflect.DeepEqual(f.calls[0], want) {
+		t.Errorf("ran %v, want %v", f.calls[0], want)
+	}
+	if _, err := newFake("", "", 0).Find(ctx, "vol-a1"); experrors.KindOf(err) != experrors.KindNotFound {
+		t.Errorf("no match: want KindNotFound, got %v", err)
+	}
+	if _, err := newFake("", "", 0).Find(ctx, "a b"); experrors.KindOf(err) != experrors.KindInvalid {
+		t.Errorf("bad name: want KindInvalid, got %v", err)
+	}
+}
+
 func TestDevicePath(t *testing.T) {
 	if got := DevicePath("vg0", "vol-a1"); got != "/dev/vg0/vol-a1" {
 		t.Errorf("got %q", got)

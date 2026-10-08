@@ -20,7 +20,7 @@ func TestSpecParseExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Type != "util/echo" || len(s.Args) != 2 {
+	if s.Type != "util/echo" || s.Namespace != "default" || len(s.Args) != 2 {
 		t.Fatalf("spec: %+v", s)
 	}
 	var cfg struct {

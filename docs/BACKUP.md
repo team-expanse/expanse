@@ -101,9 +101,9 @@ verify checksum-equal.
 
 ## 5. What is not covered
 
-Backup scheduling (cron, a new block type, automatic cadence) is a deliberately deferred
-extension point, not built this phase (`.plan/PHASE-08-TASKS.md` D4) — `restic backup` above is a
-manual or externally-scheduled command today. A shipped block's own secret-shaped config fields
+Scheduled volume backups are the `util/restic-backup` block ([`RESTIC-BACKUP.md`](RESTIC-BACKUP.md)),
+which automates §4's snapshot-and-restic steps from each volume's primary; backing up `dataDir`
+(§2) is still a manual or externally-scheduled `restic backup`. A shipped block's own secret-shaped config fields
 (e.g. `iscsi/target`'s `chapPassword`, `db/postgres`'s replication/superuser passwords) are
 ordinary plaintext values on the block spec, already covered by the generation backup (§2, X4) —
 not a separate secrets store: there is none yet, so a block that names `spec.secrets` is

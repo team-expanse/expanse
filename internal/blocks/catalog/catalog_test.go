@@ -831,3 +831,39 @@ func TestShippedForgejoBlockValidates(t *testing.T) {
 		{cfg("settings", map[string]any{"server": "v"}), "/settings/server"},
 	})
 }
+
+func TestShippedResticBackupBlockValidates(t *testing.T) {
+	cfg := func(kv ...any) map[string]any {
+		m := map[string]any{
+			"repository": "s3:http://10.0.0.9:3900/backups", "password": "repo-pass",
+			"volumes": []any{"forge/forgejo-data"},
+		}
+		for i := 0; i+1 < len(kv); i += 2 {
+			if kv[i+1] == nil {
+				delete(m, kv[i].(string))
+			} else {
+				m[kv[i].(string)] = kv[i+1]
+			}
+		}
+		return m
+	}
+	validateCases(t, "util/restic-backup", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{cfg(), ""},
+		{cfg("interval", "6h", "keep", map[string]any{"last": 3, "daily": 7}), ""},
+		{cfg("env", map[string]any{"AWS_ACCESS_KEY_ID": "GK1", "AWS_SECRET_ACCESS_KEY": "s"}), ""},
+		{cfg("volumes", []any{"forge/forgejo-data", "scratch"}), ""},
+		{nil, "repository"},
+		{cfg("password", nil), "password"},
+		{cfg("volumes", []any{}), "/volumes"},
+		{cfg("volumes", []any{"a/b/c"}), "/volumes/0"},
+		{cfg("volumes", []any{"x", "x"}), "/volumes"},
+		{cfg("interval", "daily"), "/interval"},
+		{cfg("keep", map[string]any{"daily": 0}), "/keep/daily"},
+		{cfg("keep", map[string]any{"forever": 1}), "/keep"},
+		{cfg("env", map[string]any{"RESTIC_PASSWORD": "v"}), "/env"},
+		{cfg("env", map[string]any{"bad name": "v"}), "/env"},
+	})
+}

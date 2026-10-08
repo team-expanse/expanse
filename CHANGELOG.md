@@ -6,6 +6,15 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- `util/restic-backup` block: scheduled restic backups of block volumes to S3
+  or any restic repository, with retention. Each volume is backed up from a
+  crash-consistent snapshot on the node holding its primary, and the backups
+  follow it through failover. See `docs/RESTIC-BACKUP.md`.
+
 ## 1.6.0 - 2026-10-08
 
 ### Added

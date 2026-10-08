@@ -356,6 +356,8 @@ var rootBlockTypes = map[string]bool{
 	"share/nfs":    true,
 	"iscsi/target": true,
 	"vm/instance":  true,
+	// LVM snapshots and their devices, and the agent socket.
+	"util/restic-backup": true,
 }
 
 // storageFilesystem is the mount.Resource filesystem for a storage entry:

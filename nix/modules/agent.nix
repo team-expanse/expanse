@@ -253,7 +253,8 @@ in
         # (D5: one LUN per instance), so granting the real /run here is
         # a lock-file accommodation, not a meaningfully wider surface for
         # a unit that already runs fully privileged.
-        ReadWritePaths=/var/lib/expanse/volumes /etc/target /run
+        # /etc/lvm: util/restic-backup's lvcreate archives the VG metadata there, as the agent's does.
+        ReadWritePaths=/var/lib/expanse/volumes /etc/target /run -/etc/lvm
         # targetcli-fb's own shell layer (configshell-fb) separately
         # wants a writable preferences directory, ~/.targetcli by
         # default — root's $HOME is /root, made inaccessible by

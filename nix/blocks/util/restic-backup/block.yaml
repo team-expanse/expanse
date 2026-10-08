@@ -1,0 +1,5 @@
+name: restic-backup
+version: 1.0.0
+description: Scheduled restic backups of replicated volumes to S3 or any restic repository — daemonset, each volume backed up from its primary
+icon: archive
+capabilities: []
