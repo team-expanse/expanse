@@ -15,6 +15,7 @@ import (
 type Lease interface {
 	Valid() bool
 	Done() <-chan struct{}
+	Err() error
 }
 
 // Consumer stops every user of a volume's device, in practice by unmounting it.
@@ -124,6 +125,9 @@ func (p *Promoter) Hold(ctx context.Context, res string, l Lease, opt HoldOption
 		case <-l.Done():
 		case <-time.After(h.evaluate(ctx)):
 		}
+	}
+	if ctx.Err() == nil {
+		p.log().Warn("volume lease lost", "vol", res, "err", l.Err())
 	}
 	return p.stepDown(res)
 }

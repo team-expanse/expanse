@@ -355,8 +355,9 @@ type Held struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu   sync.Mutex
-	lost bool
+	mu      sync.Mutex
+	lost    bool
+	lostErr error
 }
 
 // Done is closed when the lease is lost for ANY reason: expiry, network
@@ -374,7 +375,7 @@ func (h *Held) Done() <-chan struct{} { return h.done }
 // otherwise pin the lease forever and stall singleton replacement).
 func (h *Held) Abandon() {
 	h.cancel()
-	h.markLost()
+	h.markLost(errors.New(errors.KindUnavailable, "lease", "abandoned by its holder"))
 }
 
 // Valid reports whether the lease is currently believed held.
@@ -382,6 +383,13 @@ func (h *Held) Valid() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return !h.lost
+}
+
+// Err reports why the lease was lost, or nil while it is held.
+func (h *Held) Err() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lostErr
 }
 
 // CurrentLease returns a snapshot of the lease state (the embedded
@@ -393,11 +401,13 @@ func (h *Held) CurrentLease() Lease {
 	return h.Lease
 }
 
-// markLost closes Done exactly once.
-func (h *Held) markLost() {
+// markLost records why the lease was lost and closes Done, both exactly once.
+func (h *Held) markLost(why error) {
 	h.mu.Lock()
 	already := h.lost
-	h.lost = true
+	if !already {
+		h.lost, h.lostErr = true, why
+	}
 	h.mu.Unlock()
 	if !already {
 		close(h.done)
@@ -436,12 +446,14 @@ func (h *Held) renewOnce(ctx context.Context) bool {
 	defer cancel()
 	key := store.Key(Prefix + h.Lease.Name)
 	expires := h.mgr.now().Add(h.ttl)
+	start := time.Now()
 	rev, err := h.mgr.st.CompareAndSwap(cctx, key, h.Lease.Revision,
 		mustEncode(h.Lease.Name, h.Lease.Holder, h.mgr.term(), expires))
 	if err != nil {
 		// Renewal failed (conflict, unavailability, or budget exceeded).
 		// Close Done() immediately — do not wait for expiry.
-		h.markLost()
+		h.markLost(errors.Wrap(err, errors.KindUnavailable, "lease.renew",
+			fmt.Sprintf("renewal failed after %v: %v", time.Since(start).Round(time.Millisecond), err)))
 		return false
 	}
 	h.mu.Lock()
@@ -459,7 +471,7 @@ func (h *Held) watchLoop(ctx context.Context) {
 	defer h.wg.Done()
 	events, err := h.mgr.st.Watch(ctx, store.Key(Prefix+h.Lease.Name), h.Lease.Revision)
 	if err != nil {
-		h.markLost()
+		h.markLost(errors.Wrap(err, errors.KindUnavailable, "lease.watch", "watch failed: "+err.Error()))
 		return
 	}
 	for {
@@ -471,22 +483,17 @@ func (h *Held) watchLoop(ctx context.Context) {
 				// Stream closed by partition or store shutdown:
 				// conservatively treat the lease as lost unless this is
 				// our own shutdown after an explicit release/loss.
-				h.mu.Lock()
-				already := h.lost
-				h.mu.Unlock()
-				if !already {
-					h.markLost()
-				}
+				h.markLost(errors.New(errors.KindUnavailable, "lease.watch", "watch stream closed"))
 				return
 			}
 			switch ev.Type {
 			case store.EventDelete:
-				h.markLost()
+				h.markLost(errors.New(errors.KindConflict, "lease.watch", "watch saw the record deleted"))
 				return
 			case store.EventPut:
 				v, derr := decodeValue(ev.Entry.Value)
 				if derr != nil || v.Holder != h.Lease.Holder {
-					h.markLost() // taken over or corrupted
+					h.markLost(errors.New(errors.KindConflict, "lease.watch", "watch saw the record taken over or corrupted"))
 					return
 				}
 			}
@@ -497,13 +504,7 @@ func (h *Held) watchLoop(ctx context.Context) {
 // release stops the background loops, marks the lease lost (closing
 // Done), and best-effort deletes the key.
 func (h *Held) release(ctx context.Context, m *Manager) error {
-	h.mu.Lock()
-	already := h.lost
-	h.lost = true
-	h.mu.Unlock()
-	if !already {
-		close(h.done)
-	}
+	h.markLost(errors.New(errors.KindUnavailable, "lease", "released by its holder"))
 	h.cancel()
 	h.wg.Wait()
 	err := m.st.Delete(ctx, store.Key(Prefix+h.Lease.Name), h.Lease.Revision)

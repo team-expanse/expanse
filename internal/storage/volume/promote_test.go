@@ -1,11 +1,14 @@
 package volume
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -132,12 +135,21 @@ func (c *gateConsumer) Release(context.Context, string) error {
 type fakeLease struct {
 	done chan struct{}
 	once sync.Once
+	why  error
 }
 
 func newFakeLease() *fakeLease { return &fakeLease{done: make(chan struct{})} }
 
 func (l *fakeLease) Done() <-chan struct{} { return l.done }
-func (l *fakeLease) lose()                 { l.once.Do(func() { close(l.done) }) }
+func (l *fakeLease) lose()                 { l.loseBecause(errors.New("lost")) }
+func (l *fakeLease) loseBecause(why error) { l.once.Do(func() { l.why = why; close(l.done) }) }
+func (l *fakeLease) Err() error {
+	if l.Valid() {
+		return nil
+	}
+	return l.why
+}
+
 func (l *fakeLease) Valid() bool {
 	select {
 	case <-l.done:
@@ -702,5 +714,18 @@ func TestLeadHoldsAVolumeItCannotDemoteOnceTheLeaseIsFree(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if got := r.tr.count("release"); got != settled {
 		t.Errorf("still releasing the device (%d -> %d) while holding its lease", settled, got)
+	}
+}
+
+func TestHoldLogsWhyTheLeaseWasLost(t *testing.T) {
+	var buf bytes.Buffer
+	g := newGate(status(drbd.RoleSecondary, true, drbd.DiskUpToDate))
+	g.p.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	g.hold(context.Background(), HoldOptions{})
+	waitFor(t, "promotion", func() bool { return g.role() == drbd.RolePrimary })
+	g.lease.loseBecause(errors.New("renewal failed after 3.4s"))
+	g.finished(t)
+	if out := buf.String(); !strings.Contains(out, "volume lease lost") || !strings.Contains(out, "renewal failed after 3.4s") {
+		t.Errorf("log does not say why the lease was lost:\n%s", out)
 	}
 }

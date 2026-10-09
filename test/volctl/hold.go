@@ -44,6 +44,14 @@ func (l *fileLease) Valid() bool {
 	return err == nil
 }
 
+// Err reports the removed lease file once the lease is gone.
+func (l *fileLease) Err() error {
+	if _, err := os.Stat(l.path); err != nil {
+		return fmt.Errorf("lease file removed: %w", err)
+	}
+	return nil
+}
+
 // umountConsumer releases a device by unmounting the directory it is mounted on.
 type umountConsumer struct{ dir string }
 

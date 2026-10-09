@@ -786,3 +786,31 @@ func TestAcquireReclaimingTakesBackOwnLiveRecordOnly(t *testing.T) {
 		t.Fatalf("own record not reclaimed: %v", err)
 	}
 }
+
+func TestErrReportsWhyTheLeaseWasLost(t *testing.T) {
+	ctx := context.Background()
+
+	slow := &slowStore{Store: newBoltStore(t), d: 900 * time.Millisecond}
+	h, err := lease.NewManager(slow, "node-a").Acquire(ctx, "why-slow", 900*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if h.Err() != nil {
+		t.Fatalf("Err() = %v on a live lease, want nil", h.Err())
+	}
+	waitDone(t, h, 3*time.Second)
+	if e := h.Err(); e == nil || !strings.Contains(e.Error(), "renew") {
+		t.Errorf("Err() after slow renewal = %v, want a renewal error", e)
+	}
+
+	pst := &partStore{Store: newBoltStore(t)}
+	h, err = lease.NewManager(pst, "node-a").Acquire(ctx, "why-watch", lease.DefaultTTL)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	pst.partition()
+	waitDone(t, h, time.Second)
+	if e := h.Err(); e == nil || !strings.Contains(e.Error(), "watch") {
+		t.Errorf("Err() after partition = %v, want a watch error", e)
+	}
+}
