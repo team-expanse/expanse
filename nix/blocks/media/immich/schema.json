@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "port": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535,
+      "description": "Immich's HTTP port. When exposed with EXPOSE_VIP, keep it different from the exposed port (80) and set it as target_port"
+    },
+    "machineLearning": {
+      "type": "boolean",
+      "description": "Run Immich's machine-learning service (smart search, face recognition) on 127.0.0.1:3003; it downloads its models on first use"
+    }
+  }
+}

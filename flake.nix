@@ -230,6 +230,7 @@
             grep -q "stays FULL" $out
           '';
           monitor-uptime-kuma = mkTest "monitor-uptime-kuma" ./nix/tests/monitor-uptime-kuma.nix;
+          media-immich = mkTest "media-immich" ./nix/tests/media-immich.nix;
           # share-smb-failover (Stream B2, X2) is deliberately not wired
           # in here: it fails on a still-unresolved post-failover
           # ACCESS_DENIED bug (PHASE-03-TASKS.md Stream B2, paused).

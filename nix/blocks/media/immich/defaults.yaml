@@ -1,0 +1,4 @@
+# Not 80: exposed with EXPOSE_VIP, clients connect to VIP:80, so
+# Immich listens elsewhere (target_port).
+port: 2283
+machineLearning: true

@@ -921,3 +921,16 @@ func TestShippedUptimeKumaBlockValidates(t *testing.T) {
 		{map[string]any{"bogus": 1}, "bogus"},
 	})
 }
+
+func TestShippedImmichBlockValidates(t *testing.T) {
+	validateCases(t, "media/immich", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{map[string]any{}, ""},
+		{map[string]any{"port": 2300, "machineLearning": false}, ""},
+		{map[string]any{"port": 80}, "/port"},
+		{map[string]any{"machineLearning": "yes"}, "/machineLearning"},
+		{map[string]any{"bogus": 1}, "bogus"},
+	})
+}

@@ -1,0 +1,5 @@
+name: immich
+version: 1.0.0
+description: Immich photo and video library — its uploads, Postgres database and job queue on a replicated volume behind a VIP
+icon: image
+capabilities: []

@@ -8,6 +8,13 @@ History before 1.0.0 is not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `media/immich` block: Immich, a photo and video library, on a replicated
+  volume behind a VIP. The block runs Immich's own Postgres (with VectorChord)
+  and Redis on the volume, with Redis syncing every queued job, so uploads and
+  their pending jobs survive a crash of the serving node. See `docs/IMMICH.md`.
+
 ### Changed
 
 - Expanse now follows nixos-unstable instead of nixos-26.05, whose Immich 2.7.5

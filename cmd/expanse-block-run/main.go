@@ -35,6 +35,8 @@
 //     database and settings on the bound volume, cache in private /tmp
 //   - monitor/uptime-kuma: upstream uptime-kuma (uptimekuma.go), its
 //     SQLite database on the bound volume, synced on every commit
+//   - media/immich: upstream immich (immich.go) with a private postgres,
+//     redis and machine-learning service, their state on the bound volume
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -189,6 +191,11 @@ func main() {
 		}
 	case "monitor/uptime-kuma":
 		if err := runUptimeKuma(ctx, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "media/immich":
+		if err := runImmich(ctx, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
