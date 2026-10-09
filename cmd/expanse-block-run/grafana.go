@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
@@ -14,6 +15,42 @@ import (
 // grafanaHomepath is <pkg>/share/grafana for the resolved <pkg>/bin/grafana.
 func grafanaHomepath(bin string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(bin)), "share", "grafana")
+}
+
+// grafanaShippedPlugins is where nodes ship plugins, beside the profile's grafana:
+// Grafana 13.2 split its Prometheus datasource out of the core into grafanaPlugins.prometheus.
+func grafanaShippedPlugins(profileBin string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(profileBin)), "lib", "grafana", "plugins")
+}
+
+// linkGrafanaPlugins points dst at every plugin shipped in src and drops links to ones no
+// longer shipped; plugins installed through the UI are real directories and stay.
+func linkGrafanaPlugins(src, dst string) error {
+	shipped, err := os.ReadDir(src)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	current, err := os.ReadDir(dst)
+	if err != nil {
+		return err
+	}
+	for _, e := range current {
+		if e.Type()&os.ModeSymlink != 0 {
+			if err := os.Remove(filepath.Join(dst, e.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	for _, e := range shipped {
+		target, err := filepath.EvalSymlinks(filepath.Join(src, e.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.Symlink(target, filepath.Join(dst, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeGrafanaProvisioning provisions the Expanse datasource and the shipped
@@ -109,6 +146,14 @@ func runGrafana(ctx context.Context, instance string, args []string) error {
 	bin, err := resolveBin("grafana")
 	if err != nil {
 		return fmt.Errorf("block runtime: grafana not found in PATH (ship the package): %w", err)
+	}
+	profileBin, _ := exec.LookPath("grafana")
+	plugins := filepath.Join(data, "plugins")
+	if err := os.MkdirAll(plugins, 0o700); err != nil {
+		return err
+	}
+	if err := linkGrafanaPlugins(grafanaShippedPlugins(profileBin), plugins); err != nil {
+		return fmt.Errorf("monitor/grafana: linking shipped plugins: %w", err)
 	}
 	fmt.Printf("expanse-block-run: grafana serving on :%s\n", port)
 	return execWorkload(ctx, bin, []string{"server", "--homepath=" + grafanaHomepath(bin)},

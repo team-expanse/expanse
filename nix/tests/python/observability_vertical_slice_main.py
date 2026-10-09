@@ -153,7 +153,7 @@ with subtest("install and start a real grafana on the shipped provisioning, unmo
         "[paths]\n"
         "data = /root/grafana-data\n"
         "logs = /root/grafana-data/log\n"
-        "plugins = /root/grafana-data/plugins\n"
+        "plugins = /run/current-system/sw/lib/grafana/plugins\n"
         "provisioning = /root/grafana/provisioning\n"
         "[server]\n"
         "http_addr = 127.0.0.1\n"

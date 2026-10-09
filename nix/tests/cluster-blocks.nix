@@ -32,7 +32,7 @@ let
     networking.firewall.allowedTCPPorts = [ 2049 ];
     networking.firewall.allowedTCPPortRanges = [ { from = 18000; to = 18999; } ];
     # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = with pkgs; [ curl jq prometheus grafana prometheus-node-exporter nfs-ganesha ];
+    environment.systemPackages = with pkgs; [ curl jq prometheus grafana (callPackage ../grafana-plugins.nix { }) prometheus-node-exporter nfs-ganesha ];
     virtualisation.cores = 2;
     virtualisation.memorySize = 3072;
   };

@@ -44,7 +44,7 @@ in
       # script -- same reasoning as observability-metrics.nix: the
       # cluster CA/token don't exist until after cluster init, and D2's
       # stance is "bring your own", not a bundled systemd service.
-      environment.systemPackages = [ pkgs.prometheus pkgs.grafana ];
+      environment.systemPackages = [ pkgs.prometheus pkgs.grafana (pkgs.callPackage ../grafana-plugins.nix { }) ];
       # Extra headroom for Grafana's own background work (search
       # indexing, ngalert's scheduler) alongside this node's raft agent
       # and prometheus, all sharing one node.

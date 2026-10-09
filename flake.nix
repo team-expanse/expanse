@@ -35,6 +35,9 @@
         packages.expanse = pkgs.callPackage ./nix/package.nix { inherit version rev; };
         packages.default = self.packages.${system}.expanse;
 
+        # Grafana plugins the monitor/grafana block needs on its nodes, beside pkgs.grafana.
+        packages.grafana-plugins = pkgs.callPackage ./nix/grafana-plugins.nix { };
+
         # Installer ISO: `nix build .#iso`
         packages.iso = isoSystem.config.system.build.isoImage;
 

@@ -95,3 +95,49 @@ func TestGrafanaEnvAllowsAnonymousViewersWhenAsked(t *testing.T) {
 		t.Error("anonymous access must be off by default")
 	}
 }
+
+func TestGrafanaShippedPluginsLiveBesideTheProfileBinary(t *testing.T) {
+	got := grafanaShippedPlugins("/run/current-system/sw/bin/grafana")
+	if want := "/run/current-system/sw/lib/grafana/plugins"; got != want {
+		t.Errorf("shipped plugins = %s, want %s", got, want)
+	}
+}
+
+func TestLinkGrafanaPluginsRefreshesShippedOnesAndKeepsInstalledOnes(t *testing.T) {
+	root := t.TempDir()
+	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
+	prom := filepath.Join(root, "store", "prometheus-13.2.2")
+	for _, d := range []string{src, dst, prom, filepath.Join(dst, "installed-panel")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(prom, filepath.Join(src, "prometheus")); err != nil {
+		t.Fatal(err)
+	}
+	// Left by an earlier start: a plugin no longer shipped and an outdated link.
+	for name, target := range map[string]string{"retired": "/nix/store/gone-retired", "prometheus": "/nix/store/gone-old-prometheus"} {
+		if err := os.Symlink(target, filepath.Join(dst, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := linkGrafanaPlugins(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.Readlink(filepath.Join(dst, "prometheus")); got != prom {
+		t.Errorf("prometheus links to %q, want %q", got, prom)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "retired")); !os.IsNotExist(err) {
+		t.Errorf("retired plugin link kept: %v", err)
+	}
+	if fi, err := os.Lstat(filepath.Join(dst, "installed-panel")); err != nil || !fi.IsDir() {
+		t.Errorf("a plugin installed through the UI was touched: %v", err)
+	}
+}
+
+func TestLinkGrafanaPluginsWithoutShippedPlugins(t *testing.T) {
+	dst := t.TempDir()
+	if err := linkGrafanaPlugins(filepath.Join(dst, "missing"), dst); err != nil {
+		t.Errorf("err = %v, want nil when the node ships no plugins", err)
+	}
+}

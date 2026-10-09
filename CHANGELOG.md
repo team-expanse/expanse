@@ -6,6 +6,17 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Changed
+
+- Expanse now follows nixos-unstable instead of nixos-26.05, whose Immich 2.7.5
+  is end of life with known CVEs. Nodes keep DRBD's 9.2.16 kernel module:
+  unstable's 9.3.3 does not support the 6.18 kernel.
+- Grafana 13.2 no longer includes its Prometheus datasource. Nodes that may
+  run `monitor/grafana` must also ship `packages.grafana-plugins`; the block
+  links its plugins into Grafana on every start.
+
 ## 1.8.0 - 2026-10-09
 
 ### Added

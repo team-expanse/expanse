@@ -131,6 +131,9 @@ cluster stores the token only as a hash. The token sits in the block's config th
 its database; change it later in Grafana itself. Neither block configures Alertmanager (section 3).
 Like every binary-backed block, the workload execs the upstream binary from the system PATH, so
 add `pkgs.prometheus` and `pkgs.grafana` to `environment.systemPackages` on nodes that may run them.
+Grafana 13.2 no longer includes its Prometheus datasource, so also add Expanse's
+`packages.grafana-plugins` (`nix/grafana-plugins.nix`, which ships `grafanaPlugins.prometheus`);
+the Grafana block links it into Grafana's plugins on every start.
 
 ## 6. The in-cluster UI, with no Prometheus or Grafana at all
 
