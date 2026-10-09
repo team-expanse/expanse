@@ -14,6 +14,10 @@ History before 1.0.0 is not recorded here.
   manager, on a replicated volume behind a VIP. The block makes SQLite sync
   every commit, so items saved just before a crash of the serving node survive
   it. See `docs/VAULTWARDEN.md`.
+- `media/jellyfin` block: Jellyfin, a media server, on a replicated volume
+  behind a VIP, streaming media mounted at the same path on every node. The
+  block makes SQLite sync every commit and keeps transcodes off the volume.
+  See `docs/JELLYFIN.md`.
 
 ## 1.7.0 - 2026-10-08
 

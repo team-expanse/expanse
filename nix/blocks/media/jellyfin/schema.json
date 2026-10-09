@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "publishedServerUrl": {
+      "type": "string",
+      "pattern": "^https?://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$",
+      "description": "URL Jellyfin tells clients that discover it on the LAN to use, such as https://media.example.com"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+name: jellyfin
+version: 1.0.0
+description: Jellyfin media server — its library database and settings on a replicated volume behind a VIP
+icon: film
+capabilities: []

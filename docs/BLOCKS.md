@@ -251,7 +251,7 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | `defaults.yaml` | fallback values for unset config keys |
 | `module.nix` | NixOS closure the unit runs from |
 
-The shipped twenty-one: `util/echo`, `web/nginx`, `web/static-site`,
+The shipped twenty-two: `util/echo`, `web/nginx`, `web/static-site`,
 `web/whoami`, `web/caddy` ([`CADDY.md`](CADDY.md)), `net/haproxy`
 ([`HAPROXY.md`](HAPROXY.md)), `dev/forgejo` ([`FORGEJO.md`](FORGEJO.md)), `db/redis`, `db/postgres`, `db/mariadb`
 ([`MARIADB.md`](MARIADB.md)), `monitor/node-exporter`,
@@ -259,7 +259,8 @@ The shipped twenty-one: `util/echo`, `web/nginx`, `web/static-site`,
 `share/nfs` ([`NFS.md`](NFS.md)), `storage/s3` ([`S3.md`](S3.md)),
 `iscsi/target`, `vm/instance`, `util/restic-backup`
 ([`RESTIC-BACKUP.md`](RESTIC-BACKUP.md)), `security/vaultwarden`
-([`VAULTWARDEN.md`](VAULTWARDEN.md)). Inspect them with:
+([`VAULTWARDEN.md`](VAULTWARDEN.md)), `media/jellyfin`
+([`JELLYFIN.md`](JELLYFIN.md)). Inspect them with:
 
 ```console
 $ expanse ctl catalog list

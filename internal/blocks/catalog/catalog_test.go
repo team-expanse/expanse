@@ -897,3 +897,15 @@ func TestShippedVaultwardenBlockValidates(t *testing.T) {
 		{cfg("bogus", 1), "bogus"},
 	})
 }
+
+func TestShippedJellyfinBlockValidates(t *testing.T) {
+	validateCases(t, "media/jellyfin", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{map[string]any{}, ""},
+		{map[string]any{"publishedServerUrl": "https://media.example.com"}, ""},
+		{map[string]any{"publishedServerUrl": "media.example.com"}, "/publishedServerUrl"},
+		{map[string]any{"port": 8096}, "port"},
+	})
+}

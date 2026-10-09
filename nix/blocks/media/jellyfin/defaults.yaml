@@ -1,0 +1,2 @@
+# Jellyfin listens on 8096; spec.network exposes it on the VIP.
+{}
