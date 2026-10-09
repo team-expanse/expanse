@@ -1,12 +1,14 @@
 package raftstore_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	pb "github.com/expanse/expanse/proto"
 )
 
 // TestLinearizableReadsAfterAck (§4.1): a write acked on any node is
@@ -160,5 +162,36 @@ func TestStaleReadRevisionMonotone(t *testing.T) {
 	}
 	if rs > r2 {
 		t.Errorf("stale revision %d exceeds linearizable revision %d", rs, r2)
+	}
+}
+
+// TestForwardedCASRetryAfterLostResponse: a conditional write whose first
+// forward committed but whose response was lost must succeed when re-sent.
+func TestForwardedCASRetryAfterLostResponse(t *testing.T) {
+	c := NewTestCluster(t, 3)
+	f := c.Follower()
+	rev, err := f.Put(t.Context(), "/lease", []byte("v1"))
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	var fwd *raftstore.GRPCForwarder
+	for i, n := range c.Nodes {
+		if n == f {
+			fwd = c.fwd[i]
+		}
+	}
+	f.SetForwarder(func(ctx context.Context, cmd *pb.Command) (store.Revision, error) {
+		if _, err := fwd.Forward(ctx, cmd); err != nil {
+			return 0, err
+		}
+		return fwd.Forward(ctx, cmd) // the response to the first send was lost
+	})
+	got, err := f.CompareAndSwap(t.Context(), "/lease", rev, []byte("v2"))
+	if err != nil {
+		t.Fatalf("re-sent CAS failed: %v", err)
+	}
+	e, err := f.Get(t.Context(), "/lease")
+	if err != nil || string(e.Value) != "v2" || e.Revision != got {
+		t.Fatalf("after re-sent CAS: entry %+v, err %v; want v2 at revision %d", e, err, got)
 	}
 }

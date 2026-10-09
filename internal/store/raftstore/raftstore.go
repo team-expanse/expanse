@@ -2,6 +2,7 @@ package raftstore
 
 import (
 	"context"
+	"crypto/rand"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -339,6 +340,7 @@ func (s *Store) CompareAndSwap(ctx context.Context, k store.Key, expect store.Re
 		Value:           v,
 		Expect:          uint64(expect),
 		TimestampUnixNs: time.Now().UnixNano(), // set by the leader, NOT by the FSM
+		RequestId:       conditionalRequestID(expect),
 	}
 	return s.propose(ctx, c)
 }
@@ -350,6 +352,7 @@ func (s *Store) Delete(ctx context.Context, k store.Key, expect store.Revision) 
 		Key:             string(k),
 		Expect:          uint64(expect),
 		TimestampUnixNs: time.Now().UnixNano(),
+		RequestId:       conditionalRequestID(expect),
 	}
 	_, err := s.propose(ctx, c)
 	return err
@@ -363,6 +366,17 @@ func (s *Store) Txn(ctx context.Context, ops []store.Op) (store.Revision, error)
 		TimestampUnixNs: time.Now().UnixNano(),
 	}
 	return s.propose(ctx, c)
+}
+
+// conditionalRequestID names a write expecting a nonzero revision, so a re-sent copy
+// replays its committed result instead of failing against it. Only such writes get
+// one: the dedup cache is not in snapshots, and a duplicate of these is a no-op
+// even on a node whose cache lacks the original, so replicas cannot diverge.
+func conditionalRequestID(expect store.Revision) string {
+	if expect == 0 {
+		return ""
+	}
+	return rand.Text()
 }
 
 // propose applies a command through Raft. Followers forward the write to

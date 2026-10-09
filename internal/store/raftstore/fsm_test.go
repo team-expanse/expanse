@@ -500,3 +500,29 @@ func TestFSMRetentionVictims(t *testing.T) {
 		}
 	}
 }
+
+// TestDuplicateConditionalWriteKeepsReplicasEqual: a replica restored from a
+// snapshot has no dedup cache, yet a re-sent conditional write must leave it
+// in the same state as a replica that replays the cached result.
+func TestDuplicateConditionalWriteKeepsReplicasEqual(t *testing.T) {
+	cached := NewFSM()
+	rev := applyOK(t, cached, &pb.Command{Type: pb.CommandType_COMMAND_TYPE_PUT, Key: "/k", Value: []byte("v1"), TimestampUnixNs: 1})
+	applyOK(t, cached, &pb.Command{Type: pb.CommandType_COMMAND_TYPE_PUT, Key: "/d", Value: []byte("x"), TimestampUnixNs: 1})
+	drev := cached.data["/d"].Revision
+	cas := &pb.Command{Type: pb.CommandType_COMMAND_TYPE_PUT, Key: "/k", Value: []byte("v2"), Expect: uint64(rev), TimestampUnixNs: 2, RequestId: "cas-1"}
+	del := &pb.Command{Type: pb.CommandType_COMMAND_TYPE_DELETE, Key: "/d", Expect: uint64(drev), RequestId: "del-1"}
+	applyOK(t, cached, cas)
+	applyOK(t, cached, del)
+
+	restored := NewFSM()
+	if err := restored.Restore(io.NopCloser(bytes.NewReader(cached.canonicalLocked()))); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	for _, dup := range []*pb.Command{cas, del} {
+		applyOK(t, cached, dup)
+		_ = applyErr(t, restored, dup)
+	}
+	if cached.StateHash() != restored.StateHash() {
+		t.Error("a duplicate conditional write made a restored replica diverge")
+	}
+}

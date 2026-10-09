@@ -24,6 +24,14 @@ History before 1.0.0 is not recorded here.
   run `monitor/grafana` must also ship `packages.grafana-plugins`; the block
   links its plugins into Grafana on every start.
 
+### Fixed
+
+- A volume's primary no longer steps down when a lease renewal is slow. A
+  renewal re-sent after a lost response failed against its own earlier commit,
+  so a few hundred milliseconds of network delay could demote a healthy
+  primary and return I/O errors to the applications using the volume.
+- When a volume's lease is lost, the node now logs why (`volume lease lost`).
+
 ## 1.8.0 - 2026-10-09
 
 ### Added
