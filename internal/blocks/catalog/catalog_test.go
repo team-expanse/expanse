@@ -909,3 +909,15 @@ func TestShippedJellyfinBlockValidates(t *testing.T) {
 		{map[string]any{"port": 8096}, "port"},
 	})
 }
+
+func TestShippedUptimeKumaBlockValidates(t *testing.T) {
+	validateCases(t, "monitor/uptime-kuma", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{map[string]any{}, ""},
+		{map[string]any{"port": 3100}, ""},
+		{map[string]any{"port": 80}, "/port"},
+		{map[string]any{"bogus": 1}, "bogus"},
+	})
+}

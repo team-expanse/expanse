@@ -42,6 +42,9 @@ The project site is [expanseos.org](https://expanseos.org).
 - **Jellyfin** — a media server with its library database and settings on a
   replicated volume behind a VIP, streaming media the nodes share; every
   acknowledged change survives failover. [`docs/JELLYFIN.md`](docs/JELLYFIN.md).
+- **Uptime Kuma** — status monitoring of websites and services, with its
+  monitors and history on a replicated volume behind a VIP; every acknowledged
+  monitor survives failover. [`docs/UPTIME-KUMA.md`](docs/UPTIME-KUMA.md).
 - **Scheduled backups** — restic backups of block volumes to S3 or any restic
   repository, taken from each volume's primary and following it through
   failover. [`docs/RESTIC-BACKUP.md`](docs/RESTIC-BACKUP.md).
@@ -112,6 +115,7 @@ including forming and joining a cluster afterward:
 | [`docs/FORGEJO.md`](docs/FORGEJO.md) | The Forgejo Git forge block |
 | [`docs/VAULTWARDEN.md`](docs/VAULTWARDEN.md) | The Vaultwarden password manager block |
 | [`docs/JELLYFIN.md`](docs/JELLYFIN.md) | The Jellyfin media server block |
+| [`docs/UPTIME-KUMA.md`](docs/UPTIME-KUMA.md) | The Uptime Kuma status monitoring block |
 | [`docs/RESTIC-BACKUP.md`](docs/RESTIC-BACKUP.md) | Scheduled restic backups of volumes |
 | [`docs/ISCSI.md`](docs/ISCSI.md) | The iSCSI target block |
 | [`docs/NFS.md`](docs/NFS.md) | The NFS export block |

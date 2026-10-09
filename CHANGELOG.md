@@ -18,6 +18,10 @@ History before 1.0.0 is not recorded here.
   behind a VIP, streaming media mounted at the same path on every node. The
   block makes SQLite sync every commit and keeps transcodes off the volume.
   See `docs/JELLYFIN.md`.
+- `monitor/uptime-kuma` block: Uptime Kuma, status monitoring, on a replicated
+  volume behind a VIP. Uptime Kuma has no setting for SQLite's sync level, so
+  the block loads a preload that makes it sync every commit. See
+  `docs/UPTIME-KUMA.md`.
 
 ## 1.7.0 - 2026-10-08
 

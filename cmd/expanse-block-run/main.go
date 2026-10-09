@@ -33,6 +33,8 @@
 //     SQLite database and RSA key on the bound volume, env from spec.config
 //   - media/jellyfin: upstream jellyfin (jellyfin.go), its library
 //     database and settings on the bound volume, cache in private /tmp
+//   - monitor/uptime-kuma: upstream uptime-kuma (uptimekuma.go), its
+//     SQLite database on the bound volume, synced on every commit
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -182,6 +184,11 @@ func main() {
 		}
 	case "media/jellyfin":
 		if err := runJellyfin(ctx, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "monitor/uptime-kuma":
+		if err := runUptimeKuma(ctx, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

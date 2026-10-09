@@ -31,6 +31,7 @@
     packages.x86_64-linux.util-restic-backup = ./stubs/util-restic-backup;
     packages.x86_64-linux.security-vaultwarden = ./stubs/security-vaultwarden;
     packages.x86_64-linux.media-jellyfin = ./stubs/media-jellyfin;
+    packages.x86_64-linux.monitor-uptime-kuma = ./stubs/monitor-uptime-kuma;
     packages.x86_64-linux.iscsi-target = ./stubs/iscsi-target;
     packages.x86_64-linux.db-postgres = ./stubs/db-postgres;
     packages.x86_64-linux.vm-instance = ./stubs/vm-instance;

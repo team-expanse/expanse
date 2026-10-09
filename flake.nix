@@ -219,6 +219,14 @@
           util-restic-backup = mkTest "util-restic-backup" ./nix/tests/util-restic-backup.nix;
           security-vaultwarden = mkTest "security-vaultwarden" ./nix/tests/security-vaultwarden.nix;
           media-jellyfin = mkTest "media-jellyfin" ./nix/tests/media-jellyfin.nix;
+          # The block's preload against Uptime Kuma's own SQLite driver, without a VM.
+          uptime-kuma-sync-full = pkgs.runCommand "uptime-kuma-sync-full" { } ''
+            export HOME=$TMPDIR NODE_PATH=${pkgs.uptime-kuma}/lib/node_modules/uptime-kuma/node_modules
+            ${pkgs.nodejs}/bin/node --require=${./cmd/expanse-block-run/uptimekuma-sync-full.cjs} \
+              ${./nix/tests/node/uptime_kuma_sync_full.cjs} | tee $out
+            grep -q "stays FULL" $out
+          '';
+          monitor-uptime-kuma = mkTest "monitor-uptime-kuma" ./nix/tests/monitor-uptime-kuma.nix;
           # share-smb-failover (Stream B2, X2) is deliberately not wired
           # in here: it fails on a still-unresolved post-failover
           # ACCESS_DENIED bug (PHASE-03-TASKS.md Stream B2, paused).

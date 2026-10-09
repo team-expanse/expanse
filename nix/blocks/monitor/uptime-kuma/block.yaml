@@ -1,0 +1,5 @@
+name: uptime-kuma
+version: 1.0.0
+description: Uptime Kuma status monitoring — monitors, history and its SQLite database on a replicated volume behind a VIP
+icon: activity
+capabilities: []

@@ -1,0 +1,3 @@
+# Not 80: exposed with EXPOSE_VIP, clients connect to VIP:80, so
+# Uptime Kuma listens elsewhere (target_port).
+port: 3001
