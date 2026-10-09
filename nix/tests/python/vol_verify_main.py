@@ -23,6 +23,8 @@ NAME = "vv"
 DAMAGE_AT_MIB = 100
 DAMAGE_MIB = 2
 BLOCKS_4K = DAMAGE_MIB * 256
+# Two controller ticks (5s) plus an agent report (2s): a stale report cannot outlast it.
+SETTLE_S = 12
 
 
 def state_of(m):
@@ -88,6 +90,28 @@ def in_sync_and_healthy(primary, res):
     return fully_replicated(primary, res) and state_of(n1) == "healthy"
 
 
+def reconnect(m, res):
+    """Drop every connection and reconnect; the agent may reconnect a peer first, which is as good."""
+    m.succeed(f"drbdadm disconnect {res}")
+    rc, out = m.execute(f"drbdadm connect {res} 2>&1")
+    assert rc == 0 or "Device has a net-config" in out, out
+
+
+def healthy_for(primary, res, seconds):
+    """A predicate true once the volume has stayed in sync and Healthy for `seconds`,
+    long enough for the controller to act on any report taken while it was not."""
+    since = []
+
+    def check():
+        if not in_sync_and_healthy(primary, res):
+            since.clear()
+            return False
+        since[:] = since or [time.time()]
+        return time.time() - since[0] >= seconds
+
+    return check
+
+
 def dump_on_failure(res):
     for m in NODES:
         print(f"[{m.name}] drbd:\n{drbd_status(m, res)}")
@@ -134,13 +158,13 @@ try:
 
     with subtest("inspect names the damaged replica and the amount, from any node"):
         for m in NODES:
-            wait_for(lambda: shown_out_of_sync(m, bad.name) == f"{DAMAGE_MIB}Mi", f"{m.name}'s inspect to blame {bad.name}", 30)
+            wait_for(lambda m=m: shown_out_of_sync(m, bad.name) == f"{DAMAGE_MIB}Mi", f"{m.name}'s inspect to blame {bad.name}", 30)
             assert shown_out_of_sync(m, good.name) == "-", inspect_rows(m)
             assert shown_out_of_sync(m, primary.name) == "-", inspect_rows(m)
 
     with subtest("control: reconnecting after a verify does not repair it"):
-        primary.succeed(f"drbdadm disconnect {res} && drbdadm connect {res}")
-        wait_for(lambda: in_sync_and_healthy(primary, res), "the volume to reconnect", 120)
+        reconnect(primary, res)
+        wait_for(healthy_for(primary, res, SETTLE_S), "the volume to reconnect and stay Healthy", 120)
         still = sums(res)
         assert still[bad.name] != still[primary.name] == still[good.name], f"a reconnect changed the replicas: {still}"
         kib = out_of_sync_kib(primary, res)[bad.name]
