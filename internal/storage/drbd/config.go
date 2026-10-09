@@ -23,6 +23,9 @@ const (
 	// The resync floor under application I/O; DRBD's 250k default stalls a rebuild on a busy
 	// volume, 4M finished one in 33s for a 3% writer cost (vol-resync-rate, ARCHITECTURE A51).
 	resyncMinRate = "4M"
+	// Resync zero blocks as discards so a new thin volume's peers stay unallocated;
+	// DRBD rounds this up to the backing device's granularity and skips devices that cannot.
+	resyncDiscardGranularity = 65536
 )
 
 var (
@@ -63,7 +66,8 @@ func (r Resource) Render() (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "resource %s {\n", r.Name)
 	fmt.Fprintf(&b, "  device /dev/drbd%d minor %d;\n  disk %s;\n  meta-disk internal;\n", r.Minor, r.Minor, r.Disk)
-	fmt.Fprintf(&b, "  disk {\n    c-min-rate %s;\n  }\n", resyncMinRate)
+	fmt.Fprintf(&b, "  disk {\n    c-min-rate %s;\n    rs-discard-granularity %d;\n  }\n",
+		resyncMinRate, resyncDiscardGranularity)
 	b.WriteString("  net {\n    protocol C;\n    verify-alg sha1;\n")
 	b.WriteString("    after-sb-0pri disconnect;\n    after-sb-1pri disconnect;\n    after-sb-2pri disconnect;\n")
 	b.WriteString("    rr-conflict disconnect;\n  }\n")

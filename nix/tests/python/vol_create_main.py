@@ -79,6 +79,14 @@ with subtest("volume create completes within budget and replicates to every node
     primary = primaries(res)[0]
     dev = device_of(primary)
 
+with subtest("the initial sync leaves every thin replica unallocated"):
+    for m in NODES:
+        used = float(m.succeed(f"lvs --noheadings -o data_percent vg0/{res}").strip())
+        print(f"{m.name}: {res} {used}% allocated after the initial sync")
+        assert used < 10, f"{m.name}: the initial sync filled {used}% of the thin LV"
+        pending = m.succeed(f"drbdadm -d adjust {res}").strip()
+        assert not pending, f"{m.name}: the kernel's config differs from the file:\n{pending}"
+
 with subtest("the manager formats the blank volume once and mounts the DRBD device"):
     put_mount(primary, res)
     wait_mounted(primary, res, "the DRBD device to be mounted")
@@ -93,7 +101,7 @@ with subtest("a remount keeps the filesystem: same UUID, same files, no reformat
     assert primary.succeed(f"cat {host_path(res)}/canary").strip() == CANARY
 
 with subtest("a Secondary is never promoted or mounted"):
-    other = [m for m in NODES if m is not primary][0]
+    other = next(m for m in NODES if m is not primary)
     put_mount(other, res)
     time.sleep(15)  # several reconcile periods
     assert role_of(other, res) == "Secondary", f"{other.name} was promoted"

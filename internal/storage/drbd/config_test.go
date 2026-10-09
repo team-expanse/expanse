@@ -96,7 +96,11 @@ func TestRenderNeverAutoResolvesSplitBrain(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", need, got)
 		}
 	}
-	for _, banned := range []string{"discard-", "consensus", "violently", "call-pri-lost", "auto-discard"} {
+	for _, banned := range []string{
+		"discard-younger-primary", "discard-older-primary", "discard-zero-changes",
+		"discard-least-changes", "discard-local", "discard-remote", "discard-secondary",
+		"discard-node-", "consensus", "violently", "call-pri-lost", "auto-discard",
+	} {
 		if strings.Contains(got, banned) {
 			t.Errorf("config contains destructive policy %q:\n%s", banned, got)
 		}
@@ -193,9 +197,21 @@ func TestRenderRaisesTheResyncFloor(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(got, "  disk {\n    c-min-rate 4M;\n  }\n") {
+		if !strings.Contains(got, "    c-min-rate 4M;\n") {
 			t.Errorf("%d replicas: c-min-rate 4M missing in:\n%s", n, got)
 		}
+	}
+}
+
+// A resync used to copy every zero block of a new thin volume, filling the peers' thin
+// LVs; DRBD discards them instead, and only where the backing device reads back zeros.
+func TestRenderResyncsZeroBlocksAsDiscards(t *testing.T) {
+	got, err := resource(3).Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "  disk {\n    c-min-rate 4M;\n    rs-discard-granularity 65536;\n  }\n") {
+		t.Errorf("rs-discard-granularity missing in:\n%s", got)
 	}
 }
 

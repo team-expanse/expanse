@@ -4,6 +4,7 @@ resource vol-a1 {
   meta-disk internal;
   disk {
     c-min-rate 4M;
+    rs-discard-granularity 65536;
   }
   net {
     protocol C;

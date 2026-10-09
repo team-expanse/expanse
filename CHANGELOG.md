@@ -31,6 +31,13 @@ History before 1.0.0 is not recorded here.
   so a few hundred milliseconds of network delay could demote a healthy
   primary and return I/O errors to the applications using the volume.
 - When a volume's lease is lost, the node now logs why (`volume lease lost`).
+- A new thin volume's first sync no longer writes every block to its
+  replicas. It copied the empty volume in full, filling each secondary's
+  thin LV to 100% and taking minutes for a large volume (10 GiB in over
+  4.5 minutes in the VM tests). Blocks that are all zeros now reach the
+  replicas as discards, so they stay unallocated, and the same 10 GiB syncs
+  in under 2 minutes. Rebuilding a replica of a mostly empty thin volume gains
+  the same way. Thick volumes are unchanged.
 
 ## 1.8.0 - 2026-10-09
 
