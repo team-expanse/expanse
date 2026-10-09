@@ -100,8 +100,15 @@ def log_in():
     return json.loads(body)["access_token"]
 
 
+def user_id(token):
+    code, body = http("GET", "/api/accounts/profile", token=token)
+    assert code == 200, f"reading the profile answered {code}: {body}"
+    return json.loads(body)["id"]
+
+
 def save_item(token, n):
-    code, body = http("POST", "/api/ciphers", {"type": 2, "name": ENC, "notes": ENC,
+    # Vaultwarden 1.37.4 requires the user each item is encrypted for.
+    code, body = http("POST", "/api/ciphers", {"type": 2, "name": ENC, "notes": ENC, "encryptedFor": user_id(token),
                                                "secureNote": {"type": 0}, "favorite": n % 2 == 0}, token)
     assert code == 200, f"saving item {n} answered {code}: {body}"
     return json.loads(body)["id"]

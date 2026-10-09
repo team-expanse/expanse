@@ -85,6 +85,13 @@ def new_block_device(before, timeout=60):
     raise AssertionError(f"no single new block device after iscsi login: before={before} now={now}")
 
 
+def attached_lun(before):
+    """The LUN's block device once the kernel has read its capacity; lsblk lists it a moment earlier."""
+    dev = new_block_device(before)
+    client.wait_until_succeeds(f"test $(blockdev --getsize64 {dev}) -gt 0", timeout=30)
+    return dev
+
+
 form("iscsitgt")
 wait_agent_ready(n1)
 wait_agent_ready(n2)
@@ -156,15 +163,17 @@ with subtest("an external initiator logs in to the portal at the block's VIP"):
     before = set(client.succeed("lsblk -ndo NAME").split())
     client.succeed(f"iscsiadm -m node -o new -T {IQN} -p {VIP}:{PORT}")
     client.succeed(f"iscsiadm -m node -T {IQN} -p {VIP}:{PORT} --login")
-    dev = new_block_device(before)
+    dev = attached_lun(before)
 
 with subtest("a write through the LUN round-trips and checksums equal on a second read"):
     client.succeed(f"dd if=/dev/urandom of={dev} bs=1M count=1 oflag=direct conv=fsync")
     ref = checksum(client, dev, 1)
     client.succeed(f"iscsiadm -m node -T {IQN} -p {VIP}:{PORT} --logout")
+    before = set(client.succeed("lsblk -ndo NAME").split())
     client.wait_until_succeeds(
         f"iscsiadm -m node -T {IQN} -p {VIP}:{PORT} --login", timeout=30
     )
+    dev = attached_lun(before)
     got = checksum(client, dev, 1)
     assert got == ref, f"checksum mismatch on second initiator-side read: {got} != {ref}"
 
