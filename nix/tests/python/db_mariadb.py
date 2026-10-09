@@ -92,7 +92,7 @@ def wait_acked(n, timeout, what):
 
 
 def journal(m):
-    return m.execute("journalctl -u 'expanse-block@default-appdb-0.service' --no-pager -n 80 2>&1")[1]
+    return m.execute("journalctl -t 'expanse-block-default-appdb-0' --no-pager -n 200 2>&1")[1]
 
 
 form("mariadb")

@@ -104,7 +104,7 @@ def logged_in():
 
 
 def journal(m):
-    return m.execute(f"journalctl -u 'expanse-block@default-{NAME}-0.service' --no-pager -n 80 2>&1")[1]
+    return m.execute(f"journalctl -t 'expanse-block-default-{NAME}-0' --no-pager -n 200 2>&1")[1]
 
 
 form("forgejo")
