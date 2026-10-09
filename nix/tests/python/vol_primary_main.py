@@ -126,13 +126,19 @@ with subtest("observe: roles, then a slow resync seen from source, target and by
     assert roles(observe(n1, IDS)) == {
         "n1": ("Primary", True), "n2": ("Secondary", True), "n3": ("Secondary", True),
     }, observe(n1, IDS)
-    # Throttle to ~100 KiB/s so an 8 MiB catch-up stays in flight for over a minute.
-    slow = f"drbdsetup peer-device-options {NAME} {{peer}} 0 --c-plan-ahead=0 --resync-rate=100"
+    # DRBD 9.2 outruns resync-rate on a fast link (8 MiB in 0.4s), so delay n1->n3 by 1s to
+    # hold the catch-up open for ~2s; the ping timeout must outlast the delay.
     n1.succeed(f"drbdsetup disconnect {NAME} 2")
     n3.succeed(f"drbdsetup disconnect {NAME} 0")
+    n1.succeed(f"drbdsetup net-options {NAME} 2 --ping-timeout=30")
+    n3.succeed(f"drbdsetup net-options {NAME} 0 --ping-timeout=30")
     n1.succeed(f"dd if=/dev/urandom of={MNT}/behind bs=1M count=8 2>/dev/null && sync")
-    n1.succeed(slow.format(peer=2))
-    n3.succeed(slow.format(peer=0))
+    n1.succeed(
+        f"ip -4 addr show eth1 | grep -q {NODES['n1']} && "
+        "tc qdisc add dev eth1 root handle 1: prio && "
+        "tc qdisc add dev eth1 parent 1:3 netem delay 1000ms && "
+        f"tc filter add dev eth1 parent 1: protocol ip u32 match ip dst {NODES['n3']}/32 flowid 1:3"
+    )
     n1.succeed(f"drbdsetup connect {NAME} 2")
     n3.succeed(f"drbdsetup connect {NAME} 0")
     wait_until(n1, lambda t: "SyncSource" in t, "n3 resyncing from n1", timeout=60)
@@ -146,6 +152,7 @@ with subtest("observe: roles, then a slow resync seen from source, target and by
     assert (bystander["n3"]["Role"], bystander["n3"]["Healthy"]) == ("Stale", False), bystander
     assert (src["n2"]["Role"], src["n2"]["Healthy"]) == ("Secondary", True), src
 
+    n1.succeed("tc qdisc del dev eth1 root")
     n1.succeed(f"drbdadm adjust {NAME}")
     n3.succeed(f"drbdadm adjust {NAME}")
     for h in NODES:
