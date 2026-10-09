@@ -35,6 +35,7 @@ VG = "vg0"
 NET_FAULT_DURATION_S = (10, 30)
 NET_FAULT_GAP_S = (5, 20)
 NODE_FAULT_GAP_S = (15, 40)
+STORAGE_ATTEMPTS = 5
 
 rng = random.Random(0xC4A05)  # deterministic, so a failing run reproduces
 
@@ -53,15 +54,26 @@ def start_ledger(host, path):
     host.wait_until_succeeds(f"ss -ltn | grep -q :{LEDGER_PORT}", timeout=30)
 
 
+class PrimaryMoved(Exception):
+    """The primary stepped down on its own before the crash; what it acked still counts."""
+
+
+def writer_stopped(m):
+    return m.execute("systemctl is-active --quiet dur-writer")[0] != 0
+
+
 def stream_until_killed(primary, host, path, start):
     """Write from record `start` until enough are acked, then hard-kill the primary.
-    Identical to vol_durability_main.py's helper of the same name -- reused, not
-    reinvented, per D2."""
+    Network delay can legitimately move the primary first (A43); that raises PrimaryMoved."""
     dev = device_of(primary)
     primary.succeed(
         f"systemd-run --unit=dur-writer {REC} write {dev} {addr(host)} {LEDGER_PORT} {start} {WRITER_PAUSE_MS}"
     )
-    wait_for(lambda: ledger_highest(host, path) >= start + MIN_ACKED_BEFORE_KILL, "records to ack", 120)
+    target = start + MIN_ACKED_BEFORE_KILL
+    wait_for(lambda: writer_stopped(primary) or ledger_highest(host, path) >= target, "records to ack", 120)
+    if ledger_highest(host, path) < target:
+        primary.execute("systemctl stop dur-writer; systemctl reset-failed dur-writer")
+        raise PrimaryMoved(f"{primary.name} stopped writing at {ledger_highest(host, path) + 1}")
     time.sleep(rng.uniform(0, 1.0))
     primary.crash()
 
@@ -93,13 +105,23 @@ def inject_storage_fault(acked):
     """Hard-crash the volume's primary; the survivors must take over with zero acked-
     write loss; restore the old primary and confirm every replica re-converges and
     agrees. Directly the vol-durability.nix iteration, run inside the combined soak."""
-    primary = wait_single_primary(NODES)
-    host = [m for m in NODES if m is not primary][0]
-    survivors = [m for m in NODES if m is not primary]
-    ledger = f"/root/ledger-storage-{int(time.time())}"
+    for _ in range(STORAGE_ATTEMPTS):
+        primary = wait_single_primary(NODES)
+        host = next(m for m in NODES if m is not primary)
+        survivors = [m for m in NODES if m is not primary]
+        ledger = f"/root/ledger-storage-{int(time.time())}"
 
-    start_ledger(host, ledger)
-    stream_until_killed(primary, host, ledger, acked)
+        start_ledger(host, ledger)
+        try:
+            stream_until_killed(primary, host, ledger, acked)
+            break
+        except PrimaryMoved as moved:
+            acked = max(acked, ledger_highest(host, ledger) + 1)
+            now_primary = wait_single_primary(NODES)
+            assert_no_loss(now_primary, device_of(now_primary), acked, f"primary {now_primary.name} after a step-down")
+            print(f"[storage] {moved}; {now_primary.name} is primary with {acked} acked intact, retrying")
+    else:
+        raise AssertionError(f"the primary stepped down before each of {STORAGE_ATTEMPTS} crash attempts")
     new_primary = wait_single_primary(survivors)
     acked = max(acked, ledger_highest(host, ledger) + 1)
 
