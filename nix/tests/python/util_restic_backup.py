@@ -226,7 +226,7 @@ with subtest("retention keeps the last 3"):
     SEEN.update(s["id"] for s in snapshots())
     kept = snapshots()
     assert len(kept) <= 3, f"keep.last=3 left {len(kept)} snapshots"
-    client.succeed(f"{RESTIC_ENV} restic check")
+    client.succeed(f"{RESTIC_ENV} restic check --retry-lock 2m")
 
 with subtest("the database restores from the repository"):
     n_ok = survivors[0]

@@ -650,13 +650,14 @@ func TestLeaseLossDropsAddrWithoutWaitingForTick(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- h.Run(ctx) }()
-	waitFor(t, 2*time.Second, func() bool { return len(rec.snapshot()) >= 3 }, "acquisition")
+	// Retry is an hour, so any deadline far below it proves no tick was waited for; -race on a busy builder is slow.
+	waitFor(t, 10*time.Second, func() bool { return len(rec.snapshot()) >= 3 }, "acquisition")
 
 	// Another writer changing the lease key closes the holder's Done.
 	if _, err := st.Put(ctx, store.Key(lease.Prefix+LeaseName(vipAddr.Addr())), []byte("taken")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, time.Second, func() bool {
+	waitFor(t, 10*time.Second, func() bool {
 		for _, c := range rec.snapshot() {
 			if c == "AddrDel "+vipAddr.String() {
 				return true

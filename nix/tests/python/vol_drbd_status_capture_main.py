@@ -57,7 +57,7 @@ def capture(m, res, name):
     """Save the current status of `res` on `m` as fixtures/<name>.<node>.json."""
     path = f"/tmp/fx/{name}.{m.name}.json"
     m.succeed(f"{STATUS.format(res=res)} > {path}")
-    m.copy_from_vm(path, "fixtures")
+    m.copy_from_machine(path, "fixtures")
     print(f"CAPTURED {name}.{m.name}: {m.succeed(f'wc -c < {path}').strip()} bytes")
 
 
@@ -90,7 +90,7 @@ with subtest("split-brain on a two-node resource without quorum"):
     capture(n1, "r1", "split-brain")
     capture(n2, "r1", "split-brain")
     n1.succeed("journalctl -k --no-pager | grep -i 'split-brain\\|unrelated' > /tmp/fx/split-brain.kernel.txt || true")
-    n1.copy_from_vm("/tmp/fx/split-brain.kernel.txt", "fixtures")
+    n1.copy_from_machine("/tmp/fx/split-brain.kernel.txt", "fixtures")
 
 with subtest("healthy three-replica resource"):
     trio = {"n1": 0, "n2": 1, "n3": 2}
@@ -107,7 +107,7 @@ with subtest("healthy three-replica resource"):
     capture(n1, "r0", "healthy-primary")
     capture(n2, "r0", "healthy-secondary")
     n1.execute("drbdsetup status nosuch --json > /tmp/fx/unconfigured.txt 2>&1; echo rc=$? >> /tmp/fx/unconfigured.txt")
-    n1.copy_from_vm("/tmp/fx/unconfigured.txt", "fixtures")
+    n1.copy_from_machine("/tmp/fx/unconfigured.txt", "fixtures")
 
 with subtest("degraded: one replica lost, quorum kept"):
     write_mb(n1, "/dev/drbd0", 1)

@@ -79,8 +79,13 @@ def http(method, path, body=None, token=None, form_body=None):
 
 
 def register(email):
-    return http("POST", "/identity/accounts/register", {
-        "email": email, "name": email.split("@")[0], "masterPasswordHash": PW_HASH, "key": ENC,
+    """Vaultwarden 1.37.4's two-step sign-up: a verification token (plain text without mail), then finish."""
+    code, token = http("POST", "/identity/accounts/register/send-verification-email",
+                       {"email": email, "name": email.split("@")[0]})
+    if code >= 400:
+        return code, token
+    return http("POST", "/identity/accounts/register/finish", {
+        "email": email, "emailVerificationToken": token, "masterPasswordHash": PW_HASH, "key": ENC,
         "kdf": 0, "kdfIterations": 600000,
     })
 

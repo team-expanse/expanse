@@ -139,15 +139,16 @@ in
         assert b is None, f"block still in store: {b}"
 
     with subtest("no journald identifier remaining"):
+        # No NEW log lines after the delete (history is allowed to remain —
+        # §5.5 is about live units, not log retention). Counting twice, not
+        # --since, so a stop line logged just before the check is not "new".
+        count = ("journalctl -t expanse-block-default-web-0 -t expanse-block-default-web-1"
+                 " -t expanse-block-default-web-2 -q --no-pager | wc -l")
+        before = {m.name: m.succeed(count).strip() for m in [n1, n2, n3]}
+        time.sleep(5)
         for m in [n1, n2, n3]:
-            # No NEW log lines after the delete (history is allowed to
-            # remain — §5.5 is about live units, not log retention).
-            rc, out = m.execute(
-                "journalctl -t expanse-block-default-web-0"
-                " -t expanse-block-default-web-1"
-                " -t expanse-block-default-web-2"
-                " --since '-5s' -q --no-pager | wc -l")
-            assert out.strip() == "0", f"new journald lines after delete on {m.name}: {out}"
+            after = m.succeed(count).strip()
+            assert after == before[m.name], f"new journald lines after delete on {m.name}: {before[m.name]} -> {after}"
 
     with subtest("block list empty"):
         rc, out = n1.execute(f"expanse ctl block list {SOCK} -o json")
