@@ -297,6 +297,9 @@ in
       '';
     };
 
+    # Blocks find data files beside their PATH (/run/current-system/sw/bin); NixOS links only some of share/.
+    environment.pathsToLink = [ "/share/vaultwarden" ];
+
     systemd.services.expansed = {
       description = "Expanse Node Agent";
       wants = [ "network-online.target" ];

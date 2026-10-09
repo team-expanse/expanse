@@ -1,0 +1,5 @@
+name: vaultwarden
+version: 1.0.0
+description: Vaultwarden password manager (Bitwarden-compatible) — vaults and its database on a replicated volume behind a VIP
+icon: lock
+capabilities: []

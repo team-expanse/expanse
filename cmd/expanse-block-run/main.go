@@ -29,6 +29,8 @@
 //     database and secrets on the bound volume, app.ini from spec.config
 //   - util/restic-backup: upstream restic (restic.go), streaming thin
 //     snapshots of the listed volumes whose DRBD primary is on this node
+//   - security/vaultwarden: upstream vaultwarden (vaultwarden.go), its
+//     SQLite database and RSA key on the bound volume, env from spec.config
 //   - iscsi/target: LIO, driven via targetcli-fb's one-shot CLI form,
 //     against the bound raw volume's DRBD device (via voldevs/
 //     firstVoldev + waitForPrimaryDevice, PHASE-04-TASKS.md D3)
@@ -168,6 +170,11 @@ func main() {
 		}
 	case "util/restic-backup":
 		if err := runRestic(ctx, spec.Namespace, args); err != nil {
+			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+			os.Exit(1)
+		}
+	case "security/vaultwarden":
+		if err := runVaultwarden(ctx, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}

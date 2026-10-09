@@ -217,6 +217,7 @@
           net-haproxy = mkTest "net-haproxy" ./nix/tests/net-haproxy.nix;
           dev-forgejo = mkTest "dev-forgejo" ./nix/tests/dev-forgejo.nix;
           util-restic-backup = mkTest "util-restic-backup" ./nix/tests/util-restic-backup.nix;
+          security-vaultwarden = mkTest "security-vaultwarden" ./nix/tests/security-vaultwarden.nix;
           # share-smb-failover (Stream B2, X2) is deliberately not wired
           # in here: it fails on a still-unresolved post-failover
           # ACCESS_DENIED bug (PHASE-03-TASKS.md Stream B2, paused).

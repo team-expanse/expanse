@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["domain"],
+  "properties": {
+    "domain": {
+      "type": "string",
+      "pattern": "^https?://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$",
+      "description": "URL users and Bitwarden clients reach Vaultwarden at, such as https://vault.example.com; browsers open the web vault only over https"
+    },
+    "signupsAllowed": {
+      "type": "boolean",
+      "description": "Let anyone who reaches Vaultwarden create an account"
+    },
+    "adminToken": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n\\r]*$",
+      "description": "Enables the /admin page; an Argon2 PHC string from `vaultwarden hash`, or a plain token"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535,
+      "description": "Vaultwarden's HTTP port. When exposed with EXPOSE_VIP, keep it different from the exposed port (80) and set it as target_port"
+    },
+    "settings": {
+      "type": "object",
+      "description": "Extra Vaultwarden environment variables, applied after the block's own, such as {\"SMTP_HOST\": \"mail.example.com\"}",
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"],
+        "pattern": "^[^\\n\\r]*$"
+      }
+    }
+  }
+}

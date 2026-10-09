@@ -1,0 +1,4 @@
+# Not 80: exposed with EXPOSE_VIP, clients connect to VIP:80, so
+# Vaultwarden listens elsewhere (target_port) like dev/forgejo.
+port: 18000
+signupsAllowed: false

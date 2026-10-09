@@ -867,3 +867,33 @@ func TestShippedResticBackupBlockValidates(t *testing.T) {
 		{cfg("env", map[string]any{"bad name": "v"}), "/env"},
 	})
 }
+
+func TestShippedVaultwardenBlockValidates(t *testing.T) {
+	cfg := func(kv ...any) map[string]any {
+		m := map[string]any{"domain": "https://vault.example.com"}
+		for i := 0; i+1 < len(kv); i += 2 {
+			if kv[i+1] == nil {
+				delete(m, kv[i].(string))
+			} else {
+				m[kv[i].(string)] = kv[i+1]
+			}
+		}
+		return m
+	}
+	validateCases(t, "security/vaultwarden", []struct {
+		cfg     map[string]any
+		wantErr string
+	}{
+		{cfg(), ""},
+		{cfg("domain", "http://10.0.0.5:8080/vault", "signupsAllowed", true, "adminToken", "$argon2id$v=19$m=65540,t=3,p=4$abc$def"), ""},
+		{cfg("settings", map[string]any{"SMTP_HOST": "mail.example.com", "SMTP_PORT": 587, "SMTP_SSL": true}), ""},
+		{nil, "domain"},
+		{cfg("domain", "vault.example.com"), "/domain"},
+		{cfg("adminToken", ""), "/adminToken"},
+		{cfg("port", 80), "/port"},
+		{cfg("settings", map[string]any{"smtp_host": "x"}), "/settings"},
+		{cfg("settings", map[string]any{"SMTP_HOST": "a\nb"}), "/settings/SMTP_HOST"},
+		{cfg("settings", map[string]any{"SMTP_HOST": map[string]any{}}), "/settings/SMTP_HOST"},
+		{cfg("bogus", 1), "bogus"},
+	})
+}

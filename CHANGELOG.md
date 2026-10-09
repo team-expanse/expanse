@@ -6,6 +6,15 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- `security/vaultwarden` block: Vaultwarden, a Bitwarden-compatible password
+  manager, on a replicated volume behind a VIP. The block makes SQLite sync
+  every commit, so items saved just before a crash of the serving node survive
+  it. See `docs/VAULTWARDEN.md`.
+
 ## 1.7.0 - 2026-10-08
 
 ### Added
