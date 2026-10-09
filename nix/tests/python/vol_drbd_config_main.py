@@ -10,7 +10,12 @@ start_all()
 n1.wait_for_unit("multi-user.target")
 
 REPLICAS = [1, 2, 3, 5]
-NEVER = ["discard-", "consensus", "violently", "call-pri-lost", "auto-discard"]
+# The after-sb policies by name; a bare "discard-" also matches rs-discard-granularity.
+NEVER = [
+    "discard-younger-primary", "discard-older-primary", "discard-zero-changes",
+    "discard-least-changes", "discard-local", "discard-remote", "discard-secondary",
+    "discard-node-", "consensus", "violently", "call-pri-lost", "auto-discard",
+]
 
 n1.succeed("mkdir -p /tmp/cfg")
 for count in REPLICAS:
