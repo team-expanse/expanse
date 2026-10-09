@@ -43,7 +43,8 @@ in
 {
   name = "expanse-ui-blocks";
 
-  nodes = {
+  # Every node also gets curl-cookie-jar.nix (curl/curl#23261).
+  nodes = lib.mapAttrs (_: node: { imports = [ node ./curl-cookie-jar.nix ]; }) {
     n1 = { ... }: nodeCommon 1;
     n2 = { ... }: nodeCommon 2;
     n3 = { ... }: nodeCommon 3;

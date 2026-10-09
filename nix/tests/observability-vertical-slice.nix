@@ -36,13 +36,14 @@ in
 {
   name = "expanse-observability-vertical-slice";
 
-  nodes = {
+  # Every node also gets curl-cookie-jar.nix (curl/curl#23261).
+  nodes = lib.mapAttrs (_: node: { imports = [ node ./curl-cookie-jar.nix ]; }) {
     n1 = { pkgs, ... }: {
       imports = [ (nodeCommon 1) ];
       # Real prometheus and grafana binaries, run ad hoc -- same
       # reasoning as observability-metrics.nix/observability-grafana.nix:
       # the cluster CA/token don't exist until after cluster init.
-      environment.systemPackages = [ pkgs.prometheus pkgs.grafana ];
+      environment.systemPackages = [ pkgs.prometheus pkgs.grafana (pkgs.callPackage ../grafana-plugins.nix { }) ];
       # Extra headroom for Grafana's own background work (search
       # indexing, ngalert's scheduler) alongside this node's raft agent
       # and prometheus, all sharing one node -- mirrors observability-

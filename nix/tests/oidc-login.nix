@@ -47,7 +47,8 @@ in
 {
   name = "expanse-oidc-login";
 
-  nodes = {
+  # Every node also gets curl-cookie-jar.nix (curl/curl#23261).
+  nodes = lib.mapAttrs (_: node: { imports = [ node ./curl-cookie-jar.nix ]; }) {
     n1 = { ... }: {
       imports = [ (nodeCommon 1) ];
       # The real IdP (D2's adoption pick's counterpart on the provider
