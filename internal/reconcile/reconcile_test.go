@@ -218,14 +218,10 @@ func TestIndependentResourcesRunInParallel(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		putDesired(t, r.store, "n1", fmt.Sprintf("r%d", i), "")
 	}
-	start := time.Now()
 	if err := r.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	took := time.Since(start)
-	if took > 300*time.Millisecond {
-		t.Errorf("tick took %v; expected parallel execution (4x100ms serialized would be ~400ms)", took)
-	}
+	// Overlap, not wall-clock time, proves parallelism; timings flake under -race on a loaded builder.
 	if m.maxConcurr.Load() < 2 {
 		t.Errorf("max concurrency = %d, want >= 2", m.maxConcurr.Load())
 	}

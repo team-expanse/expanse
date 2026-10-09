@@ -119,6 +119,11 @@ in
         for name in ["echo", "nginx", "redis", "static", "ollama"]:
             b = wait_phase(n1, name, ["RUNNING"], 60)
         b = wait_phase(n1, "nodeexp", ["RUNNING"], 60)
+        # RUNNING needs one ready replica; the other nodes' replicas may land a tick later.
+        deadline = time.time() + 60
+        while len(placement_nodes(b)) < 3 and time.time() < deadline:
+            time.sleep(2)
+            b = get_json(n1, "nodeexp") or b
         assert len(placement_nodes(b)) == 3, f"daemonset not on 3 nodes: {b.get('status')}"
 
     def node_ip(name, idx=0):

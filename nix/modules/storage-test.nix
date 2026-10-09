@@ -10,6 +10,8 @@ let
   cfg = config.expanse.storage-test;
 in
 {
+  imports = [ ./drbd.nix ];
+
   options.expanse.storage-test = {
     enable = lib.mkEnableOption "scratch LVM volume group and DRBD for storage VM tests";
 

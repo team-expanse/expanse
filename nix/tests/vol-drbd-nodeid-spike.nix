@@ -5,6 +5,7 @@
 { pkgs, lib, ... }:
 let
   nodeCommon = { config, ... }: {
+    imports = [ ../modules/drbd.nix ];
     boot.extraModulePackages = [ config.boot.kernelPackages.drbd ];
     services.drbd.enable = true;
     services.drbd.config = ''

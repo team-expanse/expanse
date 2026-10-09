@@ -8,6 +8,8 @@ let
   cfg = config.expanse.agent;
 in
 {
+  imports = [ ./drbd.nix ];
+
   options.expanse.agent = {
     enable = lib.mkEnableOption "Expanse node agent (expansed)";
 
