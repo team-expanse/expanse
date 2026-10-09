@@ -734,6 +734,15 @@ type lioTarget struct {
 	port         string
 	chapUser     string
 	chapPassword string
+	// run executes one targetcli command; nil means targetcli itself.
+	run func(ctx context.Context, args ...string) error
+}
+
+func (l *lioTarget) targetcli(ctx context.Context, args ...string) error {
+	if l.run != nil {
+		return l.run(ctx, args...)
+	}
+	return targetcli(ctx, args...)
 }
 
 // targetcli runs one non-interactive targetcli command (its documented
@@ -748,22 +757,20 @@ func targetcli(ctx context.Context, args ...string) error {
 	return nil
 }
 
-// setup creates this instance's backstore, target, portal and LUN.
+// setup creates this instance's backstore, target, LUN and access rules, and opens
+// the portal last: an initiator that connects as soon as it answers is never refused.
 func (l *lioTarget) setup(ctx context.Context) error {
-	if err := targetcli(ctx, "/backstores/block", "create", "name="+l.backstore, "dev="+l.device, "wwn="+l.wwn); err != nil {
+	if err := l.targetcli(ctx, "/backstores/block", "create", "name="+l.backstore, "dev="+l.device, "wwn="+l.wwn); err != nil {
 		return err
 	}
-	if err := targetcli(ctx, "/iscsi", "create", l.iqn); err != nil {
+	if err := l.targetcli(ctx, "/iscsi", "create", l.iqn); err != nil {
 		return err
 	}
 	tpg := "/iscsi/" + l.iqn + "/tpg1"
 	// `/iscsi create` adds a default portal on [::0]:3260, which would hold the VIP's port on this
 	// node. It is absent when 3260 was already taken, so a failed delete is fine.
-	_ = targetcli(ctx, tpg+"/portals", "delete", "::0", "3260")
-	if err := targetcli(ctx, tpg+"/portals", "create", "0.0.0.0", l.port); err != nil {
-		return err
-	}
-	if err := targetcli(ctx, tpg+"/luns", "create", "/backstores/block/"+l.backstore); err != nil {
+	_ = l.targetcli(ctx, tpg+"/portals", "delete", "::0", "3260")
+	if err := l.targetcli(ctx, tpg+"/luns", "create", "/backstores/block/"+l.backstore); err != nil {
 		return err
 	}
 	// generate_node_acls + demo_mode_write_protect=0: any initiator may
@@ -776,15 +783,15 @@ func (l *lioTarget) setup(ctx context.Context) error {
 	if l.chapUser != "" {
 		auth = "authentication=1"
 	}
-	if err := targetcli(ctx, tpg, "set", "attribute", auth, "generate_node_acls=1", "demo_mode_write_protect=0"); err != nil {
+	if err := l.targetcli(ctx, tpg, "set", "attribute", auth, "generate_node_acls=1", "demo_mode_write_protect=0"); err != nil {
 		return err
 	}
 	if l.chapUser != "" {
-		if err := targetcli(ctx, tpg, "set", "auth", "userid="+l.chapUser, "password="+l.chapPassword); err != nil {
+		if err := l.targetcli(ctx, tpg, "set", "auth", "userid="+l.chapUser, "password="+l.chapPassword); err != nil {
 			return err
 		}
 	}
-	return nil
+	return l.targetcli(ctx, tpg+"/portals", "create", "0.0.0.0", l.port)
 }
 
 // teardown removes this instance's target and backstore. Errors are
@@ -792,8 +799,8 @@ func (l *lioTarget) setup(ctx context.Context) error {
 // to remove yet, on a node that never ran this instance before) and on
 // shutdown (best-effort release).
 func (l *lioTarget) teardown(ctx context.Context) {
-	_ = targetcli(ctx, "/iscsi", "delete", l.iqn)
-	_ = targetcli(ctx, "/backstores/block", "delete", l.backstore)
+	_ = l.targetcli(ctx, "/iscsi", "delete", l.iqn)
+	_ = l.targetcli(ctx, "/backstores/block", "delete", l.backstore)
 }
 
 // defaultIQN derives a stable target IQN from the block instance's own
