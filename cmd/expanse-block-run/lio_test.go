@@ -18,8 +18,10 @@ func recordTargetcli(calls *[]string) func(context.Context, ...string) error {
 func TestLIOSetupOpensThePortalLast(t *testing.T) {
 	for _, chap := range []string{"", "alice"} {
 		var calls []string
-		l := &lioTarget{backstore: "bs", iqn: "iqn.x:t", wwn: "w", device: "/dev/drbd1", port: "3260",
-			chapUser: chap, chapPassword: "secret", run: recordTargetcli(&calls)}
+		l := &lioTarget{
+			backstore: "bs", iqn: "iqn.x:t", wwn: "w", device: "/dev/drbd1", port: "3260",
+			chapUser: chap, chapPassword: "secret", run: recordTargetcli(&calls),
+		}
 		if err := l.setup(context.Background()); err != nil {
 			t.Fatal(err)
 		}
