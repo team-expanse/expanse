@@ -6,7 +6,8 @@
 let
   lint = pkgs.runCommand "cluster-vm-workloads-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
-    for f in ${./cluster-common.py} ${./block-common.py} ${./python/cluster_vm_workloads.py}; do
+    (cd ${./python} && python3 vm_pin_test.py)
+    for f in ${./cluster-common.py} ${./block-common.py} ${./python/vm_pin.py} ${./python/cluster_vm_workloads.py}; do
       python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
     done
     touch $out
@@ -78,6 +79,7 @@ in
     # ${lint}
     ${builtins.readFile ./cluster-common.py}
     ${builtins.readFile ./block-common.py}
+    ${builtins.readFile ./python/vm_pin.py}
     KERNEL = "${kernel}"
     INITRD = "${initrd}"
     CMDLINE = "${cmdline}"

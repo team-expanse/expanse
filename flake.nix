@@ -47,6 +47,13 @@
 
         devShells.default = pkgs.callPackage ./nix/devshell.nix { };
 
+        # Heavy tests run only when asked, outside checks and the release gate: `nix build .#onRequest.<name>`
+        legacyPackages.onRequest = {
+          # Twelve pinned nodes: does membership, the mesh, partitions and restarts still work at scale?
+          cluster-scale-12 = pkgs.testers.nixosTest
+            (import ./nix/tests/cluster-scale.nix { inherit self; nodeCount = 12; });
+        };
+
         checks = {
           lint = with pkgs; runCommand "lint" { nativeBuildInputs = [ golangci-lint go stdenv.cc ]; } ''
             export HOME="$TMPDIR"

@@ -2,10 +2,9 @@
 
 Measures cluster forming, placement, failover when a workload's node dies, the dead node's rejoin
 and resync, and failover when the raft leader dies. Runs after cluster-common.py and
-block-common.py; expects KERNEL, INITRD, CMDLINE, POLLER, NODE_COUNT and CORES_PER_VM spliced in.
+block-common.py and vm_pin.py; expects KERNEL, INITRD, CMDLINE, POLLER, NODE_COUNT and CORES_PER_VM spliced in.
 """
 import functools
-import os
 
 print = functools.partial(print, flush=True)  # stdout is a file; show timings as they happen
 
@@ -21,60 +20,13 @@ def note(what, seconds):
     print(f"TIMING {what}: {seconds:.1f}s")
 
 
-# --- CPU pinning: each VM gets CORES_PER_VM whole physical cores (with their hyperthread siblings) ---
-
-def physical_cores():
-    """Lists of CPUs per physical core, grouped by socket; only cores this process may use."""
-    allowed = os.sched_getaffinity(0)
-    cores = {}
-    for cpu in allowed:
-        topo = f"/sys/devices/system/cpu/cpu{cpu}/topology"
-        try:
-            key = (int(open(f"{topo}/physical_package_id").read()), int(open(f"{topo}/core_id").read()))
-        except OSError:
-            key = (0, cpu)  # no sysfs (a sandbox): treat each CPU as a core
-        cores.setdefault(key, []).append(cpu)
-    return [sorted(c) for _, c in sorted(cores.items()) if set(c) <= allowed]
-
-
-CORES = physical_cores()
+# --- CPU pinning (vm_pin.py): each VM gets CORES_PER_VM whole physical cores ---
 SLOTS = {name: i for i, name in enumerate(list(NODES) + ["watcher"])}
-
-
-def descendants(pid):
-    kids = {}
-    for p in os.listdir("/proc"):
-        if p.isdigit():
-            try:
-                kids.setdefault(int(open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()[1]), []).append(int(p))
-            except (OSError, IndexError):
-                pass
-    out, todo = [], [pid]
-    while todo:
-        p = todo.pop()
-        out.append(p)
-        todo.extend(kids.get(p, []))
-    return out
-
-
-def pin(m):
-    first = SLOTS[m.name] * CORES_PER_VM
-    if len(CORES) < first + CORES_PER_VM:
-        print(f"PIN {m.name}: only {len(CORES)} cores available, left unpinned")
-        return
-    cpus = set(sum(CORES[first:first + CORES_PER_VM], []))
-    for pid in descendants(m.process.pid):
-        for tid in os.listdir(f"/proc/{pid}/task"):
-            try:
-                os.sched_setaffinity(int(tid), cpus)
-            except OSError:
-                pass
-    print(f"PIN {m.name} -> CPUs {sorted(cpus)}")
 
 
 def start(m):
     m.start()
-    pin(m)
+    pin(m, SLOTS[m.name], CORES_PER_VM)
 
 
 # --- cluster state ---
