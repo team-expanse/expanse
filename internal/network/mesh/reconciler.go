@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/network/addrplan"
 	"github.com/expanse/expanse/internal/store"
@@ -165,6 +166,14 @@ func (r *Reconciler) publishedPeers(ctx context.Context) (map[string]*proto.Wire
 				fmt.Sprintf("%s: %v", e.Key, err))
 		}
 		out[nodeID] = &p
+	}
+	// A removed node's key may outlive its removal; revocation alone keeps it out.
+	revoked, err := r.st.List(ctx, store.Key(join.RevokedKeyPrefix))
+	if err != nil {
+		return nil, errors.New(errors.KindUnavailable, "mesh.listRevoked", err.Error())
+	}
+	for _, e := range revoked {
+		delete(out, strings.TrimPrefix(string(e.Key), join.RevokedKeyPrefix))
 	}
 	return out, nil
 }

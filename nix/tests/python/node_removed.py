@@ -53,6 +53,16 @@ def assert_retired(m, began):
         raise AssertionError(f"{m.name}'s journal does not say the node was removed")
 
 
+def wg_peer_count(m):
+    return len(m.succeed("wg show exp0 peers").split())
+
+
+def wait_mesh(machines, what):
+    """Each survivor peers with exactly the other survivors: a removed node must leave the mesh."""
+    for m in machines:
+        wait_until(lambda m=m: wg_peer_count(m) == len(machines) - 1, f"{m.name}'s mesh to {what}", 60, m)
+
+
 form("rm", uses=4)
 n4.wait_for_unit("multi-user.target")
 n4.succeed("systemctl stop expansed.service")  # it started un-enrolled at boot
@@ -70,6 +80,7 @@ with subtest("a node removed while connected stops its replica and its agent"):
     n1.succeed(f"expanse ctl node remove n3 {SOCK}")
     wait_quorum("3/2", 60)
     assert_retired(n3, time.time())
+    wait_mesh([n1, n2, n4], "drop n3")
 
 with subtest("a node removed while cut off keeps running until it is reconnected"):
     lead_away_from(n4)
@@ -88,6 +99,7 @@ with subtest("a node removed while cut off keeps running until it is reconnected
 
 with subtest("once reconnected, the node learns of its removal from a peer and stops"):
     assert_retired(n4, time.time())
+    wait_mesh([n1, n2], "drop n4")
     if "a peer says this node was removed" not in n4.succeed("journalctl -u expansed.service --no-pager 2>&1"):
         report(n4)
         raise AssertionError("n4 did not learn of its removal from a peer")

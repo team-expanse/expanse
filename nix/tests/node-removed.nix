@@ -16,7 +16,7 @@ let
     expanse.agent.blocksCatalog = ../blocks;
     expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
     environment.etc."expanse/blocks-flake".source = ../blocks-flake;
-    environment.systemPackages = with pkgs; [ curl ];
+    environment.systemPackages = with pkgs; [ curl wireguard-tools ];
     virtualisation.memorySize = 2048;
   };
 in

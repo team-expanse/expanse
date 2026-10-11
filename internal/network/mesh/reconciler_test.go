@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 	"github.com/expanse/expanse/proto"
@@ -289,6 +290,31 @@ func TestReconcileMeshReforms(t *testing.T) {
 	newOps := ctrl.ops[before:]
 	if len(newOps) != 2 || !strings.HasPrefix(newOps[0], "remove") || !strings.HasPrefix(newOps[1], "add") {
 		t.Errorf("reform ops = %v, want exactly remove+add", newOps)
+	}
+}
+
+// TestReconcileDropsARevokedNode: a removed node stays out of the mesh even if its key lingers.
+func TestReconcileDropsARevokedNode(t *testing.T) {
+	f := newFixture(t, 1500)
+	ctx := context.Background()
+	f.publish(t, "n1", "KEY1", 1)
+	f.publish(t, "n2", "KEY2", 2)
+	f.publish(t, "n3", "KEY3", 3)
+	if err := f.rec.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.Put(ctx, store.Key(join.RevokedKeyPrefix+"n3"), []byte(`{"node_id":"n3"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.rec.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := f.rec.ctrl.(*fakeCtrl)
+	if _, ok := ctrl.peers["KEY3"]; ok {
+		t.Error("revoked n3 is still a peer")
+	}
+	if _, ok := ctrl.peers["KEY2"]; !ok {
+		t.Error("n2 lost its peer")
 	}
 }
 

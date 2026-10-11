@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/blocks/blockkey"
+	"github.com/expanse/expanse/internal/cluster/join"
 
 	"github.com/expanse/expanse/internal/network/addrplan"
 	"github.com/expanse/expanse/internal/network/mesh"
@@ -200,8 +201,20 @@ func (a *Agent) fwDesired(ctx context.Context) (fw.Desired, error) {
 	if err != nil {
 		return d, err
 	}
+	// A removed node's keys may outlive its removal; revocation alone keeps it out.
+	revoked, err := a.store.List(ctx, store.Key(join.RevokedKeyPrefix))
+	if err != nil {
+		return d, err
+	}
+	gone := map[string]bool{}
+	for _, e := range revoked {
+		gone[strings.TrimPrefix(string(e.Key), join.RevokedKeyPrefix)] = true
+	}
 	for _, e := range peers {
 		rest := strings.TrimPrefix(string(e.Key), "/nodes/")
+		if id, _, _ := strings.Cut(rest, "/"); gone[id] {
+			continue
+		}
 		// Node records (JSON, created at join time) carry each peer's
 		// raft/API addresses — they exist before the wg record does,
 		// which breaks the join deadlock: the new node dials 7444 over

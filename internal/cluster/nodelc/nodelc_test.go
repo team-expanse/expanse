@@ -523,3 +523,58 @@ func TestMonitorFinishesAnInterruptedRemoval(t *testing.T) {
 		t.Errorf("n0 record lost: %v", err)
 	}
 }
+
+// putKeys writes placeholder values under each key.
+func putKeys(t *testing.T, ctx context.Context, st *raftstore.Store, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		if _, err := st.Put(ctx, store.Key(k), []byte("x")); err != nil {
+			t.Fatalf("put %s: %v", k, err)
+		}
+	}
+}
+
+// assertGoneKept checks that every gone key is deleted and every kept key survives.
+func assertGoneKept(t *testing.T, ctx context.Context, st *raftstore.Store, gone, kept []string) {
+	t.Helper()
+	for _, k := range gone {
+		if _, err := st.Get(ctx, store.Key(k)); !errors.Is(err, errors.KindNotFound) {
+			t.Errorf("%s still present after removal: %v", k, err)
+		}
+	}
+	for _, k := range kept {
+		if _, err := st.Get(ctx, store.Key(k)); err != nil {
+			t.Errorf("%s lost: %v", k, err)
+		}
+	}
+}
+
+// TestRemovePurgesTheNodesSubtree: a removed node's per-node keys (its mesh key above all)
+// must go too, or every remaining node keeps it as a WireGuard peer.
+func TestRemovePurgesTheNodesSubtree(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	for _, id := range []string{"n0", "n1", "n2"} {
+		writeNode(t, ctx, st, id, "")
+	}
+	gone := []string{"/nodes/n1/network.wgPublicKey", "/nodes/n1/status", "/nodes/n1/capabilities"}
+	kept := []string{"/nodes/n10/network.wgPublicKey", "/nodes/n2/network.wgPublicKey"}
+	putKeys(t, ctx, st, append(gone, kept...)...)
+	if err := nodelc.Remove(ctx, st, "n1", nil); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	assertGoneKept(t, ctx, st, gone, kept)
+}
+
+// TestMonitorPurgesARevokedNodesSubtree: the leader finishes the purge for an interrupted removal.
+func TestMonitorPurgesARevokedNodesSubtree(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n0", "")
+	gone := []string{"/nodes/n3/network.wgPublicKey", "/nodes/n3/status"}
+	kept := []string{"/nodes/n30/network.wgPublicKey", "/nodes/n0/network.wgPublicKey"}
+	putKeys(t, ctx, st, append(gone, kept...)...)
+	if _, err := st.Put(ctx, store.Key(nodelc.RevokedKeyPrefix+"n3"), []byte(`{"node_id":"n3"}`)); err != nil {
+		t.Fatal(err)
+	}
+	(&nodelc.Monitor{St: st, ThisNodeID: "n0"}).Evaluate(ctx, time.Now())
+	assertGoneKept(t, ctx, st, gone, kept)
+}

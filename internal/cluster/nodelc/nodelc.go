@@ -271,7 +271,7 @@ func checkReplaceable(ctx context.Context, st *raftstore.Store, id string, ignor
 //	refuse if it would break quorum (≤2 voters) unless Force + typed Confirm
 //	→ write /cluster/revoked/<id>
 //	→ raft.RemoveServer
-//	→ delete /nodes/<id>
+//	→ delete /nodes/<id> and everything under it
 //
 // The revocation is what rejects the node's identity hereafter: the
 // join service refuses any re-join under a revoked node ID (§4.8).
@@ -349,7 +349,20 @@ func Remove(ctx context.Context, st *raftstore.Store, id string, opts *Options) 
 			}
 		}
 	}
+	purgeNodeKeys(ctx, st, id)
 	return nil //nolint:nilerr // the /nodes cleanup above is best effort
+}
+
+// purgeNodeKeys best-effort deletes everything under /nodes/<id>/: left behind, the
+// node's mesh key keeps it a WireGuard peer and firewall-admitted on every other node.
+func purgeNodeKeys(ctx context.Context, st *raftstore.Store, id string) {
+	entries, err := st.List(ctx, store.Key(join.NodesKeyPrefix+id+"/"))
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		_ = st.Delete(ctx, e.Key, 0)
+	}
 }
 
 // finishRemovals drops every revoked node still in raft or on record:
@@ -368,6 +381,7 @@ func finishRemovals(ctx context.Context, st *raftstore.Store) {
 		if rec, err := st.Get(ctx, store.Key(join.NodesKeyPrefix+id)); err == nil {
 			_ = st.Delete(ctx, rec.Key, rec.Revision)
 		}
+		purgeNodeKeys(ctx, st, id)
 	}
 }
 
