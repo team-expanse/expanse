@@ -7,7 +7,7 @@ serving the export: the export, its volume and its VIP move to a survivor,
 the client reclaims its state, writes resume, the volume matches the
 client, and Prometheus sees the dead node's targets go down.
 
-Runs after cluster-common.py and block-common.py; expects NODE_COUNT.
+Runs after cluster-common.py, block-common.py and vm_pin.py; expects NODE_COUNT and CORES_PER_VM.
 """
 import functools
 
@@ -121,6 +121,8 @@ def nfs_host_path(m):
 with subtest(f"form a {NODE_COUNT}-node cluster"):
     t0 = time.time()
     start_all()
+    for slot, m in enumerate([*NODES.values(), client]):
+        pin(m, slot, CORES_PER_VM)
     for m in NODES.values():
         m.wait_for_unit("multi-user.target")
         m.succeed("systemctl stop expansed.service")

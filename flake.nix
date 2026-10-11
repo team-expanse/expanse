@@ -332,7 +332,7 @@
           # docs/PANDO.md: the Pando guest image on a vm/instance, across a crash of its node.
           pando-guest = mkTest "pando-guest" ./nix/tests/pando-guest.nix;
 
-          # Six nodes, two VM workloads serving from replicated disks: forming and failover timings. Not a gate.
+          # Six pinned nodes, two VM workloads serving from replicated disks: forming, failover and rejoin.
           cluster-vm-workloads = mkTest "cluster-vm-workloads" ./nix/tests/cluster-vm-workloads.nix;
 
           # ROADMAP.md Phase 08 (backup and restore) Stream A (X1): restic

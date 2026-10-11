@@ -1,5 +1,5 @@
 # A cluster of nodeCount nodes running two VM workloads that serve HTTP from their replicated disks:
-# measures forming, placement, and failover on node loss and on leader loss. A benchmark, not a gate.
+# checks forming, placement, and failover on node loss and on leader loss, and logs their timings.
 # Each VM is pinned to coresPerVM physical cores.
 { self, nodeCount ? 6, coresPerVM ? 2 }:
 { pkgs, lib, ... }:
