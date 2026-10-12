@@ -6,6 +6,16 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.9.1 - 2026-10-12
+
+### Security
+
+- A removed node now leaves the WireGuard mesh and the firewall. Removal left
+  the node's mesh key in the cluster store, so the remaining nodes kept it as a
+  WireGuard peer and their firewalls still admitted its addresses. Removal now
+  deletes the node's keys, and the mesh and firewall skip any revoked node
+  whose keys remain from an earlier removal.
+
 ## 1.9.0 - 2026-10-09
 
 ### Added
