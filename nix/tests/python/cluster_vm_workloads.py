@@ -2,7 +2,7 @@
 
 Measures cluster forming, placement, failover when a workload's node dies, the dead node's rejoin
 and resync, and failover when the raft leader dies. Runs after cluster-common.py and
-block-common.py and vm_pin.py; expects KERNEL, INITRD, CMDLINE, POLLER, NODE_COUNT and CORES_PER_VM spliced in.
+block-common.py; expects KERNEL, INITRD, CMDLINE, POLLER and NODE_COUNT spliced in.
 """
 import functools
 
@@ -18,15 +18,6 @@ TIMINGS = []
 def note(what, seconds):
     TIMINGS.append((what, seconds))
     print(f"TIMING {what}: {seconds:.1f}s")
-
-
-# --- CPU pinning (vm_pin.py): each VM gets CORES_PER_VM whole physical cores ---
-SLOTS = {name: i for i, name in enumerate(list(NODES) + ["watcher"])}
-
-
-def start(m):
-    m.start()
-    pin(m, SLOTS[m.name], CORES_PER_VM)
 
 
 # --- cluster state ---
@@ -142,7 +133,7 @@ def report_outage(name, since, label):
 
 t_boot = time.time()
 for m in list(NODES.values()) + [watcher]:
-    start(m)
+    m.start()
 for m in NODES.values():
     m.wait_for_unit("multi-user.target")
     m.succeed("systemctl stop expansed.service")
@@ -211,7 +202,7 @@ with subtest("hard-kill the node running web1"):
 
 with subtest("bring the dead node back: rejoin and resync"):
     t0 = time.time()
-    start(NODES[victim])
+    NODES[victim].start()
     NODES[victim].wait_for_unit("multi-user.target")
     wait_agent_ready(NODES[victim])
     note("rejoin: agent up after power-on", time.time() - t0)

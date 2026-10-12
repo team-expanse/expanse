@@ -1,13 +1,11 @@
 # A cluster of nodeCount nodes running two VM workloads that serve HTTP from their replicated disks:
 # checks forming, placement, and failover on node loss and on leader loss, and logs their timings.
-# Each VM is pinned to coresPerVM physical cores.
-{ self, nodeCount ? 6, coresPerVM ? 2 }:
+{ self, nodeCount ? 6 }:
 { pkgs, lib, ... }:
 let
   lint = pkgs.runCommand "cluster-vm-workloads-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
-    (cd ${./python} && python3 vm_pin_test.py)
-    for f in ${./cluster-common.py} ${./block-common.py} ${./python/vm_pin.py} ${./python/cluster_vm_workloads.py}; do
+    for f in ${./cluster-common.py} ${./block-common.py} ${./python/cluster_vm_workloads.py}; do
       python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
     done
     touch $out
@@ -79,13 +77,11 @@ in
     # ${lint}
     ${builtins.readFile ./cluster-common.py}
     ${builtins.readFile ./block-common.py}
-    ${builtins.readFile ./python/vm_pin.py}
     KERNEL = "${kernel}"
     INITRD = "${initrd}"
     CMDLINE = "${cmdline}"
     POLLER = "${./watcher-poll.sh}"
     NODE_COUNT = ${toString nodeCount}
-    CORES_PER_VM = ${toString coresPerVM}
     ${builtins.readFile ./python/cluster_vm_workloads.py}
   '';
 }

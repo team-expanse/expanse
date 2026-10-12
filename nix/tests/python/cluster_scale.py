@@ -1,10 +1,10 @@
-"""NODE_COUNT nodes, each pinned to its own physical core: does everything still work at this size?
+"""NODE_COUNT nodes: does everything still work at this size?
 
 Forms the cluster, then checks the mesh, block spread, raft reads and writes from every node,
 a partition with the leader on the minority side, drain and removal of one node, and a
 restart of every agent at once. Correctness, not speed: timeouts are generous.
-Runs after cluster-common.py, block-common.py, client-common.py and vm_pin.py; expects
-NODE_COUNT and CORES_PER_VM spliced in.
+Runs after cluster-common.py, block-common.py and client-common.py; expects NODE_COUNT
+spliced in.
 """
 import functools
 
@@ -86,10 +86,8 @@ def heal(names):
         NODES[name].succeed("nft delete table ip scale")
 
 
-with subtest(f"boot {NODE_COUNT} nodes, each pinned to {CORES_PER_VM} physical core(s)"):
+with subtest(f"boot {NODE_COUNT} nodes"):
     start_all()
-    for slot, m in enumerate(NODES.values()):
-        pin(m, slot, CORES_PER_VM)
     for m in NODES.values():
         m.wait_for_unit("multi-user.target")
         m.succeed("systemctl stop expansed.service")

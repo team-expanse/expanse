@@ -49,13 +49,13 @@
 
         # Heavy tests run only when asked, outside checks and the release gate: `nix build .#onRequest.<name>`
         legacyPackages.onRequest = {
-          # cluster-vm-workloads at the largest size one 16-core host pins sensibly: 12 nodes, one physical core each.
+          # cluster-vm-workloads at 12 nodes.
           cluster-vm-workloads-12 = pkgs.testers.nixosTest
-            (import ./nix/tests/cluster-vm-workloads.nix { inherit self; nodeCount = 12; coresPerVM = 1; });
+            (import ./nix/tests/cluster-vm-workloads.nix { inherit self; nodeCount = 12; });
           # Twelve nodes running the monitoring and NFS blocks together, with an NFS failover.
           cluster-blocks-12 = pkgs.testers.nixosTest
             (import ./nix/tests/cluster-blocks.nix { inherit self; nodeCount = 12; });
-          # Twelve pinned nodes: does membership, the mesh, partitions and restarts still work at scale?
+          # Twelve nodes: does membership, the mesh, partitions and restarts still work at scale?
           cluster-scale-12 = pkgs.testers.nixosTest
             (import ./nix/tests/cluster-scale.nix { inherit self; nodeCount = 12; });
         };
@@ -332,7 +332,7 @@
           # docs/PANDO.md: the Pando guest image on a vm/instance, across a crash of its node.
           pando-guest = mkTest "pando-guest" ./nix/tests/pando-guest.nix;
 
-          # Six pinned nodes, two VM workloads serving from replicated disks: forming, failover and rejoin.
+          # Six nodes, two VM workloads serving from replicated disks: forming, failover and rejoin.
           cluster-vm-workloads = mkTest "cluster-vm-workloads" ./nix/tests/cluster-vm-workloads.nix;
 
           # ROADMAP.md Phase 08 (backup and restore) Stream A (X1): restic

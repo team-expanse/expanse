@@ -1,15 +1,13 @@
-# A nodeCount-node cluster, each VM pinned to its own physical cores: forming, mesh, block
-# spread, raft from every node, a partition, drain and removal, and a full agent restart.
-# Checks that things work at scale, not how fast. On request only; the scenario is
-# python/cluster_scale.py.
-{ self, nodeCount ? 12, coresPerVM ? 1 }:
+# A nodeCount-node cluster: forming, mesh, block spread, raft from every node, a partition,
+# drain and removal, and a full agent restart. Checks that things work at scale, not how fast.
+# On request only; the scenario is python/cluster_scale.py.
+{ self, nodeCount ? 12 }:
 { pkgs, lib, ... }:
 let
   lint = pkgs.runCommand "cluster-scale-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
     cd ${./python}
-    python3 vm_pin_test.py
-    for f in ${./cluster-common.py} ${./block-common.py} ${./client-common.py} vm_pin.py cluster_scale.py; do
+    for f in ${./cluster-common.py} ${./block-common.py} ${./client-common.py} cluster_scale.py; do
       python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
     done
     touch $out
@@ -43,9 +41,7 @@ in
     ${builtins.readFile ./cluster-common.py}
     ${builtins.readFile ./block-common.py}
     ${builtins.readFile ./client-common.py}
-    ${builtins.readFile ./python/vm_pin.py}
     NODE_COUNT = ${toString nodeCount}
-    CORES_PER_VM = ${toString coresPerVM}
     ${builtins.readFile ./python/cluster_scale.py}
   '';
 }
