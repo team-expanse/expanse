@@ -4,10 +4,9 @@
 # node (nftables drop both directions, holder included) for 10–30 s, 40
 # times. Invariants:
 #   (a) the client never observes split brain: MAC flip intervals are
-#       never shorter than a legal failover cycle (two flips < 12 s apart
-#       is impossible without two nodes answering at once — a legal
-#       flip needs the old holder to lose its lease and the survivor's
-#       takeover at lease expiry), and
+#       never shorter than a legal failover cycle (a takeover waits for
+#       the previous lease, granted >= 10 s TTL earlier, to expire; two
+#       flips < 8 s apart allow for the ~2 s arping window), and
 #   (b) `ip addr` polled every 200 ms on all nodes never shows the VIP
 #       on 2 nodes within a 2 s window (legit failover has a ≥ 10 s
 #       gap: release happens on renew failure, takeover at TTL expiry).
@@ -226,9 +225,9 @@ in
         answered = [(float(r[0]), r[1]) for r in rows if len(r) > 1 and r[1]]
         assert answered, "ARP checker recorded no replies at all"
         # Compress into runs of identical MACs; each run boundary is a
-        # MAC flip (a failover). Legal flips are separated by at least
-        # one full failover cycle (~lease TTL); a flip < 12 s after the
-        # previous one means two nodes were answering simultaneously.
+        # MAC flip (a failover). A takeover waits out the previous lease
+        # (10 s TTL), so legal flips are >= 10 s apart less the ~2 s arping
+        # window; a flip < 8 s after the previous one means two answered.
         # The first entry is the initial holder, not a flip, so the
         # first real flip is not timed against the checker's start.
         flips = []
@@ -238,7 +237,7 @@ in
                 flips.append((ts, mac))
                 prev = mac
         for (t1, m1), (t2, m2) in zip(flips[1:], flips[2:]):
-            assert t2 - t1 >= 12, (
+            assert t2 - t1 >= 8, (
                 f"split brain: {m1} and {m2} both answered around t={t2:.1f} "
                 f"({t2 - t1:.1f}s after the previous flip) — duplicate holder"
             )
