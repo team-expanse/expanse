@@ -298,3 +298,42 @@ func TestBuildHTTPRoutesDeclared(t *testing.T) {
 		t.Errorf("c default route: %+v", got)
 	}
 }
+
+func TestL7StopsRoutingToABackendThatFailedToConnect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "b2") }))
+	defer srv.Close()
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadAddr := strings.TrimPrefix(dead.URL, "http://")
+	dead.Close()
+
+	pool := &fakeTableSource{t: svcTable(&Service{
+		Key: "default/web", Namespace: "default", Name: "web", TargetPort: 8080,
+		Backends: []Backend{
+			{ReplicaIndex: 0, NodeID: "n1", Healthy: true},
+			{ReplicaIndex: 1, NodeID: "n2", Healthy: true},
+		},
+	})}
+	var deadDials atomic.Int32
+	l := &L7{
+		Pool: pool,
+		Resolve: func(b Backend, _ int32) string {
+			if b.NodeID == "n1" {
+				deadDials.Add(1)
+				return deadAddr
+			}
+			return strings.TrimPrefix(srv.URL, "http://")
+		},
+		Routes: RoutesFrom(pool),
+	}
+	h := l.Handler()
+	for i := 0; i < 6; i++ {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://web.default.expanse.internal/", nil))
+		if rec.Code != 200 {
+			t.Fatalf("req %d: code=%d", i, rec.Code)
+		}
+	}
+	if got := deadDials.Load(); got != 1 {
+		t.Fatalf("dead backend dialed %d times, want 1", got)
+	}
+}

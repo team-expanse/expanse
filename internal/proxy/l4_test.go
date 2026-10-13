@@ -546,3 +546,45 @@ func TestL4TargetPortOverridesTheServicePort(t *testing.T) {
 		t.Errorf("resolved target port %d, want 8443", got)
 	}
 }
+
+// A backend that failed to connect is skipped for later connections, so a
+// frozen node costs one dial timeout after failover, not one per connection.
+func TestL4StopsDialingABackendThatFailedToConnect(t *testing.T) {
+	tbl := &fakeTable{}
+	live := newFakeBackend(t, "n2")
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddr := dead.Addr().String()
+	dead.Close()
+	tbl.setOne(Backend{ReplicaIndex: 0, NodeID: "n1"}, backendFor(live, 1))
+
+	var deadDials atomic.Int32
+	l4 := &L4{
+		Pool: tbl, Key: "default/web", DialTimeout: time.Second,
+		Resolve: func(b Backend, _ int32) string {
+			if b.NodeID == "n1" {
+				deadDials.Add(1)
+				return deadAddr
+			}
+			return live.ln.Addr().String()
+		},
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l4.Close(); ln.Close() })
+	go func() { _ = l4.Serve(context.Background(), ln) }()
+
+	for i := 0; i < 6; i++ {
+		r, _ := dialProxy(t, ln.Addr().String())
+		if got := readReply(t, r); got != "backend-n2" {
+			t.Fatalf("conn %d: got %q, want backend-n2", i, got)
+		}
+	}
+	if got := deadDials.Load(); got != 1 {
+		t.Fatalf("dead backend dialed %d times, want 1", got)
+	}
+}

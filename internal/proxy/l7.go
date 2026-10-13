@@ -184,10 +184,10 @@ type L7 struct {
 	// from Pool. Injections in tests.
 	Routes func() *HTTPTable
 
-	// Timeouts (§4.3): connect 5 s, response header 30 s, idle 90 s
+	// Timeouts (§4.3): connect 2 s, response header 30 s, idle 90 s
 	// by default; configurable per L7 instance (per-route configuration
 	// lands with explicit route declarations).
-	ConnectTimeout        time.Duration // default 5 s
+	ConnectTimeout        time.Duration // default 2 s
 	ResponseHeaderTimeout time.Duration // default 30 s
 	IdleTimeout           time.Duration // default 90 s
 
@@ -203,6 +203,7 @@ type L7 struct {
 	GetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
 	rr        atomic.Uint64
+	eject     ejector
 	transport http.RoundTripper
 	initOnce  sync.Once
 }
@@ -230,7 +231,7 @@ func (l *L7) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no backends", http.StatusBadGateway)
 		return
 	}
-	cands := svc.Healthy()
+	cands := l.eject.live(svc.Healthy())
 	if len(cands) == 0 {
 		http.Error(w, "no backends", http.StatusBadGateway)
 		return
@@ -254,6 +255,7 @@ func (l *L7) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			candidates: cands,
 			targetPort: rt.TargetPort,
 			rr:         &l.rr,
+			eject:      &l.eject,
 			maxRetries: maxRetries,
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
@@ -290,6 +292,7 @@ type l7Transport struct {
 	candidates []Backend
 	targetPort int32
 	rr         *atomic.Uint64
+	eject      *ejector
 	maxRetries int
 }
 
@@ -309,7 +312,11 @@ func (t *l7Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		resp, err := t.inner.RoundTrip(tr)
 		if err == nil {
+			t.eject.readmit(b)
 			return resp, nil
+		}
+		if isDialErr(err) {
+			t.eject.eject(b)
 		}
 		lastErr = err
 		if !idem || attempt == t.maxRetries || !isConnErr(err) {
@@ -317,6 +324,12 @@ func (t *l7Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 	return nil, lastErr
+}
+
+// isDialErr reports whether err is a failure to connect, the only sign a backend is gone.
+func isDialErr(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
 }
 
 // isConnErr reports whether err is a connection-level failure (dial

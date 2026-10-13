@@ -32,7 +32,9 @@ const (
 // Defaults per §4.3.
 const (
 	DefaultDrainTimeout = 30 * time.Second
-	DefaultDialTimeout  = 5 * time.Second
+	// DefaultDialTimeout is short: backends are in-cluster, and a frozen node's
+	// dial must fit G5.4's failover budget (TestVIPFailoverFitsTheG54Budget).
+	DefaultDialTimeout = 2 * time.Second
 
 	// L7 response/idle defaults (§4.3).
 	DefaultResponseHeaderTimeout = 30 * time.Second
@@ -73,9 +75,10 @@ type L4 struct {
 
 	MaxPerBackend int           // 0 = unlimited
 	DrainTimeout  time.Duration // default 30 s
-	DialTimeout   time.Duration // default 5 s
+	DialTimeout   time.Duration // default 2 s
 
 	rr     atomic.Uint64
+	eject  ejector
 	active sync.Map // backendID → *atomic.Int64
 	conns  sync.Map // backendID → *connSet
 
@@ -296,11 +299,12 @@ func (l *L4) handle(client net.Conn) {
 	var backend net.Conn
 	var chosen Backend
 	for attempt := 0; attempt < 3; attempt++ {
-		idx := l.pickAt(healthy, src)
+		cands := l.eject.live(healthy)
+		idx := l.pickAt(cands, src)
 		if idx < 0 {
 			break
 		}
-		b := healthy[idx]
+		b := cands[idx]
 		target := svc.TargetPort
 		if l.TargetPort != 0 {
 			target = l.TargetPort
@@ -308,9 +312,11 @@ func (l *L4) handle(client net.Conn) {
 		addr := l.Resolve(b, target)
 		c, err := l.dialer(b).Dial("tcp", addr)
 		if err == nil {
+			l.eject.readmit(b)
 			backend, chosen = c, b
 			break
 		}
+		l.eject.eject(b)
 		if attempt < 2 {
 			time.Sleep(dialRetryBackoff)
 		}

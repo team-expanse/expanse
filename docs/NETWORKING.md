@@ -61,7 +61,10 @@ The VIP holder's listener slot is shared by the L4 and L7 balancers,
 both driven by one pool table snapshotted from the store (`Pool`,
 atomic swap — readers hold the old snapshot, in-flight requests never
 see a torn table). L4 splices TCP connections round-robin across
-healthy backends with drain-on-removal. A backend on the VIP holder's
+healthy backends with drain-on-removal. Both balancers connect with a
+2 s timeout and skip a backend that failed to connect for 10 s
+(passive ejection), so a frozen node costs one timeout after failover,
+not one per connection; with every backend ejected they try them all. A backend on the VIP holder's
 own node is dialed from the VIP address, so a SINGLETON backend sees the
 same peer address on whichever node serves it (NFS clients reclaim their
 state by it); remote backends see the holder's node address. L7 is an `httputil.ReverseProxy`
