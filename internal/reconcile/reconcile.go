@@ -399,6 +399,7 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 
 	// Deletion diff: IDs applied on a previous tick but absent from
 	// desired state now were deleted — undo them via the manager.
+	retry := map[string]Resource{} // failed teardowns stay applied for the next tick
 	r.mu.Lock()
 	for id, old := range r.applied {
 		if _, undecodable := errs[id]; undecodable {
@@ -410,7 +411,8 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 			if m := r.managers[old.Type()]; m != nil {
 				if d, ok := m.(Deleter); ok {
 					if err := d.Delete(ctx, old); err != nil {
-						r.logger.Warn("orphan cleanup failed", "id", id, "err", err)
+						r.logger.Warn("orphan cleanup failed, retrying next tick", "id", id, "err", err)
+						retry[id] = old
 					} else {
 						r.changes.Add(1)
 						r.logger.Info("removed undesired resource", "id", id, "type", old.Type())
@@ -420,6 +422,7 @@ func (r *Reconciler) Tick(ctx context.Context) error {
 			r.mu.Lock()
 		}
 	}
+	maps.Copy(r.applied, retry)
 	for id, res := range resources {
 		r.applied[id] = res
 	}

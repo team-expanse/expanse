@@ -503,10 +503,11 @@ func (s *flakyStore) List(ctx context.Context, prefix store.Key) ([]*store.Entry
 // deletingManager counts the resources the reconciler tears down, in order.
 type deletingManager struct {
 	fakeManager
-	deletes atomic.Int64
-	deps    map[string][]string
-	mu      sync.Mutex
-	order   []string
+	deletes     atomic.Int64
+	failDeletes atomic.Int64 // the next n Deletes fail
+	deps        map[string][]string
+	mu          sync.Mutex
+	order       []string
 }
 
 func (m *deletingManager) Load(id string, spec []byte) (Resource, error) {
@@ -515,6 +516,10 @@ func (m *deletingManager) Load(id string, spec []byte) (Resource, error) {
 
 func (m *deletingManager) Delete(ctx context.Context, r Resource) error {
 	m.deletes.Add(1)
+	if m.failDeletes.Load() > 0 {
+		m.failDeletes.Add(-1)
+		return fmt.Errorf("umount: target is busy")
+	}
 	m.mu.Lock()
 	m.order = append(m.order, r.ID())
 	m.mu.Unlock()
@@ -734,5 +739,33 @@ func TestUnreadableDesiredStateKeepsStatusRecords(t *testing.T) {
 	_ = r.Tick(ctx)
 	if _, err := s.Get(ctx, r.StatusPrefix()+"a"); err != nil {
 		t.Errorf("status record removed on an unreadable tick: %v", err)
+	}
+}
+
+// A teardown that fails (an unmount racing the unit still using it) is
+// retried on the next tick, not forgotten with the resource left behind.
+func TestFailedOrphanCleanupIsRetriedNextTick(t *testing.T) {
+	r, s, m := newDeletingReconciler(t)
+	ctx := context.Background()
+	putDesired(t, s, "n1", "mount", "")
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e, err := s.Get(ctx, r.DesiredPrefix()+store.Key("mount"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, e.Key, e.Revision); err != nil {
+		t.Fatal(err)
+	}
+	m.failDeletes.Store(1)
+	_ = r.Tick(ctx)
+	_ = r.Tick(ctx)
+	if got := m.deletes.Load(); got != 2 {
+		t.Fatalf("Delete called %d times, want 2 (a failure, then a retry)", got)
+	}
+	_ = r.Tick(ctx)
+	if got := m.deletes.Load(); got != 2 {
+		t.Errorf("Delete called %d times after it succeeded, want no more", got)
 	}
 }
