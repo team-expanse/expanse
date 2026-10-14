@@ -114,8 +114,29 @@ def serving(name):
     return bool(rows) and rows[-1][2]
 
 
-def report_outage(name, since, label):
-    until(lambda: serving(name), f"{name} serving before the {label} report", 600)
+def dump_path(name, via):
+    """Print the watcher-to-guest network state, so a workload that never serves says why."""
+    ip = WORKLOADS[name]
+    print(watcher.execute(f"ip neigh show {ip}; curl -sv --max-time 2 http://{ip}/ 2>&1 | tail -5")[1])
+    node = NODES.get(holder(name, via) or "")
+    if node is None:
+        print(f"DIAG {name}: no single holder")
+        return
+    print(node.execute(
+        f"ip -d -s link show type macvtap; ip -s link show eth1; "
+        f"journalctl -u expanse-block-root@default-{name}-0 -n 15 --no-pager")[1])
+
+
+def until_serving(name, what, timeout, via):
+    try:
+        return until(lambda: serving(name), what, timeout)
+    except AssertionError:
+        dump_path(name, via)
+        raise
+
+
+def report_outage(name, since, label, via):
+    until_serving(name, f"{name} serving before the {label} report", 600, via)
     time.sleep(3)
     o = outage(name, since)
     if o is None:
@@ -173,7 +194,7 @@ with subtest("deploy two VM workloads and serve HTTP from their disks"):
         wait_phase(n1, name, ["RUNNING"], 600)
         note(f"deploy: {name} RUNNING", time.time() - t0)
     for name in WORKLOADS:
-        until(lambda: serving(name), f"{name} serving HTTP", 600)
+        until_serving(name, f"{name} serving HTTP", 600, n1)
         note(f"deploy: {name} serving HTTP to the watcher", time.time() - t0)
     placement = {name: holder(name, n1) for name in WORKLOADS}
     print(f"PLACEMENT {placement}; leader {leader(n1)}")
@@ -192,11 +213,11 @@ with subtest("hard-kill the node running web1"):
         note("node loss: new leader elected", until(lambda: leader(via) not in ("", victim), "a new leader", 120))
     t = until(lambda: holder("web1", via) not in (None, victim), "web1 rescheduled", 600)
     note("node loss: web1 rescheduled", t)
-    until(lambda: serving("web1"), "web1 serving again", 600)
+    until_serving("web1", "web1 serving again", 600, via)
     note("node loss: web1 serving again, from the kill", time.time() - t_kill)
     time.sleep(10)
-    report_outage("web1", t_kill, "node loss")
-    report_outage("web2", t_kill, "node loss")
+    report_outage("web1", t_kill, "node loss", via)
+    report_outage("web2", t_kill, "node loss", via)
     placement = {name: holder(name, via) for name in WORKLOADS}
     print(f"PLACEMENT {placement}; leader {leader(via)}")
 
@@ -223,12 +244,12 @@ with subtest("hard-kill the raft leader"):
     print(f"KILLED leader {lead} (holding {hosts or 'no workload'}) at {t_kill:.1f}")
     note("leader loss: new leader elected", until(lambda: leader(survivor) not in ("", lead), "a new leader", 120))
     for w in hosts:
-        until(lambda: holder(w, survivor) not in (None, lead), f"{w} rescheduled", 600)
-        until(lambda: serving(w), f"{w} serving again", 600)
+        until(lambda w=w: holder(w, survivor) not in (None, lead), f"{w} rescheduled", 600)
+        until_serving(w, f"{w} serving again", 600, survivor)
         note(f"leader loss: {w} serving again, from the kill", time.time() - t_kill)
     time.sleep(20)  # long enough for a survivor to act on a failed desired-state read
     for w in WORKLOADS:
-        report_outage(w, t_kill, "leader loss")
+        report_outage(w, t_kill, "leader loss", survivor)
     print(f"leader now {leader(survivor)}")
 
 print("SUMMARY")
