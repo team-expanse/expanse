@@ -6,6 +6,19 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.9.2 - 2026-10-14
+
+### Fixed
+
+- A VIP failover now has traffic flowing again within 15 s. The new holder
+  took the VIP on time, but the load balancer still sent connections to the
+  frozen node's backend and waited 5 s for each to time out. The L4 and L7
+  load balancers now connect with a 2 s timeout and skip a backend for 10 s
+  after a failed connect, falling back to every backend if none are left.
+- A resource whose teardown failed is retried on the next reconcile instead
+  of being forgotten. A volume unmount that raced a stopping database
+  ("target is busy") left the volume mounted for good.
+
 ## 1.9.1 - 2026-10-12
 
 ### Security
