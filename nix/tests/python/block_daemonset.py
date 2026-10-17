@@ -25,7 +25,8 @@ with subtest("new node gets a replica automatically"):
     b = wait_placement_nodes(n1, "ds", 4, 60)
     nodes = placement_nodes(b)
     assert "n4" in nodes, f"daemonset never extended to n4: {b.get('status')}"
-    echo_responds(n4, 18086, "ds\n", node="localhost")
+    # Placement is recorded before n4's unit starts; give the echo server time to listen.
+    n4.wait_until_succeeds("curl -sf --max-time 3 http://localhost:18086/ | grep -qx ds", timeout=60)
 
 MACHINES = {"n1": n1, "n2": n2, "n3": n3, "n4": n4}
 
