@@ -13,6 +13,10 @@ History before 1.0.0 is not recorded here.
 - `vm/instance` accepts `config.cpuModel: host`, which passes the node's
   CPU through to the guest, including `vmx`/`svm`, so the guest can run KVM
   itself. Left unset, guests keep qemu's default CPU model.
+- A development guest for a `vm/instance` block: `nixosModules.dev-guest`,
+  `packages.dev-guest-image` and `lib.devGuestImage`, which builds the image
+  with your own keys and packages. It runs Expanse's VM tests under nested
+  KVM. See `docs/DEVELOPING.md`.
 
 ### Fixed
 

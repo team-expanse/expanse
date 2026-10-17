@@ -45,6 +45,10 @@
         packages.${if system == "x86_64-linux" then "pando-guest-image" else null} =
           import ./nix/guests/pando/image.nix { inherit nixpkgs system; };
 
+        # The dev guest image with no keys (docs/DEVELOPING.md builds one with yours via lib.devGuestImage).
+        packages.${if system == "x86_64-linux" then "dev-guest-image" else null} =
+          import ./nix/guests/dev/image.nix { inherit nixpkgs system; };
+
         devShells.default = pkgs.callPackage ./nix/devshell.nix { };
 
         # Heavy tests run only when asked, outside checks and the release gate: `nix build .#onRequest.<name>`
@@ -334,6 +338,8 @@
           net-multi-nic = mkTest "net-multi-nic" ./nix/tests/net-multi-nic.nix;
           # docs/PANDO.md: the Pando guest image on a vm/instance, across a crash of its node.
           pando-guest = mkTest "pando-guest" ./nix/tests/pando-guest.nix;
+          # Phase 13 C4: the dev guest image on a vm/instance with nested KVM, reached over SSH.
+          dev-guest = mkTest "dev-guest" ./nix/tests/dev-guest.nix;
 
           # Six nodes, two VM workloads serving from replicated disks: forming, failover and rejoin.
           cluster-vm-workloads = mkTest "cluster-vm-workloads" ./nix/tests/cluster-vm-workloads.nix;
@@ -412,6 +418,10 @@
     // {
       nixosModules.expanse = import ./nix/modules/expanse.nix;
       nixosModules.pando-guest = import ./nix/guests/pando/module.nix;
+      nixosModules.dev-guest = import ./nix/guests/dev/module.nix;
+      # A dev guest image with your own modules: `lib.devGuestImage { modules = [ ./dev.nix ]; }`
+      lib.devGuestImage = { system ? "x86_64-linux", modules ? [ ] }:
+        import ./nix/guests/dev/image.nix { inherit nixpkgs system modules; };
 
       # Reference node config for `nixos-install --flake <ref>#expanse-node`
       # (the unattended installer instead generates a standalone
