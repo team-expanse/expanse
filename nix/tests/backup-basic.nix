@@ -15,6 +15,7 @@
   name = "expanse-backup-basic";
 
   nodes.machine = { config, pkgs, ... }: {
+    environment.systemPackages = [ pkgs.restic ];
 
     services.garage = {
       enable = true;
