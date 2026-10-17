@@ -22,6 +22,11 @@
       "type": "string",
       "description": "Kernel command line, only used with bootKernel"
     },
+    "cpuModel": {
+      "type": "string",
+      "enum": ["host"],
+      "description": "CPU model the guest sees. host passes the node's CPU through, including vmx/svm, so the guest can run KVM itself (nested virtualization); the guest can then only restart on nodes with the same CPU features. Left unset, qemu's default model, with no virtualization extensions"
+    },
     "guestReady": {
       "type": "string",
       "enum": ["systemd", "none"],

@@ -329,6 +329,8 @@
 
           # Stream D: vertical slice -- X3/X4 proven together, one kill, black-box (no internal-state waits).
           vm-instance-vertical-slice = mkTest "vm-instance-vertical-slice" ./nix/tests/vm-instance-vertical-slice.nix;
+          # Phase 13 A3: cpuModel host gives a guest vmx and /dev/kvm (nested KVM).
+          vm-instance-host-cpu = mkTest "vm-instance-host-cpu" ./nix/tests/vm-instance-host-cpu.nix;
           # docs/PANDO.md: the Pando guest image on a vm/instance, across a crash of its node.
           pando-guest = mkTest "pando-guest" ./nix/tests/pando-guest.nix;
 

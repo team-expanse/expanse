@@ -6,6 +6,14 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- `vm/instance` accepts `config.cpuModel: host`, which passes the node's
+  CPU through to the guest, including `vmx`/`svm`, so the guest can run KVM
+  itself. Left unset, guests keep qemu's default CPU model.
+
 ## 1.9.2 - 2026-10-14
 
 ### Fixed

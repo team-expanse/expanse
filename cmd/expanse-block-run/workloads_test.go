@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -434,6 +435,29 @@ func TestVMMemMiBParsesAndFloors(t *testing.T) {
 		if got := vmMemMiB(args); got != want {
 			t.Errorf("vmMemMiB(--mem=%q) = %d, want %d", raw, got, want)
 		}
+	}
+}
+
+func TestVMCPUModelArgs(t *testing.T) {
+	cases := map[string][]string{
+		"":     nil, // unset: qemu's default model, no vmx in the guest
+		"host": {"-cpu", "host"},
+	}
+	for model, want := range cases {
+		cfg := map[string]any{}
+		if model != "" {
+			cfg["cpuModel"] = model
+		}
+		got, err := vmCPUModelArgs(cfg)
+		if err != nil {
+			t.Fatalf("vmCPUModelArgs(%q): %v", model, err)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("vmCPUModelArgs(%q) = %q, want %q", model, got, want)
+		}
+	}
+	if _, err := vmCPUModelArgs(map[string]any{"cpuModel": "max"}); err == nil {
+		t.Error("vmCPUModelArgs(max): want an error, got nil")
 	}
 }
 

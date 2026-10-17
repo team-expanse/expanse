@@ -111,6 +111,18 @@ once and the guest carries on booting.
 A guest without systemd never reports. Set `config.guestReady: none` for it, and the VM counts as
 ready as soon as `qemu-kvm` starts, as it did before.
 
+### Nested virtualization
+
+By default the guest sees qemu's default CPU model, with no virtualization extensions, so it cannot
+run KVM itself. Set `config.cpuModel: host` to pass the node's CPU through, including `vmx`/`svm`;
+the guest then gets a working `/dev/kvm` and can run its own VMs, such as this project's VM tests.
+The host's `kvm_intel` (or `kvm_amd`) module must allow nesting (`nested=Y`, the kernel default).
+
+A host-CPU guest is tied to the CPU features of the node it boots on. It restarts cleanly on a node
+with the same CPU, but on an older one it may see features disappear. Keep a cluster's nodes on the
+same CPU generation if its VMs use `cpuModel: host`. `host` is the only value accepted; anything else
+is refused at apply time. `nix/tests/vm-instance-host-cpu.nix` checks both models.
+
 ## 4. Failover, from the guest's perspective
 
 When the node running the VM is hard-killed, the disk's own DRBD promotion (already proven,

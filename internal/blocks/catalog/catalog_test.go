@@ -541,6 +541,22 @@ func TestVMInstanceGuestReadyConfig(t *testing.T) {
 	}
 }
 
+// vm/instance accepts cpuModel host, and rejects any other model at apply time.
+func TestVMInstanceCPUModelConfig(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	cfg, _ := structpb.NewStruct(map[string]any{"cpuModel": "host"})
+	if errs := c.ValidateConfig("vm/instance", cfg); len(errs) != 0 {
+		t.Errorf("cpuModel host rejected: %v", errs)
+	}
+	cfg, _ = structpb.NewStruct(map[string]any{"cpuModel": "max"})
+	if errs := c.ValidateConfig("vm/instance", cfg); len(errs) != 1 || !strings.HasPrefix(errs[0], "/cpuModel:") {
+		t.Errorf("cpuModel \"max\" errors = %v, want one naming /cpuModel", errs)
+	}
+}
+
 func TestShippedMonitoringBlocksValidate(t *testing.T) {
 	c, err := Load("../../../nix/blocks")
 	if err != nil {

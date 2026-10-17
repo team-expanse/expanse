@@ -1274,6 +1274,11 @@ func runVM(ctx context.Context, instance string, args []string) error {
 		return fmt.Errorf("vm/instance: guestReady %q: want systemd or none", mode)
 	}
 
+	cpuArgs, err := vmCPUModelArgs(cfg)
+	if err != nil {
+		return err
+	}
+
 	tapName := macvtapIfaceName(instance)
 	tap, err := createMacvtap(uplink, tapName, mac)
 	if err != nil {
@@ -1302,6 +1307,7 @@ func runVM(ctx context.Context, instance string, args []string) error {
 		"-serial", "stdio",
 		"-qmp", "unix:" + qmpSock + ",server,nowait",
 	}
+	qemuArgv = append(qemuArgv, cpuArgs...)
 	// D4: getting a first bootable guest OS onto an empty raw volume is
 	// documented, not built, this phase. Left unset (the production
 	// default), the VMM boots from the attached disk the ordinary BIOS
@@ -1496,6 +1502,18 @@ func vmArg(args []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+// vmCPUModelArgs maps cpuModel to qemu's -cpu flag; host passes vmx through for nested KVM.
+func vmCPUModelArgs(cfg map[string]any) ([]string, error) {
+	switch model := cfgStr(cfg, "cpuModel"); model {
+	case "":
+		return nil, nil
+	case "host":
+		return []string{"-cpu", "host"}, nil
+	default:
+		return nil, fmt.Errorf("vm/instance: cpuModel %q: want host or unset", model)
+	}
 }
 
 // vmCPUs resolves the guest's vCPU count from the --cpu arg
