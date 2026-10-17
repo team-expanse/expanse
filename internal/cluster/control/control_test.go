@@ -18,6 +18,7 @@ import (
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	"github.com/expanse/expanse/internal/version"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -227,6 +228,10 @@ func TestInitTokenJoinStatus(t *testing.T) {
 	out := control.Render(rep)
 	if want := "nodes:     3"; !strings.Contains(out, want) {
 		t.Errorf("render missing %q:\n%s", want, out)
+	}
+	// The release that formed the cluster, not a fixed placeholder.
+	if want := "formed with: " + version.Get().Version + "\n"; rep.Version != version.Get().Version || !strings.Contains(out, want) {
+		t.Errorf("version %q; render missing %q:\n%s", rep.Version, want, out)
 	}
 	_ = pb.JoinPeer{} // peers surface in EnrollResult
 }

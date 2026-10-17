@@ -54,7 +54,7 @@ let
     expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
     environment.etc."expanse/blocks-flake".source = ../blocks-flake;
     expanse.agent.externalInterface = "eth1";
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.qemu_kvm ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     boot.kernelModules = [ "kvm" ];
     virtualisation.cores = 2;
     virtualisation.memorySize = 4608;

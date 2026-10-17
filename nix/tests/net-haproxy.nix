@@ -16,6 +16,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "net/haproxy" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -36,8 +37,7 @@ let
     # The NixOS firewall is on; the agent's own nftables ruleset is opt-in.
     # The VIP splices to replicas on other nodes at their target ports.
     networking.firewall.allowedTCPPorts = [ 80 81 18080 18081 18404 ];
-    # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.haproxy ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

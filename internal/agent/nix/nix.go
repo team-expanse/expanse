@@ -121,7 +121,23 @@ func (d *ExecDriver) Build(ctx context.Context, flakeRef, attr string, logs io.W
 	if attr != "" {
 		ref = flakeRef + "#" + attr
 	}
-	cmd := d.nixCmd(ctx, "build", ref, "--print-build-logs", "--print-out-paths", "--no-link")
+	return d.build(ctx, logs, ref)
+}
+
+// BuildFile builds attr of the Nix expression in file (nix build -f), like Build.
+func (d *ExecDriver) BuildFile(ctx context.Context, file, attr string, logs io.Writer) (StorePath, error) {
+	if d.BuildTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d.BuildTimeout)
+		defer cancel()
+	}
+	return d.build(ctx, logs, "-f", file, attr)
+}
+
+// build runs nix build on the installable args, streaming its log, and returns the out path.
+func (d *ExecDriver) build(ctx context.Context, logs io.Writer, installable ...string) (StorePath, error) {
+	args := append(append([]string{"build"}, installable...), "--print-build-logs", "--print-out-paths", "--no-link")
+	cmd := d.nixCmd(ctx, args...)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return "", fmt.Errorf("build pipe: %w", err)

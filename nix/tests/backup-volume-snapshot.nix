@@ -39,7 +39,6 @@ in
   nodes = {
     n1 = { pkgs, ... }: {
       imports = [ (nodeCommon 1) ];
-      environment.systemPackages = [ pkgs.restic ];
       services.garage = {
         enable = true;
         package = pkgs.garage;

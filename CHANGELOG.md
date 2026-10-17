@@ -6,6 +6,35 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- Installed nodes could not run any block type that execs an upstream
+  program (every type except `util/echo`, `web/whoami` and
+  `web/static-site`): nothing installed the programs, and the VM tests
+  installed them by hand. `vm/instance`'s qemu (a headless build) now ships
+  with every node; any other type's programs are fetched from the NixOS
+  binary cache the first time a block of that type is placed on a node.
+  See "Where a block's programs come from" in `docs/BLOCKS.md`.
+- `nixos-rebuild` failed on every installed node: `configuration.nix`
+  imported the installer's own copy of the source, which is gone after the
+  first reboot. The installer now copies the source to
+  `/etc/nixos/expanse` and imports it from there. See "Changing the node and
+  upgrading it" in `docs/INSTALL.md`, which also covers fixing a 1.10.0 node.
+- The node's DHCP client took a lease on each VM's macvtap link, which
+  carries the guest's MAC, so the node claimed the guest's address and
+  answered ARP and SSH for it. dhcpcd now ignores `mv*` links.
+- Enabling storage with `nixos-rebuild switch` now loads `dm_thin_pool`, so
+  the thin pool can be created straight away. Volumes need a reboot after
+  enabling storage, because a switch loads the kernel's in-tree DRBD 8.4;
+  until then `expansed` refuses to create volumes and says to reboot, where
+  it used to write resources `drbdadm` could not parse.
+- `restic` is installed on every node: `docs/BACKUP.md` backs up with it,
+  and `expanse cluster restore` runs it.
+- `expanse cluster status` showed `version: 0.1.0` on every cluster. It now
+  shows `formed with:` and the release that formed the cluster.
+
 ## 1.10.0 - 2026-10-16
 
 ### Added

@@ -15,14 +15,11 @@ let
     touch $out
   '';
   nodeCommon = idx: {
-    imports = [ self.nixosModules.expanse ];
+    imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "web/nginx" ]) ];
     nixpkgs.overlays = [
       (final: prev: { expanse = self.packages.${prev.system}.expanse; })
     ];
-    # nginx: the blocks-flake's web/nginx stub execs the bare "nginx"
-    # command expecting it on PATH (net-vip-basic.nix's own nginx
-    # deploy relies on the identical workaround).
-    environment.systemPackages = with pkgs; [ curl jq nginx ];
+    environment.systemPackages = with pkgs; [ curl jq ];
     expanse.node.enable = true;
     expanse.agent.enable = true;
     expanse.hostId = "0000000${toString idx}";

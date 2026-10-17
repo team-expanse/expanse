@@ -16,6 +16,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "security/vaultwarden" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -35,8 +36,7 @@ let
     expanse.agent.externalInterface = "eth1";
     # The NixOS firewall is on; the agent's own nftables ruleset is opt-in.
     networking.firewall.allowedTCPPorts = [ 80 ];
-    # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.vaultwarden pkgs.vaultwarden.webvault ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

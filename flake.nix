@@ -336,6 +336,7 @@
           # Phase 13 A3: cpuModel host gives a guest vmx and /dev/kvm (nested KVM).
           vm-instance-host-cpu = mkTest "vm-instance-host-cpu" ./nix/tests/vm-instance-host-cpu.nix;
           net-multi-nic = mkTest "net-multi-nic" ./nix/tests/net-multi-nic.nix;
+          net-macvtap-dhcp = mkTest "net-macvtap-dhcp" ./nix/tests/net-macvtap-dhcp.nix;
           # docs/PANDO.md: the Pando guest image on a vm/instance, across a crash of its node.
           pando-guest = mkTest "pando-guest" ./nix/tests/pando-guest.nix;
           # Phase 13 C4: the dev guest image on a vm/instance with nested KVM, reached over SSH.
@@ -411,6 +412,7 @@
 
           # Phase 12 C1: a one-node cluster -- default volume 1/3, block storage, a VIP, reboot.
           cluster-single-node = mkTest "cluster-single-node" ./nix/tests/cluster-single-node.nix;
+          storage-enable-switch = mkTest "storage-enable-switch" ./nix/tests/storage-enable-switch.nix;
           # Phase 12 B3: 1 -> 3 growth under acked writes, zero loss, DRBD quorum on at 3.
           cluster-single-node-grow = mkTest "cluster-single-node-grow" ./nix/tests/cluster-single-node-grow.nix;
         };

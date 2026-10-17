@@ -18,6 +18,7 @@ let
     imports = [
       self.nixosModules.expanse
       ../modules/storage-test.nix
+      (import ./lib/block-runtimes.nix [ "db/mariadb" ])
     ];
     nixpkgs.overlays = [
       (final: prev: { expanse = self.packages.${prev.system}.expanse; })
@@ -36,8 +37,7 @@ let
     expanse.agent.externalInterface = "eth1";
     # The NixOS firewall is on; the agent's own nftables ruleset is opt-in.
     networking.firewall.allowedTCPPorts = [ 3306 ];
-    # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.mariadb ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

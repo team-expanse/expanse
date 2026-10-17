@@ -77,13 +77,21 @@ func TestStageConfigWritesToPersistWithHardwareConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(mnt, "persist/etc/nixos")
-	want := "nixos-generate-config --root " + mnt + " --no-filesystems --dir " + dir
-	if len(ran) != 1 || ran[0] != want {
-		t.Fatalf("ran %q, want [%q]", ran, want)
+	want := []string{
+		// The node's own copy of the source: the ISO's /flake is gone after the first reboot.
+		// -H: the ISO's flake path is a symlink into the store; copy the tree, not the link.
+		"cp -rHT --no-preserve=mode,ownership /flake " + filepath.Join(dir, "expanse"),
+		"nixos-generate-config --root " + mnt + " --no-filesystems --dir " + dir,
+	}
+	if strings.Join(ran, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("ran %q, want %q", ran, want)
 	}
 	conf, err := os.ReadFile(filepath.Join(dir, "configuration.nix"))
 	if err != nil || !strings.Contains(string(conf), "./hardware-configuration.nix") {
 		t.Fatalf("configuration.nix (err %v) does not import the hardware config:\n%s", err, conf)
+	}
+	if strings.Contains(string(conf), "/flake") || !strings.Contains(string(conf), "./expanse/nix/modules/expanse-node.nix") {
+		t.Fatalf("configuration.nix must import the node's copy, not the ISO's source:\n%s", conf)
 	}
 }
 

@@ -22,6 +22,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "iscsi/target" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -41,7 +42,7 @@ let
     expanse.agent.externalInterface = "eth1";
     networking.firewall.allowedTCPPorts = [ 3260 ];
     boot.kernelModules = [ "configfs" "target_core_mod" "iscsi_target_mod" ];
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.targetcli-fb ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

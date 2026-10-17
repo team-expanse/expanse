@@ -65,6 +65,8 @@
       vim
       curl
       htop
+      # docs/BACKUP.md backs dataDir up with restic, and `expanse cluster restore` execs it.
+      restic
       expanse
     ];
 

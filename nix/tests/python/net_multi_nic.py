@@ -91,4 +91,14 @@ with subtest("a VM block's macvtap sits on eno3 and its guest gets the reserved 
     router.wait_until_succeeds(f"grep -i {GUEST_MAC} /var/lib/dnsmasq/dnsmasq.leases", timeout=300)
     router.wait_until_succeeds(f"ping -c1 -W2 {GUEST_IP}", timeout=120)
 
+with subtest("the node's DHCP client leaves the guest's macvtap alone"):
+    # Each check spans dhcpcd's solicit window: on 1.10.0 it leased the guest's reservation to the node.
+    for _ in range(10):
+        mv = n1.succeed("ip -4 -o addr show type macvtap")
+        assert "inet " not in mv, f"the node holds an address on the guest's macvtap:\n{mv}"
+        time.sleep(3)
+    router.succeed(f"ip neigh flush to {GUEST_IP}; ping -c1 -W2 {GUEST_IP}")
+    neigh = router.succeed(f"ip neigh show to {GUEST_IP}")
+    assert GUEST_MAC in neigh.lower(), f"{GUEST_IP} answered by another MAC: {neigh}"
+
 print("NET-MULTI-NIC DONE")

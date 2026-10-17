@@ -95,7 +95,7 @@ let
     # directly-connected subnet route) -- every VIP-using block test
     # already sets this for the identical reason.
     expanse.agent.externalInterface = "eth1";
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.qemu_kvm ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     boot.kernelModules = [ "kvm" ];
     # D1's own measured finding (vm-d1-boot-probe.nix): the netboot
     # initramfs's embedded squashfs (~613 MiB) needs the guest's own -m

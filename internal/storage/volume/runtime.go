@@ -61,7 +61,10 @@ type Runtime struct {
 	Diverged func(name string) (bool, error)
 	// Copy overwrites dst with the first n bytes of src; nil means copyDevice.
 	Copy func(ctx context.Context, src, dst string, n uint64) error
-	mu   sync.Mutex
+	// CheckKernel refuses a kernel that cannot run volumes (DRBD older than 9) before a pass
+	// creates or writes anything; nil skips it.
+	CheckKernel func() error
+	mu          sync.Mutex
 }
 
 func (r *Runtime) configPath(name string) string { return filepath.Join(r.ConfigDir, name+".res") }
@@ -75,6 +78,11 @@ func backingSize(size uint64) uint64 {
 func (r *Runtime) Reconcile(ctx context.Context, d Desired) (Result, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.CheckKernel != nil {
+		if err := r.CheckKernel(); err != nil {
+			return Result{}, err
+		}
+	}
 	p := &pass{Runtime: r, d: d}
 	if err := p.prepare(); err != nil {
 		return Result{}, err

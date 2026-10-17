@@ -20,6 +20,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "media/immich" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -41,14 +42,7 @@ let
     expanse.agent.externalInterface = "eth1";
     # The NixOS firewall is on; the agent's own nftables ruleset is opt-in.
     networking.firewall.allowedTCPPorts = [ 80 ];
-    # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = [
-      pkgs.curl
-      pkgs.jq
-      (pkgs.postgresql_18.withPackages (ps: [ ps.pgvector ps.vectorchord ]))
-      pkgs.redis
-      pkgs.immich
-    ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 3072;
   };
 in

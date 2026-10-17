@@ -57,6 +57,15 @@ in
         node (API-only member).'';
     };
 
+    blockRuntimes = lib.mkOption {
+      type = lib.types.attrsOf lib.types.package;
+      default = import ../block-runtimes.nix { inherit pkgs; };
+      defaultText = lib.literalExpression "import ./nix/block-runtimes.nix { inherit pkgs; }";
+      description = ''Runtime environment per block type. vm/instance's is built into the node; the agent
+        builds any other when its type is first placed here (from the node's nixpkgs, so the binary cache
+        serves it).'';
+    };
+
     externalVIPPool = lib.mkOption {
       type = lib.types.str;
       default = "";
@@ -125,7 +134,8 @@ in
     # keep winning without a definition conflict.
     boot.extraModulePackages = lib.optional (cfg.storageVG != "") config.boot.kernelPackages.drbd;
     # vhost_vsock: vm/instance guests report their boot to expanse-block-run over vsock.
-    boot.kernelModules = lib.optional (cfg.storageVG != "") "drbd" ++ [ "vhost_vsock" ];
+    # dm_thin_pool: listed so a switch that enables storage loads it, not only the next boot's initrd.
+    boot.kernelModules = lib.optionals (cfg.storageVG != "") [ "drbd" "dm_thin_pool" ] ++ [ "vhost_vsock" ];
     services.drbd = lib.mkIf (cfg.storageVG != "") {
       enable = lib.mkDefault true;
       config = lib.mkDefault ''
@@ -137,6 +147,15 @@ in
     systemd.services.drbd.wantedBy = lib.mkIf (cfg.storageVG != "") (lib.mkForce [ ]);
     services.lvm.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
     services.lvm.boot.thin.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
+
+    # Out paths without their closures (all types: 5 GiB); the agent builds a missing one from the .nix.
+    environment.etc."expanse/block-runtimes.json".text = builtins.toJSON
+      (lib.mapAttrs (_: env: builtins.unsafeDiscardStringContext env.outPath) cfg.blockRuntimes);
+    environment.etc."expanse/block-runtimes.nix".text =
+      let src = lib.fileset.toSource { root = ../.; fileset = lib.fileset.unions [ ../block-runtimes.nix ../grafana-plugins.nix ]; };
+      in "import ${src}/block-runtimes.nix { pkgs = import <nixpkgs> { }; }\n";
+    # VMs start offline: qemu ships with the node (and in the installer ISO).
+    system.extraDependencies = lib.optional (cfg.blockRuntimes ? "vm/instance") cfg.blockRuntimes."vm/instance";
 
     # Both block unit templates' ReadWritePaths=/var/lib/expanse/volumes
     # (below) must already exist on the host or systemd's own namespace
@@ -313,6 +332,8 @@ in
       # manager to util-linux, e2fsprogs and cmp; pgha's promotion seam (Stream B,
       # X2) shells out to psql over a db/postgres replica's own local unix socket --
       # the unit's own PATH is otherwise minimal. The clock-sync health check runs chronyc.
+      # <nixpkgs> for building block runtimes: the nixpkgs the node itself is built from.
+      environment.NIX_PATH = lib.concatStringsSep ":" config.nix.nixPath;
       path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils postgresql_18 ]
         ++ lib.optional config.services.chrony.enable config.services.chrony.package;
       serviceConfig = {

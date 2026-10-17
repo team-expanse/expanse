@@ -141,6 +141,12 @@ type Builder interface {
 	Build(ctx context.Context, blockType string) (nix.StorePath, error)
 }
 
+// Keyer is a Builder whose output for a type can change without the spec changing (a runtime
+// derivation that a node upgrade replaces); the key joins the cache hash.
+type Keyer interface {
+	Key(blockType string) string
+}
+
 // Applier applies a replica's desired state: build the closure when the
 // hash misses (and remember it), short-circuit when it hits. It returns
 // whether a build happened so callers can decide about switching.
@@ -160,6 +166,9 @@ type ApplyResult struct {
 // Apply resolves the closure for a replica spec.
 func (a *Applier) Apply(ctx context.Context, s Spec) (ApplyResult, error) {
 	hash := ClosureHash(s)
+	if k, ok := a.Builder.(Keyer); ok {
+		hash += ":" + k.Key(s.Type)
+	}
 	if p, ok := a.Cache.Get(hash); ok {
 		return ApplyResult{StorePath: p, Built: false}, nil
 	}

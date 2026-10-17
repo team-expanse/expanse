@@ -14,6 +14,7 @@ import (
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	"github.com/expanse/expanse/internal/version"
 	"github.com/google/uuid"
 )
 
@@ -25,7 +26,7 @@ type InitOptions struct {
 	AdvertiseAddr string // raft advertise addr host:port, e.g. "10.0.0.1:7444"
 	BindAddr      string // raft bind addr, defaults to AdvertiseAddr or 0.0.0.0:7444
 	Expect        int    // expected cluster size (informational)
-	Version       string // stamped into meta, default DefaultVersion
+	Version       string // the release that formed the cluster, stamped into meta; default this build's
 	JoinHost      string // host advertised in the printed join command, default advertise host
 	JoinPort      int    // join endpoint port, default config.PortJoin (7446)
 }
@@ -58,7 +59,7 @@ func Init(ctx context.Context, opts InitOptions) (*InitResult, error) {
 		opts.DataDir = "/persist/expanse"
 	}
 	if opts.Version == "" {
-		opts.Version = DefaultVersion
+		opts.Version = version.Get().Version
 	}
 	// 1. Assert not already in a cluster.
 	if IsClusterNode(opts.DataDir) {

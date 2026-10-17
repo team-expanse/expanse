@@ -40,6 +40,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/logs"
 	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
+	"github.com/expanse/expanse/internal/blocks/runtimepath"
 	"github.com/expanse/expanse/internal/blocks/service"
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/blocks/wire"
@@ -99,6 +100,9 @@ type Config struct {
 	// (attr per type: <category>-<name>, e.g. "util-echo"). Empty =
 	// block replicas are not realized on this node (API-only member).
 	BlocksFlakeRef string
+	// BlockRuntimes is a JSON map of block type -> runtime out path; missing ones are built from
+	// the .nix beside it on first placement.
+	BlockRuntimes string
 	// ExternalVIPPool is the cluster.network.externalVIPPool value
 	// (§4.2): e.g. "192.168.1.100-192.168.1.120". Empty = no external
 	// VIPs; VIP-exposed blocks allocate from the internal range.
@@ -427,12 +431,19 @@ func New(cfg Config) (*Agent, error) {
 					if err != nil {
 						logger.Warn("closure cache unavailable; block replicas disabled", "err", err)
 					} else {
+						outs, err := loadRuntimes(cfg.BlockRuntimes)
+						if err != nil {
+							logger.Warn("block runtimes unreadable; types fall back to the flake", "err", err)
+						}
 						a.replicaUnits = api
 						r.Register(systemd.NewManager(api, &systemd.Applier{
-							Cache:   cache,
-							Builder: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef, logger: logger},
+							Cache: cache,
+							Builder: &runtimeBuilder{
+								outs: outs, expr: strings.TrimSuffix(cfg.BlockRuntimes, ".json") + ".nix", nix: nixDriver, dir: runtimepath.Dir, logger: logger,
+								fallback: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef, logger: logger},
+							},
 						}))
-						logger.Info("block replica runtime enabled", "flake", cfg.BlocksFlakeRef)
+						logger.Info("block replica runtime enabled", "flake", cfg.BlocksFlakeRef, "runtimes", len(outs))
 					}
 				}
 			}

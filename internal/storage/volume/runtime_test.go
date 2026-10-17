@@ -261,6 +261,23 @@ func TestReconcileTakesNothingToADefinedSecondary(t *testing.T) {
 	}
 }
 
+// A kernel that cannot run the volume (DRBD 8.4 after enabling storage without a reboot) stops the
+// pass before anything is created or written.
+func TestKernelCheckFailureTouchesNothing(t *testing.T) {
+	r := newRig(t)
+	r.rt.CheckKernel = func() error { return errors.New("DRBD 8.4.11 is loaded; reboot") }
+	res, err := r.rt.Reconcile(context.Background(), desired())
+	if err == nil || !strings.Contains(err.Error(), "reboot") {
+		t.Fatalf("Reconcile err = %v, want the kernel check's", err)
+	}
+	if len(res.Actions) != 0 || len(r.j.calls) != 0 {
+		t.Errorf("actions %v, calls %v; want none", res.Actions, r.j.calls)
+	}
+	if _, err := os.Stat(filepath.Join(r.dir, "vol-a1.res")); !os.IsNotExist(err) {
+		t.Errorf("config written despite the failed check: %v", err)
+	}
+}
+
 func TestReconcileNeverPromotes(t *testing.T) {
 	r := newRig(t)
 	reconcile(t, r, desired())

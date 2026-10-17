@@ -147,7 +147,7 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 func Render(r *Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "cluster:   %s (%s)\n", r.Name, r.ClusterID)
-	fmt.Fprintf(&b, "version:   %s\n", r.Version)
+	fmt.Fprintf(&b, "formed with: %s\n", r.Version)
 	fmt.Fprintf(&b, "generation: %d\n", r.Generation)
 	fmt.Fprintf(&b, "leader:    %s\n", orNone(r.Leader))
 	fmt.Fprintf(&b, "quorum:    %d/%d%s\n", r.QuorumHave, r.QuorumNeed, degradedIf(r.Degraded))

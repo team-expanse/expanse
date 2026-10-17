@@ -90,6 +90,11 @@ in
         conf = machine.succeed("cat /mnt/persist/etc/nixos/configuration.nix")
         assert "expanse-node.nix" in conf, conf
         assert "expanse.hostId" in conf, conf
+        # The node rebuilds from its own copy: the ISO's source is gone after the reboot.
+        assert "/etc/expanse/flake" not in conf and "./expanse/nix/modules/expanse-node.nix" in conf, conf
+        machine.succeed("test -f /mnt/persist/etc/nixos/expanse/nix/modules/expanse-node.nix")
+        # A real tree: --target-flake is a symlink into the installer's store.
+        machine.succeed("test -d /mnt/persist/etc/nixos/expanse -a ! -L /mnt/persist/etc/nixos/expanse")
 
     with subtest("footprint within 6G budget"):
         usage = machine.succeed("btrfs filesystem usage -b /mnt")

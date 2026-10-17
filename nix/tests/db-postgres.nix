@@ -27,6 +27,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "db/postgres" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -49,7 +50,7 @@ let
     # postgres/initdb/pg_ctl/pg_basebackup/psql on PATH — the same
     # "upstream binary shipped in the deployment image, exec'd from
     # PATH" convention share-smb.nix's samba package already uses.
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.postgresql_18 ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     # PORT (the VIP-exposed, client-facing port) and PG_PORT (postgres's
     # own internal listen port, used directly node-to-node for
     # streaming replication/pg_basebackup, bypassing the VIP/LB

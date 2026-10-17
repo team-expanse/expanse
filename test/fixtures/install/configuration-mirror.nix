@@ -3,9 +3,9 @@
   # Partitioning was done by disko at install time; the same layout declares the mounts.
   imports = [
     ./hardware-configuration.nix
-    @flake@/nix/modules/expanse-node.nix
-    (import @flake@/nix/modules/disk-layout.nix {
-      layout = @flake@/nix/installer/disko/mirror.nix;
+    ./expanse/nix/modules/expanse-node.nix
+    (import ./expanse/nix/modules/disk-layout.nix {
+      layout = ./expanse/nix/installer/disko/mirror.nix;
       disks = [ "/dev/vda" "/dev/vdb" ];
     })
   ];

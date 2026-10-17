@@ -35,14 +35,20 @@ expanse.agent.storageVG = "expanse";
 expanse.agent.storagePool = "pool";   # empty = thick volumes, no snapshots
 ```
 
-then rebuild. This wires `boot.extraModulePackages`/`boot.kernelModules` for the DRBD kernel
-module, enables `services.lvm.boot.thin.enable`, and passes `--storage-vg`/`--storage-pool`
-through to `expansed`. It does **not** create the thin pool itself — that is a one-time,
-per-node step because its size is a capacity decision, not something to infer:
+then `nixos-rebuild switch` and **reboot**. This wires the out-of-tree DRBD 9 kernel module, loads
+`dm_thin_pool`, enables `services.lvm.boot.thin.enable`, and passes `--storage-vg`/`--storage-pool`
+through to `expansed`. The reboot is required: a switch can only load the kernel's in-tree DRBD 8.4,
+which cannot read the resources volumes use. Until the node reboots, `expansed` refuses to create
+volumes and logs "volumes need DRBD 9; reboot the node" (check with `head -1 /proc/drbd`).
+
+The rebuild does **not** create the thin pool itself — that is a one-time, per-node step because its
+size is a capacity decision, not something to infer. It works before or after the reboot:
 
 ```sh
 lvcreate --type thin-pool -l 95%FREE -n pool expanse   # leave headroom; see §3
 ```
+
+On a 1.10.0 node, which did not load `dm_thin_pool` on switch, run `modprobe dm_thin_pool` first.
 
 `expansed` then creates, resizes and deletes DRBD-backed thin LVs from that pool as
 `expanse ctl volume` requests arrive; nothing about volume creation is manual after this point.

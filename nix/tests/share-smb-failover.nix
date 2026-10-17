@@ -24,6 +24,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "share/smb" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -45,7 +46,7 @@ let
     expanse.agent.externalVIPPool = "${builtins.elemAt vipPool 0}-${builtins.elemAt vipPool 1}";
     expanse.agent.externalInterface = "eth1";
     networking.firewall.allowedTCPPorts = [ 445 ];
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.samba ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

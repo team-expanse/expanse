@@ -27,6 +27,7 @@ func newAgentCmd() *cobra.Command {
 		raftAdv          string
 		blockCat         string
 		blockFlake       string
+		blockRuntimes    string
 		extPool          string
 		extIface         string
 		dnsUp            string
@@ -58,6 +59,7 @@ func newAgentCmd() *cobra.Command {
 				RaftAdvertiseAddr: raftAdv,
 				BlocksCatalog:     blockCat,
 				BlocksFlakeRef:    blockFlake,
+				BlockRuntimes:     blockRuntimes,
 				ExternalVIPPool:   extPool,
 				ExternalInterface: extIface,
 				DNSUpstreams:      dnsUp,
@@ -127,6 +129,7 @@ func newAgentCmd() *cobra.Command {
 		"apply the §4.5 nftables ruleset (static skeleton + store-driven dynamic sets)")
 	cmd.Flags().StringVar(&raftAdv, "raft-advertise", "", "raft transport advertised addr (default: the bind host or local IP, port 7444)")
 	cmd.Flags().StringVar(&blockCat, "blocks-catalog", "", "shipped block-type directory (nix/blocks layout); empty = block API disabled")
+	cmd.Flags().StringVar(&blockRuntimes, "block-runtimes", "/etc/expanse/block-runtimes.json", "JSON map of block type to runtime store path; a missing runtime is built from the .nix beside it on first placement")
 	cmd.Flags().StringVar(&blockFlake, "blocks-flake-ref", "", "flake ref holding block closures (attr per type: <category>-<name>); empty = replicas not realized on this node")
 	cmd.Flags().StringVar(&pprofAddr, "pprof-addr", "", "serve net/http/pprof on this addr (e.g. 127.0.0.1:6060); empty = disabled (debug only, no auth)")
 	return cmd

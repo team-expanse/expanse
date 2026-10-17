@@ -27,6 +27,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "db/postgres" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -47,7 +48,7 @@ let
     environment.etc."expanse/blocks-flake".source = ../blocks-flake;
     expanse.agent.externalVIPPool = "${builtins.elemAt vipPool 0}-${builtins.elemAt vipPool 1}";
     expanse.agent.externalInterface = "eth1";
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.postgresql_18 ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     networking.firewall.allowedTCPPorts = [ 5432 55432 ];
     virtualisation.memorySize = 2048;
   };

@@ -33,7 +33,6 @@ let
     expanse.hostname = "n${toString idx}";
     expanse.storage-test.enable = true;
     expanse.agent.raftAdvertise = "192.168.1.${toString idx}:7444";
-    environment.systemPackages = [ pkgs.restic ];
     virtualisation.memorySize = 2048;
   };
 in

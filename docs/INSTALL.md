@@ -132,6 +132,41 @@ expanse cluster status     # quorum: 1/1
 Volumes and blocks then run there. Everything on a single node has **no redundancy** until more nodes
 join (`docs/CLUSTERING.md`, `docs/STORAGE.md` §8).
 
+## 5. Changing the node and upgrading it
+
+`/etc/nixos` is the node's configuration and survives reboots (it lives in `/persist/etc/nixos`; the
+rest of `/` is wiped on every boot). It holds the generated `configuration.nix`, the
+`hardware-configuration.nix` for this machine, and `expanse/`: a copy of the release's source that
+`configuration.nix` imports. Edit `configuration.nix` (for example the storage options in
+`docs/STORAGE.md` §2), then:
+
+```sh
+nixos-rebuild switch
+```
+
+The node builds from its own copy, so this works offline. It uses the nixpkgs the node was installed
+with (its `nixos` channel).
+
+**Upgrading** replaces that copy with the new release's source and rebuilds, which needs network:
+
+```sh
+cd /etc/nixos
+curl -fsSL https://github.com/team-expanse/expanse/archive/refs/tags/v1.10.1.tar.gz | tar xz
+mv expanse expanse.prev && mv expanse-1.10.1 expanse
+nixos-rebuild switch          # roll back: swap the directories and switch again
+```
+
+Upgrade a multi-node cluster one node at a time, draining each first (`docs/UPGRADE.md`).
+
+**From 1.10.0:** its `configuration.nix` imports `/etc/expanse/flake/...`, which only exists on the
+installer, so `nixos-rebuild` fails. Fetch the source as above, then point the imports at it:
+
+```sh
+cd /etc/nixos
+sed -i 's|/etc/expanse/flake/|./expanse/|g' configuration.nix
+nixos-rebuild switch
+```
+
 ## Re-installing / recovery
 
 Boot the installer USB again and re-run. The installer is idempotent:

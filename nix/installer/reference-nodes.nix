@@ -4,8 +4,8 @@ let
   node = layout: import "${nixpkgs}/nixos" {
     inherit system;
     configuration = builtins.toFile "configuration-${layout}.nix" (builtins.replaceStrings
-      [ "@flake@" "@rev@" "./hardware-configuration.nix" ]
-      [ "${self}" (self.rev or self.dirtyRev or "dirty") "${hardware}" ]
+      [ "./expanse/" "@rev@" "./hardware-configuration.nix" ]
+      [ "${self}/" (self.rev or self.dirtyRev or "dirty") "${hardware}" ]
       (builtins.readFile ../../test/fixtures/install/configuration-${layout}.nix));
   };
 in

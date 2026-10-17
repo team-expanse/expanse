@@ -15,7 +15,7 @@ in
 
   nodes = {
     n1 = { ... }: {
-      imports = [ self.nixosModules.expanse ];
+      imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "web/nginx" "monitor/node-exporter" "db/redis" "ai/ollama" ]) ];
       nixpkgs.overlays = [
         (final: prev: { expanse = self.packages.${prev.system}.expanse; })
       ];
@@ -24,7 +24,7 @@ in
       expanse.hostId = "00000001";
       expanse.hostname = "n1";
       environment.systemPackages = with pkgs; [
-        openssl curl jq redis nginx ollama prometheus-node-exporter
+        openssl curl jq
       ];
       virtualisation.memorySize = 4096;
       virtualisation.diskSize = 8192;
@@ -36,7 +36,7 @@ in
       networking.firewall.allowedTCPPortRanges = [ { from = 18000; to = 18999; } ];
     };
     n2 = { ... }: {
-      imports = [ self.nixosModules.expanse ];
+      imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "web/nginx" "monitor/node-exporter" "db/redis" "ai/ollama" ]) ];
       nixpkgs.overlays = [
         (final: prev: { expanse = self.packages.${prev.system}.expanse; })
       ];
@@ -45,7 +45,7 @@ in
       expanse.hostId = "00000002";
       expanse.hostname = "n2";
       environment.systemPackages = with pkgs; [
-        openssl curl nginx ollama prometheus-node-exporter
+        openssl curl
       ];
       virtualisation.memorySize = 4096;
       virtualisation.diskSize = 8192;
@@ -57,7 +57,7 @@ in
       networking.firewall.allowedTCPPortRanges = [ { from = 18000; to = 18999; } ];
     };
     n3 = { ... }: {
-      imports = [ self.nixosModules.expanse ];
+      imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "web/nginx" "monitor/node-exporter" "db/redis" "ai/ollama" ]) ];
       nixpkgs.overlays = [
         (final: prev: { expanse = self.packages.${prev.system}.expanse; })
       ];
@@ -66,7 +66,7 @@ in
       expanse.hostId = "00000003";
       expanse.hostname = "n3";
       environment.systemPackages = with pkgs; [
-        openssl curl nginx ollama prometheus-node-exporter
+        openssl curl
       ];
       virtualisation.memorySize = 4096;
       virtualisation.diskSize = 8192;
@@ -147,7 +147,7 @@ in
         machines_by_host = {"n1": n1, "n2": n2, "n3": n3}
         rhost = node_ip("redis")
         rc, out = machines_by_host[{"192.168.1.1": "n1", "192.168.1.2": "n2", "192.168.1.3": "n3"}[rhost]].execute(
-            "redis-cli -p 18102 ping")
+            "${pkgs.redis}/bin/redis-cli -p 18102 ping")
         assert "PONG" in out, f"redis ping: {out!r}"
         # monitor/node-exporter — metrics from every node
         for m in [n1, n2, n3]:

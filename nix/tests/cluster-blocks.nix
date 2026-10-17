@@ -15,7 +15,7 @@ let
   # The management UI always takes one pool address (share-smb.nix's note).
   vipPool = [ "192.168.1.100" "192.168.1.101" ];
   node = idx: {
-    imports = [ self.nixosModules.expanse ../modules/storage-test.nix ];
+    imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "monitor/prometheus" "monitor/grafana" "monitor/node-exporter" "share/nfs" ]) ../modules/storage-test.nix ];
     nixpkgs.overlays = [ (final: prev: { expanse = self.packages.${prev.system}.expanse; }) ];
     expanse.node.enable = true;
     expanse.agent.enable = true;
@@ -31,8 +31,7 @@ let
     expanse.agent.externalInterface = "eth1";
     networking.firewall.allowedTCPPorts = [ 2049 ];
     networking.firewall.allowedTCPPortRanges = [ { from = 18000; to = 18999; } ];
-    # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = with pkgs; [ curl jq prometheus grafana (callPackage ../grafana-plugins.nix { }) prometheus-node-exporter nfs-ganesha ];
+    environment.systemPackages = with pkgs; [ curl jq ];
     virtualisation.cores = 2;
     virtualisation.memorySize = 3072;
   };

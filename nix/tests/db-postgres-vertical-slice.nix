@@ -25,6 +25,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "db/postgres" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -47,7 +48,7 @@ let
     expanse.agent.externalInterface = "eth1";
     # util-linux: setpriv, so the test can run pg_checksums as pgdata's
     # own owning uid (postgres's frontend tools refuse root).
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.postgresql_18 pkgs.util-linux ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.util-linux ];
     networking.firewall.allowedTCPPorts = [ 5432 55432 ];
     # db-postgres-recovery.nix's own proven budget: --data-checksums (X3)
     # makes initdb heavier, and this test's own setup (pgbench -i plus

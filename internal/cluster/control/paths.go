@@ -43,9 +43,6 @@ const (
 	DefaultNodeTTL64 = int64(0)
 )
 
-// DefaultVersion is stamped into /cluster/meta by init.
-const DefaultVersion = "0.1.0"
-
 // IsClusterNode reports whether the data dir contains a cluster
 // enrollment (cluster-id present). The daemon checks this at startup to
 // pick raftstore over the single-node boltstore.

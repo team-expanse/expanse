@@ -23,6 +23,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "media/jellyfin" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -45,8 +46,7 @@ let
     expanse.agent.externalInterface = "eth1";
     # The NixOS firewall is on; the agent's own nftables ruleset is opt-in.
     networking.firewall.allowedTCPPorts = [ 80 ];
-    # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.jellyfin ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 2048;
     # Media every node reads at the same path, as from an NFS mount.
     systemd.tmpfiles.rules = [ "C /srv/media - - - - ${media}" ];

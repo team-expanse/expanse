@@ -26,8 +26,6 @@ in
     expanse.hostId = "01234567";
     expanse.hostname = "expanse-persist-test";
 
-    environment.systemPackages = [ pkgs.restic ];
-
     services.garage = {
       enable = true;
       package = pkgs.garage;

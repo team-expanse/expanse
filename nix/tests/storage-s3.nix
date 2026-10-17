@@ -17,6 +17,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "storage/s3" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -36,8 +37,7 @@ let
     expanse.agent.externalInterface = "eth1";
     # The NixOS firewall is on; the agent's own nftables ruleset is opt-in.
     networking.firewall.allowedTCPPorts = [ 3900 ];
-    # Binary-backed blocks exec upstream binaries from PATH (block-catalog.nix).
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.garage ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

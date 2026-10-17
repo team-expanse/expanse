@@ -23,7 +23,7 @@ in
 
   nodes = {
     n1 = { ... }: {
-      imports = [ self.nixosModules.expanse ];
+      imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "web/nginx" ]) ];
       nixpkgs.overlays = [
         (final: prev: { expanse = self.packages.${prev.system}.expanse; })
       ];
@@ -40,10 +40,10 @@ in
       expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
-      environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
+      environment.systemPackages = with pkgs; [ openssl curl jq ];
     };
     n2 = { ... }: {
-      imports = [ self.nixosModules.expanse ];
+      imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "web/nginx" ]) ];
       nixpkgs.overlays = [
         (final: prev: { expanse = self.packages.${prev.system}.expanse; })
       ];
@@ -60,10 +60,10 @@ in
       expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
-      environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
+      environment.systemPackages = with pkgs; [ openssl curl jq ];
     };
     n3 = { ... }: {
-      imports = [ self.nixosModules.expanse ];
+      imports = [ self.nixosModules.expanse (import ./lib/block-runtimes.nix [ "web/nginx" ]) ];
       nixpkgs.overlays = [
         (final: prev: { expanse = self.packages.${prev.system}.expanse; })
       ];
@@ -80,7 +80,7 @@ in
       expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 7443 7444 7445 7446 ];
-      environment.systemPackages = with pkgs; [ openssl curl jq nginx ];
+      environment.systemPackages = with pkgs; [ openssl curl jq ];
     };
     # The external client: a plain machine on the same LAN, no expanse.
     # Named "n9" so the driver's name-sorted eth1 assignment leaves

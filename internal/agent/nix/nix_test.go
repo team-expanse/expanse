@@ -183,3 +183,20 @@ func TestGenerationsAndRollback(t *testing.T) {
 		t.Errorf("rollback to missing generation kind = %q, want not_found", errors.KindOf(err))
 	}
 }
+
+func TestBuildFileBuildsAttrFromFile(t *testing.T) {
+	var got []string
+	d := New()
+	d.runCmd = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		got = args
+		return exec.CommandContext(ctx, "sh", "-c", `echo /nix/store/abc-runtime`)
+	}
+	p, err := d.BuildFile(context.Background(), "/etc/expanse/block-runtimes.nix", "db/mariadb", nil)
+	if err != nil || p != "/nix/store/abc-runtime" {
+		t.Fatalf("BuildFile = %q, %v", p, err)
+	}
+	want := "build -f /etc/expanse/block-runtimes.nix db/mariadb"
+	if s := strings.Join(got, " "); !strings.Contains(s, want) {
+		t.Fatalf("args %q lack %q", s, want)
+	}
+}

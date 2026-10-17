@@ -245,12 +245,20 @@ func stageSnapshot(rc *RunContext) error {
 // nixosConfigDir holds the node's NixOS config under /persist; impermanence binds it to /etc/nixos.
 const nixosConfigDir = "persist/etc/nixos"
 
+// nodeSourceDir is the expanse source beside configuration.nix, imported by relative path so it
+// resolves under /mnt during nixos-install and under /etc/nixos on the node.
+const nodeSourceDir = "expanse"
+
 func stageConfig(rc *RunContext) error {
 	dir := filepath.Join(rc.Mount, nixosConfigDir)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	if err := rc.Config.WriteYAML(filepath.Join(rc.Mount, "persist/expanse/install-config.yaml")); err != nil {
+		return err
+	}
+	// The node rebuilds from its own copy of the source; the ISO's is gone after the first reboot.
+	if err := rc.run("cp", "-rHT", "--no-preserve=mode,ownership", rc.TargetFlake, filepath.Join(dir, nodeSourceDir)); err != nil {
 		return err
 	}
 	// hardware-configuration.nix: the initrd's drivers for this machine's disks; disko owns the mounts.
@@ -318,9 +326,9 @@ func writeConfiguration(rc *RunContext, path string) error {
 	fmt.Fprintf(&b, "  # Partitioning was done by disko at install time; the same layout declares the mounts.\n")
 	fmt.Fprintf(&b, "  imports = [\n")
 	fmt.Fprintf(&b, "    ./hardware-configuration.nix\n")
-	fmt.Fprintf(&b, "    %s/nix/modules/expanse-node.nix\n", rc.TargetFlake)
-	fmt.Fprintf(&b, "    (import %s/nix/modules/disk-layout.nix {\n", rc.TargetFlake)
-	fmt.Fprintf(&b, "      layout = %s/nix/installer/disko/%s.nix;\n", rc.TargetFlake, rc.Layout)
+	fmt.Fprintf(&b, "    ./%s/nix/modules/expanse-node.nix\n", nodeSourceDir)
+	fmt.Fprintf(&b, "    (import ./%s/nix/modules/disk-layout.nix {\n", nodeSourceDir)
+	fmt.Fprintf(&b, "      layout = ./%s/nix/installer/disko/%s.nix;\n", nodeSourceDir, rc.Layout)
 	fmt.Fprintf(&b, "      disks = [ %s ];\n", strings.Join(quoted(rc.Config.Disks.Devices), " "))
 	fmt.Fprintf(&b, "    })\n")
 	fmt.Fprintf(&b, "  ];\n")

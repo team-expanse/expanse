@@ -66,6 +66,7 @@ func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) err
 		RT: &volume.Runtime{
 			LVM: lvm.New(), DRBD: dr, VG: cfg.StorageVG, Pool: cfg.StoragePool, ConfigDir: cfg.DRBDConfigDir,
 			SplitBrainCmd: marks.Handler(), Diverged: marks.Marked,
+			CheckKernel: func() error { return drbd.CheckModule(drbd.ProcPath) },
 		},
 		Lead: func(ctx context.Context, res string, opt volume.HoldOptions) error {
 			return promoter.Lead(ctx, leases, volume.LeaseName(res), res, volumeLeaseTTL, opt)

@@ -25,6 +25,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "share/smb" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -46,7 +47,7 @@ let
     networking.firewall.allowedTCPPorts = [ 445 ];
     # smbd is a real upstream binary, exec'd from PATH (block-catalog.nix
     # convention) — the deployment image ships it.
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.samba ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

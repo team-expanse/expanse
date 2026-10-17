@@ -63,6 +63,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/runtimepath"
 )
 
 // specDir is where the agent writes per-replica desired-state JSON;
@@ -88,6 +90,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 		os.Exit(1)
 	}
+	// The agent realised this type's runtime (if it has one) before starting the unit.
+	_ = os.Setenv("PATH", runtimepath.Prepend(runtimepath.Dir, spec.Type, os.Getenv("PATH")))
 	args := append([]string{}, spec.Args...)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

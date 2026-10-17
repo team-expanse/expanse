@@ -271,4 +271,17 @@ $ expanse ctl catalog show web/nginx     # identity + JSON Schema
 
 Authoring a new type is those four files plus one entry in
 `nix/blocks-flake/flake.nix`; validation, scheduling, lifecycle, and
-updates come for free.
+updates come for free. A type that runs upstream programs also lists their
+packages in `nix/block-runtimes.nix`.
+
+### Where a block's programs come from
+
+Nodes do not carry every type's programs: together they are about 5 GiB.
+`vm/instance`'s qemu is built into every node. Any other type's runtime is
+fetched the first time a block of that type is placed on a node: the agent
+builds it from `/etc/expanse/block-runtimes.nix` with the node's own nixpkgs,
+so the NixOS binary cache serves it, and roots it under
+`/nix/var/nix/gcroots/expanse/block-runtime/` so garbage collection keeps it. The first placement of a type therefore needs network access (or a
+binary cache on the LAN) and takes as long as the download; later placements
+start at once. Types served by Expanse itself (`util/echo`, `web/whoami`,
+`web/static-site`) need nothing.

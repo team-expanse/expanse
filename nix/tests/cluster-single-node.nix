@@ -19,6 +19,7 @@ in
     n1 = { ... }: {
       imports = [
         self.nixosModules.expanse
+        (import ./lib/block-runtimes.nix [ "web/nginx" ])
         ../modules/storage-test.nix
       ];
       nixpkgs.overlays = [
@@ -39,7 +40,7 @@ in
       expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 8080 18090 ];
-      environment.systemPackages = with pkgs; [ curl nginx ];
+      environment.systemPackages = with pkgs; [ curl ];
       virtualisation.memorySize = 2048;
     };
     n9 = { ... }: {

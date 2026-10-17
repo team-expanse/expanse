@@ -25,6 +25,7 @@ let
   nodeCommon = idx: {
     imports = [
       self.nixosModules.expanse
+      (import ./lib/block-runtimes.nix [ "iscsi/target" ])
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -50,7 +51,7 @@ let
     # PATH via services.drbd (storage-test.nix), so nothing extra is
     # needed there.
     boot.kernelModules = [ "configfs" "target_core_mod" "iscsi_target_mod" ];
-    environment.systemPackages = [ pkgs.curl pkgs.jq pkgs.targetcli-fb ];
+    environment.systemPackages = [ pkgs.curl pkgs.jq ];
     virtualisation.memorySize = 1536;
   };
 in

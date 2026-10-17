@@ -3,6 +3,9 @@
 {
   config = lib.mkIf config.expanse.node.enable {
     networking.useDHCP = lib.mkDefault true;
+    # A VM block's macvtap child (mv*, cmd/expanse-block-run) carries the guest's MAC: a lease on it
+    # would take the guest's address for the node.
+    networking.dhcpcd.denyInterfaces = [ "mv*" ];
     networking.interfaces = lib.mkDefault { };
 
     # mDNS so nodes are findable on the LAN.

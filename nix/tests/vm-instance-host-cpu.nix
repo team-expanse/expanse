@@ -57,7 +57,6 @@ in
     expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
     environment.etc."expanse/blocks-flake".source = ../blocks-flake;
     expanse.agent.externalInterface = "eth1";
-    environment.systemPackages = [ pkgs.qemu_kvm ];
     boot.kernelModules = [ "kvm" ];
     # Two 2 GiB guests at once, plus the host's own headroom (vm-instance.nix sizes one at 4608).
     virtualisation.memorySize = 6656;

@@ -55,7 +55,6 @@ in
       assignIP = false;
     });
     virtualisation.qemu.networkingOptions = lib.mkForce [ ];
-    environment.systemPackages = [ pkgs.qemu_kvm ];
     boot.kernelModules = [ "kvm" ];
     virtualisation.memorySize = 4608;
     virtualisation.cores = 2;

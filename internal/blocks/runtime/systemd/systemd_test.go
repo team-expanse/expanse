@@ -216,6 +216,32 @@ func TestCacheShortCircuit(t *testing.T) {
 	}
 }
 
+// keyedBuilder's key stands in for a type's runtime derivation.
+type keyedBuilder struct {
+	mockBuilder
+	key string
+}
+
+func (k *keyedBuilder) Key(string) string { return k.key }
+
+// A new runtime derivation (a node upgrade) misses the cache, though the spec is unchanged.
+func TestBuilderKeyChangeRebuilds(t *testing.T) {
+	ctx := context.Background()
+	kb := &keyedBuilder{key: "/nix/store/old-runtime.drv"}
+	a := &Applier{Cache: newTestCache(t), Builder: kb}
+	if _, err := a.Apply(ctx, sampleSpec()); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	kb.key = "/nix/store/new-runtime.drv"
+	res, err := a.Apply(ctx, sampleSpec())
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if !res.Built || kb.builds != 2 {
+		t.Errorf("new runtime reused the cached path (built=%v builds=%d)", res.Built, kb.builds)
+	}
+}
+
 // Replicas-only change path completes without invoking the build step,
 // and fast (< 5 s, §5.3).
 func TestReplicasOnlyChangeSkipsBuild(t *testing.T) {
