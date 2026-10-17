@@ -209,6 +209,10 @@ def as_pguser(cmd):
     return f"setpriv --reuid={STATIC_UID} --regid={STATIC_UID} --clear-groups -- sh -c {shlex.quote(cmd)}"
 
 
+# The replica's own runtime (the agent links it there), so a missing link fails here too.
+NODE_PSQL = "/nix/var/nix/gcroots/expanse/block-runtime/db-postgres/bin/psql"
+
+
 def wait_row_replicates(m, sockdir, sql, want, timeout=60):
     """Poll a replica's own local read until streaming replication has
     caught the primary's write, or timeout."""
@@ -216,7 +220,7 @@ def wait_row_replicates(m, sockdir, sql, want, timeout=60):
     got = ""
     while time.time() < deadline:
         rc, out = m.execute(
-            f"psql -h {sockdir} -p {PG_PORT} -U postgres -d {DATABASE} -v ON_ERROR_STOP=1 -tA -c {shlex.quote(sql)} 2>&1"
+            f"{NODE_PSQL} -h {sockdir} -p {PG_PORT} -U postgres -d {DATABASE} -v ON_ERROR_STOP=1 -tA -c {shlex.quote(sql)} 2>&1"
         )
         got = out.strip()
         if rc == 0 and got == want:
