@@ -128,6 +128,7 @@ with subtest("the data survived and is reachable at the same host mount path"):
     hm2.wait_until_succeeds(f"mountpoint -q {mnt2}", timeout=60)
     got = hm2.succeed(f"sha256sum {mnt2}/marker").split()[0]
     assert got == ref, f"data checksum mismatch after failover: {got} != {ref}"
-    echo_responds(hm2, PORT, "colocated", node="localhost")
+    # The unit starts just after the mount, so give the echo server time to listen.
+    hm2.wait_until_succeeds(f"curl -sS --max-time 3 http://localhost:{PORT}/ | grep -q colocated", timeout=60)
 
 print("SHARE-COLOCATION DONE")
