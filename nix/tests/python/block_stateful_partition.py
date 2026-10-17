@@ -52,6 +52,11 @@ def running_on(m):
     return replica_node(b, 0)
 
 
+def tiebreaker_ready(m, res):
+    status = drbd_status(m, res)
+    return "peer-disk:Diskless" in status and "quorum:no" not in status
+
+
 def split_off(m, res):
     return "StandAlone" in drbd_status(m, res)
 
@@ -73,7 +78,9 @@ with subtest("a SINGLETON block holds its replication-2 volume open on one node"
     host.wait_until_succeeds(f"systemctl is-active {UNIT}", timeout=60)
     host.succeed(f"findmnt /var/lib/expanse/volumes/{res}/mnt")
     # The third node joins as a diskless tiebreaker, which turns DRBD quorum on.
-    wait_for(lambda: "peer-disk:Diskless" in drbd_status(host, res), "a connected tiebreaker", 120)
+    # Both disk replicas must reach the tiebreaker: a cut mid-handshake leaves the survivor without quorum.
+    for m in map(machine, volume_row(n1, VOL)["nodes"]):
+        wait_for(lambda m=m: tiebreaker_ready(m, res), f"{m.name} connected to the tiebreaker", 120)
     print(f"[{host.name}] drbd with tiebreaker:\n{drbd_status(host, res)}")
     spare = next(m for m in NODES if m.name not in volume_row(n1, VOL)["nodes"])
     inspect = n1.succeed(f"expanse ctl volume inspect {VOL} 2>&1")
