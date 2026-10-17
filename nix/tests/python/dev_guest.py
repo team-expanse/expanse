@@ -73,6 +73,10 @@ with subtest("the block boots the dev guest and it answers SSH from another mach
     except Exception:
         print(guest_console())
         raise
+    # A login with no credentials lists the methods sshd offers: keys only.
+    _, out = client.execute(f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no "
+                            f"-o PreferredAuthentications=none dev@{GUEST_IP} true 2>&1")
+    assert "Permission denied (publickey)." in out, out
 
 with subtest("nix works and the guest has /dev/kvm"):
     print(ssh("nix --version"))
