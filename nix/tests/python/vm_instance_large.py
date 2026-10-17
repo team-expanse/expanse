@@ -44,10 +44,14 @@ spec:
 """
 
 
+# Keepalives end a session the guest stopped answering after ~30 s instead of hanging the test.
+SSH = ("ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
+       "-o ServerAliveInterval=5 -o ServerAliveCountMax=6")
+
+
 def ssh(cmd, timeout=None):
     # Quoted whole, so redirects and && run in the guest, not on the client.
-    return client.succeed(f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no dev@{GUEST_IP} {shlex.quote(cmd)}",
-                          timeout=timeout)
+    return client.succeed(f"{SSH} dev@{GUEST_IP} {shlex.quote(cmd)}", timeout=timeout)
 
 
 def wait_ssh():
@@ -101,6 +105,7 @@ with subtest("a synced file survives a block restart"):
         "cat /proc/sys/kernel/random/boot_id")[1].strip() not in ("", boot_id),
         "the guest back on a new boot", 600)
     print(f"SSH back {time.time() - t:.1f}s after restart")
-    ssh("sha256sum -c marker.sum")
+    # The guest is still finishing boot here; under load the first session can drop.
+    client.wait_until_succeeds(f"{SSH} dev@{GUEST_IP} 'sha256sum -c marker.sum'", timeout=120)
 
 print("VM-INSTANCE-LARGE DONE")

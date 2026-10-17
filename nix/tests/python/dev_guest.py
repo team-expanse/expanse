@@ -42,9 +42,13 @@ spec:
 """
 
 
+# Keepalives end a session the guest stopped answering after ~30 s instead of hanging the test.
+SSH = ("ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
+       "-o ServerAliveInterval=5 -o ServerAliveCountMax=6")
+
+
 def ssh(cmd, timeout=None):
-    return client.succeed(f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no dev@{GUEST_IP} {cmd}",
-                          timeout=timeout)
+    return client.succeed(f"{SSH} dev@{GUEST_IP} {cmd}", timeout=timeout)
 
 
 def guest_console():
