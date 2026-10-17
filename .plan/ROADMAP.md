@@ -174,6 +174,15 @@ configuration both verify.
 
 **Exit:** single-node and grow-on-join VM tests green, zero acked-write loss across 1 → 3, 1.1.0 — met, see `PHASE-12-TASKS.md` (the dev-workstation option deferred).
 
+## Phase 13 — Dogfood on the build server (1.10)
+
+- VM blocks can opt into the host CPU model, so a guest can run KVM (and the VM test suite).
+- A dev-VM guest image from the flake, with in-guest restic backup; large-VM limits measured.
+- The R630 build server is reinstalled with Expanse; development moves into a VM block on it.
+
+**Exit:** dev VM running on the R630 with nested KVM and backups, a suite subset green inside it,
+1.10.0 — see `PHASE-13-TASKS.md`.
+
 ---
 
 ## Cross-cutting items
