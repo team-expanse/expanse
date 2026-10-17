@@ -14,6 +14,14 @@ History before 1.0.0 is not recorded here.
   CPU through to the guest, including `vmx`/`svm`, so the guest can run KVM
   itself. Left unset, guests keep qemu's default CPU model.
 
+### Fixed
+
+- With `externalInterface` unset (the installed default), VIPs and VM
+  macvtaps now use the default route's interface. Detection never matched a
+  default route, so VIPs were never announced and VM blocks failed to start
+  unless the interface was named explicitly. The WireGuard mesh's MTU check
+  had the same fault.
+
 ## 1.9.2 - 2026-10-14
 
 ### Fixed

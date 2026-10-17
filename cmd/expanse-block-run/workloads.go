@@ -1245,16 +1245,8 @@ func runVM(ctx context.Context, instance string, args []string) error {
 	cpus := vmCPUs(args)
 	memMiB := vmMemMiB(args)
 
-	// EXPANSE_EXTERNAL_INTERFACE (nix/modules/agent.nix, from the agent's
-	// own --external-interface): the same physical NIC the VIP holder
-	// already announces on. Empty falls back to "auto" (the default
-	// route's device) -- the right answer for a real deployment with a
-	// gateway, but not for this project's own nixosTest harness, whose
-	// flat-LAN test nodes carry no default route at all (only directly-
-	// connected subnet routes), confirmed the hard way: vip.ResolveIface
-	// returned "no default route interface for auto detection" until the
-	// test explicitly set externalInterface, exactly as every VIP-using
-	// block test already must.
+	// EXPANSE_EXTERNAL_INTERFACE: the NIC the VIP holder announces on; empty = the default
+	// route's device (net-multi-nic.nix). nixosTest nodes set it, as their default is slirp eth0.
 	_, uplink, err := vip.ResolveIface(uplinkIfaceFromEnv(os.Getenv("EXPANSE_EXTERNAL_INTERFACE")))
 	if err != nil {
 		return fmt.Errorf("vm/instance: resolve uplink interface: %w", err)

@@ -53,7 +53,7 @@ func resolveIface(iface string) (netlink.Link, error) {
 		return nil, errors.Wrap(err, errors.KindUnavailable, "vip", "list routes")
 	}
 	for _, r := range routes {
-		if r.Dst == nil && r.LinkIndex != 0 {
+		if IsDefaultRoute(r) {
 			link, err := netlink.LinkByIndex(r.LinkIndex)
 			if err != nil {
 				continue
@@ -62,6 +62,19 @@ func resolveIface(iface string) (netlink.Link, error) {
 		}
 	}
 	return nil, errors.New(errors.KindNotFound, "vip", "no default route interface for auto detection")
+}
+
+// IsDefaultRoute reports whether r is a default route on a link; netlink >= 1.3 sets its Dst to
+// 0.0.0.0/0 where older versions left it nil.
+func IsDefaultRoute(r netlink.Route) bool {
+	if r.LinkIndex == 0 {
+		return false
+	}
+	if r.Dst == nil {
+		return true
+	}
+	ones, _ := r.Dst.Mask.Size()
+	return ones == 0 && r.Dst.IP.IsUnspecified()
 }
 
 func addrIPNet(p netip.Prefix) *net.IPNet {

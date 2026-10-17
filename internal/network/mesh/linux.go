@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/vishvananda/netlink"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -265,7 +266,7 @@ func detectPhysicalMTU(meshIface string) (int, error) {
 		return 0, err
 	}
 	for _, r := range routes {
-		if r.Dst == nil && r.LinkIndex != 0 { // default route
+		if vip.IsDefaultRoute(r) {
 			link, linkErr := netlink.LinkByIndex(r.LinkIndex)
 			if linkErr != nil {
 				continue
