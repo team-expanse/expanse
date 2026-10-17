@@ -1040,6 +1040,7 @@ func (a *Agent) refreshInventory(ctx context.Context) {
 	if _, err := a.store.Put(ctx, key, []byte(strings.Join(inv.Capabilities, ","))); err != nil {
 		a.logger.Error("write node capabilities failed", "err", err)
 	}
+	a.publishCapacity(ctx, inv)
 }
 
 func (a *Agent) loop(ctx context.Context, every time.Duration, name string, fn func()) {

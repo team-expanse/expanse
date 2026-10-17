@@ -322,3 +322,74 @@ func TestNodesViewCordonAndDrain(t *testing.T) {
 		}
 	}
 }
+
+// A node's published capacity replaces DefaultCapacity field by field; a node that has not
+// published one, or a field it omits or garbles, keeps the default (Phase 13 D2).
+func TestNodesViewPublishedCapacity(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	for _, pair := range [][2]string{
+		{"/nodes/n1", `{"id":"n1"}`},
+		{"/nodes/n1/status", "idle"},
+		{"/nodes/n1/capacity", "cpu=48000 memory=405874409472 disk=1600000000000"},
+		{"/nodes/n2", `{"id":"n2"}`},
+		{"/nodes/n2/status", "idle"},
+		{"/nodes/n3", `{"id":"n3"}`},
+		{"/nodes/n3/status", "idle"},
+		{"/nodes/n3/capacity", "cpu=16000 memory=lots"},
+	} {
+		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
+			t.Fatalf("put %s: %v", pair[0], err)
+		}
+	}
+	views, _, err := Nodes(st)(ctx)
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	type want struct{ cpu, mem, disk int64 }
+	wants := map[string]want{
+		"n1": {48000, 405874409472, 1600000000000},
+		"n2": {DefaultCapacity.CPU.Milli, DefaultCapacity.Mem.N, DefaultCapacity.Disk.N},
+		"n3": {16000, DefaultCapacity.Mem.N, DefaultCapacity.Disk.N},
+	}
+	for _, v := range views {
+		w := wants[v.ID]
+		got := want{v.FreeCPU.Milli, v.FreeMem.N, v.FreeDisk.N}
+		if got != w || v.CapacityCPU.Milli != w.cpu {
+			t.Errorf("%s free = %+v capacity cpu %d, want %+v", v.ID, got, v.CapacityCPU.Milli, w)
+		}
+	}
+}
+
+// A 24-vCPU, 256 GiB, 1 TiB vm/instance places on a node that published the R630's capacity.
+func TestLargeVMPlacesOnPublishedCapacity(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	for _, pair := range [][2]string{
+		{"/nodes/n1", `{"id":"n1"}`},
+		{"/nodes/n1/status", "idle"},
+		{"/nodes/n1/capabilities", "kvm"},
+		{"/nodes/n1/capacity", "cpu=32000 memory=405874409472 disk=1599784443904"},
+	} {
+		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
+			t.Fatalf("put %s: %v", pair[0], err)
+		}
+	}
+	views, cfg, err := Nodes(st)(ctx)
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	blk := &pb.Block{
+		Metadata: &pb.Metadata{Name: "dev", Namespace: "default"},
+		Spec: &pb.BlockSpec{
+			Type:      "vm/instance",
+			Resources: &pb.Resources{Requests: &pb.ResourcePair{Cpu: "24000m", Memory: "256Gi"}},
+			Storage:   []*pb.Storage{{Name: "disk", Size: "1Ti"}},
+			Placement: &pb.Placement{RequiredCapabilities: []string{"kvm"}},
+		},
+	}
+	cands, reasons := scheduler.Filter(views, scheduler.ReplicaRequest{Block: blk}, cfg)
+	if len(cands) != 1 {
+		t.Fatalf("large VM not placeable: %v", reasons)
+	}
+}

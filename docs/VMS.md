@@ -64,6 +64,25 @@ same way as any other block:
 expanse ctl block apply -f vm1.yaml
 ```
 
+### Sizing
+
+`requests.cpu` becomes qemu's `-smp` (rounded up to whole vCPUs) and `requests.memory` its `-m`.
+The scheduler places the block against what each node's agent publishes at
+`/nodes/<id>/capacity`: hardware threads, total memory and the data volume group's size, with the
+block's storage sizes counted against the volume group. CPU is overcommitted 2× by default; memory
+never is. A node that has not published a capacity (an agent older than 1.10.0) counts as 4 CPUs,
+8 GiB and 100 GiB.
+
+Nothing is held back for the host by default, so on a node that also runs other blocks, reserve
+some memory before placing a guest that takes most of it:
+
+```sh
+expanse ctl kv put /config/scheduler '{"reservedMemory": "64Gi"}'
+```
+
+Leave `limits.memory` unset on a VM: qemu needs memory beyond the guest's `-m`, and a limit equal
+to the request gets the guest OOM-killed under load.
+
 ## 3. Guest OS installation and boot
 
 **Out of this phase's own scope** (D4) — the exit criteria only require a guest that boots and is

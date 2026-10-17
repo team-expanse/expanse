@@ -7,15 +7,16 @@ package wire
 //   - Nodes: the scheduler's cluster view, built from the store's node
 //     status keys plus realized placements (capacity accounting).
 //
-// Known Phase 05 seams (explicit, not silent gaps):
-//   - Node capacity comes from DefaultCapacity, not live inventory —
-//     inventory propagation across nodes is Phase 05 node-mesh work.
+// Notes:
+//   - Node capacity is what each agent publishes (CapacityKey), with
+//     DefaultCapacity for a node that has not published it.
 //   - The OvercommitConfig reads /config/scheduler when present.
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/expanse/expanse/internal/blocks/blockkey"
@@ -30,9 +31,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// DefaultCapacity is the conservative per-node capacity used until
-// inventory propagation lands (Phase 05). Values match the controller
-// test fixtures.
+// DefaultCapacity is the per-node capacity used for any field a node has
+// not published. Values match the controller test fixtures.
 var DefaultCapacity = struct {
 	CPU  quantity.CPU
 	Mem  quantity.Bytes
@@ -51,7 +51,7 @@ type storeReader interface {
 
 // Nodes builds the scheduler cluster view from the store: one NodeView
 // per node record under /nodes/<id>, Ready iff its status value reports
-// healthy ("idle"), capacity = DefaultCapacity minus the requests of
+// healthy ("idle"), capacity = nodeCapacity minus the requests of
 // active placements already on the node.
 func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
 	return func(ctx context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
@@ -135,6 +135,7 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 				ready = lc.placeable
 			}
 			u := used[id]
+			c := nodeCapacity(ctx, st, id)
 			views = append(views, scheduler.NodeView{
 				ID:             id,
 				Ready:          ready,
@@ -143,10 +144,10 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 				Capabilities:   nodeCapabilities(ctx, st, id),
 				Volumes:        local,
 				HealthyVolumes: healthyLocal,
-				CapacityCPU:    DefaultCapacity.CPU,
-				FreeCPU:        quantity.CPU{Milli: DefaultCapacity.CPU.Milli - u.cpu},
-				FreeMem:        quantity.Bytes{N: DefaultCapacity.Mem.N - u.mem},
-				FreeDisk:       quantity.Bytes{N: DefaultCapacity.Disk.N - u.dsk},
+				CapacityCPU:    c.CPU,
+				FreeCPU:        quantity.CPU{Milli: c.CPU.Milli - u.cpu},
+				FreeMem:        quantity.Bytes{N: c.Mem.N - u.mem},
+				FreeDisk:       quantity.Bytes{N: c.Disk.N - u.dsk},
 			})
 		}
 		return views, cfg, nil
@@ -278,11 +279,61 @@ func nodeReady(ctx context.Context, st storeReader, id string) (bool, error) {
 	return fields["health"] == "healthy", nil
 }
 
+// Capacity is a node's schedulable size.
+type Capacity struct {
+	CPU  quantity.CPU
+	Mem  quantity.Bytes
+	Disk quantity.Bytes
+}
+
+// CapacityKey is where a node's agent publishes its Capacity, as FormatCapacity renders it.
+func CapacityKey(nodeID string) store.Key { return store.Key("/nodes/" + nodeID + "/capacity") }
+
+// FormatCapacity renders "cpu=<milli> memory=<bytes> disk=<bytes>"; a zero field is left out.
+func FormatCapacity(c Capacity) string {
+	var parts []string
+	if c.CPU.Milli > 0 {
+		parts = append(parts, fmt.Sprintf("cpu=%d", c.CPU.Milli))
+	}
+	if c.Mem.N > 0 {
+		parts = append(parts, fmt.Sprintf("memory=%d", c.Mem.N))
+	}
+	if c.Disk.N > 0 {
+		parts = append(parts, fmt.Sprintf("disk=%d", c.Disk.N))
+	}
+	return strings.Join(parts, " ")
+}
+
+// nodeCapacity reads the node's published capacity; an absent or unparseable field keeps
+// DefaultCapacity's, so a node from before publishing still schedules as it did.
+func nodeCapacity(ctx context.Context, st storeReader, id string) Capacity {
+	c := Capacity{CPU: DefaultCapacity.CPU, Mem: DefaultCapacity.Mem, Disk: DefaultCapacity.Disk}
+	e, err := st.Get(ctx, CapacityKey(id))
+	if err != nil {
+		return c
+	}
+	for _, f := range strings.Fields(string(e.Value)) {
+		k, v, _ := strings.Cut(f, "=")
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			continue
+		}
+		switch k {
+		case "cpu":
+			c.CPU.Milli = n
+		case "memory":
+			c.Mem.N = n
+		case "disk":
+			c.Disk.N = n
+		}
+	}
+	return c
+}
+
 // nodeCapabilities reads the node's self-published capability list
 // (internal/agent.Agent.refreshInventory), e.g. ["kvm", "aes-ni"] — the
-// only channel this leader-side view has for another node's real
-// hardware, since capacity itself still comes from DefaultCapacity, not
-// live inventory. A missing key (a node that hasn't published yet, or
+// leader-side view's channel for another node's hardware, alongside
+// nodeCapacity. A missing key (a node that hasn't published yet, or
 // never will — witnesses skip inventory collection entirely) means no
 // known capabilities, the same as before this was wired at all: P6
 // simply finds every declared requirement missing, not a hard error.

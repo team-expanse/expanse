@@ -340,6 +340,7 @@
           pando-guest = mkTest "pando-guest" ./nix/tests/pando-guest.nix;
           # Phase 13 C4: the dev guest image on a vm/instance with nested KVM, reached over SSH.
           dev-guest = mkTest "dev-guest" ./nix/tests/dev-guest.nix;
+          vm-instance-large = mkTest "vm-instance-large" ./nix/tests/vm-instance-large.nix;
 
           # Six nodes, two VM workloads serving from replicated disks: forming, failover and rejoin.
           cluster-vm-workloads = mkTest "cluster-vm-workloads" ./nix/tests/cluster-vm-workloads.nix;

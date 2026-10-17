@@ -402,11 +402,12 @@ func TestVMArgFindsFlagValue(t *testing.T) {
 
 func TestVMCPUsParsesAndRoundsUp(t *testing.T) {
 	cases := map[string]int{
-		"":      1, // unset: one vCPU floor
-		"2":     2,
-		"500m":  1, // fractional core rounds up, never down to zero
-		"1500m": 2,
-		"bogus": 1, // unparseable: same floor as unset
+		"":       1, // unset: one vCPU floor
+		"2":      2,
+		"500m":   1, // fractional core rounds up, never down to zero
+		"1500m":  2,
+		"24000m": 24, // the dev VM (Phase 13 D4)
+		"bogus":  1,  // unparseable: same floor as unset
 	}
 	for raw, want := range cases {
 		var args []string
@@ -424,8 +425,9 @@ func TestVMMemMiBParsesAndFloors(t *testing.T) {
 		"":      512, // unset default
 		"1Gi":   1024,
 		"256Mi": 256,
-		"1Ki":   128, // below the floor
-		"bogus": 512, // unparseable: same default as unset
+		"256Gi": 262144, // the dev VM (Phase 13 D4)
+		"1Ki":   128,    // below the floor
+		"bogus": 512,    // unparseable: same default as unset
 	}
 	for raw, want := range cases {
 		var args []string

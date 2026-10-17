@@ -25,6 +25,10 @@ History before 1.0.0 is not recorded here.
   default route, so VIPs were never announced and VM blocks failed to start
   unless the interface was named explicitly. The WireGuard mesh's MTU check
   had the same fault.
+- Placement now uses each node's real size: its agent publishes hardware
+  threads, total memory and data volume group size. The scheduler used to
+  count every node as 4 CPUs, 8 GiB and 100 GiB of disk, so no block asking
+  for more could be placed anywhere. See "Sizing" in `docs/VMS.md`.
 
 ## 1.9.2 - 2026-10-14
 
