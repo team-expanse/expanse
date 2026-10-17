@@ -90,6 +90,39 @@ block is RUNNING, SSH in from any machine other than the node running it (`VMS.m
 reach its own macvtap guest). Afterwards, manage the guest with `nixos-rebuild` inside it from a
 flake that imports `expanse.nixosModules.dev-guest`. `nix/tests/dev-guest.nix` tests this recipe.
 
+**4. Back it up.** A volume with `replication: 1` lives on one disk set, and the nix store can be
+rebuilt but your work cannot. Turn on restic in the guest's modules:
+
+```nix
+expanse.devGuest.backup = {
+  enable = true;
+  repository = "rest:http://nas.lan:8000/dev";   # any restic repository: sftp:, s3:, rest:
+  passwordFile = "/var/lib/restic/password";     # a path in the guest, never the nix store
+};
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `backup.paths` | `/home`, `/etc/nixos` | Every user's repos, `~/.ssh` and dotfiles, and the guest's config |
+| `backup.exclude` | `/home/*/.cache` | Left out |
+| `backup.schedule` | `daily` | `OnCalendar`; a run missed while the guest was off starts at boot |
+| `backup.environmentFile` | none | Credentials for S3 or a REST server login |
+
+Write the password file (`sudo install -m 0400 /dev/stdin /var/lib/restic/password`) and keep a
+copy off the guest: without it the backups cannot be read. The first run creates the repository.
+The nix store, `/var` and anything outside `/home` are not backed up; rebuild them from the
+guest's flake. Run the restore drill once after setting it up:
+
+```sh
+sudo systemctl start restic-backups-dev.service    # back up now
+sudo restic-dev snapshots
+sudo restic-dev restore latest --target / --include /home/you/src/project
+```
+
+`restic-dev` is restic with the repository and password already set. To rebuild a lost guest,
+write a fresh image as in steps 1–3, then `sudo restic-dev restore latest --target /` restores
+everything.
+
 ## Building and Running
 
 ```bash

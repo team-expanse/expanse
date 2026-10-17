@@ -3,10 +3,12 @@
 Writes the image onto a pre-created volume larger than the image, deploys the block, and from a
 second machine (a host cannot reach its own macvtap guest) SSHes in as the dev user. Inside the
 guest: nix works, /dev/kvm exists, an L3 kernel boots under qemu -enable-kvm, and / has grown.
+Then the restore drill: back up to the client's restic server, lose files, restore them.
 
 Runs after cluster-common.py, block-common.py, vol_cluster.py and single_node_common.py.
 Expects IMAGE and GUEST_IP (dev-guest.nix) spliced in ahead of this file.
 """
+import shlex
 
 NAME = "dev"
 VOL_NAME = f"blk-default-{NAME}-disk"  # storage.BlockVolumeName: the block adopts this volume
@@ -85,5 +87,17 @@ with subtest("the root filesystem grew to the volume"):
     image = int(n1.succeed(f"stat -c %s {IMAGE}").strip())
     print(f"image {image >> 20} MiB, root fs {size >> 20} MiB")
     assert size > image + (2 << 30) and size > (VOL_SIZE_GIB - 2) << 30, f"root fs not grown: {size}"
+
+with subtest("restic backs up /home and /etc/nixos, and a lost file comes back"):
+    ssh("systemctl is-active restic-backups-dev.timer")
+    ssh(shlex.quote("mkdir -p ~/src/proj ~/.ssh && head -c 1M /dev/urandom > ~/src/proj/data "
+                    "&& echo key > ~/.ssh/id_test && sha256sum ~/src/proj/data ~/.ssh/id_test > ~/sums"))
+    ssh("sudo systemctl start restic-backups-dev.service", timeout=300)
+    print(ssh("sudo restic-dev snapshots"))
+    ssh(shlex.quote("rm -rf ~/src ~/.ssh/id_test && ! test -e ~/src"))
+    ssh(shlex.quote("sudo restic-dev restore latest --target / --include /home/dev/src "
+                    "--include /home/dev/.ssh/id_test"), timeout=300)
+    ssh(shlex.quote("sha256sum -c ~/sums"))
+    ssh(shlex.quote("sudo restic-dev ls latest /etc/nixos"))
 
 print("DEV-GUEST DONE")

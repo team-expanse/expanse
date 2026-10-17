@@ -1,5 +1,5 @@
-# Phase 13 C4: docs/DEVELOPING.md's dev guest on a vm/instance with cpuModel host, reached over
-# SSH from a second machine, running KVM itself. The scenario is python/dev_guest.py.
+# Phase 13 C4/E2: docs/DEVELOPING.md's dev guest on a vm/instance with cpuModel host, reached over
+# SSH from a second machine that also holds its restic backups. The scenario is python/dev_guest.py.
 { self }:
 { pkgs, lib, ... }:
 let
@@ -12,6 +12,8 @@ let
   '';
 
   guestIP = "192.168.1.60";
+  # The client is node 1 by name order; it runs the restic REST server the guest backs up to.
+  backupURL = "rest:http://192.168.1.1:8000/dev";
   keys = import "${pkgs.path}/nixos/tests/ssh-keys.nix" pkgs;
 
   # The shipped guest with a static address (the test network has no DHCP), a test key and the
@@ -25,6 +27,12 @@ let
         networking.useDHCP = false;
         networking.interfaces.eth0.ipv4.addresses = [{ address = guestIP; prefixLength = 24; }];
         expanse.devGuest.authorizedKeys = [ keys.snakeOilPublicKey ];
+        expanse.devGuest.backup = {
+          enable = true;
+          repository = backupURL;
+          passwordFile = "/etc/restic-test-password";
+        };
+        environment.etc."restic-test-password".text = "test-only-password";
         environment.etc."dev-guest-test/l3-kernel".source =
           "${config.boot.kernelPackages.kernel}/${config.system.boot.loader.kernelFile}";
         expanse.devGuest.extraPackages = [
@@ -73,6 +81,8 @@ in
     environment.systemPackages = [ pkgs.openssh ];
     environment.etc."ssh-key" = { source = keys.snakeOilPrivateKey; mode = "0600"; };
     programs.ssh.extraConfig = "IdentityFile /etc/ssh-key";
+    services.restic.server = { enable = true; listenAddress = "8000"; extraFlags = [ "--no-auth" ]; };
+    networking.firewall.allowedTCPPorts = [ 8000 ];
   };
 
   testScript = ''

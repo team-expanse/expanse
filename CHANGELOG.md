@@ -17,6 +17,9 @@ History before 1.0.0 is not recorded here.
   `packages.dev-guest-image` and `lib.devGuestImage`, which builds the image
   with your own keys and packages. It runs Expanse's VM tests under nested
   KVM. See `docs/DEVELOPING.md`.
+- `expanse.devGuest.backup` backs up the dev guest's `/home` and
+  `/etc/nixos` to any restic repository on a schedule, with `restic-dev`
+  for restores.
 
 ### Fixed
 
