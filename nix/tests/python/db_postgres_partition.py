@@ -180,12 +180,17 @@ def replica_mount(m, idx):
     return f"/var/lib/expanse/volumes/{row['id']}/mnt"
 
 
+# The replica's own runtime (the agent links it there), so a missing link fails here too.
+NODE_PG_BIN = "/nix/var/nix/gcroots/expanse/block-runtime/db-postgres/bin"
+NODE_PSQL = f"{NODE_PG_BIN}/psql"
+
+
 def wait_row_replicates(m, sockdir, sql, want, timeout=60):
     deadline = time.time() + timeout
     got = ""
     while time.time() < deadline:
         rc, out = m.execute(
-            f"psql -h {sockdir} -p {PG_PORT} -U postgres -d {DATABASE} -v ON_ERROR_STOP=1 -tA -c {shlex.quote(sql)} 2>&1"
+            f"{NODE_PSQL} -h {sockdir} -p {PG_PORT} -U postgres -d {DATABASE} -v ON_ERROR_STOP=1 -tA -c {shlex.quote(sql)} 2>&1"
         )
         got = out.strip()
         if rc == 0 and got == want:
