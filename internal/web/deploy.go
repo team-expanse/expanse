@@ -18,6 +18,8 @@ import (
 	"github.com/expanse/expanse/internal/web/schemaform"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,6 +34,8 @@ func (s *Server) registerDeployRoutes() {
 	s.routes.Handle("GET /deploy", s.requireAuth(http.HandlerFunc(s.handleDeployCatalog)))
 	s.routes.Handle("GET /deploy/{cat}/{name}", s.requireAuth(http.HandlerFunc(s.handleDeployForm)))
 	s.routes.Handle("POST /deploy/{cat}/{name}", s.requireAuth(http.HandlerFunc(s.handleDeploySubmit)))
+	s.routes.Handle("GET /blocks/{ns}/{name}/edit", s.requireAuth(http.HandlerFunc(s.handleEditForm)))
+	s.routes.Handle("POST /blocks/{ns}/{name}/edit", s.requireAuth(http.HandlerFunc(s.handleEditSubmit)))
 }
 
 // clusterFacts is what the deploy pages know about the nodes; zero nodes means unknown.
@@ -150,6 +154,8 @@ type deployFormData struct {
 	Page         page
 	Type         *pb.BlockType
 	Action       string
+	Edit         bool   // editing an existing block: the name is fixed
+	Cancel       string // where Cancel goes
 	Name         string
 	NameError    string
 	Replicas     string
@@ -217,43 +223,145 @@ func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	fitToCluster(b, s.loadClusterFacts(r.Context()).nodes)
 	followPorts(b, typ.Defaults)
-	var general []string
-	general = append(general, applyCommon(b, form)...)
-
-	var ves []validate.ValidationError
-	if c, ok := s.blocks.(blockChecker); ok {
-		ves = c.Check(r.Context(), b, false)
-	}
-	nameErr := ""
-	for _, v := range ves {
-		switch {
-		case v.ConfigField != "":
-			cfgErrs = append(cfgErrs, v.ConfigField)
-		case v.Rule == "V1" || v.Rule == "V2":
-			nameErr = v.Message
-		default:
-			general = append(general, v.Error())
-		}
-	}
-	if len(cfgErrs) == 0 && len(general) == 0 && nameErr == "" {
+	sub := formErrors{config: cfgErrs, general: applyCommon(b, form)}
+	if sub.admit(r.Context(), s.blocks, b, false) {
 		created, err := s.blocks.Create(r.Context(), b)
 		if err == nil {
 			ns, name := created.GetMetadata().GetNamespace(), created.GetMetadata().GetName()
 			s.done(w, r, "success", "Block "+ns+"/"+name+" deployed", "/blocks/"+ns+"/"+name)
 			return
 		}
-		general = append(general, errText(err))
+		sub.general = append(sub.general, errText(err))
 	}
+	s.renderRejected(w, r, s.deployData(w, r, bt, b, nil), form, sub)
+}
 
-	fields, err := schemaform.Build(bt.GetSchemaJson(), cfgPrefix, nil)
+func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
+	b, bt, ok := s.editTarget(w, r)
+	if !ok {
+		return
+	}
+	fields, err := schemaform.Build(bt.GetSchemaJson(), cfgPrefix, b.GetSpec().GetConfig().AsMap())
+	if err != nil {
+		s.renderError(w, r, http.StatusInternalServerError, errText(err))
+		return
+	}
+	s.render(w, http.StatusOK, "deploy_form.html", s.editData(w, r, bt, b, fields))
+}
+
+func (s *Server) handleEditSubmit(w http.ResponseWriter, r *http.Request) {
+	cur, bt, ok := s.editTarget(w, r)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	form := r.PostForm
+	before := cur.GetSpec().GetConfig().AsMap()
+	cfg, cfgErrs := schemaform.Decode(bt.GetSchemaJson(), cfgPrefix, form)
+	keepSecrets(bt.GetSchemaJson(), cfg, before)
+	b := proto.Clone(cur).(*pb.Block)
+	st, err := structpb.NewStruct(cfg)
+	if err != nil {
+		s.renderError(w, r, http.StatusInternalServerError, errText(err))
+		return
+	}
+	b.Spec.Config = st
+	followPorts(b, before)
+	sub := formErrors{config: cfgErrs, general: applyCommon(b, form)}
+	if sub.admit(r.Context(), s.blocks, b, true) {
+		_, err := s.blocks.Update(r.Context(), b)
+		if err == nil {
+			full := b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
+			s.done(w, r, "success", "Block "+full+" updated", "/blocks/"+full)
+			return
+		}
+		sub.general = append(sub.general, errText(err))
+	}
+	s.renderRejected(w, r, s.editData(w, r, bt, b, nil), form, sub)
+}
+
+// editTarget loads the block named in the path and its catalog type.
+func (s *Server) editTarget(w http.ResponseWriter, r *http.Request) (*pb.Block, *pb.BlockType, bool) {
+	if s.blocksUnavailable(w, r) || s.catalogUnavailable(w, r) {
+		return nil, nil, false
+	}
+	b, err := s.getBlock(r.Context(), r)
+	if err != nil {
+		s.renderError(w, r, httpStatus(err), errText(err))
+		return nil, nil, false
+	}
+	bt, err := s.catalog.GetType(r.Context(), &pb.GetTypeRequest{Name: b.GetSpec().GetType()})
+	if err != nil {
+		s.renderError(w, r, httpStatus(err), errText(err))
+		return nil, nil, false
+	}
+	return b, bt, true
+}
+
+func (s *Server) editData(w http.ResponseWriter, r *http.Request, bt *pb.BlockType, b *pb.Block, fields []schemaform.Field) deployFormData {
+	full := b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
+	d := s.deployData(w, r, bt, b, fields)
+	d.Page = s.newPage(w, r, "Edit "+full, "blocks",
+		crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full, Href: "/blocks/" + full}, crumb{Label: "Edit"})
+	d.Edit, d.Action, d.Cancel = true, "/blocks/"+full+"/edit", "/blocks/"+full
+	return d
+}
+
+// keepSecrets keeps a secret's current value when its input was left empty (it is never shown).
+func keepSecrets(schema []byte, cfg, before map[string]any) {
+	fields, err := schemaform.Build(schema, cfgPrefix, nil)
+	if err != nil {
+		return
+	}
+	for _, f := range fields {
+		key := strings.TrimPrefix(f.Path, "/")
+		if _, set := cfg[key]; f.Kind == schemaform.Secret && !set && before[key] != nil {
+			cfg[key] = before[key]
+		}
+	}
+}
+
+// formErrors sorts a rejected submission's errors by where the form shows them.
+type formErrors struct {
+	config  []string // "path: message" for a config field
+	name    string
+	general []string
+}
+
+// admit runs the block service's full admission check and reports whether nothing failed.
+func (e *formErrors) admit(ctx context.Context, blocks pb.BlockServiceServer, b *pb.Block, update bool) bool {
+	if c, ok := blocks.(blockChecker); ok {
+		for _, v := range c.Check(ctx, b, update) {
+			switch {
+			case v.ConfigField != "":
+				e.config = append(e.config, v.ConfigField)
+			case v.Rule == "V1" || v.Rule == "V2":
+				e.name = v.Message
+			default:
+				e.general = append(e.general, v.Error())
+			}
+		}
+	}
+	return len(e.config) == 0 && len(e.general) == 0 && e.name == ""
+}
+
+// renderRejected re-renders the form with what was posted and each error on its field.
+func (s *Server) renderRejected(w http.ResponseWriter, r *http.Request, data deployFormData, form url.Values, e formErrors) {
+	fields, err := schemaform.Build(data.Type.GetSchemaJson(), cfgPrefix, nil)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
 	schemaform.Refill(fields, form)
-	general = append(general, schemaform.AttachErrors(fields, cfgErrs)...)
-	data := s.deployData(w, r, bt, b, fields)
-	data.Name, data.NameError, data.Errors = form.Get("name"), nameErr, general
+	data.Fields = fields
+	data.Errors = append(e.general, schemaform.AttachErrors(fields, e.config)...)
+	data.NameError = e.name
+	if !data.Edit {
+		data.Name = form.Get("name")
+	}
 	data.Replicas, data.CPU, data.Memory = form.Get("replicas"), form.Get("cpu"), form.Get("memory")
 	for i := range data.Storage {
 		data.Storage[i].Size = form.Get("storage/" + data.Storage[i].Name + "/size")
@@ -277,11 +385,11 @@ func fitToCluster(b *pb.Block, nodes int) {
 	}
 }
 
-// followPorts moves the template's port targets and probes from a config port's default to its new value.
-func followPorts(b *pb.Block, defaults map[string]any) {
+// followPorts moves port targets and probes from a config port's previous value to its new one.
+func followPorts(b *pb.Block, before map[string]any) {
 	cfg := b.GetSpec().GetConfig().AsMap()
 	moved := map[int32]int32{}
-	for k, d := range defaults {
+	for k, d := range before {
 		from, ok1 := portNumber(d)
 		to, ok2 := portNumber(cfg[k])
 		if ok1 && ok2 && to != from {
@@ -362,7 +470,7 @@ func (s *Server) deployData(w http.ResponseWriter, r *http.Request, bt *pb.Block
 	d := deployFormData{
 		Page: s.newPage(w, r, "Deploy "+bt.GetName(), "blocks",
 			crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: "Deploy", Href: "/deploy"}, crumb{Label: bt.GetName()}),
-		Type: bt, Action: "/deploy/" + bt.GetName(), Name: b.GetMetadata().GetName(),
+		Type: bt, Action: "/deploy/" + bt.GetName(), Cancel: "/deploy", Name: b.GetMetadata().GetName(),
 		ShowReplicas: showReplicas(spec), CPU: spec.GetResources().GetRequests().GetCpu(),
 		Memory: spec.GetResources().GetRequests().GetMemory(), Ports: spec.GetNetwork().GetPorts(), Fields: fields,
 	}

@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="page-head">
   <div>
-    <h1 class="page-title">Deploy <code>{{.Type.Name}}</code></h1>
+    <h1 class="page-title">{{if .Edit}}Edit <code>{{.Name}}</code> ({{.Type.Name}}){{else}}Deploy <code>{{.Type.Name}}</code>{{end}}</h1>
     {{with .Type.Description}}<p class="page-sub">{{.}}</p>{{end}}
   </div>
 </div>
@@ -12,8 +12,8 @@
       {{range .Errors}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>{{.}}</div>{{end}}
       <label class="field">
         <span class="field-label">Name</span>
-        <input class="input" type="text" name="name" value="{{.Name}}" autocomplete="off" required{{if .NameError}} aria-invalid="true" autofocus{{end}}>
-        {{if .NameError}}<span class="field-error">{{.NameError}}</span>{{else}}<span class="field-hint">Lowercase letters, digits and dashes; unique in its namespace.</span>{{end}}
+        <input class="input" type="text" name="name" value="{{.Name}}"{{if .Edit}} readonly{{end}} autocomplete="off" required{{if .NameError}} aria-invalid="true" autofocus{{end}}>
+        {{if .NameError}}<span class="field-error">{{.NameError}}</span>{{else if .Edit}}<span class="field-hint">A block keeps its name; deploy a new one to rename.</span>{{else}}<span class="field-hint">Lowercase letters, digits and dashes; unique in its namespace.</span>{{end}}
       </label>
       <div class="field-row">
         {{if .ShowReplicas}}
@@ -49,8 +49,8 @@
         <pre class="input code">{{.Manifest}}</pre>
       </details>
       <div class="form-actions">
-        <button class="btn btn-primary" type="submit">Deploy</button>
-        <a class="btn btn-ghost" href="/deploy">Cancel</a>
+        <button class="btn btn-primary" type="submit">{{if .Edit}}Save{{else}}Deploy{{end}}</button>
+        <a class="btn btn-ghost" href="{{.Cancel}}">Cancel</a>
       </div>
     </form>
   </section>

@@ -228,3 +228,72 @@ func TestDeployFormPortsFollowTheConfig(t *testing.T) {
 		t.Errorf("readiness port = %d, want 18090", p)
 	}
 }
+
+func deployNginx(t *testing.T, c *http.Client, base, csrf string) {
+	t.Helper()
+	resp, body := postForm(t, c, base+"/deploy/web/nginx", csrf, url.Values{
+		"name": {"site"}, "replicas": {"1"}, "cfg/serverName": {"www.example.org"}, "cfg/port": {"8080"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("deploy: status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+}
+
+func TestEditFormShowsTheBlock(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "")
+	c, csrf := loggedInClient(t, srv, pw)
+	deployNginx(t, c, srv.URL, csrf)
+
+	_, detail := get(t, c, srv.URL+"/blocks/default/site")
+	if !strings.Contains(detail, `href="/blocks/default/site/edit"`) {
+		t.Error("the detail page has no Edit link")
+	}
+	code, body := get(t, c, srv.URL+"/blocks/default/site/edit")
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	for _, want := range []string{`value="www.example.org"`, `action="/blocks/default/site/edit"`, `name="replicas" value="1"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("edit form lacks %s", want)
+		}
+	}
+	if !strings.Contains(body, `name="name" value="site" readonly`) {
+		t.Error("the name is editable")
+	}
+	if code, _ := get(t, c, srv.URL+"/blocks/default/nope/edit"); code != http.StatusNotFound {
+		t.Errorf("missing block: status %d, want 404", code)
+	}
+}
+
+func TestEditFormUpdatesTheBlock(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "")
+	c, csrf := loggedInClient(t, srv, pw)
+	deployNginx(t, c, srv.URL, csrf)
+
+	resp, body := postForm(t, c, srv.URL+"/blocks/default/site/edit", csrf, url.Values{
+		"name": {"site"}, "replicas": {"1"}, "cpu": {"300m"}, "memory": {"96Mi"},
+		"cfg/serverName": {"new.example.org"}, "cfg/port": {"8090"}, "cfg/root": {"/var/www"},
+	})
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/blocks/default/site" {
+		t.Fatalf("status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+	s := getBlock(t, st, "default/site").GetSpec()
+	if cfg := s.GetConfig().AsMap(); cfg["serverName"] != "new.example.org" || cfg["port"] != float64(8090) {
+		t.Errorf("config = %v", cfg)
+	}
+	if s.GetResources().GetRequests().GetCpu() != "300m" {
+		t.Errorf("cpu = %q", s.GetResources().GetRequests().GetCpu())
+	}
+	if p := s.GetNetwork().GetPorts()[0]; p.GetTargetPort() != 8090 || p.GetPort() != 80 {
+		t.Errorf("port = %v, want 80 → 8090", p)
+	}
+
+	resp, body = postForm(t, c, srv.URL+"/blocks/default/site/edit", csrf, url.Values{
+		"name": {"site"}, "replicas": {"1"}, "cfg/serverName": {"new.example.org"}, "cfg/port": {"0"},
+	})
+	if resp.StatusCode != http.StatusBadRequest || !invalid(body, "cfg/port") {
+		t.Errorf("a bad port: status %d, errors:\n%s", resp.StatusCode, alerts(body))
+	}
+}
