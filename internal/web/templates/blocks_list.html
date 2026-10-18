@@ -4,7 +4,7 @@
     <h1 class="page-title">Blocks</h1>
     <p class="page-sub">Deployed workloads and their replicas across the cluster.</p>
   </div>
-  <div class="page-actions"><a class="btn btn-primary" href="/blocks/new"><svg class="icon"><use href="#i-plus"/></svg>Deploy block</a></div>
+  <div class="page-actions"><a class="btn btn-primary" href="/deploy"><svg class="icon"><use href="#i-plus"/></svg>Deploy block</a></div>
 </div>
 
 {{if .Blocks}}
@@ -30,7 +30,7 @@
           <td class="muted">{{range $i, $p := .Status.GetPlacements}}{{if $i}}, {{end}}{{$p.GetNodeId}}{{end}}</td>
         </tr>
         {{else}}
-        <tr><td colspan="5"><div class="empty"><svg class="icon"><use href="#i-blocks"/></svg><p>No blocks deployed yet.</p><a class="btn btn-primary" href="/blocks/new">Deploy your first block</a></div></td></tr>
+        <tr><td colspan="5"><div class="empty"><svg class="icon"><use href="#i-blocks"/></svg><p>No blocks deployed yet.</p><a class="btn btn-primary" href="/deploy">Deploy your first block</a></div></td></tr>
         {{end}}
       </tbody>
     </table>

@@ -112,10 +112,17 @@ over Server-Sent Events, never by polling.
 - **Health & alerts** (`/health`, live) — firing critical alerts (the same rules as
   `deploy/prometheus/expanse-alerts.rules.yml`), quorum, node checks, resource health and volume
   health.
-- **Blocks** (`/blocks`, `/blocks/new`, `/blocks/<ns>/<name>` live, `/blocks/<ns>/<name>/logs`
-  live) — list with phase counts, deploy from a pasted manifest (schema errors shown inline, the
-  catalog listed alongside), a detail page with replica placement, pending-placement reasons and
-  conditions, scale, delete (confirmed), and a live log tail per replica.
+- **Blocks** (`/blocks`, `/deploy`, `/blocks/new`, `/blocks/<ns>/<name>` live,
+  `/blocks/<ns>/<name>/logs` live) — list with phase counts; a detail page with replica placement,
+  pending-placement reasons and conditions, scale, delete (confirmed), and a live log tail per
+  replica. **Deploy block** opens `/deploy`, every catalog type with what it needs (a type no
+  node can run, such as `vm/instance` without `kvm`, is greyed out). Picking one opens a form
+  built from the type's schema and `template.yaml`, filled in with working defaults: name,
+  replicas, CPU and memory, each volume's size, then the type's own settings. Replicas and volume
+  copies are capped at the cluster's node count; changing a port setting moves the block's
+  forwarding and health check with it. Errors appear on the field they concern. "Show as YAML"
+  gives the same block as a manifest for `expanse ctl block apply -f`, and `/blocks/new` still
+  takes a pasted manifest.
 - **Volumes** (`/volumes`, `/volumes/new`, `/volumes/<name>` live) — list with state counts,
   create (field-level validation), a detail page with the replica table (role, health, resync
   progress, out-of-sync bytes, last seen), snapshots, snapshot/resize (grow-only) forms and

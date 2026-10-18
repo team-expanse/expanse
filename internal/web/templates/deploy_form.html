@@ -1,0 +1,101 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Deploy <code>{{.Type.Name}}</code></h1>
+    {{with .Type.Description}}<p class="page-sub">{{.}}</p>{{end}}
+  </div>
+</div>
+<div class="grid-form">
+  <section class="card">
+    <form method="post" action="{{.Action}}" class="form" novalidate>
+      {{template "csrf" .Page}}
+      {{range .Errors}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>{{.}}</div>{{end}}
+      <label class="field">
+        <span class="field-label">Name</span>
+        <input class="input" type="text" name="name" value="{{.Name}}" autocomplete="off" required{{if .NameError}} aria-invalid="true" autofocus{{end}}>
+        {{if .NameError}}<span class="field-error">{{.NameError}}</span>{{else}}<span class="field-hint">Lowercase letters, digits and dashes; unique in its namespace.</span>{{end}}
+      </label>
+      <div class="field-row">
+        {{if .ShowReplicas}}
+        <label class="field">
+          <span class="field-label">Replicas</span>
+          <input class="input" type="number" name="replicas" value="{{.Replicas}}" min="0">
+          <span class="field-hint">Copies running at once, each on its own node where possible.</span>
+        </label>
+        {{end}}
+        <label class="field">
+          <span class="field-label">CPU</span>
+          <input class="input" type="text" name="cpu" value="{{.CPU}}" placeholder="500m">
+          <span class="field-hint">Cores reserved: <code>500m</code> is half a core, <code>2</code> two.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Memory</span>
+          <input class="input" type="text" name="memory" value="{{.Memory}}" placeholder="512Mi">
+          <span class="field-hint"><code>Mi</code> or <code>Gi</code>.</span>
+        </label>
+      </div>
+      {{range .Storage}}
+      <label class="field">
+        <span class="field-label">Volume <code>{{.Name}}</code> size</span>
+        <input class="input" type="text" name="storage/{{.Name}}/size" value="{{.Size}}">
+        <span class="field-hint">Disk space for this block, e.g. <code>20Gi</code>{{if gt .Replication 1}}, kept on {{.Replication}} nodes{{end}}.</span>
+      </label>
+      {{end}}
+      {{if .Fields}}<h2 class="form-section">Settings</h2>{{end}}
+      {{range .Fields}}{{template "cfgfield" .}}{{end}}
+      <details class="manifest">
+        <summary>Show as YAML</summary>
+        <p class="field-hint">The same block as a manifest for <code>expanse ctl block apply -f</code>.</p>
+        <pre class="input code">{{.Manifest}}</pre>
+      </details>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Deploy</button>
+        <a class="btn btn-ghost" href="/deploy">Cancel</a>
+      </div>
+    </form>
+  </section>
+  <aside class="card card-muted">
+    <div class="card-head"><h2>Reached at</h2></div>
+    {{if .Ports}}
+    <ul class="type-list">
+      {{range .Ports}}<li>Port {{.Port}} ({{.Name}}){{if eq .Expose.String "EXPOSE_VIP"}} on the block's own address{{end}}</li>{{end}}
+    </ul>
+    {{else}}<p class="muted">This type has no network ports.</p>{{end}}
+  </aside>
+</div>
+{{end}}
+
+{{define "cfgfield"}}
+{{if eq .Kind.String "group"}}
+<fieldset class="field-group">
+  <legend class="field-label">{{.Label}}</legend>
+  {{with .Help}}<span class="field-hint">{{.}}</span>{{end}}
+  {{range .Fields}}{{template "cfgfield" .}}{{end}}
+</fieldset>
+{{else if eq .Kind.String "bool"}}
+<label class="field field-check">
+  <span><input type="checkbox" name="{{.Name}}" value="true"{{if .Checked}} checked{{end}}{{if .Error}} aria-invalid="true"{{end}}> <span class="field-label">{{.Label}}</span></span>
+  {{if .Error}}<span class="field-error">{{.Error}}</span>{{else}}{{with .Help}}<span class="field-hint">{{.}}</span>{{end}}{{end}}
+</label>
+{{else}}
+<label class="field">
+  <span class="field-label">{{.Label}}{{if not .Required}} <span class="faint">optional</span>{{end}}</span>
+  {{if eq .Kind.String "enum"}}
+  <select class="input" name="{{.Name}}"{{if .Error}} aria-invalid="true"{{end}}>{{$v := .Value}}{{range .Options}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{if .}}{{.}}{{else}}(default){{end}}</option>{{end}}</select>
+  {{else if eq .Kind.String "list"}}
+  <textarea class="input" name="{{.Name}}" rows="3"{{if .Error}} aria-invalid="true"{{end}}>{{.Value}}</textarea>
+  {{else if eq .Kind.String "yaml"}}
+  <textarea class="input code" name="{{.Name}}" rows="6" spellcheck="false"{{with .Placeholder}} placeholder="{{.}}"{{end}}{{if .Error}} aria-invalid="true"{{end}}>{{.Value}}</textarea>
+  {{else if eq .Kind.String "secret"}}
+  <input class="input" type="password" name="{{.Name}}" value="" autocomplete="new-password"{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+  {{else if or (eq .Kind.String "integer") (eq .Kind.String "number")}}
+  <input class="input" type="number" name="{{.Name}}" value="{{.Value}}"{{with .Min}} min="{{.}}"{{end}}{{with .Max}} max="{{.}}"{{end}}{{if eq .Kind.String "number"}} step="any"{{end}}{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+  {{else if .Multiline}}
+  <textarea class="input code" name="{{.Name}}" rows="8" spellcheck="false"{{with .Placeholder}} placeholder="{{.}}"{{end}}{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>{{.Value}}</textarea>
+  {{else}}
+  <input class="input" type="text" name="{{.Name}}" value="{{.Value}}"{{with .Placeholder}} placeholder="{{.}}"{{end}}{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+  {{end}}
+  {{if .Error}}<span class="field-error">{{.Error}}</span>{{else}}{{with .Help}}<span class="field-hint">{{.}}{{if eq $.Kind.String "list"}} One per line.{{end}}</span>{{else}}{{if eq .Kind.String "list"}}<span class="field-hint">One per line.</span>{{else if eq .Kind.String "yaml"}}<span class="field-hint">YAML.</span>{{end}}{{end}}{{end}}
+</label>
+{{end}}
+{{end}}

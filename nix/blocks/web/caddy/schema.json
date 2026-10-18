@@ -26,6 +26,7 @@
       "description": "ACME directory URL; defaults to Let's Encrypt, then ZeroSSL"
     },
     "sites": {
+      "examples": [[{"host": "app.example.com", "reverseProxy": ["10.0.0.21:8080"]}]],
       "type": "array",
       "minItems": 1,
       "description": "Sites served; each answers for one host name",
@@ -89,6 +90,7 @@
       }
     },
     "caddyfile": {
+      "contentMediaType": "text/plain",
       "type": "string",
       "minLength": 1,
       "description": "A whole Caddyfile, used instead of sites; Caddy's data directory is still the block's volume"

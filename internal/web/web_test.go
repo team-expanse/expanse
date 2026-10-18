@@ -25,6 +25,13 @@ import (
 // generated for it.
 func newTestServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
+	srv, pw, _ := newTestServerStore(t)
+	return srv, pw
+}
+
+// newTestServerStore is newTestServer that also returns the store, for seeding cluster state.
+func newTestServerStore(t *testing.T) (*httptest.Server, string, store.Store) {
+	t.Helper()
 	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("boltstore.New: %v", err)
@@ -46,7 +53,7 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 	}
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
-	return srv, pw
+	return srv, pw, st
 }
 
 // testBlocksServer builds a real (not mocked) BlockService/CatalogService

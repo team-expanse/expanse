@@ -44,10 +44,13 @@ type Field struct {
 	Options  []string // Enum choices; a leading "" means unset
 	Min, Max string
 	Pattern  string
-	Value    string
-	Checked  bool
-	Fields   []Field
-	Error    string
+	// Multiline marks text with a contentMediaType (a file's contents), edited in a textarea.
+	Multiline   bool
+	Placeholder string // the schema's first example, as the input would hold it
+	Value       string
+	Checked     bool
+	Fields      []Field
+	Error       string
 }
 
 type prop struct {
@@ -64,6 +67,8 @@ type node struct {
 	Minimum     *float64        `json:"minimum"`
 	Maximum     *float64        `json:"maximum"`
 	Pattern     string          `json:"pattern"`
+	MediaType   string          `json:"contentMediaType"`
+	Examples    []any           `json:"examples"`
 	WriteOnly   bool            `json:"writeOnly"`
 	Required    []string        `json:"required"`
 	Properties  json.RawMessage `json:"properties"`
@@ -196,6 +201,13 @@ func build(n *node, prefix, path string, values map[string]any) ([]Field, error)
 			Name: prefix + path + "/" + p.key, Path: path + "/" + p.key,
 			Label: p.node.label(p.key), Help: p.node.Description, Kind: p.node.kind(),
 			Required: req[p.key], Pattern: p.node.Pattern,
+			Multiline: p.node.MediaType != "",
+		}
+		if len(p.node.Examples) > 0 {
+			ex := Field{Kind: f.Kind}
+			if err := ex.show(p.node.Examples[0]); err == nil {
+				f.Placeholder = ex.Value
+			}
 		}
 		if p.node.Minimum != nil {
 			f.Min = formatNumber(*p.node.Minimum)
@@ -345,6 +357,9 @@ func AttachErrors(fields []Field, errs []string) []string {
 	var rest []string
 	for _, e := range errs {
 		path, msg, _ := strings.Cut(e, ": ")
+		if strings.HasPrefix(msg, "missing properties: ") {
+			msg = "Required."
+		}
 		if f := find(fields, path); f != nil {
 			if f.Error != "" {
 				f.Error += "; "
@@ -404,4 +419,21 @@ func label(key string) string {
 		words[i] = w
 	}
 	return strings.Join(words, " ")
+}
+
+// Refill sets the fields to the raw posted form, so rejected input can be corrected; secrets stay empty.
+func Refill(fields []Field, form url.Values) {
+	for i := range fields {
+		f := &fields[i]
+		switch f.Kind {
+		case Group:
+			Refill(f.Fields, form)
+		case Secret:
+		case Bool:
+			v := form.Get(f.Name)
+			f.Checked = v == "true" || v == "on"
+		default:
+			f.Value = form.Get(f.Name)
+		}
+	}
 }

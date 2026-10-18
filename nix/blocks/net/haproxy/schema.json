@@ -15,6 +15,7 @@
       "description": "Port serving the stats page at /stats and Prometheus metrics at /metrics; unset, neither is served"
     },
     "frontends": {
+      "examples": [[{"name": "web", "port": 18080, "servers": ["app1.lan:8080", "app2.lan:8080"]}]],
       "type": "array",
       "minItems": 1,
       "description": "Listeners, each balancing over its own servers",
@@ -76,6 +77,7 @@
       }
     },
     "config": {
+      "contentMediaType": "text/plain",
       "type": "string",
       "minLength": 1,
       "description": "A whole haproxy.cfg, used instead of frontends"

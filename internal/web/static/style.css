@@ -505,3 +505,14 @@ progress.meter-sm { width: 5rem; vertical-align: middle; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Deploy pages (deploy_catalog.html, deploy_form.html). */
+.type-card { display: block; color: inherit; text-decoration: none; }
+.type-card:hover { border-color: var(--fg-faint); }
+.type-card p { margin: 0.3rem 0 0; font-size: 0.88rem; }
+.type-card-off { opacity: 0.65; }
+.form-section { font-size: 1rem; margin: 0.6rem 0 0; }
+.field-group { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.7rem; }
+.field-check input { margin-right: 0.3rem; }
+.manifest summary { cursor: pointer; font-size: 0.88rem; color: var(--fg-muted); }
+.manifest pre { white-space: pre; overflow-x: auto; margin: 0.4rem 0 0; }

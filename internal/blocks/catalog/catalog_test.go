@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -991,6 +992,34 @@ func TestLoadRejectsTemplateWithTypeOrConfig(t *testing.T) {
 		}
 		if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), key) {
 			t.Errorf("template with %q: err = %v, want a rejection naming it", key, err)
+		}
+	}
+}
+
+// A schema's examples are shown as form placeholders, so each must itself validate.
+func TestShippedSchemaExamplesValidate(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range c.Types() {
+		typ, _ := c.GetType(id)
+		var s struct {
+			Properties map[string]struct {
+				Examples []any `json:"examples"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(typ.SchemaJSON, &s); err != nil {
+			t.Fatal(err)
+		}
+		for key, p := range s.Properties {
+			for _, ex := range p.Examples {
+				for _, e := range c.ValidateConfig(id, mustStruct(t, map[string]any{key: ex})) {
+					if strings.HasPrefix(e, "/"+key) {
+						t.Errorf("%s: example for %s does not validate: %s", id, key, e)
+					}
+				}
+			}
 		}
 	}
 }

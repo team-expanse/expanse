@@ -115,6 +115,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s.routes.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
 	s.registerDashboardRoutes()
 	s.registerBlockRoutes()
+	s.registerDeployRoutes()
 	s.registerClusterRoutes()
 	s.registerNodeRoutes()
 	s.registerVolumeRoutes()

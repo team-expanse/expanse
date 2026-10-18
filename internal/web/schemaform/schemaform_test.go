@@ -26,7 +26,8 @@ const testSchema = `{
     "buckets": {"type": "array", "items": {"type": "string"}},
     "tls": {"type": "object", "required": ["cert"], "properties": {
       "cert": {"type": "string"}, "port": {"type": "integer"}}},
-    "sites": {"type": "array", "items": {"type": "object"}},
+    "sites": {"type": "array", "items": {"type": "object"}, "examples": [[{"host": "a.example.org"}]]},
+    "caddyfile": {"type": "string", "contentMediaType": "text/plain"},
     "env": {"type": "object", "additionalProperties": {"type": "string"}}
   }
 }`
@@ -59,7 +60,7 @@ func TestBuildKindsAndOrder(t *testing.T) {
 	for _, f := range fields {
 		order = append(order, f.Path)
 	}
-	want := "/serverName /port /ratio /adminPassword /policy /squash /readOnly /buckets /tls /sites /env"
+	want := "/serverName /port /ratio /adminPassword /policy /squash /readOnly /buckets /tls /sites /caddyfile /env"
 	if got := strings.Join(order, " "); got != want {
 		t.Errorf("order (required first, then schema order):\n got %s\nwant %s", got, want)
 	}
@@ -73,6 +74,12 @@ func TestBuildKindsAndOrder(t *testing.T) {
 		if f[p].Kind != k {
 			t.Errorf("%s kind = %v, want %v", p, f[p].Kind, k)
 		}
+	}
+	if !f["/caddyfile"].Multiline || f["/serverName"].Multiline {
+		t.Error("contentMediaType should make a multi-line text field, and only then")
+	}
+	if f["/sites"].Placeholder != "- host: a.example.org\n" {
+		t.Errorf("sites placeholder = %q, want its first example as YAML", f["/sites"].Placeholder)
 	}
 	if !f["/serverName"].Required || f["/port"].Required || !f["/tls/cert"].Required {
 		t.Error("required flags wrong")
@@ -166,6 +173,9 @@ func TestAttachErrors(t *testing.T) {
 		"/port: must be <= 65535", "/tls/cert: missing properties: 'cert'", "/: anyOf failed",
 	})
 	f := byPath(fields)
+	if f["/tls/cert"].Error != "Required." {
+		t.Errorf("a missing required field reads %q, want Required.", f["/tls/cert"].Error)
+	}
 	if f["/port"].Error != "must be <= 65535" || f["/tls/cert"].Error == "" {
 		t.Errorf("errors not attached: port=%q cert=%q", f["/port"].Error, f["/tls/cert"].Error)
 	}
@@ -249,5 +259,18 @@ func TestLabel(t *testing.T) {
 		if got := label(in); got != want {
 			t.Errorf("label(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Refill shows what the user typed, even input Decode rejected, but never a secret.
+func TestRefill(t *testing.T) {
+	fields := mustBuild(t, testSchema, map[string]any{"port": float64(80), "readOnly": true})
+	Refill(fields, url.Values{"cfg/port": {"eighty"}, "cfg/tls/cert": {"/c"}, "cfg/adminPassword": {"pw"}})
+	f := byPath(fields)
+	if f["/port"].Value != "eighty" || f["/tls/cert"].Value != "/c" || f["/adminPassword"].Value != "" {
+		t.Errorf("port=%q cert=%q password=%q", f["/port"].Value, f["/tls/cert"].Value, f["/adminPassword"].Value)
+	}
+	if f["/readOnly"].Checked {
+		t.Error("an unposted checkbox stayed checked")
 	}
 }
