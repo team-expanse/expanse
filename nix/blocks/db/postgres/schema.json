@@ -17,11 +17,13 @@
     },
     "replicationPassword": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 1,
       "description": "Password for the internal 'replicator' role standbys use to stream from the primary. Required: pg_hba.conf trusts only the WireGuard overlay CIDR, but a shared secret is still needed since every node is on that overlay"
     },
     "superuserPassword": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 1,
       "description": "Password for the postgres superuser over TCP (local Unix-socket admin access, used by the failover controller, is trust and needs no password)"
     },

@@ -30,11 +30,21 @@ History before 1.0.0 is not recorded here.
   the node's volume stack without a rebuild or a reboot. The deploy form warns
   while no node has storage on. `expanse.agent.storageVG` still works and
   overrides the UI on that node.
+- Block passwords and tokens are sealed: the fields a type's schema marks
+  `writeOnly` are moved out of the block's config into the cluster's secret
+  store (age, keyed from the cluster secret), whether they come from the form
+  or `expanse ctl block apply`. Replicas get them as systemd credentials. They
+  no longer appear in `block get`, the web UI, generation diffs or replica spec
+  files. The deploy form generates a required password left empty and shows it
+  once.
 
 ### Changed
 
 - Every node loads the DRBD 9 kernel module and LVM thin-pool support from
   boot, whether or not storage is on, so turning it on needs no reboot.
+- `spec.secrets` is accepted (V20): each entry names a sealed secret for one
+  of the type's `writeOnly` fields. Blocks created earlier keep their
+  passwords in their config until their next update, which seals them.
 - Volume replicas are placed only on nodes whose storage is on. Nodes from
   before this release, which do not report it, stay eligible.
 

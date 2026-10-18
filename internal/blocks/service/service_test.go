@@ -23,6 +23,7 @@ func (fakeCatalog) Types() []string       { return []string{"util/echo"} }
 func (fakeCatalog) ValidateConfig(t string, c *structpb.Struct) []string {
 	return nil
 }
+func (fakeCatalog) WriteOnlyFields(string) []string { return nil }
 
 func newServer(t *testing.T) (*Server, func(context.Context) (uint64, error)) {
 	t.Helper()

@@ -21,6 +21,7 @@
     },
     "metricsToken": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 1,
       "description": "The cluster metrics bearer token (expanse ctl metrics set-token); without it the agents' /metrics are not scraped"
     },

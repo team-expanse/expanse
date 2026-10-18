@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/catalog"
 	"github.com/expanse/expanse/internal/blocks/service"
 	"github.com/expanse/expanse/internal/blocks/validate"
+	"github.com/expanse/expanse/internal/secrets"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 	"github.com/expanse/expanse/internal/web/auth"
@@ -76,8 +78,11 @@ func testBlocksServer(t *testing.T, st store.Store) (pb.BlockServiceServer, pb.C
 	blk := service.New(st, func() validate.Context {
 		return validate.Context{Catalog: cat, NodeCount: 1}
 	})
+	blk.Secrets = &secrets.Store{St: st, ClusterSecret: testClusterSecret}
 	return blk, service.NewCatalogServer(cat)
 }
+
+var testClusterSecret = bytes.Repeat([]byte{3}, 32)
 
 // loggedInClient returns an http.Client with a cookie jar already holding
 // a valid session for srv, plus the CSRF token to echo on mutating

@@ -26,6 +26,7 @@
     },
     "chapPassword": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 12,
       "description": "CHAP secret (the iSCSI spec requires at least 12 bytes). Required when chapUser is set"
     }

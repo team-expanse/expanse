@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1020,6 +1021,32 @@ func TestShippedSchemaExamplesValidate(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// Every password, token or secret key a schema declares is writeOnly, so it is sealed.
+func TestShippedSecretsAreWriteOnly(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	want := map[string][]string{
+		"db/postgres":          {"replicationPassword", "superuserPassword"},
+		"db/mariadb":           {"password", "rootPassword"},
+		"db/redis":             {"password"},
+		"iscsi/target":         {"chapPassword"},
+		"monitor/grafana":      {"adminPassword"},
+		"dev/forgejo":          {"adminPassword"},
+		"monitor/prometheus":   {"metricsToken"},
+		"security/vaultwarden": {"adminToken"},
+		"util/restic-backup":   {"password"},
+		"storage/s3":           {"secretAccessKey"},
+	}
+	for _, id := range c.Types() {
+		typ, _ := c.GetType(id)
+		if got := typ.WriteOnly; !slices.Equal(got, want[id]) {
+			t.Errorf("%s: writeOnly fields %v, want %v", id, got, want[id])
 		}
 	}
 }

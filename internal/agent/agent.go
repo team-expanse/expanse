@@ -433,6 +433,8 @@ func New(cfg Config) (*Agent, error) {
 			})
 			blk.Nodes = wire.Nodes(st)
 			blk.Logs = logs.JournaldReader{}
+			sealer := a.secretStore()
+			blk.Secrets = sealer
 			a.blocks = blk
 			a.blockCatalog = service.NewCatalogServer(cat)
 			logger.Info("block API enabled", "types", len(cat.Types()))
@@ -453,13 +455,17 @@ func New(cfg Config) (*Agent, error) {
 							logger.Warn("block runtimes unreadable; types fall back to the flake", "err", err)
 						}
 						a.replicaUnits = api
-						r.Register(systemd.NewManager(api, &systemd.Applier{
+						mgr := systemd.NewManager(api, &systemd.Applier{
 							Cache: cache,
 							Builder: &runtimeBuilder{
 								outs: outs, expr: strings.TrimSuffix(cfg.BlockRuntimes, ".json") + ".nix", nix: nixDriver, dir: runtimepath.Dir, logger: logger,
 								fallback: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef, logger: logger},
 							},
-						}))
+						})
+						if sealer != nil {
+							mgr.Unseal = sealer.Get
+						}
+						r.Register(mgr)
 						logger.Info("block replica runtime enabled", "flake", cfg.BlocksFlakeRef, "runtimes", len(outs))
 					}
 				}

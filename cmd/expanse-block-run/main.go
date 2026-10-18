@@ -92,7 +92,11 @@ func main() {
 	}
 	// The agent realised this type's runtime (if it has one) before starting the unit.
 	_ = os.Setenv("PATH", runtimepath.Prepend(runtimepath.Dir, spec.Type, os.Getenv("PATH")))
-	args := append([]string{}, spec.Args...)
+	args, err := withCredentials(spec.Args, os.Getenv("CREDENTIALS_DIRECTORY"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()

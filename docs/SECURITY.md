@@ -101,7 +101,42 @@ store-backed session password login issues — indistinguishable to every other 
 honored by whichever node's own listener next answers a request, exactly like a password-issued
 session already is.
 
-## 4. What is not covered
+## 4. Block secrets
+
+A block type's schema marks its passwords, tokens and secret keys `writeOnly` (for example
+`db/postgres`'s `superuserPassword`, `monitor/grafana`'s `adminPassword`, `storage/s3`'s
+`secretAccessKey`). Whether a value comes from the web UI's form or from YAML given to
+`expanse ctl block apply`, BlockService takes it out of the block's config before storing the
+block. It seals the value with age, keyed by HKDF over the cluster secret like the CA key, and
+stores it at `/secrets/<namespace>/<name>` in the same Raft transaction as the block. The spec
+keeps only a reference:
+
+```yaml
+spec:
+  secrets:
+    - name: pg.superuserPassword.3f9a1c22   # the sealed value
+      path: superuserPassword                # the config field it fills
+```
+
+So the value is not in `block get`, the web UI, generation snapshots and diffs, or the replica's
+spec file under `/run/expanse/block-replica/`. The node that runs a replica unseals its secrets
+into `/run/expanse/block-secrets/<instance>/` (tmpfs, root only). The block's unit loads that
+directory with `LoadCredential=`, and `expanse-block-run` puts each value back into the config
+before the workload starts. A changed value gets a new name, so the spec changes and the replicas
+restart with it. Applying the same value again keeps the name, and nothing restarts.
+
+- **Leaving a field out** of an update keeps the stored value. An empty string (`""`) removes it.
+  In the web UI, an empty password input keeps it too.
+- **Generated values:** on Deploy, the web UI generates a value for each required secret left
+  empty. It shows the values once, on the page after Deploy.
+- **Old values are kept, sealed, until the block is deleted.** A generation rollback can restore
+  a spec that names one. Deleting the block deletes all its secrets, so rolling back to before a
+  delete brings the block back without them: edit it and enter them again.
+- **Blocks created before 1.11.0** keep their passwords in their config until their next update
+  through the form or `block apply`, which seals them.
+- `util/restic-backup`'s `env` map, which may hold cloud credentials, is not sealed yet.
+
+## 5. What is not covered
 
 TPM-backed sealing of the cluster secret, the CA's private key, or the OIDC client secret — no TPM
 hardware has been available to test against, so none of this project's sealing code has ever touched

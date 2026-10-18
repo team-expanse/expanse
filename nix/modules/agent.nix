@@ -212,6 +212,9 @@ in
         # replica), so a per-block exception isn't possible here.
         ReadWritePaths=/var/lib/expanse/volumes
         RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+        # Block secrets (passwords, tokens), unsealed by the agent into a root-only
+        # tmpfs directory; expanse-block-run reads config_<field> back into the config.
+        LoadCredential=config:/run/expanse/block-secrets/%i
         # No SystemCallFilter: some binary-backed workloads (e.g.
         # node_exporter) use syscall families outside @system-service
         # and die with SIGSYS; the other sandbox options remain.

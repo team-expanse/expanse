@@ -1560,12 +1560,14 @@ func (x *Backup) GetPostHook() string {
 	return ""
 }
 
-// SecretRef mounts a cluster secret into the block via systemd credentials
-// (never env vars, never files in /nix/store — §5.3).
+// SecretRef points a writeOnly config field at a sealed cluster secret
+// (/secrets/<namespace>/<name>). BlockService writes these when a spec's
+// config carries a secret value; the node hands the value to the runtime as
+// a systemd credential (never env vars, never files in /nix/store — §5.3).
 type SecretRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // refused until a secrets store exists (V20)
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // the secret, in the block's namespace (V20)
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"` // the top-level config field it fills
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

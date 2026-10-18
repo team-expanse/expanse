@@ -19,7 +19,10 @@ import (
 type fakeCatalog struct {
 	types      []string
 	configErrs func(t string, c *structpb.Struct) []string
+	writeOnly  map[string][]string
 }
+
+func (f *fakeCatalog) WriteOnlyFields(t string) []string { return f.writeOnly[t] }
 
 func (f *fakeCatalog) HasType(t string) bool {
 	for _, x := range f.types {
@@ -544,16 +547,68 @@ func TestV19ConfigSchema(t *testing.T) {
 	}
 }
 
-// No cluster secrets store exists yet, so a block naming secrets is refused rather than run without them.
-func TestV20SecretsAreRefusedUntilThereIsASecretsStore(t *testing.T) {
-	b := validBlock()
-	b.Spec.Secrets = []*pb.SecretRef{{Name: "tls-cert", Path: "/run/secrets/tls"}}
-	e := byRule(Validate(b, baseCtx()), "V20")
-	if e == nil {
-		t.Fatal("a block naming a secret was accepted, but nothing would deliver the secret")
+// A secret ref names a sealed value for one of the type's writeOnly fields.
+func TestV20SecretRefs(t *testing.T) {
+	ctx := baseCtx()
+	ctx.Catalog.(*fakeCatalog).writeOnly = map[string][]string{"web/nginx": {"adminPassword", "token"}}
+	for _, tc := range []struct {
+		name string
+		refs []*pb.SecretRef
+		want string // "" = accepted; else a word the V20 message holds
+	}{
+		{"a writeOnly field", []*pb.SecretRef{{Name: "web.adminPassword.ab12", Path: "adminPassword"}}, ""},
+		{"two fields", []*pb.SecretRef{{Name: "a", Path: "adminPassword"}, {Name: "b", Path: "token"}}, ""},
+		{"not a writeOnly field", []*pb.SecretRef{{Name: "a", Path: "serverName"}}, "serverName"},
+		{"a path twice", []*pb.SecretRef{{Name: "a", Path: "token"}, {Name: "b", Path: "token"}}, "twice"},
+		{"a bad name", []*pb.SecretRef{{Name: "../x", Path: "token"}}, "../x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := validBlock()
+			b.Spec.Secrets = tc.refs
+			e := byRule(Validate(b, ctx), "V20")
+			switch {
+			case tc.want == "" && e != nil:
+				t.Fatalf("refused: %s", e.Message)
+			case tc.want != "" && e == nil:
+				t.Fatal("accepted")
+			case tc.want != "" && !strings.Contains(e.Message, tc.want):
+				t.Errorf("V20 message %q lacks %q", e.Message, tc.want)
+			}
+		})
 	}
-	if !strings.Contains(e.Message, "tls-cert") || !strings.Contains(e.Message, "not supported") {
-		t.Errorf("V20 message %q should name the secret and say secrets are not supported yet", e.Message)
+}
+
+// A field held as a secret counts as set: the schema's required and constraints are not
+// applied to a value the spec no longer carries.
+func TestV19ASecretRefFillsItsField(t *testing.T) {
+	ctx := baseCtx()
+	cat := ctx.Catalog.(*fakeCatalog)
+	cat.writeOnly = map[string][]string{"web/nginx": {"adminPassword"}}
+	cat.configErrs = func(_ string, c *structpb.Struct) []string {
+		v, ok := c.GetFields()["adminPassword"]
+		switch {
+		case !ok:
+			return []string{"/adminPassword: missing properties: 'adminPassword'"}
+		case len(v.GetStringValue()) < 8:
+			return []string{"/adminPassword: length must be >= 8"}
+		}
+		return nil
+	}
+	b := validBlock()
+	if byRule(Validate(b, ctx), "V19") == nil {
+		t.Fatal("the fake should require adminPassword")
+	}
+	b.Spec.Secrets = []*pb.SecretRef{{Name: "web.adminPassword.ab12", Path: "adminPassword"}}
+	if e := byRule(Validate(b, ctx), "V19"); e != nil {
+		t.Fatalf("a field held as a secret is reported: %s", e.Message)
+	}
+	if b.GetSpec().GetConfig().GetFields()["adminPassword"] != nil {
+		t.Error("validation changed the block's config")
+	}
+	b.Spec.Secrets = nil
+	b.Spec.Config, _ = structpb.NewStruct(map[string]any{"adminPassword": "short"})
+	if byRule(Validate(b, ctx), "V19") == nil {
+		t.Error("a value given in the config is not checked")
 	}
 }
 

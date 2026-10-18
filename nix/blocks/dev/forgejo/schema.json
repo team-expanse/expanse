@@ -16,6 +16,7 @@
     },
     "adminPassword": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 8,
       "description": "The administrator's password; applied on every start"
     },

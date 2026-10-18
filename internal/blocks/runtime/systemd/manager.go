@@ -12,8 +12,10 @@ package systemd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/errors"
@@ -65,11 +67,70 @@ type Manager struct {
 	// SpecDir is where per-replica desired-state JSON is written for
 	// expanse-block-run (default DefaultSpecDir); empty = default.
 	SpecDir string
+	// SecretDir holds each replica's unsealed secrets, one file per config field, which
+	// the unit loads with LoadCredential; empty = block-secrets beside SpecDir.
+	SecretDir string
+	// Unseal reads one of a namespace's block secrets; nil delivers none.
+	Unseal func(ctx context.Context, ns, name string) ([]byte, error)
 }
 
 // DefaultSpecDir is the runtime directory expanse-block-run reads its
 // per-replica spec from (the static template unit only carries %i).
 const DefaultSpecDir = "/run/expanse/block-replica"
+
+// secretDir is the replica's credential directory: under SecretDir, by default
+// block-secrets beside the spec directory (/run/expanse/block-secrets, tmpfs).
+func (m *Manager) secretDir(s Spec) string {
+	base := m.SecretDir
+	if base == "" {
+		base = filepath.Join(filepath.Dir(m.specDir()), "block-secrets")
+	}
+	return filepath.Join(base, Instance(s.Namespace, s.Name, s.Index))
+}
+
+// writeSecrets unseals the replica's secrets into its credential directory and drops
+// stale ones. The directory always exists: the unit's LoadCredential fails without it.
+func (m *Manager) writeSecrets(ctx context.Context, s Spec) error {
+	const op = "systemd.writeSecrets"
+	dir := m.secretDir(s)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return errors.Wrap(err, errors.KindInternal, op, dir)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return errors.Wrap(err, errors.KindInternal, op, dir)
+	}
+	for field, name := range s.Secrets {
+		if field == "" || strings.ContainsAny(field, "/\\") || strings.HasPrefix(field, ".") {
+			return errors.New(errors.KindInvalid, op, fmt.Sprintf("bad secret field %q", field))
+		}
+		if m.Unseal == nil {
+			return errors.New(errors.KindUnavailable, op, "this node cannot unseal secrets")
+		}
+		v, err := m.Unseal(ctx, s.Namespace, name)
+		if err != nil {
+			return errors.Wrap(err, errors.KindOf(err), op, "secret "+name)
+		}
+		if err := writeFileSync(filepath.Join(dir, field), v, 0o600); err != nil {
+			return errors.Wrap(err, errors.KindInternal, op, field)
+		}
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return errors.Wrap(err, errors.KindInternal, op, dir)
+	}
+	for _, e := range ents {
+		if _, ok := s.Secrets[e.Name()]; !ok {
+			_ = os.RemoveAll(filepath.Join(dir, e.Name()))
+		}
+	}
+	return nil
+}
+
+// secretsCurrent reports whether the credentials on disk were written for this spec.
+func (m *Manager) secretsCurrent(s Spec) bool {
+	_, err := os.Stat(m.secretDir(s))
+	return err == nil && m.specOnDiskMatches(s)
+}
 
 // specDir returns the configured spec directory.
 func (m *Manager) specDir() string {
@@ -194,6 +255,11 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 		Kind:        "update",
 		Description: "resolve block closure (cache-checked build)",
 		Fn: func(ctx context.Context) error {
+			if !m.secretsCurrent(spec) {
+				if err := m.writeSecrets(ctx, spec); err != nil {
+					return err
+				}
+			}
 			if err := m.writeSpec(spec); err != nil {
 				return err
 			}
@@ -239,6 +305,9 @@ func (m *Manager) Delete(ctx context.Context, r reconcile.Resource) error {
 	// running on a failed stop is caught by the next pass; the spec
 	// file removal is strict — it decides expanse-block-run's behavior.
 	_ = m.API.Stop(ctx, UnitNameForSpec(res.spec))
+	if err := os.RemoveAll(m.secretDir(res.spec)); err != nil {
+		return errors.Wrap(err, errors.KindInternal, "systemd.Delete", "credentials")
+	}
 	return m.removeSpec(res.spec)
 }
 

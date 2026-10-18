@@ -728,6 +728,24 @@ func TestReplicaSpecResticBackupRunsAsRoot(t *testing.T) {
 	}
 }
 
+// A block's secret refs reach the replica spec by name, never by value.
+func TestReplicaSpecCarriesSecretRefs(t *testing.T) {
+	blk := &pb.Block{Spec: &pb.BlockSpec{Type: "db/postgres", Secrets: []*pb.SecretRef{
+		{Name: "pg.superuserPassword.ab12", Path: "superuserPassword"},
+	}}}
+	raw, err := replicaSpec(blk, "default", "pg", 0, map[string]volumeRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec systemd.Spec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Secrets["superuserPassword"] != "pg.superuserPassword.ab12" || len(spec.Secrets) != 1 {
+		t.Errorf("secrets = %v", spec.Secrets)
+	}
+}
+
 // flakyReads fails reads under prefix the way a follower does during a leader election.
 type flakyReads struct {
 	store.Store

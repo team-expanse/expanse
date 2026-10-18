@@ -16,6 +16,7 @@
     },
     "rootPassword": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 8,
       "description": "Password for root@localhost and root@'%'; applied on every start"
     },
@@ -31,6 +32,7 @@
     },
     "password": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 1,
       "description": "Password for user; applied on every start"
     },

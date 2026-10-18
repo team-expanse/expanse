@@ -126,7 +126,10 @@ over Server-Sent Events, never by polling.
   forwarding and health check with it. Errors appear on the field they concern. "Show as YAML"
   gives the same block as a manifest for `expanse ctl block apply -f`, and `/blocks/new` still
   takes a pasted manifest. **Edit** on a block's page opens the same form with its current
-  settings (`/blocks/<ns>/<name>/edit`); a password left empty keeps its current value.
+  settings (`/blocks/<ns>/<name>/edit`). Password fields are never filled in. On Deploy, a
+  required one left empty is generated, and the page after Deploy shows it once. On Edit, one
+  left empty keeps its current value. They are stored sealed, apart from the block
+  (SECURITY.md §4).
 - **Volumes** (`/volumes`, `/volumes/new`, `/volumes/<name>` live) — list with state counts,
   create (field-level validation), a detail page with the replica table (role, health, resync
   progress, out-of-sync bytes, last seen), snapshots, snapshot/resize (grow-only) forms and

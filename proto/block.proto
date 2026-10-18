@@ -248,11 +248,13 @@ message Backup {
   string post_hook = 5;
 }
 
-// SecretRef mounts a cluster secret into the block via systemd credentials
-// (never env vars, never files in /nix/store — §5.3).
+// SecretRef points a writeOnly config field at a sealed cluster secret
+// (/secrets/<namespace>/<name>). BlockService writes these when a spec's
+// config carries a secret value; the node hands the value to the runtime as
+// a systemd credential (never env vars, never files in /nix/store — §5.3).
 message SecretRef {
-  string name = 1; // refused until a secrets store exists (V20)
-  string path = 2;
+  string name = 1; // the secret, in the block's namespace (V20)
+  string path = 2; // the top-level config field it fills
 }
 
 // BlockSpec is the user-authored desired state.

@@ -230,6 +230,11 @@ roll). `mode: recreate` tears down before standing up; the generation
 of the block record pins every placement to the exact revision it was
 scheduled from, so a mid-roll crash resumes deterministically.
 
+Passwords and tokens in `config` (the fields a type's schema marks `writeOnly`) are
+taken out of the stored block and sealed. The block keeps a `spec.secrets` reference to each
+([`SECURITY.md`](SECURITY.md) §4). Applying the same file again keeps them, and a changed value
+restarts the replicas with it.
+
 ### 6. Delete it
 
 ```console

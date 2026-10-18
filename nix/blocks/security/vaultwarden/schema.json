@@ -15,6 +15,7 @@
     },
     "adminToken": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 1,
       "pattern": "^[^\\n\\r]*$",
       "description": "Enables the /admin page; an Argon2 PHC string from `vaultwarden hash`, or a plain token"

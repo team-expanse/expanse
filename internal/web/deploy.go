@@ -166,8 +166,15 @@ type deployFormData struct {
 	Fields       []schemaform.Field
 	Errors       []string
 	Manifest     string
-	ClusterOnly  bool // the block gets an address, but no LAN range is set
-	NoStorage    bool // the block needs storage, but no node has it on
+	ClusterOnly  bool            // the block gets an address, but no LAN range is set
+	NoStorage    bool            // the block needs storage, but no node has it on
+	Stored       map[string]bool // secret fields with a sealed value
+}
+
+// renderForm renders the deploy/edit form, saying what an empty secret input does.
+func (s *Server) renderForm(w http.ResponseWriter, status int, data deployFormData) {
+	markSecrets(data.Fields, data.Stored, data.Edit)
+	s.render(w, status, "deploy_form.html", data)
 }
 
 func (s *Server) deployType(w http.ResponseWriter, r *http.Request) (*pb.BlockType, *catalog.Type, bool) {
@@ -203,7 +210,7 @@ func (s *Server) handleDeployForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := s.deployData(w, r, bt, b, fields)
-	s.render(w, http.StatusOK, "deploy_form.html", data)
+	s.renderForm(w, http.StatusOK, data)
 }
 
 func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +224,11 @@ func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	form := r.PostForm
 	cfg, cfgErrs := schemaform.Decode(bt.GetSchemaJson(), cfgPrefix, form)
+	gen, err := generateSecrets(bt.GetSchemaJson(), cfg)
+	if err != nil {
+		s.renderError(w, r, http.StatusInternalServerError, errText(err))
+		return
+	}
 	b, _, err := s.newBlock(r.Context(), typ, strings.TrimSpace(form.Get("name")), cfg)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
@@ -227,6 +239,10 @@ func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
 		created, err := s.blocks.Create(r.Context(), b)
 		if err == nil {
 			ns, name := created.GetMetadata().GetNamespace(), created.GetMetadata().GetName()
+			if len(gen) > 0 {
+				s.renderGenerated(w, r, ns+"/"+name, gen)
+				return
+			}
 			s.done(w, r, "success", "Block "+ns+"/"+name+" deployed", "/blocks/"+ns+"/"+name)
 			return
 		}
@@ -245,7 +261,7 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
-	s.render(w, http.StatusOK, "deploy_form.html", s.editData(w, r, bt, b, fields))
+	s.renderForm(w, http.StatusOK, s.editData(w, r, bt, b, fields))
 }
 
 func (s *Server) handleEditSubmit(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +381,7 @@ func (s *Server) renderRejected(w http.ResponseWriter, r *http.Request, data dep
 	for i := range data.Storage {
 		data.Storage[i].Size = form.Get("storage/" + data.Storage[i].Name + "/size")
 	}
-	s.render(w, http.StatusBadRequest, "deploy_form.html", data)
+	s.renderForm(w, http.StatusBadRequest, data)
 }
 
 // newBlock builds a block of typ fitted to the cluster: replicas and copies capped at the node count,
@@ -551,6 +567,7 @@ func (s *Server) deployData(w http.ResponseWriter, r *http.Request, bt *pb.Block
 	d.Manifest = manifestYAML(b, fields)
 	d.ClusterOnly = hasVIP(b) && s.lanPool(r.Context()) == ""
 	d.NoStorage = len(spec.GetStorage()) > 0 && !s.anyNodeStorage(r.Context())
+	d.Stored = storedSecrets(b)
 	return d
 }
 

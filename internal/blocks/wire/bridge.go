@@ -289,6 +289,12 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 			spec.Args = []string{"--config", string(raw)}
 		}
 	}
+	for _, r := range blk.GetSpec().GetSecrets() {
+		if spec.Secrets == nil {
+			spec.Secrets = map[string]string{}
+		}
+		spec.Secrets[r.GetPath()] = r.GetName()
+	}
 	if rootBlockTypes[blk.GetSpec().GetType()] {
 		spec.RunAsRoot = true
 	}

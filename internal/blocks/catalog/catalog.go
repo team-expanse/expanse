@@ -40,7 +40,10 @@ type Type struct {
 	Dir          string
 	Schema       *jsonschema.Schema
 	SchemaJSON   []byte // schema.json as shipped, for clients that render forms
-	Defaults     map[string]any
+	// WriteOnly names the top-level config fields marked writeOnly: secrets, sealed
+	// apart from the spec. Sorted.
+	WriteOnly []string
+	Defaults  map[string]any
 	// Template holds the spec fields (no type or config) a working block of this type starts from.
 	Template map[string]any
 }
@@ -133,6 +136,7 @@ func loadType(dir, category, name string) (*Type, error) {
 		Dir:          dir,
 		Schema:       schema,
 		SchemaJSON:   schemaRaw,
+		WriteOnly:    writeOnlyFields(schemaRaw),
 	}
 
 	if defRaw, err := os.ReadFile(filepath.Join(dir, "defaults.yaml")); err == nil {
@@ -149,6 +153,27 @@ func loadType(dir, category, name string) (*Type, error) {
 		return nil, errors.New(errors.KindInvalid, op, fmt.Sprintf("block %s/%s: %v", category, name, err))
 	}
 	return typ, nil
+}
+
+// writeOnlyFields lists the schema's top-level string properties marked writeOnly.
+func writeOnlyFields(schema []byte) []string {
+	var s struct {
+		Properties map[string]struct {
+			Type      string `json:"type"`
+			WriteOnly bool   `json:"writeOnly"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal(schema, &s) != nil {
+		return nil
+	}
+	var out []string
+	for k, p := range s.Properties {
+		if p.WriteOnly && p.Type == "string" {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // loadTemplate reads the optional template.yaml; type and config come from the catalog, not from it.
@@ -202,6 +227,14 @@ func (c *Catalog) Defaults(t string) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// WriteOnlyFields lists type t's secret fields (Type.WriteOnly).
+func (c *Catalog) WriteOnlyFields(t string) []string {
+	if typ, ok := c.types[t]; ok {
+		return typ.WriteOnly
+	}
+	return nil
 }
 
 // ValidateConfig validates config against the type's JSON Schema and returns

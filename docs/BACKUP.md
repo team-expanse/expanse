@@ -103,8 +103,7 @@ verify checksum-equal.
 
 Scheduled volume backups are the `util/restic-backup` block ([`RESTIC-BACKUP.md`](RESTIC-BACKUP.md)),
 which automates §4's snapshot-and-restic steps from each volume's primary; backing up `dataDir`
-(§2) is still a manual or externally-scheduled `restic backup`. A shipped block's own secret-shaped config fields
-(e.g. `iscsi/target`'s `chapPassword`, `db/postgres`'s replication/superuser passwords) are
-ordinary plaintext values on the block spec, already covered by the generation backup (§2, X4) —
-not a separate secrets store: there is none yet, so a block that names `spec.secrets` is
-refused (V20) rather than run without them (`.plan/PHASE-08-TASKS.md` D3).
+(§2) is still a manual or externally-scheduled `restic backup`. Blocks' passwords and tokens
+(e.g. `iscsi/target`'s `chapPassword`, `db/postgres`'s replication/superuser passwords) are sealed
+under `/secrets/` in the replicated store ([`SECURITY.md`](SECURITY.md) §4). They are backed up
+with `dataDir` (§2), and only that cluster's secret unseals them.

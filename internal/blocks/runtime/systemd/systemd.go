@@ -85,6 +85,9 @@ type Spec struct {
 	// Credentials map systemd credential name -> source path, surfaced
 	// with LoadCredential= (never env vars, never /nix/store files).
 	Credentials map[string]string `json:"credentials,omitempty"`
+	// Secrets maps a config field to the block secret holding its value; the manager
+	// unseals each into the unit's credentials, never into this spec.
+	Secrets map[string]string `json:"secrets,omitempty"`
 	// ExtraAddressFamilies extends the default AF_UNIX AF_INET AF_INET6.
 	ExtraAddressFamilies []string `json:"extraAddressFamilies,omitempty"`
 	// IOWeight (0–1000); 0 emits systemd's default 100.

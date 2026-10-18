@@ -32,6 +32,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/scheduler"
+	"github.com/expanse/expanse/internal/secrets"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
@@ -60,6 +61,8 @@ type Server struct {
 	// separate, not-yet-wired component, logs.Proxy): matches the CLI's
 	// own current behavior of talking to whichever node it dials.
 	Logs logs.Reader
+	// Secrets seals writeOnly config values apart from the spec; nil keeps them in it.
+	Secrets *secrets.Store
 }
 
 // StreamLogs implements the agent side of BlockService.StreamLogs.
@@ -120,8 +123,8 @@ func (s *Server) Create(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	if b.GetMetadata().GetName() == "" {
 		return nil, errors.New(errors.KindInvalid, "blocks.service.Create", "name is required")
 	}
+	b = proto.Clone(b).(*pb.Block) // sealing rewrites the config
 	if b.GetMetadata().GetNamespace() == "" {
-		b = proto.Clone(b).(*pb.Block)
 		b.Metadata.Namespace = "default"
 	}
 	k := key(b.GetMetadata().GetNamespace(), b.GetMetadata().GetName())
@@ -130,6 +133,10 @@ func (s *Server) Create(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	// advisory V2 via Existing). Zero store writes happen on failure.
 	if ves := s.Check(ctx, b, false); len(ves) > 0 {
 		return nil, admissionErr(ves)
+	}
+	sealed, err := s.sealSecrets(ctx, b, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	// Seed system status. ObservedGeneration: the FSM snapshots the new
@@ -144,10 +151,10 @@ func (s *Server) Create(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, "blocks.service.Create", "marshal block")
 	}
-	if _, err := s.St.Txn(ctx, []store.Op{
+	if _, err := s.St.Txn(ctx, append([]store.Op{
 		{Kind: store.OpCheck, Key: k, Expect: 0}, // V2, atomic read-before-write
 		{Kind: store.OpPut, Key: k, Value: out},
-	}); err != nil {
+	}, sealed...)); err != nil {
 		return nil, errors.Wrap(err, errors.KindConflict, "blocks.service.Create",
 			fmt.Sprintf("block %s/%s already exists or txn failed", b.GetMetadata().GetNamespace(), b.GetMetadata().GetName()))
 	}
@@ -243,8 +250,8 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	if b.GetMetadata().GetName() == "" {
 		return nil, errors.New(errors.KindInvalid, "blocks.service.Update", "name is required")
 	}
+	b = proto.Clone(b).(*pb.Block) // sealing rewrites the config
 	if b.GetMetadata().GetNamespace() == "" {
-		b = proto.Clone(b).(*pb.Block)
 		b.Metadata.Namespace = "default"
 	}
 	ns, name := b.GetMetadata().GetNamespace(), b.GetMetadata().GetName()
@@ -260,8 +267,13 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 		return nil, errors.Wrap(err, errors.KindInternal, "blocks.service.Update", "read for revision")
 	}
 
+	carrySecrets(b, cur.GetSpec().GetSecrets())
 	if ves := s.Check(ctx, b, true); len(ves) > 0 {
 		return nil, admissionErr(ves)
+	}
+	sealed, err := s.sealSecrets(ctx, b, cur.GetSpec().GetSecrets())
+	if err != nil {
+		return nil, err
 	}
 
 	gen, err := generationCurrent(ctx, s.St)
@@ -275,10 +287,10 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, "blocks.service.Update", "marshal block")
 	}
-	if _, err := s.St.Txn(ctx, []store.Op{
+	if _, err := s.St.Txn(ctx, append([]store.Op{
 		{Kind: store.OpCheck, Key: k, Expect: e.Revision}, // must still exist unmodified
 		{Kind: store.OpPut, Key: k, Value: out},
-	}); err != nil {
+	}, sealed...)); err != nil {
 		return nil, errors.Wrap(err, errors.KindConflict, "blocks.service.Update",
 			fmt.Sprintf("block %s/%s modified concurrently", ns, name))
 	}
@@ -304,10 +316,14 @@ func (s *Server) Delete(ctx context.Context, r *pb.DeleteBlockRequest) (*emptypb
 	if err := proto.Unmarshal(e.Value, &b); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, "blocks.service.Delete", "unmarshal block")
 	}
-	if _, err := s.St.Txn(ctx, []store.Op{
+	dropped, err := s.dropSecrets(ctx, ns, r.GetName())
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.St.Txn(ctx, append([]store.Op{
 		{Kind: store.OpCheck, Key: k, Expect: e.Revision},
 		{Kind: store.OpDelete, Key: k},
-	}); err != nil {
+	}, dropped...)); err != nil {
 		return nil, errors.Wrap(err, errors.KindConflict, "blocks.service.Delete",
 			fmt.Sprintf("block %s/%s modified concurrently", ns, r.GetName()))
 	}

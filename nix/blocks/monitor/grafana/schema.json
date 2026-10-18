@@ -17,6 +17,7 @@
     },
     "adminPassword": {
       "type": "string",
+      "writeOnly": true,
       "minLength": 8,
       "description": "Password for Grafana's admin user; applied when Grafana first creates its database"
     },

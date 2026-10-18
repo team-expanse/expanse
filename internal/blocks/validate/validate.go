@@ -18,10 +18,12 @@ package validate
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/expanse/expanse/internal/quantity"
+	"github.com/expanse/expanse/internal/secrets"
 	pb "github.com/expanse/expanse/proto"
 	"github.com/robfig/cron/v3"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -49,6 +51,8 @@ type Catalog interface {
 	// ValidateConfig checks config against the type's JSON Schema and
 	// returns one string per failing field path (V19).
 	ValidateConfig(t string, config *structpb.Struct) []string
+	// WriteOnlyFields lists the type's top-level secret fields (V20).
+	WriteOnlyFields(t string) []string
 }
 
 // Context carries cluster state into validation. Zero fields mean "not
@@ -102,7 +106,7 @@ func Validate(b *pb.Block, ctx Context) []ValidationError {
 	add(v17(b))
 	add(v18(b, ctx))
 	add(v19(b, ctx))
-	add(v20(b))
+	add(v20(b, ctx))
 	add(v21(b))
 	add(v22(b))
 	add(v23(b, ctx))
@@ -495,8 +499,12 @@ func v19(b *pb.Block, ctx Context) []ValidationError {
 	if ctx.Catalog == nil {
 		return nil
 	}
+	cfg, held := withSecretFields(b)
 	var errs []ValidationError
-	for _, path := range ctx.Catalog.ValidateConfig(b.GetSpec().GetType(), b.GetSpec().GetConfig()) {
+	for _, path := range ctx.Catalog.ValidateConfig(b.GetSpec().GetType(), cfg) {
+		if field, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), ":"); held[field] {
+			continue // the sealed value was checked when it was given
+		}
 		e := verr("V19", "spec.config field %q does not validate against the schema of type %q", path, b.GetSpec().GetType())
 		e.ConfigField = path
 		errs = append(errs, e)
@@ -504,12 +512,49 @@ func v19(b *pb.Block, ctx Context) []ValidationError {
 	return errs
 }
 
-// --- V20: secrets; there is no cluster secrets store yet, so none can be delivered ---
+// withSecretFields copies the config with a stand-in for each field held only as a
+// secret ref, so the schema sees it set; held names those fields.
+func withSecretFields(b *pb.Block) (*structpb.Struct, map[string]bool) {
+	cfg := b.GetSpec().GetConfig()
+	held := map[string]bool{}
+	for _, r := range b.GetSpec().GetSecrets() {
+		if _, given := cfg.GetFields()[r.GetPath()]; !given {
+			held[r.GetPath()] = true
+		}
+	}
+	if len(held) == 0 {
+		return cfg, held
+	}
+	out := &structpb.Struct{Fields: map[string]*structpb.Value{}}
+	for k, v := range cfg.GetFields() {
+		out.Fields[k] = v
+	}
+	for f := range held {
+		out.Fields[f] = structpb.NewStringValue("")
+	}
+	return out, held
+}
 
-func v20(b *pb.Block) []ValidationError {
+// --- V20: secret refs: valid names, each for a distinct writeOnly field of the type ---
+
+func v20(b *pb.Block, ctx Context) []ValidationError {
 	var errs []ValidationError
+	var fields []string
+	if ctx.Catalog != nil {
+		fields = ctx.Catalog.WriteOnlyFields(b.GetSpec().GetType())
+	}
+	seen := map[string]bool{}
 	for _, s := range b.GetSpec().GetSecrets() {
-		errs = append(errs, verr("V20", "spec.secrets %q: secrets are not supported yet; remove it", s.GetName()))
+		switch {
+		case !secrets.ValidName(s.GetName()):
+			errs = append(errs, verr("V20", "spec.secrets %q: not a valid secret name", s.GetName()))
+		case seen[s.GetPath()]:
+			errs = append(errs, verr("V20", "spec.secrets: field %q is named twice", s.GetPath()))
+		case ctx.Catalog != nil && !slices.Contains(fields, s.GetPath()):
+			errs = append(errs, verr("V20", "spec.secrets %q: %q is not a secret field of type %q (secret fields: %s)",
+				s.GetName(), s.GetPath(), b.GetSpec().GetType(), strings.Join(fields, ", ")))
+		}
+		seen[s.GetPath()] = true
 	}
 	return errs
 }

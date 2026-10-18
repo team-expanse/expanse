@@ -152,7 +152,7 @@ func TestDeployFormShowsEveryErrorOnItsField(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400", resp.StatusCode)
 	}
-	for _, field := range []string{"name", "cfg/port", "cfg/superuserPassword", "cfg/replicationPassword"} {
+	for _, field := range []string{"name", "cfg/port"} {
 		if !strings.Contains(body, `name="`+field+`"`) || !invalid(body, field) {
 			t.Errorf("field %s is not marked invalid; errors:\n%s", field, alerts(body))
 		}
