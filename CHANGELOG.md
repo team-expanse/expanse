@@ -14,6 +14,17 @@ History before 1.0.0 is not recorded here.
   resources a new block of that type starts from. `CatalogService.GetType` now
   returns the type's shipped `schema.json` as is, plus its defaults and
   template as JSON, so clients can build a deploy form from them.
+- Deploy any catalog type from the web UI without writing YAML: Blocks →
+  Deploy lists the catalog (types no node can run are greyed out), and each
+  type gets a form built from its schema, template and defaults. Errors show on
+  the field they belong to; "Show as YAML" gives the same block as a manifest.
+  A block's Edit button opens the same form.
+- The LAN address range for block VIPs (and the UI's own) is a cluster setting,
+  edited under Settings → LAN addresses in the web UI and checked against the
+  nodes' subnet before it is saved. `expanse.agent.externalVIPPool` still
+  works and applies while the setting is unset. Changing the range moves
+  blocks to addresses in the new one.
+- A block's page shows its address, and whether it is reachable from the LAN.
 
 ### Changed
 

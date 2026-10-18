@@ -15,6 +15,8 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/apply"
 	"github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/network/vip"
+	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -159,8 +161,12 @@ func (s *Server) renderBlockNewError(w http.ResponseWriter, r *http.Request, man
 }
 
 type blockDetailData struct {
-	Page  page
-	Block *pb.Block
+	Page    page
+	Block   *pb.Block
+	HasVIP  bool
+	Address string // the block's own address, "" until the agent assigns it
+	// ClusterOnly marks an address from the cluster-internal range, unreachable from the LAN.
+	ClusterOnly bool
 }
 
 func (s *Server) getBlock(ctx context.Context, r *http.Request) (*pb.Block, error) {
@@ -177,10 +183,15 @@ func (s *Server) handleBlockDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	full := b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
-	s.render(w, http.StatusOK, "block_detail.html", blockDetailData{
-		Page:  s.newPage(w, r, full, "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full}),
-		Block: b,
-	})
+	d := blockDetailData{
+		Page:   s.newPage(w, r, full, "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full}),
+		Block:  b,
+		HasVIP: hasVIP(b),
+	}
+	if p, scope, ok := vip.Lookup(store.WithStale(r.Context()), s.store, full); d.HasVIP && ok {
+		d.Address, d.ClusterOnly = p.Addr().String(), scope == vip.ScopeInternal
+	}
+	s.render(w, http.StatusOK, "block_detail.html", d)
 }
 
 // handleBlockEvents streams live status as SSE (X5: "watch it reach

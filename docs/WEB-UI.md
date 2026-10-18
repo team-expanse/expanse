@@ -12,7 +12,7 @@ TLS, as soon as its agent starts — there is no separate service to enable. Poi
 volumes and cluster state are all cluster-wide views regardless of which node answers.
 
 If the cluster also has the UI's own VIP configured (D8 — a `vip.Holder` wired alongside the
-block-VIP path, present whenever `expanse.agent.externalVIPPool`/`externalInterface` are set), one
+block-VIP path, present whenever a LAN address range is set in Settings or by `expanse.agent.externalVIPPool`), one
 address is reachable regardless of which node currently holds it, and survives losing that node
 (§4). The certificate every node presents carries a fixed shared SAN, `expanse-ui`
 (`ca.UIVIPHostname`), in addition to the node's own ID — resolve that name to the VIP address (a
@@ -140,7 +140,9 @@ over Server-Sent Events, never by polling.
   `expanse ctl admin reset-password` path in §3 remains the recovery route), the OIDC
   configuration as stored (issuer, client ID, redirect URL, allow-list — never the secret), and
   the UI CA: where `ui-ca.pem` lives on disk and a download of the certificate
-  (`/settings/ui-ca.pem`).
+  (`/settings/ui-ca.pem`), and the LAN address range blocks and the UI get their VIPs from
+  (`docs/NETWORKING.md`). Until one is set, the deploy form and each block's Address card say
+  the block is reachable inside the cluster only.
 
 All of the above are thin `html/template` + HTMX layers directly over control-plane operations the
 CLI already exercises (`internal/blocks`, `internal/storage`, the in-process `NodeService`) — the

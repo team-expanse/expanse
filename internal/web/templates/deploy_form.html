@@ -61,6 +61,7 @@
       {{range .Ports}}<li>Port {{.Port}} ({{.Name}}){{if eq .Expose.String "EXPOSE_VIP"}} on the block's own address{{end}}</li>{{end}}
     </ul>
     {{else}}<p class="muted">This type has no network ports.</p>{{end}}
+    {{if .ClusterOnly}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>No LAN address range is set, so this block will be reachable from inside the cluster only. <a href="/settings#network">Set a range</a> to reach blocks from your network.</p></div></div>{{end}}
   </aside>
 </div>
 {{end}}

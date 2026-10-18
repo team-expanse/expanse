@@ -32,6 +32,12 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 // newTestServerStore is newTestServer that also returns the store, for seeding cluster state.
 func newTestServerStore(t *testing.T) (*httptest.Server, string, store.Store) {
 	t.Helper()
+	return newTestServerWith(t, func(*Server) {})
+}
+
+// newTestServerWith is newTestServerStore with setup applied to the Server before it serves.
+func newTestServerWith(t *testing.T, setup func(*Server)) (*httptest.Server, string, store.Store) {
+	t.Helper()
 	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("boltstore.New: %v", err)
@@ -51,6 +57,7 @@ func newTestServerStore(t *testing.T) (*httptest.Server, string, store.Store) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	setup(s)
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
 	return srv, pw, st

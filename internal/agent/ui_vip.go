@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/store"
@@ -34,20 +35,11 @@ type noopCloser struct{}
 
 func (noopCloser) Close() error { return nil }
 
+// uiVIPLoop keeps the UI's address in the current pool, restarting the holder when the
+// network setting moves it.
 func (a *Agent) uiVIPLoop(ctx context.Context) {
 	if err := a.initVIP(); err != nil {
 		a.logger.Error("ui vip disabled", "err", err)
-		return
-	}
-	scope := vip.ScopeInternal
-	pool := vip.InternalPool()
-	if len(a.extPool) > 0 {
-		scope = vip.ScopeExternal
-		pool = a.extPool
-	}
-	pfx, err := vip.Allocate(ctx, a.store, uiVIPRef, scope, pool)
-	if err != nil {
-		a.logger.Error("ui vip allocation failed", "err", err)
 		return
 	}
 	seams, err := a.vipSeams()
@@ -57,6 +49,32 @@ func (a *Agent) uiVIPLoop(ctx context.Context) {
 	}
 	seams.Listen = func(netip.Prefix) (io.Closer, error) { return noopCloser{}, nil }
 
+	var cur netip.Prefix
+	stop, done := func() {}, make(chan struct{})
+	close(done)
+	defer func() { stop(); <-done }()
+	tick := time.NewTicker(vipScanInterval)
+	defer tick.Stop()
+	for {
+		pfx, _, err := vip.Assign(ctx, a.store, uiVIPRef, a.lanPool(ctx))
+		switch {
+		case err != nil:
+			a.logger.Warn("ui vip allocation failed", "err", err)
+		case pfx != cur:
+			stop()
+			<-done
+			cur = pfx
+			stop, done = a.runUIHolder(ctx, pfx, seams)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+func (a *Agent) runUIHolder(ctx context.Context, pfx netip.Prefix, seams vip.Seams) (context.CancelFunc, chan struct{}) {
 	h := vip.NewHolder(vip.HolderConfig{
 		Leases:     a.leaseManager(),
 		Self:       a.cfg.NodeID,
@@ -68,9 +86,15 @@ func (a *Agent) uiVIPLoop(ctx context.Context) {
 		OnAcquired: func(p netip.Prefix) { a.publishVIPHolder(p, a.cfg.NodeID) },
 		OnLost:     func(p netip.Prefix) { a.publishVIPHolder(p, "") },
 	})
-	if err := h.Run(ctx); err != nil {
-		a.logger.Warn("ui vip holder exited", "err", err)
-	}
+	hctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := h.Run(hctx); err != nil {
+			a.logger.Warn("ui vip holder exited", "vip", pfx, "err", err)
+		}
+	}()
+	return cancel, done
 }
 
 // uiVIPCandidates returns every non-witness cluster member: the UI

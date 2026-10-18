@@ -17,6 +17,18 @@
   <div id="block-fragment" sse-swap="block" hx-swap="innerHTML">{{template "block-fragment" .Block}}</div>
 </div>
 
+{{if .HasVIP}}
+<section class="card" id="address">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>Address</h2>{{if .Address}}{{if .ClusterOnly}}<span class="pill pill-neutral"><span class="dot"></span>Cluster only</span>{{else}}<span class="pill pill-ok"><span class="dot"></span>LAN</span>{{end}}{{end}}</div>
+  {{if .Address}}
+  <ul class="type-list">
+    {{range .Block.Spec.Network.GetPorts}}{{if eq .Expose.String "EXPOSE_VIP"}}<li><code>{{$.Address}}:{{.Port}}</code> <span class="muted">{{.Name}}</span></li>{{end}}{{end}}
+  </ul>
+  {{if .ClusterOnly}}<p class="field-hint">Reachable from inside the cluster only. <a href="/settings#network">Set a LAN address range</a> to reach it from your network.</p>{{end}}
+  {{else}}<p class="muted">Not assigned yet. It appears within a few seconds.</p>{{end}}
+</section>
+{{end}}
+
 <section class="card">
   <div class="card-head"><h2>Scale</h2></div>
   <form class="form-inline" hx-post="/blocks/{{$ns}}/{{$name}}/scale" hx-target="#block-fragment" hx-swap="innerHTML">

@@ -144,6 +144,7 @@ func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string
 		a.logger.Error("vip scan: list blocks", "err", err)
 		return nil, nil, err
 	}
+	lan := a.lanPool(ctx)
 	for _, e := range ents {
 		k := string(e.Key)
 		if !blockkey.IsSpec(e.Key) {
@@ -166,13 +167,7 @@ func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string
 			continue
 		}
 		blockRef := k[len("/blocks/"):]
-		scope := vip.ScopeInternal
-		pool := vip.InternalPool()
-		if len(a.extPool) > 0 {
-			scope = vip.ScopeExternal
-			pool = a.extPool
-		}
-		pfx, err := vip.Allocate(ctx, a.store, blockRef, scope, pool)
+		pfx, scope, err := vip.Assign(ctx, a.store, blockRef, lan)
 		if err != nil {
 			a.logger.Warn("vip allocation failed", "block", blockRef, "err", err)
 			continue
@@ -182,6 +177,24 @@ func (a *Agent) scanBlocks(ctx context.Context) (map[string]vipBlock, map[string
 		cands[key] = readyCandidates(&b)
 	}
 	return desired, cands, nil
+}
+
+// lanPool is the LAN VIP pool: the cluster's network setting, else this node's --external-vip-pool.
+func (a *Agent) lanPool(ctx context.Context) []netip.Prefix {
+	s, err := vip.LoadSettings(store.WithStale(ctx), a.store)
+	if err != nil {
+		a.logger.Warn("network settings unreadable; using the node's VIP pool", "err", err)
+		return a.extPool
+	}
+	if s.ExternalPool == "" {
+		return a.extPool
+	}
+	pool, err := vip.ParseExternalPool(s.ExternalPool)
+	if err != nil {
+		a.logger.Warn("network settings: bad VIP pool; using the node's", "err", err)
+		return a.extPool
+	}
+	return pool
 }
 
 // vipPorts lists a block's EXPOSE_VIP ports; an unset target port means the same port.

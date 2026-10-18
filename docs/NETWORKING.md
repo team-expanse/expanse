@@ -26,7 +26,7 @@ clustering machinery underneath (Raft, leases), see
 |---|---|
 | `10.42.0.0/16` | WireGuard overlay (`exp0`). Node N gets `10.42.N.0/24`; the node itself is `.1`. MTU 1420 (WireGuard overhead). |
 | `10.43.0.0/16` | Internal service VIPs (cluster-only). |
-| LAN subnet | External VIPs, allocated from a user-declared pool (e.g. `192.168.1.100-192.168.1.150`). The web UI's own VIP (`docs/WEB-UI.md`) takes one address from this pool at agent start, so size it one larger than the block VIPs you need. |
+| LAN subnet | External VIPs, allocated from a user-declared pool (e.g. `192.168.1.100-192.168.1.150`), set in the web UI under Settings → LAN addresses (see below). The web UI's own VIP (`docs/WEB-UI.md`) takes one address from this pool too, so size it one larger than the block VIPs you need. |
 | `10.44.0.0/16` | Block-internal addresses (microvms/containers, Phase 09). |
 
 Constants live in `internal/network/addrplan`; ports in
@@ -55,6 +55,19 @@ Candidates are ordered by ready-replica count, ties by node ID. The
 lease fence is the duplicate-holder safety argument: a new holder can
 only take over after the old one's lease has expired, and a partitioned
 holder stops serving when its own renewal fails.
+
+**The LAN pool.** Each node takes the pool from the cluster setting at
+`/settings/network` (Settings → LAN addresses in the web UI), falling
+back to its own `expanse.agent.externalVIPPool` while that is unset.
+With neither, VIPs come from `10.43.0.0/16` and are reachable inside
+the cluster only. The UI checks a new range before saving it: every
+address must share a subnet with a node (the item's `/len`, default
+/24), must not be a node's own, the subnet's network or broadcast
+address, or inside `10.42–10.44/16`, and the range holds at most 1024
+addresses. The agents re-read the setting on every 2 s scan: when the
+range changes, a block whose address is outside it gets a new one
+(lowest free) and its holder moves; clearing it moves blocks back to
+internal addresses. The UI's own VIP follows the same way.
 
 ### Load balancing (`internal/proxy`, wired in `internal/agent/lb.go`)
 The VIP holder's listener slot is shared by the L4 and L7 balancers,

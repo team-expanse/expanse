@@ -7,7 +7,7 @@ let
   shim = "n2 = n3 = n1\n";
   lint = pkgs.runCommand "ui-block-forms-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
-    { cat ${./cluster-common.py} ${./block-common.py}; printf '%s' ${lib.escapeShellArg shim}; cat ${./python/vol_cluster.py} ${./python/single_node_common.py} ${./python/ui_block_forms.py}; } \
+    { cat ${./cluster-common.py} ${./block-common.py}; printf '%s' ${lib.escapeShellArg shim}; cat ${./python/vol_cluster.py} ${./python/single_node_common.py} ${./python/ui_forms_common.py} ${./python/ui_block_forms.py}; } \
       | python3 -c 'import sys; compile(sys.stdin.read(), "testscript", "exec")'
     touch $out
   '';
@@ -56,6 +56,7 @@ in
     ${shim}
     ${builtins.readFile ./python/vol_cluster.py}
     ${builtins.readFile ./python/single_node_common.py}
+    ${builtins.readFile ./python/ui_forms_common.py}
     ${builtins.readFile ./python/ui_block_forms.py}
   '';
 }

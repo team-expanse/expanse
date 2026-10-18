@@ -166,6 +166,7 @@ type deployFormData struct {
 	Fields       []schemaform.Field
 	Errors       []string
 	Manifest     string
+	ClusterOnly  bool // the block gets an address, but no LAN range is set
 }
 
 func (s *Server) deployType(w http.ResponseWriter, r *http.Request) (*pb.BlockType, *catalog.Type, bool) {
@@ -547,6 +548,7 @@ func (s *Server) deployData(w http.ResponseWriter, r *http.Request, bt *pb.Block
 		d.Storage = append(d.Storage, storageInput{Name: st.GetName(), Size: st.GetSize(), Replication: st.GetReplication()})
 	}
 	d.Manifest = manifestYAML(b, fields)
+	d.ClusterOnly = hasVIP(b) && s.lanPool(r.Context()) == ""
 	return d
 }
 

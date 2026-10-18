@@ -37,6 +37,7 @@ type settingsData struct {
 	CAPath      string
 	CAAvailable bool
 	SSOUser     bool
+	Network     networkView
 }
 
 func (s *Server) settingsData(w http.ResponseWriter, r *http.Request) settingsData {
@@ -51,6 +52,7 @@ func (s *Server) settingsData(w http.ResponseWriter, r *http.Request) settingsDa
 	_, err := s.store.Get(store.WithStale(r.Context()), store.Key(control.UICAKey))
 	d.CAAvailable = err == nil
 	d.SSOUser = d.Page.User != auth.AdminUsername
+	d.Network = s.networkView(r.Context())
 	return d
 }
 

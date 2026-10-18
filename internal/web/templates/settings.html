@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">Settings</h1>
-    <p class="page-sub">Access to this interface. Cluster-wide: every node serves the same store.</p>
+    <p class="page-sub">Access to this interface and the addresses blocks use. Cluster-wide: every node serves the same store.</p>
   </div>
 </div>
 <div class="grid-2">
@@ -69,4 +69,24 @@
     </section>
   </div>
 </div>
+<section class="card" id="network">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>LAN addresses</h2>{{if .Network.InUse}}<span class="pill pill-ok"><span class="dot"></span>Set</span>{{else}}<span class="pill pill-neutral"><span class="dot"></span>Not set</span>{{end}}</div>
+  <p>Each block that serves on the network gets its own address from this range, and so does this interface. Use free addresses on the nodes' network, outside your router's DHCP range.</p>
+  {{if not .Network.InUse}}
+  <div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>No range is set, so blocks are reachable from inside the cluster only.</p></div></div>
+  {{else if not .Network.Setting}}
+  <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><p>In use: <code>{{.Network.Fallback}}</code>, from this node's configuration. Saving a range here replaces it on every node.</p></div></div>
+  {{end}}
+  <form method="post" action="/settings/network" class="form" novalidate>
+    {{template "csrf" .Page}}
+    <label class="field">
+      <span class="field-label">Address range</span>
+      <input class="input" type="text" name="externalVIPPool" value="{{.Network.Input}}" placeholder="192.168.1.200-192.168.1.220" spellcheck="false"{{if .Network.Error}} aria-invalid="true" autofocus{{end}}>
+      {{if .Network.Error}}<span class="field-error">{{.Network.Error}}</span>{{else}}<span class="field-hint">A range (<code>first-last</code>) or single addresses, separated by commas. Add <code>/16</code> if your network is wider than a /24. Changing it gives every block a new address.</span>{{end}}
+    </label>
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">Save</button>
+    </div>
+  </form>
+</section>
 {{end}}

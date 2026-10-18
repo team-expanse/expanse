@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/expanse/expanse/internal/errors"
@@ -94,39 +95,9 @@ func ParseExternalPool(cfg string) ([]netip.Prefix, error) {
 }
 
 func parsePoolItem(item string) ([]netip.Prefix, error) {
-	// Optional mask suffix: "/24" after the range or address.
-	mask := 0
-	if i := strings.LastIndex(item, "/"); i >= 0 {
-		n, err := fmt.Sscanf(item[i+1:], "%d", &mask)
-		if err != nil || n != 1 {
-			return nil, errors.New(errors.KindInvalid, "vip", "invalid prefix length in pool item "+item)
-		}
-		item = item[:i]
-	}
-	lo, hi, ranged := strings.Cut(item, "-")
-	loAddr, err := netip.ParseAddr(strings.TrimSpace(lo))
+	loAddr, hiAddr, mask, err := poolRange(item)
 	if err != nil {
-		return nil, errors.Wrap(err, errors.KindInvalid, "vip", "pool start address")
-	}
-	loAddr = loAddr.Unmap()
-	hiAddr := loAddr
-	if ranged {
-		hiAddr, err = netip.ParseAddr(strings.TrimSpace(hi))
-		if err != nil {
-			return nil, errors.Wrap(err, errors.KindInvalid, "vip", "pool end address")
-		}
-		hiAddr = hiAddr.Unmap()
-	}
-	if hiAddr.Less(loAddr) {
-		return nil, errors.New(errors.KindInvalid, "vip", "pool range is reversed: "+item)
-	}
-	if mask == 0 {
-		// Spec example uses the LAN /24; that is the sensible default
-		// for bare pool addresses.
-		mask = 24
-	}
-	if mask < 0 || mask > loAddr.BitLen() {
-		return nil, errors.New(errors.KindInvalid, "vip", fmt.Sprintf("prefix /%d out of range for %s", mask, item))
+		return nil, err
 	}
 	var out []netip.Prefix
 	for a := loAddr; ; a = a.Next() {
@@ -139,6 +110,47 @@ func parsePoolItem(item string) ([]netip.Prefix, error) {
 		}
 	}
 	return out, nil
+}
+
+// poolRange parses one pool item into its first and last address and announce mask.
+func poolRange(item string) (netip.Addr, netip.Addr, int, error) {
+	var none netip.Addr
+	fail := func(err error) (netip.Addr, netip.Addr, int, error) { return none, none, 0, err }
+	// Optional mask suffix: "/24" after the range or address.
+	mask := 0
+	if i := strings.LastIndex(item, "/"); i >= 0 {
+		n, err := fmt.Sscanf(item[i+1:], "%d", &mask)
+		if err != nil || n != 1 {
+			return fail(errors.New(errors.KindInvalid, "vip", "invalid prefix length in pool item "+item))
+		}
+		item = item[:i]
+	}
+	lo, hi, ranged := strings.Cut(item, "-")
+	loAddr, err := netip.ParseAddr(strings.TrimSpace(lo))
+	if err != nil {
+		return fail(errors.Wrap(err, errors.KindInvalid, "vip", "pool start address"))
+	}
+	loAddr = loAddr.Unmap()
+	hiAddr := loAddr
+	if ranged {
+		hiAddr, err = netip.ParseAddr(strings.TrimSpace(hi))
+		if err != nil {
+			return fail(errors.Wrap(err, errors.KindInvalid, "vip", "pool end address"))
+		}
+		hiAddr = hiAddr.Unmap()
+	}
+	if hiAddr.Less(loAddr) {
+		return fail(errors.New(errors.KindInvalid, "vip", "pool range is reversed: "+item))
+	}
+	if mask == 0 {
+		// Spec example uses the LAN /24; that is the sensible default
+		// for bare pool addresses.
+		mask = 24
+	}
+	if mask < 0 || mask > loAddr.BitLen() {
+		return fail(errors.New(errors.KindInvalid, "vip", fmt.Sprintf("prefix /%d out of range for %s", mask, item)))
+	}
+	return loAddr, hiAddr, mask, nil
 }
 
 // InternalPool returns the internal VIP pool as single-address /32
@@ -161,7 +173,8 @@ func InternalPool() []netip.Prefix {
 // Allocate assigns the lowest free address from pool to blockRef at
 // the given scope. If the block already holds a record it is returned
 // unchanged (stability across repeated calls and across restarts).
-// The record persists until Release — typically at block delete.
+// The record persists until Release — typically at block delete — or
+// until the pool no longer holds its address, when it moves into the pool.
 func Allocate(ctx context.Context, st store.Store, blockRef string, scope Scope, pool []netip.Prefix) (netip.Prefix, error) {
 	// Block refs are hierarchical ("web/nginx"); slashes are legal
 	// in the key. Reject only the empty ref.
@@ -172,6 +185,7 @@ func Allocate(ctx context.Context, st store.Store, blockRef string, scope Scope,
 		return netip.Prefix{}, errors.New(errors.KindInvalid, "vip", "unknown scope "+string(scope))
 	}
 	key := PoolKey(scope, blockRef)
+	var rev store.Revision // nonzero: replace a record the pool no longer holds
 	if ent, err := st.Get(ctx, key); err == nil {
 		var a allocation
 		if err := json.Unmarshal(ent.Value, &a); err != nil {
@@ -181,7 +195,10 @@ func Allocate(ctx context.Context, st store.Store, blockRef string, scope Scope,
 		if err != nil {
 			return netip.Prefix{}, errors.Wrap(err, errors.KindInternal, "vip", "corrupt allocation record")
 		}
-		return p, nil
+		if slices.Contains(pool, p) {
+			return p, nil
+		}
+		rev = ent.Revision
 	}
 	used, err := usedAddrs(ctx, st)
 	if err != nil {
@@ -199,7 +216,10 @@ func Allocate(ctx context.Context, st store.Store, blockRef string, scope Scope,
 		// expect==0: create-only. Losing a race with another writer
 		// (same address claimed concurrently) surfaces as KindConflict;
 		// a single retry pass covers the realistic case.
-		if _, err := st.CompareAndSwap(ctx, key, 0, rec); err != nil {
+		if _, err := st.CompareAndSwap(ctx, key, rev, rec); err != nil {
+			if rev != 0 {
+				return netip.Prefix{}, err // another node moved it first; the next pass reads theirs
+			}
 			continue
 		}
 		return p, nil

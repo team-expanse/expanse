@@ -908,6 +908,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.logger.Error("web UI init failed", "err", err)
 		} else {
 			webSrv.DataDir = a.ctl.dataDir // where the UI CA certificate is written, shown on the settings page
+			webSrv.VIPPoolFallback = a.cfg.ExternalVIPPool
 			go func() {
 				addr := fmt.Sprintf("0.0.0.0:%d", config.PortUI)
 				if err := webSrv.Serve(ctx, addr, tlsCfg); err != nil {

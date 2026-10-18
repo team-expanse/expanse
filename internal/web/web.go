@@ -72,6 +72,8 @@ type Server struct {
 	// DataDir is the agent's data directory, shown on the settings
 	// page as where the UI CA certificate lives on disk; optional.
 	DataDir string
+	// VIPPoolFallback is this node's --external-vip-pool, in use while the cluster setting is unset.
+	VIPPoolFallback string
 
 	store         store.Store
 	blocks        pb.BlockServiceServer
@@ -123,6 +125,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s.registerGenerationRoutes()
 	s.registerEventRoutes()
 	s.registerSettingsRoutes()
+	s.registerNetworkRoutes()
 	return s, nil
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
+	"google.golang.org/protobuf/proto"
 )
 
 func blockWithPlacements(nodes []string, phases ...pb.Phase) *pb.Block {
@@ -151,5 +152,48 @@ func TestVIPPortsListsEveryExposedPortWithItsTarget(t *testing.T) {
 	}
 	if vipPorts(&pb.Block{}) != nil {
 		t.Errorf("a block without ports has VIP ports")
+	}
+}
+
+// The cluster's network setting overrides this node's --external-vip-pool, and a change moves the VIP.
+func TestScanBlocksUsesTheClusterPoolSetting(t *testing.T) {
+	ctx := context.Background()
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("boltstore.New: %v", err)
+	}
+	defer st.Close()
+	b := &pb.Block{Spec: &pb.BlockSpec{Network: &pb.Network{Ports: []*pb.Port{
+		{Name: "http", Port: 80, TargetPort: 8080, Expose: pb.Expose_EXPOSE_VIP},
+	}}}}
+	raw, _ := proto.Marshal(b)
+	if _, err := st.Put(ctx, "/blocks/web/nginx", raw); err != nil {
+		t.Fatal(err)
+	}
+	a := newTestAgent(t, st)
+	a.extPool, _ = vip.ParseExternalPool("192.168.1.100")
+
+	addr := func() string {
+		t.Helper()
+		desired, _, err := a.scanBlocks(ctx)
+		if err != nil || len(desired) != 1 {
+			t.Fatalf("scanBlocks = %v, %v; want one VIP", desired, err)
+		}
+		for k, vb := range desired {
+			if vb.scope != vip.ScopeExternal {
+				t.Errorf("%s scope = %s, want external", k, vb.scope)
+			}
+			return k
+		}
+		return ""
+	}
+	if got := addr(); got != "192.168.1.100/24" {
+		t.Errorf("with only the node's flag, VIP = %s", got)
+	}
+	if err := vip.SaveSettings(ctx, st, vip.Settings{ExternalPool: "192.168.1.200"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := addr(); got != "192.168.1.200/24" {
+		t.Errorf("after the cluster setting, VIP = %s, want 192.168.1.200/24", got)
 	}
 }
