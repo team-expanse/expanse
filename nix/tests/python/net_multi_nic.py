@@ -94,7 +94,8 @@ with subtest("a VM block's macvtap sits on eno3 and its guest gets the reserved 
 with subtest("the node's DHCP client leaves the guest's macvtap alone"):
     # Each check spans dhcpcd's solicit window: on 1.10.0 it leased the guest's reservation to the node.
     for _ in range(10):
-        mv = n1.succeed("ip -4 -o addr show type macvtap")
+        # `ip addr show type macvtap` ignores the type filter, so list the links first.
+        mv = n1.succeed("for l in $(ip -o link show type macvtap | awk -F'[ :@]+' '{print $2}'); do ip -4 -o addr show dev $l; done")
         assert "inet " not in mv, f"the node holds an address on the guest's macvtap:\n{mv}"
         time.sleep(3)
     router.succeed(f"ip neigh flush to {GUEST_IP}; ping -c1 -W2 {GUEST_IP}")
