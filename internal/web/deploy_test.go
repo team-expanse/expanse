@@ -297,3 +297,27 @@ func TestEditFormUpdatesTheBlock(t *testing.T) {
 		t.Errorf("a bad port: status %d, errors:\n%s", resp.StatusCode, alerts(body))
 	}
 }
+
+// A second block of a type gets the next free port, so two can share a node.
+func TestDeployFormPicksAFreePort(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "")
+	c, csrf := loggedInClient(t, srv, pw)
+	deployNginx(t, c, srv.URL, csrf) // config port 8080
+
+	_, body := get(t, c, srv.URL+"/deploy/web/nginx")
+	if !strings.Contains(body, `name="cfg/port" value="8081"`) {
+		t.Error("the form does not offer the next free port, 8081")
+	}
+	resp, body := postForm(t, c, srv.URL+"/deploy/web/nginx", csrf, url.Values{
+		"name": {"site2"}, "cfg/serverName": {"two.example.org"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+	s := getBlock(t, st, "default/site2").GetSpec()
+	if s.GetConfig().AsMap()["port"] != float64(8081) || s.GetNetwork().GetPorts()[0].GetTargetPort() != 8081 {
+		t.Errorf("second nginx: config port %v, target %d; want 8081 for both",
+			s.GetConfig().AsMap()["port"], s.GetNetwork().GetPorts()[0].GetTargetPort())
+	}
+}

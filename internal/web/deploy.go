@@ -190,13 +190,12 @@ func (s *Server) handleDeployForm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	b, err := apply.FromTemplate(typ, "default", typ.Name, nil)
+	b, free, err := s.newBlock(r.Context(), typ, typ.Name, nil)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
-	fitToCluster(b, s.loadClusterFacts(r.Context()).nodes)
-	fields, err := schemaform.Build(bt.GetSchemaJson(), cfgPrefix, typ.Defaults)
+	fields, err := schemaform.Build(bt.GetSchemaJson(), cfgPrefix, free)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
@@ -216,13 +215,11 @@ func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	form := r.PostForm
 	cfg, cfgErrs := schemaform.Decode(bt.GetSchemaJson(), cfgPrefix, form)
-	b, err := apply.FromTemplate(typ, "default", strings.TrimSpace(form.Get("name")), cfg)
+	b, _, err := s.newBlock(r.Context(), typ, strings.TrimSpace(form.Get("name")), cfg)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
-	fitToCluster(b, s.loadClusterFacts(r.Context()).nodes)
-	followPorts(b, typ.Defaults)
 	sub := formErrors{config: cfgErrs, general: applyCommon(b, form)}
 	if sub.admit(r.Context(), s.blocks, b, false) {
 		created, err := s.blocks.Create(r.Context(), b)
@@ -367,6 +364,75 @@ func (s *Server) renderRejected(w http.ResponseWriter, r *http.Request, data dep
 		data.Storage[i].Size = form.Get("storage/" + data.Storage[i].Name + "/size")
 	}
 	s.render(w, http.StatusBadRequest, "deploy_form.html", data)
+}
+
+// newBlock builds a block of typ fitted to the cluster: replicas and copies capped at the node count,
+// and port settings left at their default moved off ports other blocks use. It returns those defaults.
+func (s *Server) newBlock(ctx context.Context, typ *catalog.Type, name string, cfg map[string]any) (*pb.Block, map[string]any, error) {
+	fitted := *typ
+	fitted.Defaults = freePorts(typ.Defaults, s.usedPorts(ctx))
+	b, err := apply.FromTemplate(&fitted, "default", name, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	fitToCluster(b, s.loadClusterFacts(ctx).nodes)
+	followPorts(b, typ.Defaults)
+	return b, fitted.Defaults, nil
+}
+
+// usedPorts lists the ports existing blocks listen on: their port targets, probes and port settings.
+func (s *Server) usedPorts(ctx context.Context) map[int32]bool {
+	used := map[int32]bool{}
+	resp, err := s.blocks.List(ctx, &pb.ListBlocksRequest{})
+	if err != nil {
+		return used
+	}
+	for _, b := range resp.GetBlocks() {
+		net := b.GetSpec().GetNetwork()
+		for _, p := range net.GetPorts() {
+			used[p.GetTargetPort()] = true
+		}
+		for _, probe := range []*pb.HealthProbe{net.GetHealthCheck().GetReadiness(), net.GetHealthCheck().GetLiveness()} {
+			if probe.GetPort() > 0 {
+				used[probe.GetPort()] = true
+			}
+		}
+		for k, v := range b.GetSpec().GetConfig().AsMap() {
+			if n, ok := portNumber(v); ok && isPortKey(k) {
+				used[n] = true
+			}
+		}
+	}
+	return used
+}
+
+func isPortKey(k string) bool { return k == "port" || strings.HasSuffix(k, "Port") }
+
+// freePorts returns defaults with each port setting another block already uses moved to the next free port.
+func freePorts(defaults map[string]any, used map[int32]bool) map[string]any {
+	out := make(map[string]any, len(defaults))
+	taken := make(map[int32]bool, len(used))
+	for p := range used {
+		taken[p] = true
+	}
+	keys := make([]string, 0, len(defaults))
+	for k, v := range defaults {
+		out[k] = v
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		n, ok := portNumber(defaults[k])
+		if !ok || !isPortKey(k) || n <= 0 {
+			continue
+		}
+		for taken[n] && n < 65535 {
+			n++
+		}
+		taken[n] = true
+		out[k] = float64(n)
+	}
+	return out
 }
 
 // fitToCluster caps the template's replicas and volume copies (written for 3 nodes) at the node count.

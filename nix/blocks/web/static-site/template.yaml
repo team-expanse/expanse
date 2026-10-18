@@ -2,6 +2,8 @@
 replicas: 1
 strategy:
   kind: ACTIVE_ACTIVE
+placement:
+  antiAffinity: ANTI_AFFINITY_NODE
 resources:
   requests:
     cpu: 100m
