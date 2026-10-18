@@ -210,7 +210,8 @@ def as_pguser(cmd):
 
 
 # The replica's own runtime (the agent links it there), so a missing link fails here too.
-NODE_PSQL = "/nix/var/nix/gcroots/expanse/block-runtime/db-postgres/bin/psql"
+NODE_PG_BIN = "/nix/var/nix/gcroots/expanse/block-runtime/db-postgres/bin"
+NODE_PSQL = f"{NODE_PG_BIN}/psql"
 
 
 def wait_row_replicates(m, sockdir, sql, want, timeout=60):
@@ -470,7 +471,7 @@ with subtest("pg_checksums reports zero corruption on the promoted primary (X3)"
     pg_pid = new_primary_m.succeed(f"head -1 {pgdata}/postmaster.pid").strip()
     new_primary_m.succeed(f"kill -INT {pg_pid}")
     new_primary_m.succeed(f"timeout 30 sh -c 'while kill -0 {pg_pid} 2>/dev/null; do sleep 0.5; done'")
-    out = new_primary_m.succeed(as_pguser(f"pg_checksums -D {pgdata} -c"))
+    out = new_primary_m.succeed(as_pguser(f"{NODE_PG_BIN}/pg_checksums -D {pgdata} -c"))
     print(f"[diag] pg_checksums: {out}")
     # Restore pgdata's own strict mode -- postgres's restart below
     # refuses to start otherwise.
