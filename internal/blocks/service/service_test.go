@@ -281,3 +281,37 @@ func TestListSkipsReplicaProbeRecords(t *testing.T) {
 		t.Errorf("namesInNamespace = %v, want [a]", names)
 	}
 }
+
+// Check reports every admission failure, where Create stops at the first, and writes nothing.
+func TestCheckReportsEveryFailure(t *testing.T) {
+	srv, _ := newServer(t)
+	ctx := context.Background()
+	b := validBlock("")
+	b.Spec.Type = "no/such"
+	b.Metadata.Namespace = ""
+	ves := srv.Check(ctx, b, false)
+	rules := map[string]bool{}
+	for _, v := range ves {
+		rules[v.Rule] = true
+	}
+	if !rules["V1"] || !rules["V3"] {
+		t.Errorf("Check = %v, want V1 (name) and V3 (type)", ves)
+	}
+
+	ok := validBlock("c1")
+	if ves := srv.Check(ctx, ok, false); len(ves) != 0 {
+		t.Fatalf("valid block: %v", ves)
+	}
+	if _, err := srv.Get(ctx, &pb.GetBlockRequest{Namespace: "default", Name: "c1"}); err == nil {
+		t.Error("Check wrote the block")
+	}
+	if _, err := srv.Create(ctx, ok); err != nil {
+		t.Fatal(err)
+	}
+	if ves := srv.Check(ctx, validBlock("c1"), false); len(ves) == 0 {
+		t.Error("a second create of c1 passed Check (V2)")
+	}
+	if ves := srv.Check(ctx, validBlock("c1"), true); len(ves) != 0 {
+		t.Errorf("updating c1 failed Check: %v", ves)
+	}
+}

@@ -97,6 +97,21 @@ func admissionErr(ves []validate.ValidationError) error {
 	return errors.New(errors.KindInvalid, "blocks.service", v.Error())
 }
 
+// Check runs Create's (or, with update, Update's) admission and returns every failure; it writes nothing.
+func (s *Server) Check(ctx context.Context, b *pb.Block, update bool) []validate.ValidationError {
+	ns := b.GetMetadata().GetNamespace()
+	if ns == "" {
+		ns = "default"
+	}
+	self := ""
+	if update {
+		self = b.GetMetadata().GetName()
+	}
+	ad := s.adCtx()
+	ad.Existing = s.namesInNamespace(ctx, ns, self)
+	return validate.Validate(b, ad)
+}
+
 // Create admits and persists a new block. The block is written and the
 // generation bumped in one Raft transaction; BlockStatus is seeded
 // Phase=PENDING with ObservedGeneration set to the generation this create
@@ -113,9 +128,7 @@ func (s *Server) Create(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 
 	// Pre-txn admission for good error messages (V1–V24, incl. a
 	// advisory V2 via Existing). Zero store writes happen on failure.
-	ad := s.adCtx()
-	ad.Existing = s.namesInNamespace(ctx, b.GetMetadata().GetNamespace(), "")
-	if ves := validate.Validate(b, ad); len(ves) > 0 {
+	if ves := s.Check(ctx, b, false); len(ves) > 0 {
 		return nil, admissionErr(ves)
 	}
 
@@ -247,9 +260,7 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 		return nil, errors.Wrap(err, errors.KindInternal, "blocks.service.Update", "read for revision")
 	}
 
-	ad := s.adCtx()
-	ad.Existing = s.namesInNamespace(ctx, ns, name)
-	if ves := validate.Validate(b, ad); len(ves) > 0 {
+	if ves := s.Check(ctx, b, true); len(ves) > 0 {
 		return nil, admissionErr(ves)
 	}
 

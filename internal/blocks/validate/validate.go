@@ -33,6 +33,8 @@ import (
 type ValidationError struct {
 	Rule    string
 	Message string
+	// ConfigField is V19's "path: message" from the catalog, for marking the form field.
+	ConfigField string
 }
 
 func (e ValidationError) Error() string { return e.Rule + ": " + e.Message }
@@ -495,8 +497,9 @@ func v19(b *pb.Block, ctx Context) []ValidationError {
 	}
 	var errs []ValidationError
 	for _, path := range ctx.Catalog.ValidateConfig(b.GetSpec().GetType(), b.GetSpec().GetConfig()) {
-		errs = append(errs, verr("V19",
-			"spec.config field %q does not validate against the schema of type %q", path, b.GetSpec().GetType()))
+		e := verr("V19", "spec.config field %q does not validate against the schema of type %q", path, b.GetSpec().GetType())
+		e.ConfigField = path
+		errs = append(errs, e)
 	}
 	return errs
 }

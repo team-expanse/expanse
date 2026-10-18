@@ -1,4 +1,4 @@
-# From cmd/expanse-block-run runOllama and block.yaml capabilities [gpu]; models live under /tmp.
+# From cmd/expanse-block-run runOllama; models live under /tmp. Runs on CPU, so no GPU is required.
 replicas: 1
 strategy:
   kind: SINGLETON
@@ -6,8 +6,6 @@ resources:
   requests:
     cpu: "2"
     memory: 4Gi
-placement:
-  requiredCapabilities: [gpu]
 network:
   ports:
     - name: api

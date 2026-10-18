@@ -527,7 +527,7 @@ func TestV19ConfigSchema(t *testing.T) {
 	ctx.Catalog = &fakeCatalog{
 		types: []string{"web/nginx"},
 		configErrs: func(t string, c *structpb.Struct) []string {
-			return []string{"serverName"}
+			return []string{"/serverName: missing"}
 		},
 	}
 	e := byRule(Validate(validBlock(), ctx), "V19")
@@ -537,6 +537,10 @@ func TestV19ConfigSchema(t *testing.T) {
 	// V19: message must name the failing field path.
 	if !strings.Contains(e.Message, "serverName") {
 		t.Errorf("V19 message %q does not name the failing field path", e.Message)
+	}
+	// The catalog's "path: message" is kept as is, so a form can mark the field.
+	if e.ConfigField != "/serverName: missing" {
+		t.Errorf("V19 ConfigField = %q", e.ConfigField)
 	}
 }
 
