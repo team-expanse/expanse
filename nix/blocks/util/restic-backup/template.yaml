@@ -1,0 +1,14 @@
+# From docs/RESTIC-BACKUP.md's example manifest.
+strategy:
+  kind: DAEMONSET
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+network:
+  healthCheck:
+    readiness:
+      type: PROBE_HTTP
+      path: /healthz
+      port: 18900
+      periodSeconds: 30

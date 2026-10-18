@@ -1,0 +1,23 @@
+# From docs/OBSERVABILITY.md §5 (storage, VIP); VIP port 80 -> config port 9090.
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+storage:
+  - name: tsdb
+    size: 10Gi
+    replication: 3
+    mountPath: /var/lib/prometheus
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9090
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 9090

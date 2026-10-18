@@ -518,6 +518,10 @@ message BlockType {
   repeated string capabilities = 5;
   // The type's JSON Schema (draft 2020-12) for spec.config.
   bytes schema_json = 6;
+  // defaults.yaml as a JSON object: the config values a new block starts with.
+  bytes defaults_json = 7;
+  // template.yaml as a JSON object: the spec fields (no type or config) a new block starts with.
+  bytes template_json = 8;
 }
 
 message ListTypesRequest {}

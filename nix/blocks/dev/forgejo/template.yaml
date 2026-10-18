@@ -1,0 +1,30 @@
+# From docs/FORGEJO.md §manifest.
+replicas: 1
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+storage:
+  - name: forgejo-data
+    size: 20Gi
+    replication: 3
+    mountPath: /var/lib/forgejo
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 13000
+      protocol: tcp
+      expose: EXPOSE_VIP
+    - name: ssh
+      port: 2222
+      targetPort: 12222
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 13000
+      periodSeconds: 2

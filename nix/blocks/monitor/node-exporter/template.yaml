@@ -1,0 +1,12 @@
+# From nix/tests/python/block_monitoring.py: a DAEMONSET with no storage; Prometheus scrapes each node directly.
+strategy:
+  kind: DAEMONSET
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+network:
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 9100

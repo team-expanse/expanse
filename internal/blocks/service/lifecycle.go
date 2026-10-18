@@ -225,8 +225,7 @@ func (s *CatalogServer) GetType(ctx context.Context, r *pb.GetTypeRequest) (*pb.
 	return toBlockType(t), nil
 }
 
-// toBlockType converts a catalog Type to its proto form, rendering the
-// compiled JSON Schema back to bytes.
+// toBlockType converts a catalog Type to its proto form, with the shipped schema, defaults and template.
 func toBlockType(t *catalog.Type) *pb.BlockType {
 	bt := &pb.BlockType{
 		Name:         t.ID(),
@@ -234,11 +233,13 @@ func toBlockType(t *catalog.Type) *pb.BlockType {
 		Description:  t.Description,
 		Icon:         t.Icon,
 		Capabilities: t.Capabilities,
+		SchemaJson:   t.SchemaJSON,
 	}
-	if t.Schema != nil {
-		if raw, err := json.Marshal(t.Schema); err == nil {
-			bt.SchemaJson = raw
-		}
+	if t.Defaults != nil {
+		bt.DefaultsJson, _ = json.Marshal(t.Defaults)
+	}
+	if t.Template != nil {
+		bt.TemplateJson, _ = json.Marshal(t.Template)
 	}
 	return bt
 }

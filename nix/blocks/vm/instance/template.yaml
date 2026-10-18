@@ -1,0 +1,14 @@
+# From docs/VMS.md section 2: a raw replicated disk on a kvm-capable node.
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: "2"
+    memory: 2Gi
+storage:
+  - name: disk
+    size: 20Gi
+    replication: 3
+    filesystem: none
+placement:
+  requiredCapabilities: [kvm]

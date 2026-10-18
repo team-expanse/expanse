@@ -40,21 +40,21 @@ spec:
 
   replicas: 3
   strategy:
-    kind: active-active
+    kind: ACTIVE_ACTIVE
     update:
-      mode: rolling
+      mode: UPDATE_MODE_ROLLING
       maxUnavailable: 1
       maxSurge: 0
       minReadySeconds: 10
 
-  runtime: systemd
+  runtime: RUNTIME_SYSTEMD
 
   resources:
     requests: { cpu: "500m", memory: "256Mi" }
 
   placement:
-    antiAffinity: node            # never two replicas on one node
-    spread: even
+    antiAffinity: ANTI_AFFINITY_NODE  # never two replicas on one node
+    spread: SPREAD_EVEN
 
   network:
     ports:
@@ -62,10 +62,10 @@ spec:
         port: 80
         targetPort: 8080
         protocol: tcp
-        expose: vip
+        expose: EXPOSE_VIP
     healthCheck:
       readiness:
-        type: http
+        type: PROBE_HTTP
         path: /
         port: 8080
         initialDelaySeconds: 5
@@ -167,8 +167,8 @@ What happened between apply and `RUNNING`:
 
 1. **Scheduling** — the scheduler filtered the node views (ready,
    uncordoned, resources free after overcommit accounting) and scored
-   the survivors (spread: even → least-loaded wins). Each replica got
-   a distinct node because `antiAffinity: node`.
+   the survivors (spread: SPREAD_EVEN → least-loaded wins). Each replica got
+   a distinct node because `antiAffinity: ANTI_AFFINITY_NODE`.
 2. **Desired-state bridge** — each placement became a
    `block-replica:<ns>/<name>/<idx>` resource on its target node.
 3. **Agent reconcile** — the target node's agent rendered the nginx
@@ -220,7 +220,7 @@ Bump the version or change config, then apply again:
 $ expanse ctl block apply -f web.yaml     # spec changed: version 1.29
 ```
 
-With `mode: rolling` the controller updates one replica at a time:
+With `mode: UPDATE_MODE_ROLLING` the controller updates one replica at a time:
 it surges only up to `maxSurge` extra placements, waits for the new
 placement to report healthy plus `minReadySeconds`, retires one old
 replica (within `maxUnavailable`), and only then proceeds — so at
@@ -249,6 +249,7 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | `block.yaml` | type identity (name, version, description, capabilities) |
 | `schema.json` | JSON Schema for the type's `config:` section |
 | `defaults.yaml` | fallback values for unset config keys |
+| `template.yaml` | the `spec:` fields (not `type` or `config`) a new block of this type starts from: strategy, ports, storage, resources. The web UI's deploy form starts from it. |
 | `module.nix` | NixOS closure the unit runs from |
 
 The shipped twenty-four: `util/echo`, `web/nginx`, `web/static-site`,
@@ -269,7 +270,7 @@ $ expanse ctl catalog list
 $ expanse ctl catalog show web/nginx     # identity + JSON Schema
 ```
 
-Authoring a new type is those four files plus one entry in
+Authoring a new type is those five files plus one entry in
 `nix/blocks-flake/flake.nix`; validation, scheduling, lifecycle, and
 updates come for free. A type that runs upstream programs also lists their
 packages in `nix/block-runtimes.nix`.

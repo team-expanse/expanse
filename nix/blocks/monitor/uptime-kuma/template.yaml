@@ -1,0 +1,23 @@
+# From docs/UPTIME-KUMA.md example manifest.
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+storage:
+  - name: uptime-kuma-data
+    size: 2Gi
+    replication: 3
+    mountPath: /var/lib/uptime-kuma
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3001
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 3001

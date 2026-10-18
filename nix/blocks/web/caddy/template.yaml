@@ -1,0 +1,29 @@
+# From docs/CADDY.md's example manifest.
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+storage:
+  - name: caddy-data
+    size: 1Gi
+    replication: 3
+    mountPath: /var/lib/caddy
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 18080
+      protocol: tcp
+      expose: EXPOSE_VIP
+    - name: https
+      port: 443
+      targetPort: 18443
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 18080
+      periodSeconds: 2

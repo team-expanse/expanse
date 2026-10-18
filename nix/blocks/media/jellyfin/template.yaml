@@ -1,0 +1,25 @@
+# From docs/JELLYFIN.md §manifest.
+replicas: 1
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: "2"
+    memory: 1Gi
+storage:
+  - name: jellyfin-data
+    size: 10Gi
+    replication: 3
+    mountPath: /var/lib/jellyfin
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8096
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 8096
+      periodSeconds: 2

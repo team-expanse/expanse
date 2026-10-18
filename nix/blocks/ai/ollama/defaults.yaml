@@ -1,3 +1,4 @@
-port: 11434
+# Listens off the standard port so the VIP (template.yaml) can take 11434 on the same node.
+port: 21434
 models: []
 keepAlive: 5m

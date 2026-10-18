@@ -9,9 +9,9 @@
 // catalog.go does not depend on validate.
 //
 // Load-time strictness: block.yaml and schema.json are required (a block
-// without a schema cannot validate config at API-write time); defaults.yaml
-// and module.nix are optional at load time — defaults.yaml is data, and
-// module.nix is exercised by the nix build, not by the API path.
+// without a schema cannot validate config at API-write time); defaults.yaml,
+// template.yaml and module.nix are optional at load time — the first two are
+// data, and module.nix is exercised by the nix build, not by the API path.
 package catalog
 
 import (
@@ -39,7 +39,10 @@ type Type struct {
 	Capabilities []string
 	Dir          string
 	Schema       *jsonschema.Schema
+	SchemaJSON   []byte // schema.json as shipped, for clients that render forms
 	Defaults     map[string]any
+	// Template holds the spec fields (no type or config) a working block of this type starts from.
+	Template map[string]any
 }
 
 // ID is the fully-qualified type id "<category>/<name>".
@@ -129,6 +132,7 @@ func loadType(dir, category, name string) (*Type, error) {
 		Capabilities: meta.Capabilities,
 		Dir:          dir,
 		Schema:       schema,
+		SchemaJSON:   schemaRaw,
 	}
 
 	if defRaw, err := os.ReadFile(filepath.Join(dir, "defaults.yaml")); err == nil {
@@ -141,7 +145,31 @@ func loadType(dir, category, name string) (*Type, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, errors.New(errors.KindInvalid, op, err.Error())
 	}
+	if typ.Template, err = loadTemplate(dir); err != nil {
+		return nil, errors.New(errors.KindInvalid, op, fmt.Sprintf("block %s/%s: %v", category, name, err))
+	}
 	return typ, nil
+}
+
+// loadTemplate reads the optional template.yaml; type and config come from the catalog, not from it.
+func loadTemplate(dir string) (map[string]any, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "template.yaml"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tmpl map[string]any
+	if err := yaml.Unmarshal(raw, &tmpl); err != nil {
+		return nil, fmt.Errorf("parse template.yaml: %w", err)
+	}
+	for _, key := range []string{"type", "config"} {
+		if _, ok := tmpl[key]; ok {
+			return nil, fmt.Errorf("template.yaml must not set %q", key)
+		}
+	}
+	return tmpl, nil
 }
 
 // HasType reports whether the catalog knows type t ("<category>/<name>").

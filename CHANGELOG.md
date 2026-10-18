@@ -6,6 +6,28 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- Every catalog type ships a `template.yaml`: the strategy, ports, storage and
+  resources a new block of that type starts from. `CatalogService.GetType` now
+  returns the type's shipped `schema.json` as is, plus its defaults and
+  template as JSON, so clients can build a deploy form from them.
+
+### Changed
+
+- New `db/postgres`, `db/redis` and `ai/ollama` blocks built from the catalog
+  defaults listen on 15432, 16379 and 21434, so their VIP can take the standard
+  client port (5432, 6379, 11434) on the same node, as `db/mariadb` already
+  does. Existing blocks keep the ports in their config.
+
+### Fixed
+
+- The worked example in `docs/BLOCKS.md` used lowercase enum values
+  (`expose: vip`, `antiAffinity: node`, ...) that `expanse ctl block apply`
+  rejects.
+
 ## 1.10.1 - 2026-10-17
 
 ### Fixed

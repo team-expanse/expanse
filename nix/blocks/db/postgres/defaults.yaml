@@ -1,4 +1,5 @@
-port: 5432
+# Listens off the standard port so the VIP (template.yaml) can take 5432 on the same node.
+port: 15432
 database: app
 sharedBuffers: 256MB
 maxWalSenders: 10

@@ -1,0 +1,10 @@
+# From nix/tests/block-common.py echo_yaml (block-deploy, block-delete).
+replicas: 3
+strategy:
+  kind: ACTIVE_ACTIVE
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+placement:
+  antiAffinity: ANTI_AFFINITY_NODE

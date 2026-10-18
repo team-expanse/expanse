@@ -1,0 +1,23 @@
+# From docs/NFS.md example manifest (volume sized down from 100Gi).
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+storage:
+  - name: files-data
+    size: 10Gi
+    replication: 3
+    mountPath: /mnt/files
+network:
+  ports:
+    - name: nfs
+      port: 2049
+      targetPort: 12049
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 12049

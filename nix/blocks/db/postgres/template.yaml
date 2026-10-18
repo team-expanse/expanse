@@ -1,0 +1,27 @@
+# From docs/DATABASE.md; clients use VIP:5432, postgres listens on config.port 15432 (defaults.yaml).
+replicas: 3
+strategy:
+  kind: ACTIVE_ACTIVE
+placement:
+  antiAffinity: ANTI_AFFINITY_NODE
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+storage:
+  - name: pgdata
+    size: 10Gi
+    replication: 1
+    mountPath: /var/lib/postgresql-data
+network:
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 15432
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 15432
+      periodSeconds: 2

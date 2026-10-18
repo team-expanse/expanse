@@ -1,0 +1,7 @@
+replicas: 2
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      expose: EXPOSE_VIP

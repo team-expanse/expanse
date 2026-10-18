@@ -1,0 +1,20 @@
+# From cmd/expanse-block-run runRedis: no replication, data under /tmp, so no volume.
+replicas: 1
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+network:
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 16379
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 16379
+      periodSeconds: 2

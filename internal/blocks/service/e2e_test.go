@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/expanse/expanse/internal/blocks/apply"
@@ -230,5 +232,31 @@ func TestCatalogServerAgainstRealEcho(t *testing.T) {
 	}
 	if _, err := cs.GetType(context.Background(), &pb.GetTypeRequest{Name: "web/nope"}); err == nil {
 		t.Error("unknown type returned without error")
+	}
+}
+
+// GetType carries the shipped schema, defaults and template so clients can build forms.
+func TestCatalogServerReturnsSchemaDefaultsTemplate(t *testing.T) {
+	cat, err := catalog.Load("../catalog/testdata/blocks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewCatalogServer(cat).GetType(context.Background(), &pb.GetTypeRequest{Name: "demo/ping"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("../catalog/testdata/blocks/demo/ping/schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.GetSchemaJson()) != string(raw) {
+		t.Errorf("schema_json is not the shipped schema.json:\n%s", got.GetSchemaJson())
+	}
+	var defaults, tmpl map[string]any
+	if err := json.Unmarshal(got.GetDefaultsJson(), &defaults); err != nil || defaults["target"] != "localhost" {
+		t.Errorf("defaults_json = %s (%v)", got.GetDefaultsJson(), err)
+	}
+	if err := json.Unmarshal(got.GetTemplateJson(), &tmpl); err != nil || tmpl["replicas"] != float64(2) {
+		t.Errorf("template_json = %s (%v)", got.GetTemplateJson(), err)
 	}
 }

@@ -1,0 +1,25 @@
+# From docs/IMMICH.md §manifest; storage sized down to a modest default.
+replicas: 1
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: "2"
+    memory: 4Gi
+storage:
+  - name: immich-data
+    size: 50Gi
+    replication: 3
+    mountPath: /var/lib/immich
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 2283
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 2283
+      periodSeconds: 2

@@ -1,0 +1,26 @@
+# From docs/ISCSI.md §manifest; the LUN must be a raw volume (filesystem: none).
+replicas: 1
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+storage:
+  - name: lun
+    size: 10Gi
+    replication: 3
+    mountPath: /mnt/lun
+    filesystem: none
+network:
+  ports:
+    - name: iscsi
+      port: 3260
+      targetPort: 33260
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 33260
+      periodSeconds: 2

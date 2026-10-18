@@ -1,0 +1,22 @@
+# From cmd/expanse-block-run runOllama and block.yaml capabilities [gpu]; models live under /tmp.
+replicas: 1
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: "2"
+    memory: 4Gi
+placement:
+  requiredCapabilities: [gpu]
+network:
+  ports:
+    - name: api
+      port: 11434
+      targetPort: 21434
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 21434
+      periodSeconds: 2

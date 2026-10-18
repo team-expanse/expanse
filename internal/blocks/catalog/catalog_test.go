@@ -413,7 +413,7 @@ func TestLoadShippedBlocksBatch2(t *testing.T) {
 			t.Errorf("bad enum not rejected with path: %v", errs)
 		}
 		d := c.Defaults("db/redis")
-		if d["port"] != int(6379) || d["maxMemory"] != "256mb" {
+		if d["port"] != int(16379) || d["maxMemory"] != "256mb" {
 			t.Errorf("unexpected redis defaults: %v", d)
 		}
 	})
@@ -514,7 +514,7 @@ func TestLoadShippedBlocksBatch3(t *testing.T) {
 			t.Errorf("missing required replicationPassword/superuserPassword not rejected")
 		}
 		d := c.Defaults("db/postgres")
-		if d["port"] != int(5432) || d["database"] != "app" {
+		if d["port"] != int(15432) || d["database"] != "app" {
 			t.Errorf("unexpected postgres defaults: %v", d)
 		}
 		if _, ok := d["replicationPassword"]; ok {
@@ -949,4 +949,48 @@ func TestShippedImmichBlockValidates(t *testing.T) {
 		{map[string]any{"machineLearning": "yes"}, "/machineLearning"},
 		{map[string]any{"bogus": 1}, "bogus"},
 	})
+}
+
+func TestLoadTemplateAndRawSchema(t *testing.T) {
+	c := mustLoad(t)
+	ping, _ := c.GetType("demo/ping")
+	if ping.Template["replicas"] != 2 {
+		t.Errorf("template not loaded: %v", ping.Template)
+	}
+	raw, err := os.ReadFile("testdata/blocks/demo/ping/schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ping.SchemaJSON) != string(raw) {
+		t.Errorf("SchemaJSON is not the file's bytes: %s", ping.SchemaJSON)
+	}
+	if pong, _ := c.GetType("demo/pong"); pong.Template != nil {
+		t.Errorf("pong has no template.yaml but got %v", pong.Template)
+	}
+}
+
+func TestLoadRejectsTemplateWithTypeOrConfig(t *testing.T) {
+	for _, key := range []string{"type", "config"} {
+		dir := t.TempDir()
+		src := "testdata/blocks/demo/ping"
+		dst := filepath.Join(dir, "demo", "ping")
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{"block.yaml", "schema.json"} {
+			b, err := os.ReadFile(filepath.Join(src, f))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dst, f), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(dst, "template.yaml"), []byte(key+": x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("template with %q: err = %v, want a rejection naming it", key, err)
+		}
+	}
 }

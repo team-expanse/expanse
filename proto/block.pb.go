@@ -3603,7 +3603,11 @@ type BlockType struct {
 	Icon         string   `protobuf:"bytes,4,opt,name=icon,proto3" json:"icon,omitempty"`
 	Capabilities []string `protobuf:"bytes,5,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	// The type's JSON Schema (draft 2020-12) for spec.config.
-	SchemaJson    []byte `protobuf:"bytes,6,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
+	SchemaJson []byte `protobuf:"bytes,6,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
+	// defaults.yaml as a JSON object: the config values a new block starts with.
+	DefaultsJson []byte `protobuf:"bytes,7,opt,name=defaults_json,json=defaultsJson,proto3" json:"defaults_json,omitempty"`
+	// template.yaml as a JSON object: the spec fields (no type or config) a new block starts with.
+	TemplateJson  []byte `protobuf:"bytes,8,opt,name=template_json,json=templateJson,proto3" json:"template_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3676,6 +3680,20 @@ func (x *BlockType) GetCapabilities() []string {
 func (x *BlockType) GetSchemaJson() []byte {
 	if x != nil {
 		return x.SchemaJson
+	}
+	return nil
+}
+
+func (x *BlockType) GetDefaultsJson() []byte {
+	if x != nil {
+		return x.DefaultsJson
+	}
+	return nil
+}
+
+func (x *BlockType) GetTemplateJson() []byte {
+	if x != nil {
+		return x.TemplateJson
 	}
 	return nil
 }
@@ -4052,7 +4070,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12-\n" +
 	"\x05phase\x18\x03 \x01(\x0e2\x17.expanse.block.v1.PhaseR\x05phase\x12F\n" +
 	"\x0epending_reason\x18\x04 \x01(\v2\x1f.expanse.block.v1.PendingReasonR\rpendingReason\x12@\n" +
-	"\breplicas\x18\x05 \x03(\v2$.expanse.block.v1.ReplicaExplanationR\breplicas\"\xb4\x01\n" +
+	"\breplicas\x18\x05 \x03(\v2$.expanse.block.v1.ReplicaExplanationR\breplicas\"\xfe\x01\n" +
 	"\tBlockType\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -4060,7 +4078,9 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x04icon\x18\x04 \x01(\tR\x04icon\x12\"\n" +
 	"\fcapabilities\x18\x05 \x03(\tR\fcapabilities\x12\x1f\n" +
 	"\vschema_json\x18\x06 \x01(\fR\n" +
-	"schemaJson\"\x12\n" +
+	"schemaJson\x12#\n" +
+	"\rdefaults_json\x18\a \x01(\fR\fdefaultsJson\x12#\n" +
+	"\rtemplate_json\x18\b \x01(\fR\ftemplateJson\"\x12\n" +
 	"\x10ListTypesRequest\"F\n" +
 	"\x11ListTypesResponse\x121\n" +
 	"\x05types\x18\x01 \x03(\v2\x1b.expanse.block.v1.BlockTypeR\x05types\"$\n" +

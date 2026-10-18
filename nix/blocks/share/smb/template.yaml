@@ -1,0 +1,23 @@
+# From nix/tests/python/share_smb.py manifest; VIP port 445 -> config port 44445.
+strategy:
+  kind: SINGLETON
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+storage:
+  - name: share-data
+    size: 10Gi
+    replication: 3
+    mountPath: /mnt/share-data
+network:
+  ports:
+    - name: smb
+      port: 445
+      targetPort: 44445
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 44445

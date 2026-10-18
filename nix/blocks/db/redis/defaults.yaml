@@ -1,4 +1,5 @@
-port: 6379
+# Listens off the standard port so the VIP (template.yaml) can take 6379 on the same node.
+port: 16379
 maxMemory: 256mb
 maxMemoryPolicy: noeviction
 appendOnly: true

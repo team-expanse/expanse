@@ -1,0 +1,20 @@
+# From nix/tests/block-catalog.nix's deploy_type, with nginx's VIP port pattern on port 8081.
+replicas: 1
+strategy:
+  kind: ACTIVE_ACTIVE
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+network:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8081
+      protocol: tcp
+      expose: EXPOSE_VIP
+  healthCheck:
+    readiness:
+      type: PROBE_TCP
+      port: 8081
+      periodSeconds: 2
