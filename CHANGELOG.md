@@ -17,6 +17,11 @@ History before 1.0.0 is not recorded here.
   with every node; any other type's programs are fetched from the NixOS
   binary cache the first time a block of that type is placed on a node.
   See "Where a block's programs come from" in `docs/BLOCKS.md`.
+- The btrfs system partition, which holds `/nix`, was a fixed 8 GiB, too
+  small for a system upgrade plus the block programs now fetched on demand.
+  The installer makes it 32 GiB when the system disks are 64 GiB or larger.
+  Existing nodes can move `/nix` onto a logical volume: see "Moving /nix
+  onto a logical volume" in `docs/INSTALL.md`.
 - `nixos-rebuild` failed on every installed node: `configuration.nix`
   imported the installer's own copy of the source, which is gone after the
   first reboot. The installer now copies the source to

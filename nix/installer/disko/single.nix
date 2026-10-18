@@ -7,12 +7,9 @@
 # (systemDevice) to find /dev/disk/by-partlabel/disk-system-root for the
 # blank-snapshot and verify stages; keep the disk/partition attribute
 # names in sync with it if they change.
-{ disks ? [ "/dev/sda" ], ... }@args:
+{ disks ? [ "/dev/sda" ], systemSize ? "32G", ... }@args:
 let
   dev = builtins.elemAt disks 0;
-  # Generous for root+nix+persist+log with room to grow; the remainder of
-  # the disk -- most of it, in production -- goes to LVM.
-  systemSize = "8G";
   subvolumes = {
     "@root" = { mountpoint = "/"; mountOptions = [ "compress=zstd" "noatime" ]; };
     "@nix" = { mountpoint = "/nix"; mountOptions = [ "compress=zstd" "noatime" ]; };

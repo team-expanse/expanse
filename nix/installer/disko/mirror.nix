@@ -8,9 +8,8 @@
 # each half as a plain FAT filesystem; nix/modules/md-boot.nix lets bootctl
 # install onto it. internal/install/plan.go (systemDevice) snapshots
 # /dev/md/system; keep the array names in sync with it.
-{ disks ? [ "/dev/sda" "/dev/sdb" ], ... }@args:
+{ disks ? [ "/dev/sda" "/dev/sdb" ], systemSize ? "32G", ... }@args:
 let
-  systemSize = "8G";
   nDisks = builtins.length disks;
   dataPartition = {
     size = "100%";

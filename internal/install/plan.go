@@ -203,7 +203,25 @@ func (rc *RunContext) diskoCommand(disks []Disk) (string, []string) {
 	for i, d := range disks {
 		devices[i] = d.Path
 	}
-	return "disko", []string{"--mode", "destroy,format,mount", "--yes-wipe-all-disks", "--arg", "disks", "[" + strings.Join(quoted(devices), " ") + "]", layoutFile}
+	return "disko", []string{"--mode", "destroy,format,mount", "--yes-wipe-all-disks", "--arg", "disks", "[" + strings.Join(quoted(devices), " ") + "]",
+		"--argstr", "systemSize", systemSize(disks), layoutFile}
+}
+
+// largeSystemDisk is the smallest system disk that gets the larger system partition.
+const largeSystemDisk = 64 << 30
+
+// systemSize sizes the btrfs system partition (/nix holds the system and every block type's
+// programs) from the smallest of the first two disks, the ones that carry it.
+func systemSize(disks []Disk) string {
+	if len(disks) > 2 {
+		disks = disks[:2]
+	}
+	for _, d := range disks {
+		if n, err := d.SizeBytesOf(); err != nil || n < largeSystemDisk {
+			return "8G"
+		}
+	}
+	return "32G"
 }
 
 func (rc *RunContext) runDisko(disks []Disk) error {

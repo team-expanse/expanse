@@ -26,6 +26,7 @@ fail() {
 }
 ssh_() {
   ssh -q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
     -i "$key" -p "$port" root@127.0.0.1 "$@"
 }
 up() {
@@ -61,8 +62,8 @@ boot() {
 step "install $(basename "$iso")"
 rm -f "$work"/b0.qcow2 "$work"/b1.qcow2
 cp "$ovmf/OVMF_VARS.fd" "$work/vars.fd" && chmod u+w "$work/vars.fd"
-qemu-img create -q -f qcow2 "$work/b0.qcow2" 32G
-qemu-img create -q -f qcow2 "$work/b1.qcow2" 32G
+qemu-img create -q -f qcow2 "$work/b0.qcow2" 80G
+qemu-img create -q -f qcow2 "$work/b1.qcow2" 80G
 boot "" -drive file="$iso",if=none,id=cd0,media=cdrom,readonly=on -device ide-cd,drive=cd0,bootindex=9 \
   -chardev "socket,id=s0,path=$sock,server=on,wait=off,logfile=$work/serial-install.log" -serial chardev:s0
 for _ in $(seq 1 100); do
@@ -100,6 +101,7 @@ boot ",restrict=on" -serial file:"$work/serial-boot.log"
 up
 ssh_ 'expanse version; systemctl is-system-running || true; expanse ctl node health | head -1'
 ssh_ 'test -f /etc/nixos/expanse/nix/modules/expanse-node.nix' || fail "no node source in /etc/nixos/expanse"
+ssh_ 'test "$(blockdev --getsize64 /dev/vda2)" = $((32 << 30))' || fail "system partition is not 32 GiB on 80 GiB disks"
 step "nixos-rebuild build, offline"
 ssh_ 'cd /tmp && nixos-rebuild build 2>&1 | tail -3' || fail "nixos-rebuild build"
 step "cluster and a block"
@@ -122,7 +124,7 @@ spec:
 YAML
 ssh_ 'expanse ctl block apply -f /root/hello.yaml'
 ssh_ 'for _ in $(seq 1 60); do curl -sf localhost:18080 && exit 0; sleep 3; done; exit 1' || fail "block never served"
-ssh_ 'touch /etc/iso-check-marker; systemctl reboot' || true
+ssh_ 'touch /etc/iso-check-marker; systemctl reboot --no-block' || true
 
 step "after reboot"
 # QEMU restarts the guest in place: wait for SSH to go away, then to come back.

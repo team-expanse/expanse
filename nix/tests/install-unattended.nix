@@ -38,7 +38,7 @@ in
 
     virtualisation.memorySize = 2048;
     virtualisation.cores = 2;
-    virtualisation.emptyDiskImages = [ 20480 ];
+    virtualisation.emptyDiskImages = [ 81920 ]; # over 64 GiB: the installer picks the 32G system partition
 
     # disko evaluates and builds its runtime script inside the (offline)
     # VM; pre-build the exact same derivation here so it is already in
@@ -46,7 +46,7 @@ in
     # baked-in channel + substitutes.
     virtualisation.additionalPaths = [
       ((import "${pkgs.disko}/share/disko" { inherit lib; })._cliDestroyFormatMount
-        (import (self + "/nix/installer/disko/single.nix") { disks = [ "/dev/vdb" ]; })
+        (import (self + "/nix/installer/disko/single.nix") { disks = [ "/dev/vdb" ]; systemSize = "32G"; })
         (import pkgs.path { system = pkgs.stdenv.hostPlatform.system; }))
     ];
   };
@@ -73,6 +73,8 @@ in
         for sv in ["@root", "@nix", "@persist", "@log"]:
             assert sv in out, f"missing subvolume {sv}: {out}"
         machine.succeed("vgs expanse")
+        size = int(machine.succeed("blockdev --getsize64 /dev/disk/by-partlabel/disk-system-root"))
+        assert size == 32 << 30, f"system partition is {size} bytes on an 80 GiB disk, want 32 GiB"
 
     with subtest("blank snapshot exists"):
         out = machine.succeed("btrfs subvolume list /mnt")

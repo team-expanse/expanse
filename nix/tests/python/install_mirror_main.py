@@ -43,6 +43,9 @@ with subtest("btrfs system is on md RAID1 and holds the blank snapshot"):
     subvols = machine.succeed("btrfs subvolume list /mnt")
     for sv in ["@root", "@root-blank", "@nix", "@persist", "@log"]:
         assert sv in subvols, f"missing subvolume {sv}: {subvols}"
+    for part in ("/dev/vdb2", "/dev/vdc2"):
+        size = int(machine.succeed(f"blockdev --getsize64 {part}"))
+        assert size == 8 << 30, f"{part} is {size} bytes on a 20 GiB disk, want 8 GiB"
 
 with subtest("every disk's remainder is a PV in VG expanse"):
     pvs = machine.succeed("pvs --noheadings -o pv_name,vg_name")

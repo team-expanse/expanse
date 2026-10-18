@@ -122,3 +122,34 @@ func TestSystemDeviceMatchesLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemSizeGrowsWithTheSystemDisks(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		sizes []string // lsblk SIZE
+		want  string
+	}{
+		{"minimum disk", []string{"20G"}, "8G"},
+		{"just under the threshold", []string{"63.9G"}, "8G"},
+		{"large single disk", []string{"500G"}, "32G"},
+		{"mirror uses the smaller of the pair", []string{"1.8T", "40G"}, "8G"},
+		{"extra JBOD disks don't count", []string{"100G", "100G", "20G"}, "32G"},
+		{"unparseable size stays small", []string{"?"}, "8G"},
+	} {
+		disks := make([]Disk, len(tc.sizes))
+		for i, s := range tc.sizes {
+			disks[i] = Disk{Path: fmt.Sprintf("/dev/vd%c", 'a'+i), Size: s}
+		}
+		if got := systemSize(disks); got != tc.want {
+			t.Errorf("%s: systemSize = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestDiskoCommandPassesTheSystemSize(t *testing.T) {
+	rc := &RunContext{TargetFlake: "/src", Layout: LayoutSingle}
+	_, args := rc.diskoCommand([]Disk{{Path: "/dev/vda", Size: "500G"}})
+	if !strings.Contains(strings.Join(args, " "), "--argstr systemSize 32G") {
+		t.Errorf("disko args %q lack --argstr systemSize 32G", args)
+	}
+}

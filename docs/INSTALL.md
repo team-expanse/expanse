@@ -167,6 +167,79 @@ sed -i 's|/etc/expanse/flake/|./expanse/|g' configuration.nix
 nixos-rebuild switch
 ```
 
+## 6. Moving /nix onto a logical volume
+
+`/`, `/nix`, `/persist` and `/var/log` share the btrfs system partition. The installer makes it
+32 GiB when the system disks are 64 GiB or larger, and 8 GiB on smaller disks. Nodes installed before
+1.10.1 have 8 GiB. That is tight: the node's own system takes about 4 GiB, an upgrade briefly needs a
+second copy, and each block type's programs land in `/nix/store` the first time it runs there
+(`media/immich` takes about 2.5 GiB). When `/nix` fills up, upgrades and new blocks fail.
+
+Check with `df -h /nix`. If it is more than about half full, move `/nix` onto a logical volume in VG
+`expanse`, which holds the rest of the disks. This takes one reboot.
+
+**1. Make the volume.** `vgs expanse` shows the free space (`VFree`). 32 GiB is plenty:
+
+```sh
+lvcreate -L 32G -n nix expanse
+mkfs.btrfs -L nix /dev/expanse/nix
+```
+
+If storage is enabled and its thin pool took nearly all the space, make a thin volume in the pool
+instead: `lvcreate -V 32G -T expanse/pool -n nix`. It then shares the pool with the cluster's
+volumes, so keep an eye on the pool's `Data%` in `lvs`.
+
+**2. Mount it from the node's config.** Save this as `/etc/nixos/nix-lv.nix`:
+
+```nix
+{ lib, ... }:
+{
+  boot.initrd.services.lvm.enable = true;
+  fileSystems."/nix" = lib.mkForce {
+    device = "/dev/expanse/nix";
+    fsType = "btrfs";
+    options = [ "compress=zstd" "noatime" ];
+    neededForBoot = true;
+  };
+}
+```
+
+and add `./nix-lv.nix` to the `imports` list in `/etc/nixos/configuration.nix`.
+
+**3. Build the next boot's system.** `/nix` cannot be swapped on a running system, so use `boot`, not
+`switch`. This builds into the current `/nix`, so it has to come before the copy:
+
+```sh
+nixos-rebuild boot
+```
+
+**4. Copy the store and reboot.** Stop the Nix daemon so nothing changes during the copy. Blocks
+keep running until the reboot; `cp -a` keeps the store's hard links:
+
+```sh
+systemctl stop nix-daemon.socket nix-daemon.service
+mkdir -p /mnt/nix && mount -o compress=zstd /dev/expanse/nix /mnt/nix
+cp -a /nix/. /mnt/nix/
+umount /mnt/nix
+systemctl reboot
+```
+
+`findmnt /nix` should now show `/dev/mapper/expanse-nix`. If the node does not come up, pick the
+previous generation in the boot menu: it still mounts the old `/nix`.
+
+**5. Free the old copy** once the node runs well on the volume. This gives the space back to `/`,
+`/persist` and `/var/log`. Generations from before the move can no longer boot afterwards:
+
+```sh
+dev=$(findmnt -no SOURCE /persist | sed 's/\[.*//')
+mkdir -p /mnt/top && mount -o subvolid=5 "$dev" /mnt/top
+btrfs subvolume delete /mnt/top/@nix
+btrfs subvolume create /mnt/top/@nix
+umount /mnt/top
+```
+
+`scripts/nix-lv-check.sh` runs these steps in QEMU on a node that `scripts/iso-check.sh` installed.
+
 ## Re-installing / recovery
 
 Boot the installer USB again and re-run. The installer is idempotent:

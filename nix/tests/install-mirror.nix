@@ -42,7 +42,7 @@ in
     # disko builds its script inside the offline VM; pre-build it (see install-unattended.nix).
     virtualisation.additionalPaths = [
       ((import "${pkgs.disko}/share/disko" { inherit lib; })._cliDestroyFormatMount
-        (import (self + "/nix/installer/disko/mirror.nix") { disks = [ "/dev/vdb" "/dev/vdc" ]; })
+        (import (self + "/nix/installer/disko/mirror.nix") { disks = [ "/dev/vdb" "/dev/vdc" ]; systemSize = "8G"; })
         (import pkgs.path { system = pkgs.stdenv.hostPlatform.system; }))
     ];
   };
