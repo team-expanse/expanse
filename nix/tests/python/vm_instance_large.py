@@ -45,7 +45,8 @@ spec:
 
 
 # Keepalives end a session the guest stopped answering after ~30 s instead of hanging the test.
-SSH = ("ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
+# -F /dev/null: ssh refuses system config owned by a non-root user (unprivileged test stores).
+SSH = ("ssh -F /dev/null -i /etc/ssh-key -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
        "-o ServerAliveInterval=5 -o ServerAliveCountMax=6")
 
 
@@ -56,7 +57,7 @@ def ssh(cmd, timeout=None):
 
 def wait_ssh():
     try:
-        client.wait_until_succeeds(f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no "
+        client.wait_until_succeeds(f"ssh -F /dev/null -i /etc/ssh-key -o BatchMode=yes -o StrictHostKeyChecking=no "
                                    f"-o ConnectTimeout=5 dev@{GUEST_IP} true", timeout=600)
     except Exception:
         print(n1.execute(f"journalctl -u {UNIT} --no-pager -o cat 2>&1 | tail -60")[1])
@@ -101,7 +102,7 @@ with subtest("a synced file survives a block restart"):
     n1.succeed(f"systemctl restart {UNIT}")
     wait_phase(n1, NAME, ["RUNNING"], 600)
     wait_for(lambda: client.execute(
-        f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 dev@{GUEST_IP} "
+        f"ssh -F /dev/null -i /etc/ssh-key -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 dev@{GUEST_IP} "
         "cat /proc/sys/kernel/random/boot_id")[1].strip() not in ("", boot_id),
         "the guest back on a new boot", 600)
     print(f"SSH back {time.time() - t:.1f}s after restart")

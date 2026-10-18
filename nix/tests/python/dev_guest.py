@@ -43,7 +43,8 @@ spec:
 
 
 # Keepalives end a session the guest stopped answering after ~30 s instead of hanging the test.
-SSH = ("ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
+# -F /dev/null: ssh refuses system config owned by a non-root user (unprivileged test stores).
+SSH = ("ssh -F /dev/null -i /etc/ssh-key -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
        "-o ServerAliveInterval=5 -o ServerAliveCountMax=6")
 
 
@@ -72,13 +73,13 @@ with subtest("the block boots the dev guest and it answers SSH from another mach
     deploy(n1, NAME, MANIFEST)
     wait_phase(n1, NAME, ["RUNNING"], 900)
     try:
-        client.wait_until_succeeds(f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no "
+        client.wait_until_succeeds(f"ssh -F /dev/null -i /etc/ssh-key -o BatchMode=yes -o StrictHostKeyChecking=no "
                                    f"-o ConnectTimeout=5 dev@{GUEST_IP} true", timeout=600)
     except Exception:
         print(guest_console())
         raise
     # A login with no credentials lists the methods sshd offers: keys only.
-    _, out = client.execute(f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no "
+    _, out = client.execute(f"ssh -F /dev/null -i /etc/ssh-key -o BatchMode=yes -o StrictHostKeyChecking=no "
                             f"-o PreferredAuthentications=none dev@{GUEST_IP} true 2>&1")
     assert "Permission denied (publickey)." in out, out
 
