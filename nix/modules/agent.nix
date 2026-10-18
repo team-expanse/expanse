@@ -87,7 +87,7 @@ in
     storageVG = lib.mkOption {
       type = lib.types.str;
       default = "";
-      description = "LVM volume group holding volume replicas. Empty = volume storage disabled.";
+      description = "LVM volume group holding volume replicas. Empty = the web UI turns storage on (Nodes → node → Storage); set, it overrides the UI.";
     };
 
     storagePool = lib.mkOption {
@@ -127,16 +127,14 @@ in
   config = lib.mkIf cfg.enable {
     users.groups.expanse = { };
 
-    # DRBD is out-of-tree and LVM's thin activation is off by default;
-    # wire both in, but only on nodes actually configured to hold volume
-    # replicas. mkDefault throughout: storage-test.nix sets the identical
-    # values itself (a VM test's own concern, not this module's), and must
-    # keep winning without a definition conflict.
-    boot.extraModulePackages = lib.optional (cfg.storageVG != "") config.boot.kernelPackages.drbd;
+    # DRBD 9 is out-of-tree and LVM's thin activation is off by default. Both are wired on
+    # every node, so the web UI can turn storage on without a rebuild or a reboot. mkDefault
+    # throughout: storage-test.nix sets the identical values itself and must keep winning.
+    boot.extraModulePackages = [ config.boot.kernelPackages.drbd ];
     # vhost_vsock: vm/instance guests report their boot to expanse-block-run over vsock.
-    # dm_thin_pool: listed so a switch that enables storage loads it, not only the next boot's initrd.
-    boot.kernelModules = lib.optionals (cfg.storageVG != "") [ "drbd" "dm_thin_pool" ] ++ [ "vhost_vsock" ];
-    services.drbd = lib.mkIf (cfg.storageVG != "") {
+    # dm_thin_pool: listed so a switch that adds storage loads it, not only the next boot's initrd.
+    boot.kernelModules = [ "drbd" "dm_thin_pool" "vhost_vsock" ];
+    services.drbd = {
       enable = lib.mkDefault true;
       config = lib.mkDefault ''
         global { usage-count no; }
@@ -144,9 +142,9 @@ in
       '';
     };
     # Resources are brought up by the agent's own reconcile loop, not by the drbd unit.
-    systemd.services.drbd.wantedBy = lib.mkIf (cfg.storageVG != "") (lib.mkForce [ ]);
-    services.lvm.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
-    services.lvm.boot.thin.enable = lib.mkIf (cfg.storageVG != "") (lib.mkDefault true);
+    systemd.services.drbd.wantedBy = lib.mkForce [ ];
+    services.lvm.enable = lib.mkDefault true;
+    services.lvm.boot.thin.enable = lib.mkDefault true;
 
     # Out paths without their closures (all types: 5 GiB); the agent builds a missing one from the .nix.
     environment.etc."expanse/block-runtimes.json".text = builtins.toJSON

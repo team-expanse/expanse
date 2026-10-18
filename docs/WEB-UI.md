@@ -108,7 +108,10 @@ over Server-Sent Events, never by polling.
   through its 10s heartbeat, addresses and join time. The detail page adds hardware inventory
   (system, CPU, memory, disks, NICs, GPUs), health checks, reconciler status and managed
   resources — **for the node serving the page only**: agents do not publish inventory or check
-  results cluster-wide, so another node's page says so and links to that node's own UI.
+  results cluster-wide, so another node's page says so and links to that node's own UI. Every
+  node's page has a **Storage** card (from the node's own report): its data VG's free space and an
+  **Enable storage** button that builds the thin pool and starts the volume stack, with no rebuild
+  or reboot (STORAGE.md §2). The deploy form warns while no node has storage on.
 - **Health & alerts** (`/health`, live) — firing critical alerts (the same rules as
   `deploy/prometheus/expanse-alerts.rules.yml`), quorum, node checks, resource health and volume
   health.

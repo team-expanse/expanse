@@ -16,6 +16,46 @@
   <div class="kv-card"><div class="kv-label">Self-reported</div><div class="kv-value">{{if .Node.Degraded}}<span class="text-warn">degraded</span>{{else}}ok{{end}}</div><div class="kv-sub">{{if .Node.Lifecycle}}lifecycle: {{.Node.Lifecycle}}{{else}}lifecycle: healthy{{end}}</div></div>
 </section>
 
+{{with .Storage}}
+<section class="card" id="storage">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-disk"/></svg>Storage</h2>{{template "pill" .Pill}}</div>
+  {{$r := .Report}}
+  {{if eq $.Node.Role "witness"}}
+  <p class="muted">Witnesses vote in the cluster but hold no data.</p>
+  {{else if not $r}}
+  <p class="muted">This node has not reported its storage yet.</p>
+  {{else}}
+  <p>Volumes for blocks such as databases and VMs live in a thin pool on the node's data disk, copied to other nodes that have storage on.</p>
+  {{if eq $r.State "ready"}}
+  <dl class="dl">
+    <dt>Pool</dt><dd><code>{{$r.VG}}/{{$r.Pool}}</code>{{if $r.PoolSize}} · {{bytes $r.PoolSize}}{{end}}</dd>
+    <dt>Volume group</dt><dd>{{bytes $r.VGFree}} free of {{bytes $r.VGSize}}</dd>
+  </dl>
+  {{if eq $r.Source "config"}}<p class="field-hint">Set in this node's NixOS configuration (<code>expanse.agent.storageVG</code>).</p>{{end}}
+  {{else if eq $r.State "reboot"}}
+  <div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p><strong>Reboot {{.Node}} to finish.</strong> The running kernel has an older DRBD loaded; storage starts after the reboot.</p></div></div>
+  {{else if .Pending}}
+  <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><p>Turning on: {{.Node}} is building its thin pool from {{.Percent}}% of the free space.</p></div></div>
+  {{else}}
+  {{if eq $r.State "failed"}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{$r.Message}}</p></div></div>
+  {{else if $r.Message}}<p class="muted">{{$r.Message}}. Storage needs the data volume group the installer creates.</p>{{end}}
+  {{if .CanEnable}}
+  <p>Volume group <code>{{$r.VG}}</code>: {{bytes $r.VGFree}} free of {{bytes $r.VGSize}}.</p>
+  <form method="post" action="/nodes/{{.Node}}/storage" class="form" novalidate>
+    {{template "csrf" $.Page}}
+    <label class="field">
+      <span class="field-label">Pool size, % of the free space</span>
+      <input class="input" type="number" name="percent" value="{{.Percent}}" min="1" max="95"{{if .Error}} aria-invalid="true" autofocus{{end}}>
+      {{if .Error}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">The rest stays free as headroom. The pool cannot shrink later.</span>{{end}}
+    </label>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">Enable storage</button></div>
+  </form>
+  {{end}}
+  {{end}}
+  {{end}}
+</section>
+{{end}}
+
 {{if not .Node.Serving}}
 <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeID}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{.Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
 {{else}}

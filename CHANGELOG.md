@@ -25,8 +25,18 @@ History before 1.0.0 is not recorded here.
   works and applies while the setting is unset. Changing the range moves
   blocks to addresses in the new one.
 - A block's page shows its address, and whether it is reachable from the LAN.
+- Turn storage on from the web UI: a node's page has a Storage card with an
+  Enable storage button, which builds the thin pool in the data VG and starts
+  the node's volume stack without a rebuild or a reboot. The deploy form warns
+  while no node has storage on. `expanse.agent.storageVG` still works and
+  overrides the UI on that node.
 
 ### Changed
+
+- Every node loads the DRBD 9 kernel module and LVM thin-pool support from
+  boot, whether or not storage is on, so turning it on needs no reboot.
+- Volume replicas are placed only on nodes whose storage is on. Nodes from
+  before this release, which do not report it, stay eligible.
 
 - New `db/postgres`, `db/redis` and `ai/ollama` blocks built from the catalog
   defaults listen on 15432, 16379 and 21434, so their VIP can take the standard

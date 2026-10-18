@@ -34,6 +34,7 @@
           <span class="field-hint"><code>Mi</code> or <code>Gi</code>.</span>
         </label>
       </div>
+      {{if .NoStorage}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>No node has storage turned on, so this block cannot start. <a href="/nodes">Turn storage on</a> from a node's page first.</p></div></div>{{end}}
       {{range .Storage}}
       <label class="field">
         <span class="field-label">Volume <code>{{.Name}}</code> size</span>

@@ -31,7 +31,12 @@ import (
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/proxy"
 
+	"github.com/expanse/expanse/internal/storage"
 	volctlc "github.com/expanse/expanse/internal/storage/controller"
+	"github.com/expanse/expanse/internal/storage/drbd"
+	"github.com/expanse/expanse/internal/storage/lvm"
+	"github.com/expanse/expanse/internal/storage/mount"
+	"github.com/expanse/expanse/internal/storage/volume"
 	pb "github.com/expanse/expanse/proto"
 
 	"github.com/expanse/expanse/internal/api"
@@ -195,6 +200,19 @@ type Agent struct {
 	nodeLease    *lease.Held
 	volnode      volumeRunner
 	volctl       *volctlc.Controller
+	// Volume stack parts storageLoop needs to start volumes at runtime (storage.go).
+	lvm          lvm.LVM
+	drbd         *drbd.Exec
+	drbdAlloc    *drbd.Allocator
+	drbdCheck    func() error
+	mounts       *mount.Manager
+	splitMarks   volume.SplitBrainMarks
+	newVolNode   func(vg, pool string) volumeRunner
+	volMu        sync.Mutex
+	volStop      func()
+	volClosed    bool
+	storageVG    atomic.Value // string: the VG reported as disk capacity
+	lastStore    *storage.NodeStorage
 	blockBridge  *wire.Bridge
 	replicaUnits unitStarter // nil when block replicas are disabled; liveness probes restart through it
 	invMu        sync.Mutex
@@ -396,11 +414,10 @@ func New(cfg Config) (*Agent, error) {
 	r.Register(nixman.New(nixDriver, os.Stdout))
 	a.recon = r
 
-	// DRBD volume stack: cluster nodes with a configured volume group only.
-	if cfg.StorageVG != "" {
-		if err := a.initStorage(cfg, st, logger); err != nil {
-			return nil, err
-		}
+	// DRBD volume stack: started now for a VG in the node's config, else by
+	// storageLoop once the web UI turns storage on.
+	if err := a.initStorage(cfg, st, logger); err != nil {
+		return nil, err
 	}
 
 	// Block API (T20.5a): served on the agent socket when a block
@@ -716,9 +733,13 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// DRBD volume node loop. Its stop demotes every primary, so shutdown waits for
 	// it, and before the store closes: releasing a volume lease needs the store.
-	stopVolumes := func() {}
+	stopVolumes := a.stopVolumes
 	if a.volnode != nil {
-		stopVolumes = a.runVolumes(ctx, cancel)
+		node := a.volnode
+		a.startVolumes(ctx, func() volumeRunner { return node })
+	}
+	if a.ctl != nil && !witness {
+		go a.storageLoop(ctx)
 	}
 	if a.volctl != nil {
 		go a.volctl.Run(ctx)

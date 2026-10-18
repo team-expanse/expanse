@@ -225,6 +225,7 @@
           ui-blocks = mkTest "ui-blocks" ./nix/tests/ui-blocks.nix;
           ui-block-forms = mkTest "ui-block-forms" ./nix/tests/ui-block-forms.nix;
           ui-lan-range = mkTest "ui-lan-range" ./nix/tests/ui-lan-range.nix;
+          ui-storage-enable = mkTest "ui-storage-enable" ./nix/tests/ui-storage-enable.nix;
           ui-cluster = mkTest "ui-cluster" ./nix/tests/ui-cluster.nix;
           ui-volumes = mkTest "ui-volumes" ./nix/tests/ui-volumes.nix;
           ui-vertical-slice = mkTest "ui-vertical-slice" ./nix/tests/ui-vertical-slice.nix;

@@ -390,6 +390,16 @@ func seedPreviewStore(t *testing.T, st store.Store) {
 			}
 		}
 	}
+	reports := map[string]storage.NodeStorage{
+		"n1": {State: storage.NodeStorageOff, VG: "expanse", VGSize: 1800 << 30, VGFree: 1800 << 30},
+		"n2": {State: storage.NodeStorageReady, Source: storage.SourceUI, VG: "expanse", Pool: "pool", VGSize: 1800 << 30, VGFree: 90 << 30, PoolSize: 1710 << 30},
+		"n3": {State: storage.NodeStorageReboot, Source: storage.SourceUI, VG: "expanse", Pool: "pool", VGSize: 900 << 30, VGFree: 45 << 30, PoolSize: 855 << 30},
+	}
+	for id, r := range reports {
+		if err := storage.SaveNodeStorage(ctx, st, id, r); err != nil {
+			t.Fatal(err)
+		}
+	}
 	rec, err := oidc.NewConfigRecord("https://sso.example.internal/realms/lab", "expanse-ui", "s3cret", "https://expanse-ui:8443/login/oidc/callback", []string{"jared@example.internal", "ops@example.internal"}, clusterSecretForTest)
 	if err != nil {
 		t.Fatal(err)

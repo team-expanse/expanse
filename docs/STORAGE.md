@@ -27,31 +27,40 @@ is deterministic, reproducible upgrades.
 
 ## 2. Enabling volume replication on a node
 
-A freshly installed node has the VG but nothing built on it. Add to the node's NixOS config
-(`expanse.agent`, `nix/modules/agent.nix`):
+A freshly installed node has the data VG (`expanse`) but nothing built on it. Every node loads the
+DRBD 9 kernel module and LVM's thin-pool support from boot, so turning storage on needs no rebuild
+and no reboot.
+
+**From the web UI.** Open **Nodes → the node → Storage** and press **Enable storage**. The card shows
+the VG's free space; the pool takes 95% of it by default (1–95%, the rest is headroom, see §3). The
+node's agent then creates the thin pool `expanse/pool`, starts its volume stack and reports the
+card as **On**. Do this on each node that should hold volume replicas; replicas are placed only on
+nodes whose storage is on. A node upgraded from 1.10.x that had storage off may still have the
+in-tree DRBD 8.4 loaded until its next reboot; its card then says **Reboot needed**.
+
+Under the hood the UI writes `/settings/storage/<node>` (`{"vg","pool","percent"}`) and each agent
+reports `/storage-nodes/<node>` (`state`: `off`, `ready`, `reboot` or `failed`, with sizes and a
+message).
+
+**From the NixOS config (override).** Setting the options takes precedence over the UI on that node:
 
 ```nix
 expanse.agent.storageVG = "expanse";
 expanse.agent.storagePool = "pool";   # empty = thick volumes, no snapshots
 ```
 
-then `nixos-rebuild switch` and **reboot**. This wires the out-of-tree DRBD 9 kernel module, loads
-`dm_thin_pool`, enables `services.lvm.boot.thin.enable`, and passes `--storage-vg`/`--storage-pool`
-through to `expansed`. The reboot is required: a switch can only load the kernel's in-tree DRBD 8.4,
-which cannot read the resources volumes use. Until the node reboots, `expansed` refuses to create
-volumes and logs "volumes need DRBD 9; reboot the node" (check with `head -1 /proc/drbd`).
-
-The rebuild does **not** create the thin pool itself — that is a one-time, per-node step because its
-size is a capacity decision, not something to infer. It works before or after the reboot:
+then `nixos-rebuild switch`. This path does **not** create the thin pool; do it once per node:
 
 ```sh
 lvcreate --type thin-pool -l 95%FREE -n pool expanse   # leave headroom; see §3
 ```
 
-On a 1.10.0 node, which did not load `dm_thin_pool` on switch, run `modprobe dm_thin_pool` first.
+The node's Storage card then shows **On**, set in its configuration. On a node still running the
+in-tree DRBD 8.4 (upgraded from 1.10.x without a reboot), `expansed` refuses to create volumes and
+logs "volumes need DRBD 9; reboot the node" (check with `head -1 /proc/drbd`).
 
-`expansed` then creates, resizes and deletes DRBD-backed thin LVs from that pool as
-`expanse ctl volume` requests arrive; nothing about volume creation is manual after this point.
+`expansed` then creates, resizes and deletes DRBD-backed thin LVs from that pool as volume requests
+arrive; nothing about volume creation is manual after this point.
 
 ## 3. Thin-pool policy
 

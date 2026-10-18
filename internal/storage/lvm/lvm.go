@@ -101,9 +101,12 @@ func invalid(op, format string, args ...any) error {
 	return experrors.New(experrors.KindInvalid, op, fmt.Sprintf(format, args...))
 }
 
+// ValidName reports whether n is a name LVM accepts for a VG or LV.
+func ValidName(n string) bool { return lvmName.MatchString(n) && n != "." && n != ".." }
+
 func checkNames(op string, names ...string) error {
 	for _, n := range names {
-		if !lvmName.MatchString(n) || n == "." || n == ".." {
+		if !ValidName(n) {
 			return invalid(op, "invalid lvm name %q", n)
 		}
 	}

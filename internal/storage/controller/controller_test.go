@@ -506,6 +506,36 @@ func TestPlacementSkipsUnreachableAndCordonedNodes(t *testing.T) {
 	}
 }
 
+func TestPlacementSkipsNodesWhoseStorageIsNotReady(t *testing.T) {
+	c, st := newPlacer(t, "n1", "n2", "n3", "n4")
+	ctx := context.Background()
+	for id, state := range map[string]storage.NodeStorageState{
+		"n1": storage.NodeStorageReady, "n2": storage.NodeStorageOff, "n3": storage.NodeStorageReboot,
+	} {
+		if err := storage.SaveNodeStorage(ctx, st, id, storage.NodeStorage{State: state}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// n4 reports nothing (an agent from before 1.11), so it stays eligible.
+	request(t, st, "data", 2)
+	c.processPending(ctx, meshed(t, c))
+	ids := placed(t, st)
+	if len(ids) != 1 {
+		t.Fatalf("placed %v, want one volume", ids)
+	}
+	status, _, err := storage.LoadStatus(ctx, st, ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := map[string]bool{}
+	for _, r := range status.Placement {
+		hosts[r.NodeID] = true
+	}
+	if len(hosts) != 2 || !hosts["n1"] || !hosts["n4"] {
+		t.Fatalf("placed on %v, want n1 and n4", hosts)
+	}
+}
+
 // TestBlockBoundVolumePrimaryMovesToTheBlocksHost is the regression test for
 // PHASE-03-TASKS.md D2: a SINGLETON block's bound volume gets its primary
 // moved onto whichever node the block is actually placed on, not left

@@ -278,7 +278,7 @@ func TestAgentDryRunReconcile(t *testing.T) {
 	})
 }
 
-func TestVolumeStorageIsWiredOnlyWhenAVolumeGroupIsConfigured(t *testing.T) {
+func TestVolumeNodeIsWiredAtStartOnlyWhenAVolumeGroupIsConfigured(t *testing.T) {
 	newAgent := func(vg string) *Agent {
 		t.Helper()
 		dir := t.TempDir()
@@ -288,8 +288,8 @@ func TestVolumeStorageIsWiredOnlyWhenAVolumeGroupIsConfigured(t *testing.T) {
 		}
 		return a
 	}
-	if a := newAgent(""); a.volnode != nil || a.volctl != nil {
-		t.Error("volume storage wired without a volume group")
+	if a := newAgent(""); a.volnode != nil || a.volctl == nil || a.newVolNode == nil {
+		t.Error("without a volume group: want the controller and a way to start volumes later, no volume node")
 	}
 	a := newAgent("vg0")
 	if a.volnode == nil || a.volctl == nil {

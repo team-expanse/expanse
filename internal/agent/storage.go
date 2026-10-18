@@ -34,51 +34,85 @@ type volumeRunner interface {
 	Run(ctx context.Context, interval time.Duration)
 }
 
-// runVolumes starts the volume node loop and returns the function that stops it
-// and waits until it has demoted every volume.
-func (a *Agent) runVolumes(ctx context.Context, cancel context.CancelFunc) func() {
+// startVolumes runs the volume node loop until stopVolumes; it is a no-op once
+// volumes run or the agent is shutting down. build makes the node.
+func (a *Agent) startVolumes(ctx context.Context, build func() volumeRunner) {
+	a.volMu.Lock()
+	defer a.volMu.Unlock()
+	if a.volStop != nil || a.volClosed {
+		return
+	}
+	node := build()
+	vctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		a.volnode.Run(ctx, volumeSyncInterval)
+		node.Run(vctx, volumeSyncInterval)
 	}()
-	return func() {
+	a.volStop = func() {
 		cancel()
 		<-done
 	}
 }
 
-// initStorage wires the DRBD volume stack: the node loop that converges the
-// replicas placed here, and the leader-side controller that plans them.
+// stopVolumes stops the volume node loop, waiting until it has demoted every
+// volume, and keeps it from starting again.
+func (a *Agent) stopVolumes() {
+	a.volMu.Lock()
+	defer a.volMu.Unlock()
+	a.volClosed = true
+	if a.volStop != nil {
+		a.volStop()
+		a.volStop = nil
+	}
+}
+
+// initStorage wires the leader-side controller that plans volume replicas, and
+// the volume node for the VG in the node's config, if it names one. The mount
+// manager registers now because the reconciler cannot take one while it runs.
 func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) error {
 	marks, err := volume.NewSplitBrainMarks(filepath.Join(cfg.DataDir, splitBrainDir))
 	if err != nil {
 		return fmt.Errorf("split-brain markers: %w", err)
 	}
-	dr := drbd.New()
-	mounts := mount.New(nil, dr, "")
-	a.recon.Register(mounts)
-	promoter := &volume.Promoter{DRBD: dr, Consumer: mounts, Log: logger}
-	leases := lease.NewManager(st, cfg.NodeID)
-	alloc := drbd.NewAllocator(st, drbd.DefaultMinors, drbd.DefaultPorts)
-	a.volnode = &volume.Node{
-		Splits: marks, Self: cfg.NodeID, St: st, Alloc: alloc, DRBD: dr, Log: logger,
+	a.splitMarks = marks
+	a.drbd = drbd.New()
+	a.mounts = mount.New(nil, a.drbd, "")
+	a.recon.Register(a.mounts)
+	a.drbdAlloc = drbd.NewAllocator(st, drbd.DefaultMinors, drbd.DefaultPorts)
+	a.volctl = volctlc.New(volctlc.Options{
+		NodeID: cfg.NodeID, St: st, Alloc: a.drbdAlloc, Logger: logger, LostAfter: cfg.StorageLostAfter,
+		IsLeader: func() bool { return a.ctl != nil && a.ctl.store != nil && a.ctl.store.IsLeader() },
+	})
+	a.lvm = lvm.New()
+	a.drbdCheck = func() error { return drbd.CheckModule(drbd.ProcPath) }
+	a.newVolNode = a.volumeNode
+	if cfg.StorageVG != "" {
+		a.volnode = a.volumeNode(cfg.StorageVG, cfg.StoragePool)
+		a.storageVG.Store(cfg.StorageVG)
+	}
+	return nil
+}
+
+// volumeNode builds the loop that converges the replicas placed on this node,
+// in pool (thin) or straight in vg when pool is empty.
+func (a *Agent) volumeNode(vg, pool string) volumeRunner {
+	cfg, logger, dr := a.cfg, a.logger, a.drbd
+	promoter := &volume.Promoter{DRBD: dr, Consumer: a.mounts, Log: logger}
+	leases := lease.NewManager(a.store, cfg.NodeID)
+	return &volume.Node{
+		Splits: a.splitMarks, Self: cfg.NodeID, St: a.store, Alloc: a.drbdAlloc, DRBD: dr, Log: logger,
 		RT: &volume.Runtime{
-			LVM: lvm.New(), DRBD: dr, VG: cfg.StorageVG, Pool: cfg.StoragePool, ConfigDir: cfg.DRBDConfigDir,
-			SplitBrainCmd: marks.Handler(), Diverged: marks.Marked,
-			CheckKernel: func() error { return drbd.CheckModule(drbd.ProcPath) },
+			LVM: a.lvm, DRBD: dr, VG: vg, Pool: pool, ConfigDir: cfg.DRBDConfigDir,
+			SplitBrainCmd: a.splitMarks.Handler(), Diverged: a.splitMarks.Marked,
+			CheckKernel: a.drbdCheck,
 		},
 		Lead: func(ctx context.Context, res string, opt volume.HoldOptions) error {
 			return promoter.Lead(ctx, leases, volume.LeaseName(res), res, volumeLeaseTTL, opt)
 		},
 		Addr: a.meshAddr,
-		Thin: cfg.StoragePool != "",
+		Thin: pool != "",
 	}
-	a.volctl = volctlc.New(volctlc.Options{
-		NodeID: cfg.NodeID, St: st, Alloc: alloc, Logger: logger, LostAfter: cfg.StorageLostAfter,
-		IsLeader: func() bool { return a.ctl != nil && a.ctl.store != nil && a.ctl.store.IsLeader() },
-	})
-	return nil
 }
 
 // meshAddr resolves a node to its exp0 overlay address: the .1 of the /24 in its

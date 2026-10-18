@@ -1,6 +1,5 @@
-# 1.10.1: an installed node turns storage on with nixos-rebuild switch (docs/STORAGE.md §2), no reboot.
-# The thin pool must be creatable at once, and volumes must refuse the in-tree DRBD 8.4 that the switch
-# loads, with an error that says to reboot. The scenario is python/storage_enable_switch.py.
+# An installed node turns storage on with nixos-rebuild switch through the Nix override, no reboot:
+# DRBD 9 is loaded from boot. The scenario is python/storage_enable_switch.py.
 { self }:
 { pkgs, lib, ... }:
 let

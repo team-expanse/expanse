@@ -26,6 +26,7 @@ func (s *Server) registerNodeRoutes() {
 	s.routes.Handle("GET /nodes", s.requireAuth(http.HandlerFunc(s.handleNodesList)))
 	s.routes.Handle("GET /nodes/events", s.requireAuth(http.HandlerFunc(s.handleNodesEvents)))
 	s.routes.Handle("GET /nodes/{id}", s.requireAuth(http.HandlerFunc(s.handleNodeDetail)))
+	s.routes.Handle("POST /nodes/{id}/storage", s.requireAuth(http.HandlerFunc(s.handleNodeStorageEnable)))
 }
 
 // nodeView is one node as the list and detail pages show it.
@@ -154,17 +155,25 @@ type nodeDetailData struct {
 	Status         *pb.NodeStatus
 	StatusPill     pill
 	Resources      []resourceView
+	Storage        nodeStorageView
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
+	if data, ok := s.nodeDetail(w, r); ok {
+		s.render(w, http.StatusOK, "node_detail.html", data)
+	}
+}
+
+// nodeDetail loads the page for the {id} node; when ok is false it has answered already.
+func (s *Server) nodeDetail(w http.ResponseWriter, r *http.Request) (nodeDetailData, bool) {
 	if s.clusterUnavailable(w, r) {
-		return
+		return nodeDetailData{}, false
 	}
 	id := r.PathValue("id")
 	nodes, _, err := s.loadNodes(r.Context())
 	if err != nil {
 		s.renderError(w, r, http.StatusServiceUnavailable, errText(err))
-		return
+		return nodeDetailData{}, false
 	}
 	data := nodeDetailData{Page: s.newPage(w, r, id, "nodes", crumb{Label: "Nodes", Href: "/nodes"}, crumb{Label: id})}
 	found := false
@@ -175,12 +184,13 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found {
 		s.renderError(w, r, http.StatusNotFound, "There is no node named "+id+" in this cluster.")
-		return
+		return nodeDetailData{}, false
 	}
 	if data.Node.Serving {
 		s.loadLocalNodeDetail(r.Context(), &data)
 	}
-	s.render(w, http.StatusOK, "node_detail.html", data)
+	data.Storage = s.nodeStorageView(r.Context(), id)
+	return data, true
 }
 
 // loadLocalNodeDetail fills the sections only the in-process

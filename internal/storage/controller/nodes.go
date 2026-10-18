@@ -64,13 +64,21 @@ func (c *Controller) meshedNodes(ctx context.Context) (map[string]bool, error) {
 }
 
 // storageNodes are the live nodes that can take a new replica: not witnesses (no
-// capacity) and not cordoned.
+// capacity), not cordoned, and not reporting storage that is off or not ready.
 func (c *Controller) storageNodes(ctx context.Context, meshed map[string]bool) []storage.NodeInfo {
 	held := c.replicaCounts(ctx)
+	reports, err := storage.ListNodeStorage(ctx, c.opts.St)
+	if err != nil {
+		c.log.Warn("cannot read node storage reports", "err", err)
+		return nil
+	}
 	var nodes []storage.NodeInfo
 	for id, alive := range meshed {
 		rec, _ := c.nodeRecord(ctx, id)
-		if alive && rec.Role != "witness" && !rec.Cordoned {
+		// A node with no report predates them and keeps its old eligibility.
+		r, reported := reports[id]
+		ready := !reported || r.State == storage.NodeStorageReady
+		if alive && ready && rec.Role != "witness" && !rec.Cordoned {
 			nodes = append(nodes, storage.NodeInfo{ID: id, Replicas: held[id]})
 		}
 	}

@@ -24,12 +24,13 @@ func capacityFrom(inv *inventory.Inventory, vgSize uint64) wire.Capacity {
 
 // storageVGSize is the data VG's size, or 0 when the node has none or vgs fails.
 func (a *Agent) storageVGSize(ctx context.Context) uint64 {
-	if a.cfg.StorageVG == "" {
+	name := a.storageVGName()
+	if name == "" {
 		return 0
 	}
-	vg, err := lvm.New().VG(ctx, a.cfg.StorageVG)
+	vg, err := lvm.New().VG(ctx, name)
 	if err != nil {
-		a.logger.Warn("storage VG size unavailable; placement keeps the default disk capacity", "vg", a.cfg.StorageVG, "err", err)
+		a.logger.Warn("storage VG size unavailable; placement keeps the default disk capacity", "vg", name, "err", err)
 		return 0
 	}
 	return vg.Size
