@@ -252,7 +252,7 @@ Shipped types live in `nix/blocks/<category>/<name>/`, each with:
 | File | Role |
 |---|---|
 | `block.yaml` | type identity (name, version, description, capabilities) |
-| `schema.json` | JSON Schema for the type's `config:` section |
+| `schema.json` | JSON Schema for the type's `config:` section. The web UI's form also reads `x-expanse-ref: {type, format}` on a string that holds another block's address (`format` `url` or `hostport`) and offers the addresses of existing blocks of that type. |
 | `defaults.yaml` | fallback values for unset config keys |
 | `template.yaml` | the `spec:` fields (not `type` or `config`) a new block of this type starts from: strategy, ports, storage, resources. The web UI's deploy form starts from it. |
 | `module.nix` | NixOS closure the unit runs from |

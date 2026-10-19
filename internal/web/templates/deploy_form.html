@@ -120,7 +120,9 @@
   {{else if .Multiline}}
   <textarea class="input code" name="{{.Name}}" rows="8" spellcheck="false"{{with .Placeholder}} placeholder="{{.}}"{{end}}{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>{{.Value}}</textarea>
   {{else}}
-  <input class="input" type="text" name="{{.Name}}" value="{{.Value}}"{{with .Placeholder}} placeholder="{{.}}"{{end}}{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+  <input class="input" type="text" name="{{.Name}}" value="{{.Value}}"{{with .Placeholder}} placeholder="{{.}}"{{end}}{{if .Choices}} list="{{.Name}}@refs"{{end}}{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+  {{with .Choices}}<datalist id="{{$.Name}}@refs">{{range .}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</datalist>{{end}}
+  {{if and .Ref .Ref.Type (not .Choices)}}<span class="field-hint">No {{.Ref.Type}} block with an address yet; <a href="/deploy/{{.Ref.Type}}">deploy one</a> first, or type an address.</span>{{end}}
   {{end}}
   {{if .Error}}<span class="field-error">{{.Error}}</span>{{else}}{{with .Help}}<span class="field-hint">{{.}}{{if eq $.Kind.String "list"}} One per line.{{end}}</span>{{else}}{{if eq .Kind.String "list"}}<span class="field-hint">One per line.</span>{{else if eq .Kind.String "yaml"}}<span class="field-hint">YAML.</span>{{end}}{{end}}{{end}}
 </label>

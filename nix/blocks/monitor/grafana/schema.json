@@ -13,7 +13,8 @@
     "prometheusUrl": {
       "type": "string",
       "pattern": "^https?://",
-      "description": "URL of the Prometheus to query, e.g. the monitor/prometheus block's VIP: http://10.0.0.50:9090"
+      "description": "URL of the Prometheus to query, e.g. the monitor/prometheus block's address: http://10.0.0.50",
+      "x-expanse-ref": {"type": "monitor/prometheus", "format": "url"}
     },
     "adminPassword": {
       "type": "string",

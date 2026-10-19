@@ -24,7 +24,8 @@
     },
     "replicaOf": {
       "type": "string",
-      "description": "Replicate from this host:port (failover/replication config)"
+      "description": "Replicate from this host:port (failover/replication config)",
+      "x-expanse-ref": {"type": "db/redis", "format": "hostport"}
     },
     "password": {
       "type": "string",

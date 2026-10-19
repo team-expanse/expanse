@@ -48,7 +48,10 @@ type Field struct {
 	// Multiline marks text with a contentMediaType (a file's contents), edited in a textarea.
 	Multiline bool
 	// SSHKeys marks a list of SSH public keys, where gh:<user> stands for a GitHub user's keys.
-	SSHKeys     bool
+	SSHKeys bool
+	// Ref marks a field that holds another block's address; Choices are the blocks it can take.
+	Ref         *Ref
+	Choices     []Choice
 	Placeholder string // the schema's first example, as the input would hold it
 	Value       string
 	Checked     bool
@@ -83,8 +86,22 @@ type node struct {
 	If          json.RawMessage `json:"if"`
 	Presets     []preset        `json:"x-expanse-presets"`
 	SSHKeys     bool            `json:"x-expanse-ssh-keys"`
+	Ref         *Ref            `json:"x-expanse-ref"`
 
 	props []prop
+}
+
+// Ref is x-expanse-ref: the field holds the address of a block of Type, written as Format
+// ("url" for http://addr[:port], "hostport" for addr:port).
+type Ref struct {
+	Type   string `json:"type"`
+	Format string `json:"format"`
+}
+
+// Choice is one existing block's address offered for a Ref field.
+type Choice struct {
+	Value string
+	Label string
 }
 
 // preset is a ready-made value for an object, offered in a select above its fields.
@@ -234,7 +251,7 @@ func build(n *node, prefix, path string, values map[string]any) ([]Field, error)
 			Name: prefix + path + "/" + p.key, Path: path + "/" + p.key,
 			Label: p.node.label(p.key), Help: p.node.Description, Kind: p.node.kind(),
 			Required: req[p.key], Pattern: p.node.Pattern,
-			Multiline: p.node.MediaType != "", SSHKeys: p.node.SSHKeys,
+			Multiline: p.node.MediaType != "", SSHKeys: p.node.SSHKeys, Ref: p.node.Ref,
 		}
 		if len(p.node.Examples) > 0 {
 			ex := Field{Kind: f.Kind}

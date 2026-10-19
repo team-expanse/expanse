@@ -127,7 +127,9 @@ over Server-Sent Events, never by polling.
   section names the node each replica would run on now, or each node's reason for refusing it
   (not enough memory, CPU or disk, a missing capability, one replica per node), and warns when
   another block listens on the same port. **Check** re-runs admission and the pre-flight with
-  the form's values without deploying. "Show as YAML"
+  the form's values without deploying. A setting that points at another block, such as
+  grafana's Prometheus URL or redis's replica source, lists the addresses of existing blocks
+  of that type, and a required one is filled in when only one block fits. "Show as YAML"
   gives the same block as a manifest for `expanse ctl block apply -f`, and `/blocks/new` still
   takes a pasted manifest. **Edit** on a block's page opens the same form with its current
   settings (`/blocks/<ns>/<name>/edit`). Password fields are never filled in. On Deploy, a

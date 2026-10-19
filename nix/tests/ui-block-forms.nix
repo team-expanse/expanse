@@ -36,7 +36,7 @@ in
       expanse.agent.blocksFlakeRef = "/etc/expanse/blocks-flake";
       environment.etc."expanse/blocks-flake".source = ../blocks-flake;
       # Two addresses: the web UI's own VIP takes one at agent start.
-      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.101";
+      expanse.agent.externalVIPPool = "192.168.1.100-192.168.1.103"; # the UI, site and r1
       expanse.agent.externalInterface = "eth1";
       networking.firewall.allowedTCPPorts = [ 80 ];
       environment.systemPackages = with pkgs; [ curl ];

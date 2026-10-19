@@ -341,3 +341,15 @@ func TestPresetsRefill(t *testing.T) {
 		t.Errorf("refilled %q", f.Value)
 	}
 }
+
+func TestBuildReadsABlockRef(t *testing.T) {
+	schema := `{"type": "object", "properties": {
+	  "upstream": {"type": "string", "x-expanse-ref": {"type": "monitor/prometheus", "format": "url"}}}}`
+	fields, err := Build([]byte(schema), "cfg", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fields[0].Ref; got == nil || got.Type != "monitor/prometheus" || got.Format != "url" {
+		t.Fatalf("Ref = %+v", got)
+	}
+}

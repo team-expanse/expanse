@@ -5,6 +5,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -170,11 +171,14 @@ type deployFormData struct {
 	NoStorage    bool            // the block needs storage, but no node has it on
 	Stored       map[string]bool // secret fields with a sealed value
 	Preflight    *preflightView  // deploy only: where the block would run
+	Editing      string          // edit only: the block's "ns/name"
 }
 
-// renderForm renders the deploy/edit form, saying what an empty secret input does.
-func (s *Server) renderForm(w http.ResponseWriter, status int, data deployFormData) {
+// renderForm renders the deploy/edit form, saying what an empty secret input does
+// and offering existing blocks' addresses for fields that refer to one.
+func (s *Server) renderForm(w http.ResponseWriter, r *http.Request, status int, data deployFormData) {
 	markSecrets(data.Fields, data.Stored, data.Edit)
+	offerRefs(data.Fields, s.refChoices(r.Context(), data.Type.GetSchemaJson(), data.Editing))
 	s.render(w, status, "deploy_form.html", data)
 }
 
@@ -200,11 +204,13 @@ func (s *Server) handleDeployForm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	b, free, err := s.newBlock(r.Context(), typ, typ.Name, nil)
+	sole := soleRefs(bt.GetSchemaJson(), s.refChoices(r.Context(), bt.GetSchemaJson(), ""))
+	b, free, err := s.newBlock(r.Context(), typ, typ.Name, sole)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
+	maps.Copy(free, sole)
 	fields, err := schemaform.Build(bt.GetSchemaJson(), cfgPrefix, free)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
@@ -212,7 +218,7 @@ func (s *Server) handleDeployForm(w http.ResponseWriter, r *http.Request) {
 	}
 	data := s.deployData(w, r, bt, b, fields)
 	data.Preflight = s.preflight(r.Context(), b)
-	s.renderForm(w, http.StatusOK, data)
+	s.renderForm(w, r, http.StatusOK, data)
 }
 
 func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
@@ -266,7 +272,7 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
-	s.renderForm(w, http.StatusOK, s.editData(w, r, bt, b, fields))
+	s.renderForm(w, r, http.StatusOK, s.editData(w, r, bt, b, fields))
 }
 
 func (s *Server) handleEditSubmit(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +333,7 @@ func (s *Server) editData(w http.ResponseWriter, r *http.Request, bt *pb.BlockTy
 	d := s.deployData(w, r, bt, b, fields)
 	d.Page = s.newPage(w, r, "Edit "+full, "blocks",
 		crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full, Href: "/blocks/" + full}, crumb{Label: "Edit"})
-	d.Edit, d.Action, d.Cancel = true, "/blocks/"+full+"/edit", "/blocks/"+full
+	d.Edit, d.Editing, d.Action, d.Cancel = true, full, "/blocks/"+full+"/edit", "/blocks/"+full
 	return d
 }
 
@@ -391,7 +397,7 @@ func (s *Server) renderRejected(w http.ResponseWriter, r *http.Request, data dep
 	if len(e.config) == 0 && len(e.general) == 0 && e.name == "" {
 		status = http.StatusOK // a Check that found nothing wrong
 	}
-	s.renderForm(w, status, data)
+	s.renderForm(w, r, status, data)
 }
 
 // newBlock builds a block of typ fitted to the cluster: replicas and copies capped at the node count,
