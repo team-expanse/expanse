@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ const vipScanInterval = 2 * time.Second
 type holderRun struct {
 	cancel context.CancelFunc
 	done   chan struct{}
+	ports  []vipPort // what its listeners were opened on
 }
 
 // initVIP is idempotent (vipInitOnce): both vipLoop and uiVIPLoop call
@@ -111,9 +113,9 @@ func (a *Agent) vipPass(ctx context.Context) {
 	defer a.vipMu.Unlock()
 	a.vipCands = cands
 
-	// Stop holders whose VIP disappeared (block deleted, port changed).
+	// Stop holders whose VIP disappeared (block deleted) or whose ports changed (restarted below).
 	for key, hr := range a.holders {
-		if _, ok := desired[key]; !ok {
+		if vb, ok := desired[key]; !ok || !slices.Equal(vb.ports, hr.ports) {
 			hr.cancel()
 			<-hr.done
 			delete(a.holders, key)
@@ -273,7 +275,7 @@ func (a *Agent) startHolder(ctx context.Context, key string, vb vipBlock) *holde
 			a.logger.Warn("vip holder exited", "vip", key, "err", err)
 		}
 	}()
-	return &holderRun{cancel: cancel, done: done}
+	return &holderRun{cancel: cancel, done: done, ports: vb.ports}
 }
 
 // publishVIPHolder writes (holder != "") or clears (holder == "") the

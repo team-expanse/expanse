@@ -197,3 +197,38 @@ func TestScanBlocksUsesTheClusterPoolSetting(t *testing.T) {
 		t.Errorf("after the cluster setting, VIP = %s, want 192.168.1.200/24", got)
 	}
 }
+
+// A block whose VIP ports change gets a new holder; the old one keeps listening on the old ports.
+func TestVIPPassRestartsAHolderWhosePortsChanged(t *testing.T) {
+	ctx := context.Background()
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("boltstore.New: %v", err)
+	}
+	defer st.Close()
+	b := &pb.Block{Spec: &pb.BlockSpec{Network: &pb.Network{Ports: []*pb.Port{
+		{Name: "http", Port: 8081, TargetPort: 8080, Expose: pb.Expose_EXPOSE_VIP},
+	}}}}
+	raw, _ := proto.Marshal(b)
+	if _, err := st.Put(ctx, "/blocks/web/nginx", raw); err != nil {
+		t.Fatal(err)
+	}
+	a := newTestAgent(t, st)
+	a.extPool, _ = vip.ParseExternalPool("192.168.1.100")
+	a.extIface = "expanse-test-none" // no such link: the replacement holder doesn't start
+
+	run := func(ports ...vipPort) bool {
+		canceled := false
+		done := make(chan struct{})
+		close(done)
+		a.holders["192.168.1.100/24"] = &holderRun{cancel: func() { canceled = true }, done: done, ports: ports}
+		a.vipPass(ctx)
+		return canceled
+	}
+	if run(vipPort{exposed: 8081, target: 8080}) {
+		t.Error("a holder with unchanged ports was restarted")
+	}
+	if !run(vipPort{exposed: 80, target: 8080}) {
+		t.Error("a holder still on the old port 80 was kept")
+	}
+}

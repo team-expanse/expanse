@@ -42,6 +42,13 @@
         <span class="field-hint">Disk space for this block, e.g. <code>20Gi</code>{{if gt .Replication 1}}, kept on {{.Replication}} nodes{{end}}.</span>
       </label>
       {{end}}
+      {{range .Ports}}{{if eq .Expose.String "EXPOSE_VIP"}}
+      <label class="field">
+        <span class="field-label">Address port <code>{{.Name}}</code></span>
+        <input class="input" type="number" name="port/{{.Name}}" value="{{.Port}}" min="1" max="65535">
+        <span class="field-hint">The port clients connect to on the block's own address.</span>
+      </label>
+      {{end}}{{end}}
       {{if .Fields}}<h2 class="form-section">Settings</h2>{{end}}
       {{range .Fields}}{{template "cfgfield" .}}{{end}}
       <details class="manifest">

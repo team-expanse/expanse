@@ -321,3 +321,39 @@ func TestDeployFormPicksAFreePort(t *testing.T) {
 			s.GetConfig().AsMap()["port"], s.GetNetwork().GetPorts()[0].GetTargetPort())
 	}
 }
+
+func TestDeployFormSetsTheAddressPort(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "")
+	c, csrf := loggedInClient(t, srv, pw)
+
+	_, body := get(t, c, srv.URL+"/deploy/web/nginx")
+	for _, want := range []string{`name="port/http" value="80"`, "behind the block&#39;s address"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("nginx form lacks %s", want)
+		}
+	}
+
+	_, body = postForm(t, c, srv.URL+"/deploy/web/nginx", csrf, url.Values{
+		"name": {"site"}, "cfg/serverName": {"www.example.org"}, "port/http": {"70000"},
+	})
+	if !strings.Contains(body, "Port http must be a number from 1 to 65535") {
+		t.Errorf("out-of-range address port accepted:\n%s", alerts(body))
+	}
+
+	resp, body := postForm(t, c, srv.URL+"/deploy/web/nginx", csrf, url.Values{
+		"name": {"site"}, "cfg/serverName": {"www.example.org"}, "cfg/port": {"8080"}, "port/http": {"8081"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+	p := getBlock(t, st, "default/site").GetSpec().GetNetwork().GetPorts()[0]
+	if p.GetPort() != 8081 || p.GetTargetPort() != 8080 {
+		t.Errorf("port = %d→%d, want 8081→8080", p.GetPort(), p.GetTargetPort())
+	}
+
+	_, body = get(t, c, srv.URL+"/blocks/default/site/edit")
+	if !strings.Contains(body, `name="port/http" value="8081"`) {
+		t.Error("the edit form doesn't show the address port")
+	}
+}

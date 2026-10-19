@@ -575,6 +575,24 @@ func applyCommon(b *pb.Block, form url.Values) []string {
 			st.Size = v
 		}
 	}
+	return append(errs, applyAddressPorts(spec, form)...)
+}
+
+// applyAddressPorts sets each address port (what clients connect to on the block's address) from the form.
+func applyAddressPorts(spec *pb.BlockSpec, form url.Values) []string {
+	var errs []string
+	for _, p := range spec.GetNetwork().GetPorts() {
+		v := strings.TrimSpace(form.Get("port/" + p.GetName()))
+		if v == "" || p.GetExpose() != pb.Expose_EXPOSE_VIP {
+			continue
+		}
+		n, err := strconv.ParseInt(v, 10, 32)
+		if err != nil || n < 1 || n > 65535 {
+			errs = append(errs, "Port "+p.GetName()+" must be a number from 1 to 65535")
+			continue
+		}
+		p.Port = int32(n)
+	}
 	return errs
 }
 

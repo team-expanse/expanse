@@ -3,7 +3,7 @@
 On a one-node cluster, web/nginx is deployed from /deploy with only a name and a server name
 (everything else comes from the type's template and defaults), serves on its VIP to an outside
 client, then has its listen port changed through the edit form and still serves: the VIP's
-forwarding followed the port. The form's pre-flight places it on n1, and Check refuses a block too
+forwarding followed the port. Changing the address port moves the VIP's client port. The form's pre-flight places it on n1, and Check refuses a block too
 big for any node without creating it. A field naming another block (redis's replicaOf) offers the
 addresses of existing blocks of that type. Runs after cluster-common.py, block-common.py, vol_cluster.py and
 single_node_common.py; n9 is the external client.
@@ -20,9 +20,9 @@ def block_vip():
         return ""
 
 
-def vip_serves():
+def vip_serves(port=80):
     vip = block_vip()
-    out = n9.execute(f"curl -s -o /dev/null -w '%{{http_code}}' --connect-timeout 3 http://{vip}/ || true")[1]
+    out = n9.execute(f"curl -s -o /dev/null -w '%{{http_code}}' --connect-timeout 3 http://{vip}:{port}/ || true")[1]
     return vip != "" and out.strip() == "200"
 
 
@@ -68,6 +68,13 @@ with subtest("changing the port through the edit form keeps the VIP serving"):
              "the port's target to follow the config", 30)
     wait_for(lambda: n1.execute("ss -ltn | grep -q ':8090 '")[0] == 0, "nginx to listen on 8090", 180)
     wait_for(vip_serves, "the client to reach nginx on the VIP after the edit", 120)
+
+with subtest("changing the address port through the edit form moves where clients connect"):
+    status, loc, body = post("/blocks/default/site/edit", {
+        "name": "site", "replicas": "1", "cfg/serverName": "site.test", "cfg/port": "8090", "port/http": "8081",
+    })
+    assert status == "303", f"edit: {status}\n{body[-2000:]}"
+    wait_for(lambda: vip_serves(8081), "the client to reach nginx on the VIP's port 8081", 120)
 
 with subtest("the redis form offers an existing redis's address to replicate from"):
     status, loc, body = post("/deploy/db/redis", {"name": "r1"})

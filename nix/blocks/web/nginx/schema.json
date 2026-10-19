@@ -18,7 +18,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 65535,
-      "description": "TCP port nginx listens on"
+      "description": "Port nginx listens on, behind the block's address (clients use the address port above)"
     },
     "tls": {
       "type": "object",

@@ -19,6 +19,12 @@ History before 1.0.0 is not recorded here.
   Operation not permitted`, and the block stayed in Scheduling.
 - A running singleton block no longer shows "Not fully placed: LeaseHeld" after
   its agent restarts.
+- The deploy and edit forms show each address port (the port clients connect to
+  on the block's address) as its own field. nginx's `port` setting is labelled as
+  the port nginx listens on behind the address; setting it to 8081 used to leave
+  clients on port 80 with nothing saying so.
+- Changing a block's address port takes effect: the address is reopened on the
+  new port. Before, it kept listening on the old one until the agent restarted.
 
 ## 1.11.0 - 2026-10-18
 
