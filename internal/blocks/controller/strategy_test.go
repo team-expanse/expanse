@@ -308,3 +308,35 @@ func TestSingletonWithoutReplicasPlacesOne(t *testing.T) {
 		t.Fatalf("Reconcile: placed %d, %v; want 1", n, err)
 	}
 }
+
+// svr1, 1.11.0: a restarted agent can't retake its own singleton lease until the old one expires.
+// With the replica already placed there is nothing to gate, so the block stays RUNNING, unflagged.
+func TestRestartedControllerLeavesARunningSingletonAlone(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mustCreate(t, ctx, st, singletonBlock("dev"))
+	views := func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodeViews(1), testCfg(), nil
+	}
+	c1 := New(st, views)
+	if _, err := c1.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	p := loadStatus(t, ctx, st, "default", "dev").GetPlacements()[0]
+	key := "/node/" + p.GetNodeId() + "/status/resources/" + ReplicaResourceID("default", "dev", 0)
+	if _, err := st.Put(ctx, store.Key(key), []byte("health=healthy in_sync=true actions=1 updated=1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c1.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	c2 := New(st, views) // the restarted agent: same node, no lease handle
+	if _, err := c2.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := loadStatus(t, ctx, st, "default", "dev")
+	if s.GetPhase() != pb.Phase_RUNNING || s.GetPendingReason() != nil {
+		t.Fatalf("phase %v reason %+v, want RUNNING and no reason", s.GetPhase(), s.GetPendingReason())
+	}
+}

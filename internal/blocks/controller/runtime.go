@@ -139,6 +139,7 @@ func (c *Controller) promoteBlock(ctx context.Context, e store.Entry) error {
 			return true
 		}() {
 		status.Phase = pb.Phase_RUNNING
+		status.PendingReason = nil
 		changed = true
 	}
 	if !changed {

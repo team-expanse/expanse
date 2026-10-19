@@ -68,6 +68,9 @@ func (c *Controller) acquireSingleton(ctx context.Context, ns, name string) erro
 // placeSingleton places the single replica of a singleton block, gated
 // on the lease.
 func (c *Controller) placeSingleton(ctx context.Context, b *pb.Block, e store.Entry, status *pb.BlockStatus, nodes []scheduler.NodeView, cfg scheduler.OvercommitConfig) (int, error) {
+	if placementAt(status, 0) != nil {
+		return 0, nil // already placed: the lease gates nothing (a restarted agent can't retake it yet)
+	}
 	if err := c.acquireSingleton(ctx, b.GetMetadata().GetNamespace(), b.GetMetadata().GetName()); err != nil {
 		if errors.Is(err, errors.KindConflict) {
 			status.Phase = pb.Phase_PENDING

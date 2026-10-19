@@ -270,3 +270,29 @@ func TestRuntimePassWaitsForReadinessProbe(t *testing.T) {
 		}
 	}
 }
+
+// A pending reason left from before the replica came up goes when the block turns RUNNING.
+func TestRuntimePassClearsPendingReasonWhenRunning(t *testing.T) {
+	c, ctx := runtimeHarness(t)
+	mustCreate(t, ctx, c.St, blockFor("web", 1))
+	if _, err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := loadStatus(t, ctx, c.St, "default", "web")
+	s.PendingReason = &pb.PendingReason{Code: "LeaseHeld", Message: "singleton lease held elsewhere"}
+	if err := c.persistStatus(ctx, blockKey("default", "web"), s); err != nil {
+		t.Fatal(err)
+	}
+	p := s.GetPlacements()[0]
+	key := "/node/" + p.GetNodeId() + "/status/resources/" + ReplicaResourceID("default", "web", 0)
+	if _, err := c.St.Put(ctx, store.Key(key), []byte("health=healthy in_sync=true actions=1 updated=1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RuntimePass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s = loadStatus(t, ctx, c.St, "default", "web")
+	if s.GetPhase() != pb.Phase_RUNNING || s.GetPendingReason() != nil {
+		t.Fatalf("phase %v reason %+v, want RUNNING and no reason", s.GetPhase(), s.GetPendingReason())
+	}
+}
