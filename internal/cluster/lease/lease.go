@@ -206,6 +206,12 @@ func (m *Manager) TryAcquire(ctx context.Context, name string, ttl time.Duration
 	return m.tryAcquire(ctx, name, ttl, false)
 }
 
+// TryAcquireReclaiming is TryAcquire that also takes back a live record naming
+// this node; AcquireReclaiming's soundness conditions apply.
+func (m *Manager) TryAcquireReclaiming(ctx context.Context, name string, ttl time.Duration) (*Held, error) {
+	return m.tryAcquire(ctx, name, ttl, true)
+}
+
 func (m *Manager) tryAcquire(ctx context.Context, name string, ttl time.Duration, reclaimOwn bool) (*Held, error) {
 	if ttl <= 0 {
 		return nil, errors.New(errors.KindInvalid, "lease.TryAcquire", "ttl must be positive")

@@ -48,8 +48,8 @@ func (c *Controller) acquireSingleton(ctx context.Context, ns, name string) erro
 		return nil
 	}
 
-	mgr := c.leaseManager()
-	h, err := mgr.TryAcquire(ctx, key, lease.DefaultTTL)
+	// Reclaiming is sound: one controller per node ID, and only the raft leader places.
+	h, err := c.leaseManager().TryAcquireReclaiming(ctx, key, lease.DefaultTTL)
 	if err == nil {
 		c.leaseMu.Lock()
 		c.held[key] = h
@@ -69,7 +69,7 @@ func (c *Controller) acquireSingleton(ctx context.Context, ns, name string) erro
 // on the lease.
 func (c *Controller) placeSingleton(ctx context.Context, b *pb.Block, e store.Entry, status *pb.BlockStatus, nodes []scheduler.NodeView, cfg scheduler.OvercommitConfig) (int, error) {
 	if placementAt(status, 0) != nil {
-		return 0, nil // already placed: the lease gates nothing (a restarted agent can't retake it yet)
+		return 0, nil // already placed: the lease gates nothing
 	}
 	if err := c.acquireSingleton(ctx, b.GetMetadata().GetNamespace(), b.GetMetadata().GetName()); err != nil {
 		if errors.Is(err, errors.KindConflict) {

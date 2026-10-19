@@ -340,3 +340,20 @@ func TestRestartedControllerLeavesARunningSingletonAlone(t *testing.T) {
 		t.Fatalf("phase %v reason %+v, want RUNNING and no reason", s.GetPhase(), s.GetPendingReason())
 	}
 }
+
+// A restarted agent retakes its own live singleton lease at once rather than waiting out the TTL.
+func TestRestartedControllerReclaimsItsOwnSingletonLease(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mustCreate(t, ctx, st, singletonBlock("dev"))
+	before := lease.NewManager(st, st.NodeID()) // the agent before its restart
+	if _, err := before.TryAcquire(ctx, singletonLeaseName("default", "dev"), lease.DefaultTTL); err != nil {
+		t.Fatal(err)
+	}
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodeViews(1), testCfg(), nil
+	})
+	if n, err := c.Reconcile(ctx); err != nil || n != 1 {
+		t.Fatalf("Reconcile: placed %d, %v; want 1", n, err)
+	}
+}
