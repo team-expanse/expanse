@@ -1,0 +1,4 @@
+# The deploy form starts from Debian 13; a manifest without image uses the disk as it is.
+image:
+  url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+  checksumUrl: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS

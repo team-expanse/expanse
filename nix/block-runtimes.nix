@@ -34,7 +34,8 @@ let
     "share/smb" = [ samba ];
     "storage/s3" = [ garage ];
     "util/restic-backup" = [ restic ];
-    "vm/instance" = [ qemu ];
+    # xorriso builds the cloud-init seed ISO.
+    "vm/instance" = [ qemu xorriso ];
     "web/caddy" = [ caddy ];
     "web/nginx" = [ nginx ];
   };

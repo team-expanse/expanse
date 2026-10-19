@@ -3,15 +3,98 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "checksum"
+          ]
+        },
+        {
+          "required": [
+            "checksumUrl"
+          ]
+        }
+      ],
+      "description": "A cloud image (qcow2 or raw) written onto the disk on the VM's first start, while the disk is still blank. Later changes do not touch the disk. Left unset, the disk is used as it is",
+      "x-expanse-presets": [
+        {
+          "label": "Debian 13 (log in as debian)",
+          "value": {
+            "url": "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2",
+            "checksumUrl": "https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS"
+          },
+          "login": "debian"
+        },
+        {
+          "label": "Ubuntu 24.04 LTS (log in as ubuntu)",
+          "value": {
+            "url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+            "checksumUrl": "https://cloud-images.ubuntu.com/noble/current/SHA256SUMS"
+          },
+          "login": "ubuntu"
+        }
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "Where to download the image"
+        },
+        "checksum": {
+          "type": "string",
+          "pattern": "^([0-9a-fA-F]{64}|[0-9a-fA-F]{128})$",
+          "description": "The file's SHA-256 or SHA-512 in hex"
+        },
+        "checksumUrl": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "A SHA256SUMS or SHA512SUMS file that lists the image by its file name, used when checksum is unset"
+        }
+      }
+    },
+    "cloudInit": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Cloud-init",
+      "description": "Handed to the image's cloud-init on the first boot",
+      "properties": {
+        "sshKeys": {
+          "type": "array",
+          "title": "SSH keys",
+          "items": {
+            "type": "string",
+            "pattern": "^(ssh-|ecdsa-|sk-)"
+          },
+          "description": "Public keys that may log in. In the web form, gh:<user> imports a GitHub user's keys",
+          "x-expanse-ssh-keys": true
+        },
+        "user": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "description": "A login user to create, with sudo rights and the SSH keys. Left unset, the keys go to the image's own user"
+        },
+        "hostname": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+          "description": "Left unset, the block's name"
+        }
+      }
+    },
     "mac": {
       "type": "string",
       "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$",
-      "description": "Explicit guest NIC MAC override. Left unset, a stable, locally-administered MAC is derived once from the block instance's own name (PHASE-06-TASKS.md D2/D4 pattern) — identical across every failover, never regenerated or tied to a node or its macvtap parent interface"
+      "description": "Explicit guest NIC MAC override. Left unset, a stable, locally-administered MAC is derived once from the block instance's own name (PHASE-06-TASKS.md D2/D4 pattern) \u2014 identical across every failover, never regenerated or tied to a node or its macvtap parent interface"
     },
     "bootKernel": {
       "type": "string",
       "minLength": 1,
-      "description": "Nix store path to a kernel for direct-kernel-boot, bypassing whatever bootloader (if any) the raw volume's own disk holds. PHASE-06-TASKS.md D4 leaves getting a first bootable guest OS onto an empty volume out of this phase's own scope (document, don't build); this is the escape hatch that lets a guest boot at all before that exists — bootInitrd/bootCmdline go with it. Left unset (the production default), the VMM boots from the attached disk the ordinary BIOS way, exactly like a physical machine"
+      "description": "Nix store path to a kernel for direct-kernel-boot, bypassing whatever bootloader (if any) the raw volume's own disk holds. PHASE-06-TASKS.md D4 leaves getting a first bootable guest OS onto an empty volume out of this phase's own scope (document, don't build); this is the escape hatch that lets a guest boot at all before that exists \u2014 bootInitrd/bootCmdline go with it. Left unset (the production default), the VMM boots from the attached disk the ordinary BIOS way, exactly like a physical machine"
     },
     "bootInitrd": {
       "type": "string",
@@ -24,12 +107,17 @@
     },
     "cpuModel": {
       "type": "string",
-      "enum": ["host"],
+      "enum": [
+        "host"
+      ],
       "description": "CPU model the guest sees. host passes the node's CPU through, including vmx/svm, so the guest can run KVM itself (nested virtualization); the guest can then only restart on nodes with the same CPU features. Left unset, qemu's default model, with no virtualization extensions"
     },
     "guestReady": {
       "type": "string",
-      "enum": ["systemd", "none"],
+      "enum": [
+        "systemd",
+        "none"
+      ],
       "description": "When the VM counts as RUNNING. systemd (the default): once the guest's systemd reports over vsock that it booted to multi-user.target. none: as soon as qemu-kvm starts, for guests without systemd 254 or newer"
     }
   }

@@ -41,11 +41,14 @@ type Field struct {
 	Help     string
 	Kind     Kind
 	Required bool
-	Options  []string // Enum choices; a leading "" means unset
+	// Options are Enum choices, or a Group's preset labels then CustomPreset; a leading "" means unset.
+	Options  []string
 	Min, Max string
 	Pattern  string
 	// Multiline marks text with a contentMediaType (a file's contents), edited in a textarea.
-	Multiline   bool
+	Multiline bool
+	// SSHKeys marks a list of SSH public keys, where gh:<user> stands for a GitHub user's keys.
+	SSHKeys     bool
 	Placeholder string // the schema's first example, as the input would hold it
 	Value       string
 	Checked     bool
@@ -78,9 +81,24 @@ type node struct {
 	OneOf       json.RawMessage `json:"oneOf"`
 	AllOf       json.RawMessage `json:"allOf"`
 	If          json.RawMessage `json:"if"`
+	Presets     []preset        `json:"x-expanse-presets"`
+	SSHKeys     bool            `json:"x-expanse-ssh-keys"`
 
 	props []prop
 }
+
+// preset is a ready-made value for an object, offered in a select above its fields.
+type preset struct {
+	Label string         `json:"label"`
+	Value map[string]any `json:"value"`
+}
+
+const (
+	// PresetSuffix names a group's preset select: the group's input name plus this.
+	PresetSuffix = "@preset"
+	// CustomPreset is the choice that takes the group's own fields.
+	CustomPreset = "custom"
+)
 
 func parse(raw []byte) (*node, error) {
 	var n node
@@ -129,7 +147,7 @@ func (n *node) typeName() string {
 }
 
 func (n *node) kind() Kind {
-	if n.AnyOf != nil || n.OneOf != nil || n.AllOf != nil || n.If != nil {
+	if (n.AnyOf != nil && !requiredOnly(n.AnyOf)) || n.OneOf != nil || n.AllOf != nil || n.If != nil {
 		return YAML
 	}
 	if n.Enum != nil {
@@ -162,6 +180,21 @@ func (n *node) kind() Kind {
 		}
 	}
 	return YAML
+}
+
+// requiredOnly reports whether every anyOf branch only lists required properties ("set one
+// of these"): validation enforces it and the fields stay plain inputs.
+func requiredOnly(raw json.RawMessage) bool {
+	var branches []map[string]json.RawMessage
+	if json.Unmarshal(raw, &branches) != nil {
+		return false
+	}
+	for _, b := range branches {
+		if _, ok := b["required"]; !ok || len(b) != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // ordered lists required properties first, then the rest, each in schema order.
@@ -201,7 +234,7 @@ func build(n *node, prefix, path string, values map[string]any) ([]Field, error)
 			Name: prefix + path + "/" + p.key, Path: path + "/" + p.key,
 			Label: p.node.label(p.key), Help: p.node.Description, Kind: p.node.kind(),
 			Required: req[p.key], Pattern: p.node.Pattern,
-			Multiline: p.node.MediaType != "",
+			Multiline: p.node.MediaType != "", SSHKeys: p.node.SSHKeys,
 		}
 		if len(p.node.Examples) > 0 {
 			ex := Field{Kind: f.Kind}
@@ -231,6 +264,7 @@ func build(n *node, prefix, path string, values map[string]any) ([]Field, error)
 				return nil, err
 			}
 			f.Fields = kids
+			f.choosePreset(p.node.Presets, sub)
 		}
 		if has && v != nil {
 			if err := f.show(v); err != nil {
@@ -240,6 +274,32 @@ func build(n *node, prefix, path string, values map[string]any) ([]Field, error)
 		out = append(out, f)
 	}
 	return out, nil
+}
+
+// choosePreset offers presets in Options and selects the one equal to v, or CustomPreset.
+func (f *Field) choosePreset(presets []preset, v map[string]any) {
+	if len(presets) == 0 {
+		return
+	}
+	if !f.Required {
+		f.Options = append(f.Options, "")
+	}
+	for _, p := range presets {
+		f.Options = append(f.Options, p.Label)
+		if v != nil && f.Value == "" && sameJSON(p.Value, v) {
+			f.Value = p.Label
+		}
+	}
+	f.Options = append(f.Options, CustomPreset)
+	if v != nil && f.Value == "" {
+		f.Value = CustomPreset
+	}
+}
+
+func sameJSON(a, b any) bool {
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }
 
 // show renders a config value into the field; secrets are never shown.
@@ -294,7 +354,11 @@ func decode(n *node, prefix, path string, form url.Values, errs *[]string) map[s
 		fail := func(msg string) { *errs = append(*errs, fp+": "+msg) }
 		switch p.node.kind() {
 		case Group:
-			if sub := decode(p.node, prefix, fp, form, errs); len(sub) > 0 {
+			if v, chosen := pickPreset(p.node.Presets, form, prefix+fp+PresetSuffix); chosen {
+				if v != nil {
+					out[p.key] = v
+				}
+			} else if sub := decode(p.node, prefix, fp, form, errs); len(sub) > 0 {
 				out[p.key] = sub
 			}
 		case Bool:
@@ -350,6 +414,25 @@ func decode(n *node, prefix, path string, form url.Values, errs *[]string) map[s
 		}
 	}
 	return out
+}
+
+// pickPreset returns the chosen preset's value, nil for "unset"; chosen is false for
+// CustomPreset or no select, when the group's own fields apply.
+func pickPreset(presets []preset, form url.Values, name string) (map[string]any, bool) {
+	sel, posted := form[name]
+	if len(presets) == 0 || !posted || sel[0] == CustomPreset {
+		return nil, false
+	}
+	for _, p := range presets {
+		if p.Label == sel[0] {
+			out := make(map[string]any, len(p.Value))
+			for k, v := range p.Value {
+				out[k] = v
+			}
+			return out, true
+		}
+	}
+	return nil, true
 }
 
 // AttachErrors sets each "path: message" error on its field and returns the ones that match none.
@@ -427,6 +510,9 @@ func Refill(fields []Field, form url.Values) {
 		f := &fields[i]
 		switch f.Kind {
 		case Group:
+			if f.Options != nil {
+				f.Value = form.Get(f.Name + PresetSuffix)
+			}
 			Refill(f.Fields, form)
 		case Secret:
 		case Bool:

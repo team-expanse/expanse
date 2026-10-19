@@ -126,6 +126,15 @@
     var el = ev.target.closest("[data-autosubmit]");
     if (el && el.form) el.form.requestSubmit();
   });
+  // A preset select shows its group's own fields only for "custom".
+  function syncPreset(sel) {
+    var custom = sel.closest("fieldset").querySelector("[data-preset-custom]");
+    if (custom) custom.hidden = sel.value !== "custom";
+  }
+  document.querySelectorAll("select[data-preset]").forEach(syncPreset);
+  document.addEventListener("change", function (ev) {
+    if (ev.target.matches("select[data-preset]")) syncPreset(ev.target);
+  });
   document.body.addEventListener("htmx:sseMessage", function (ev) {
     var pre = ev.target.closest && ev.target.closest("[data-autoscroll]");
     if (pre && pre.scrollHeight - pre.scrollTop - pre.clientHeight < 80) pre.scrollTop = pre.scrollHeight;

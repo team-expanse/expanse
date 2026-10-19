@@ -218,7 +218,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "vm/instance":
-		if err := runVM(ctx, instance, args); err != nil {
+		if err := runVM(ctx, instance, spec.Name, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
@@ -233,6 +233,7 @@ func main() {
 // spec mirrors the agent's systemd.Spec (the fields the helper needs).
 type spec struct {
 	Namespace string   `json:"namespace"`
+	Name      string   `json:"name"`
 	Type      string   `json:"type"`
 	Args      []string `json:"args,omitempty"`
 	Index     int      `json:"index"`

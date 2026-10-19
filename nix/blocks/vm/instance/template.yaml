@@ -9,6 +9,8 @@ storage:
   - name: disk
     size: 20Gi
     replication: 3
+    # Never mounted (filesystem: none), but the volume is bound to the replica only with a path.
+    mountPath: /mnt/disk
     filesystem: none
 placement:
   requiredCapabilities: [kvm]

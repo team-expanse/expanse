@@ -124,6 +124,7 @@ func (s *Server) Create(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 		return nil, errors.New(errors.KindInvalid, "blocks.service.Create", "name is required")
 	}
 	b = proto.Clone(b).(*pb.Block) // sealing rewrites the config
+	defaultReplicas(b)
 	if b.GetMetadata().GetNamespace() == "" {
 		b.Metadata.Namespace = "default"
 	}
@@ -251,6 +252,7 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 		return nil, errors.New(errors.KindInvalid, "blocks.service.Update", "name is required")
 	}
 	b = proto.Clone(b).(*pb.Block) // sealing rewrites the config
+	defaultReplicas(b)
 	if b.GetMetadata().GetNamespace() == "" {
 		b.Metadata.Namespace = "default"
 	}
@@ -361,4 +363,13 @@ func generationCurrent(ctx context.Context, st store.Store) (uint64, error) {
 		return 0, errors.Wrap(err, errors.KindInternal, "blocks.service", "parse generation")
 	}
 	return n, nil
+}
+
+// defaultReplicas gives a singleton without replicas its one (V5 allows it unset); readers
+// of spec.replicas, the scheduler among them, would otherwise see 0.
+func defaultReplicas(b *pb.Block) {
+	if b.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_SINGLETON && b.GetSpec().Replicas == nil {
+		one := int32(1)
+		b.Spec.Replicas = &one
+	}
 }

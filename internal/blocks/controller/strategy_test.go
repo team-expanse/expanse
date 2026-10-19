@@ -293,3 +293,18 @@ func TestSingletonRollsThroughLease(t *testing.T) {
 		t.Errorf("placements after singleton roll = %d, want 1", got)
 	}
 }
+
+// A singleton stored without replicas (V5 allows it) still gets its one replica.
+func TestSingletonWithoutReplicasPlacesOne(t *testing.T) {
+	ctx := context.Background()
+	b := singletonBlock("bare")
+	b.Spec.Replicas = nil
+	st := newStore(t)
+	mustCreate(t, ctx, st, b)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodeViews(3), testCfg(), nil
+	})
+	if n, err := c.Reconcile(ctx); err != nil || n != 1 {
+		t.Fatalf("Reconcile: placed %d, %v; want 1", n, err)
+	}
+}

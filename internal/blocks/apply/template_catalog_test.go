@@ -95,3 +95,23 @@ func TestShippedTemplatesForwardToTheConfigPort(t *testing.T) {
 		}
 	}
 }
+
+// Every template volume has a mountPath: the bridge binds no volume without one, raw ones included.
+func TestShippedTemplateVolumesHaveAMountPath(t *testing.T) {
+	cat, err := catalog.Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range cat.Types() {
+		typ, _ := cat.GetType(id)
+		b, err := FromTemplate(typ, "", "t1", requiredConfig[id])
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		for _, st := range b.GetSpec().GetStorage() {
+			if st.GetMountPath() == "" {
+				t.Errorf("%s: volume %s has no mountPath, so it is never bound to the replica", id, st.GetName())
+			}
+		}
+	}
+}

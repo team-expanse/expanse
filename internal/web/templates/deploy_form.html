@@ -61,6 +61,7 @@
     <ul class="type-list">
       {{range .Ports}}<li>Port {{.Port}} ({{.Name}}){{if eq .Expose.String "EXPOSE_VIP"}} on the block's own address{{end}}</li>{{end}}
     </ul>
+    {{else if eq .Type.Name "vm/instance"}}<p class="muted">The VM joins your LAN with its own MAC address and gets its IP address from your DHCP server. The block's page shows the MAC.</p>
     {{else}}<p class="muted">This type has no network ports.</p>{{end}}
     {{if .ClusterOnly}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>No LAN address range is set, so this block will be reachable from inside the cluster only. <a href="/settings#network">Set a range</a> to reach blocks from your network.</p></div></div>{{end}}
   </aside>
@@ -72,7 +73,18 @@
 <fieldset class="field-group">
   <legend class="field-label">{{.Label}}</legend>
   {{with .Help}}<span class="field-hint">{{.}}</span>{{end}}
+  {{if .Options}}
+  <label class="field">
+    <select class="input" name="{{.Name}}@preset" data-preset{{if .Error}} aria-invalid="true"{{end}}>{{$v := .Value}}{{range .Options}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{if eq . "custom"}}Custom…{{else if .}}{{.}}{{else}}(none){{end}}</option>{{end}}</select>
+    {{with .Error}}<span class="field-error">{{.}}</span>{{end}}
+  </label>
+  <div class="preset-custom" data-preset-custom>
+    <span class="field-hint">Used when Custom is chosen above.</span>
+    {{range .Fields}}{{template "cfgfield" .}}{{end}}
+  </div>
+  {{else}}
   {{range .Fields}}{{template "cfgfield" .}}{{end}}
+  {{end}}
 </fieldset>
 {{else if eq .Kind.String "bool"}}
 <label class="field field-check">

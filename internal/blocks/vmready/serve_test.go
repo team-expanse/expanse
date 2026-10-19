@@ -40,6 +40,7 @@ func serve(t *testing.T, cid uint32, conns []fakeConn) []string {
 func TestServePublishesEachChangeOnce(t *testing.T) {
 	got := serve(t, 7, []fakeConn{
 		{7, "X_SYSTEMD_HOSTNAME=nixos"},
+		{7, "X_SYSTEMD_UNIT_ACTIVE=basic.target"},
 		{7, "READY=1\nSTATUS=Ready."},
 		{7, "X_SYSTEMD_UNIT_ACTIVE=multi-user.target"},
 		{7, "X_SYSTEMD_UNIT_ACTIVE=getty.target"},

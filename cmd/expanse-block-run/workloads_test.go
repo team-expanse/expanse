@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -340,31 +339,6 @@ func TestMacvtapIfaceNameIsDeterministic(t *testing.T) {
 	}
 	if macvtapIfaceName("default-vm2-0") == a {
 		t.Error("macvtapIfaceName identical for two different instances")
-	}
-}
-
-func TestDefaultMACIsDeterministic(t *testing.T) {
-	a := defaultMAC("default-vm1-0")
-	b := defaultMAC("default-vm1-0")
-	if a != b {
-		t.Errorf("defaultMAC not deterministic: %q vs %q", a, b)
-	}
-	if defaultMAC("default-other-0") == a {
-		t.Error("defaultMAC identical for two different instances")
-	}
-}
-
-func TestDefaultMACIsLocallyAdministeredUnicast(t *testing.T) {
-	mac, err := net.ParseMAC(defaultMAC("default-vm1-0"))
-	if err != nil {
-		t.Fatalf("defaultMAC produced an unparseable address: %v", err)
-	}
-	first := mac[0]
-	if first&0x01 != 0 {
-		t.Errorf("defaultMAC = %v, want the multicast bit clear", mac)
-	}
-	if first&0x02 == 0 {
-		t.Errorf("defaultMAC = %v, want the locally-administered bit set", mac)
 	}
 }
 

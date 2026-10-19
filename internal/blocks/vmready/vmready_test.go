@@ -133,3 +133,16 @@ func TestLeavingEmergencyModeIsBooting(t *testing.T) {
 		t.Fatalf("status = %q", got)
 	}
 }
+
+// systemd 254 and 255 (Ubuntu 24.04) report no units, measured with the noble cloud image.
+func TestReadyAloneCountsForAGuestThatReportsNoUnits(t *testing.T) {
+	tr := NewTracker()
+	feed(t, tr, []string{
+		"X_SYSTEMD_HOSTNAME=smoke",
+		"STATUS=User job cloud-init.service/start running (11s / no limit)...",
+		"READY=1\nSTATUS=Ready.",
+	})
+	if !tr.Ready() || !StatusTextReady(tr.Status()) {
+		t.Fatalf("status = %q, want ready", tr.Status())
+	}
+}

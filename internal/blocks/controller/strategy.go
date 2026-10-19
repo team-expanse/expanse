@@ -85,7 +85,7 @@ func (c *Controller) placeSingleton(ctx context.Context, b *pb.Block, e store.En
 // placeReplicas is the generic scheduler loop for index-addressed
 // strategies (active-active, primary-replica, singleton).
 func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Entry, status *pb.BlockStatus, nodes []scheduler.NodeView, cfg scheduler.OvercommitConfig) (int, error) {
-	want := int(b.GetSpec().GetReplicas())
+	want := replicaCount(b)
 	var existing []string
 	for _, p := range status.GetPlacements() {
 		if p.GetReplicaIndex() != -1 {

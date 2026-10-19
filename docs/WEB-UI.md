@@ -129,7 +129,9 @@ over Server-Sent Events, never by polling.
   settings (`/blocks/<ns>/<name>/edit`). Password fields are never filled in. On Deploy, a
   required one left empty is generated, and the page after Deploy shows it once. On Edit, one
   left empty keeps its current value. They are stored sealed, apart from the block
-  (SECURITY.md §4).
+  (SECURITY.md §4). A `vm/instance` form starts from the Debian 13 cloud image (or Ubuntu
+  24.04 LTS, or a custom URL) and takes SSH keys, where `gh:<user>` imports a GitHub user's keys;
+  the VM's page shows its MAC address to find it in the DHCP leases (VMS.md §3).
 - **Volumes** (`/volumes`, `/volumes/new`, `/volumes/<name>` live) — list with state counts,
   create (field-level validation), a detail page with the replica table (role, health, resync
   progress, out-of-sync bytes, last seen), snapshots, snapshot/resize (grow-only) forms and

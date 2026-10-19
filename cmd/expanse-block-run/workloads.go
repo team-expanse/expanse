@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/quantity"
@@ -1223,7 +1224,7 @@ wal_log_hints = on
 // closes qemu's own fd on the raw device, so — unlike LIO's kernel-held
 // configfs backstore (lioTarget.teardown) — no separate release step is
 // needed for DRBD to demote cleanly afterward.
-func runVM(ctx context.Context, instance string, args []string) error {
+func runVM(ctx context.Context, instance, name string, args []string) error {
 	cfg, err := cfgMap(args)
 	if err != nil {
 		return err
@@ -1238,10 +1239,14 @@ func runVM(ctx context.Context, instance string, args []string) error {
 		return fmt.Errorf("vm/instance: %w", err)
 	}
 
-	mac := cfgStr(cfg, "mac")
-	if mac == "" {
-		mac = defaultMAC(instance)
+	// A cloud image goes onto a blank disk on the first start; the seed carries cloud-init's settings.
+	seed, cleanup, err := prepareGuest(ctx, instance, name, cfg, dev)
+	if err != nil {
+		return fmt.Errorf("vm/instance: %w", err)
 	}
+	defer cleanup()
+
+	mac := vm.MAC(cfg, instance)
 	cpus := vmCPUs(args)
 	memMiB := vmMemMiB(args)
 
@@ -1288,6 +1293,8 @@ func runVM(ctx context.Context, instance string, args []string) error {
 
 	qemuArgv := []string{
 		"-enable-kvm", "-nodefaults", "-display", "none", "-no-reboot",
+		// Debian's cloud image resets right after GRUB on a machine without a video card.
+		"-vga", "std",
 		"-m", strconv.Itoa(memMiB), "-smp", strconv.Itoa(cpus),
 		"-drive", "file=" + dev + ",if=virtio,format=raw",
 		// fd=3: the first (and only) entry in cmd.ExtraFiles below --
@@ -1300,6 +1307,9 @@ func runVM(ctx context.Context, instance string, args []string) error {
 		"-qmp", "unix:" + qmpSock + ",server,nowait",
 	}
 	qemuArgv = append(qemuArgv, cpuArgs...)
+	if seed != "" {
+		qemuArgv = append(qemuArgv, "-drive", "file="+seed+",if=virtio,format=raw,readonly=on")
+	}
 	// D4: getting a first bootable guest OS onto an empty raw volume is
 	// documented, not built, this phase. Left unset (the production
 	// default), the VMM boots from the attached disk the ordinary BIOS
@@ -1376,7 +1386,7 @@ func runVM(ctx context.Context, instance string, args []string) error {
 // not a config mistake — adopt the proven path instead of chasing it.
 // macvtapIfaceName derives a stable, deterministic macvtap child
 // interface name from the block instance's own name — identical on
-// every failover, the same pattern defaultMAC/defaultIQN/defaultWWN
+// every failover, the same pattern vm.DefaultMAC/defaultIQN/defaultWWN
 // already use. Linux kernel interface names are capped at IFNAMSIZ-1
 // (15 bytes); a straightforward "mvtap-<instance>" prefix routinely
 // blows past that for any realistic namespace/name/index combination
@@ -1452,23 +1462,6 @@ func deleteLink(name string) error {
 		return nil //nolint:nilerr // no such link: nothing to remove
 	}
 	return netlink.LinkDel(link)
-}
-
-// defaultMAC derives a stable, locally-administered guest MAC from the
-// block instance's own name — mirrors defaultIQN/defaultWWN, the same
-// "pin an identity once, never derive it from anything node-specific"
-// pattern D2 uses for a VM's network identity, so ordinary switch
-// MAC-learning and the guest's own gratuitous ARP on boot handle
-// failover with no new cluster-level mechanism.
-func defaultMAC(instance string) string {
-	sum := sha256.Sum256([]byte("expanse-vm-mac:" + instance))
-	b := make([]byte, 6)
-	copy(b, sum[:6])
-	// Locally-administered, unicast: clear the multicast bit, set the
-	// locally-administered bit — the same OUI class QEMU/libvirt's own
-	// default MAC scheme ("52:54:00:...") already uses.
-	b[0] = (b[0] &^ 0x01) | 0x02
-	return net.HardwareAddr(b).String()
 }
 
 // uplinkIfaceFromEnv resolves the EXPANSE_EXTERNAL_INTERFACE env var

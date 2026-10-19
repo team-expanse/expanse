@@ -219,6 +219,9 @@ func post(fields []Field) url.Values {
 	for _, f := range byPath(fields) {
 		switch f.Kind {
 		case Group:
+			if f.Options != nil {
+				v.Set(f.Name+PresetSuffix, f.Value)
+			}
 		case Bool:
 			if f.Checked {
 				v.Set(f.Name, "true")
@@ -272,5 +275,69 @@ func TestRefill(t *testing.T) {
 	}
 	if f["/readOnly"].Checked {
 		t.Error("an unposted checkbox stayed checked")
+	}
+}
+
+const presetSchema = `{
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "object", "required": ["url"],
+      "anyOf": [{"required": ["checksum"]}, {"required": ["checksumUrl"]}],
+      "x-expanse-presets": [
+        {"label": "Debian", "value": {"url": "https://d/deb.qcow2", "checksumUrl": "https://d/SUMS"}},
+        {"label": "Ubuntu", "value": {"url": "https://u/ubu.img", "checksumUrl": "https://u/SUMS"}}
+      ],
+      "properties": {"url": {"type": "string"}, "checksum": {"type": "string"}, "checksumUrl": {"type": "string"}}
+    }
+  }
+}`
+
+func TestARequiredOneOfStaysAGroup(t *testing.T) {
+	if f := byPath(mustBuild(t, presetSchema, nil))["/image"]; f.Kind != Group {
+		t.Errorf("kind = %v: an anyOf of required lists is still a plain object", f.Kind)
+	}
+}
+
+func TestPresetsBuild(t *testing.T) {
+	f := byPath(mustBuild(t, presetSchema, map[string]any{"image": map[string]any{"url": "https://u/ubu.img", "checksumUrl": "https://u/SUMS"}}))["/image"]
+	if want := []string{"", "Debian", "Ubuntu", CustomPreset}; !reflect.DeepEqual(f.Options, want) {
+		t.Errorf("options = %q, want %q", f.Options, want)
+	}
+	if f.Value != "Ubuntu" {
+		t.Errorf("selected %q, want the preset the value matches", f.Value)
+	}
+	f = byPath(mustBuild(t, presetSchema, map[string]any{"image": map[string]any{"url": "https://mine/x.img", "checksum": "ab"}}))["/image"]
+	if f.Value != CustomPreset || byPath(f.Fields)["/image/url"].Value != "https://mine/x.img" {
+		t.Errorf("own image: selected %q", f.Value)
+	}
+	if f := byPath(mustBuild(t, presetSchema, nil))["/image"]; f.Value != "" {
+		t.Errorf("unset: selected %q", f.Value)
+	}
+}
+
+func TestPresetsDecode(t *testing.T) {
+	form := url.Values{"cfg/image" + PresetSuffix: {"Debian"}, "cfg/image/url": {"https://ignored"}}
+	got, errs := Decode([]byte(presetSchema), "cfg", form)
+	want := map[string]any{"url": "https://d/deb.qcow2", "checksumUrl": "https://d/SUMS"}
+	if len(errs) != 0 || !reflect.DeepEqual(got["image"], want) {
+		t.Errorf("preset: %v, %v", got, errs)
+	}
+	form = url.Values{"cfg/image" + PresetSuffix: {CustomPreset}, "cfg/image/url": {"https://mine/x.img"}, "cfg/image/checksum": {"ab"}}
+	got, _ = Decode([]byte(presetSchema), "cfg", form)
+	if want := map[string]any{"url": "https://mine/x.img", "checksum": "ab"}; !reflect.DeepEqual(got["image"], want) {
+		t.Errorf("custom: %v", got)
+	}
+	form = url.Values{"cfg/image" + PresetSuffix: {""}, "cfg/image/url": {"https://left/over"}}
+	if got, _ = Decode([]byte(presetSchema), "cfg", form); got["image"] != nil {
+		t.Errorf("none: %v", got)
+	}
+}
+
+func TestPresetsRefill(t *testing.T) {
+	fields := mustBuild(t, presetSchema, nil)
+	Refill(fields, url.Values{"cfg/image" + PresetSuffix: {CustomPreset}})
+	if f := byPath(fields)["/image"]; f.Value != CustomPreset {
+		t.Errorf("refilled %q", f.Value)
 	}
 }

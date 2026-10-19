@@ -37,6 +37,12 @@ History before 1.0.0 is not recorded here.
   no longer appear in `block get`, the web UI, generation diffs or replica spec
   files. The deploy form generates a required password left empty and shows it
   once.
+- VMs from cloud images: `vm/instance` takes an `image` (URL plus a checksum
+  or checksum file) that the node downloads, checks and writes onto the blank
+  disk on the first start, and `cloudInit` settings (SSH keys, user, hostname)
+  it hands to the guest as a NoCloud seed. The deploy form offers Debian 13,
+  Ubuntu 24.04 LTS or a custom URL, imports `gh:<user>` SSH keys, and the
+  block's page shows the guest's MAC address.
 
 ### Changed
 
@@ -45,6 +51,10 @@ History before 1.0.0 is not recorded here.
 - `spec.secrets` is accepted (V20): each entry names a sealed secret for one
   of the type's `writeOnly` fields. Blocks created earlier keep their
   passwords in their config until their next update, which seals them.
+- VMs get a standard VGA device: Debian's cloud image resets right after
+  GRUB without one.
+- A VM whose systemd is 254 or 255 (Ubuntu 24.04) counts as RUNNING on
+  `READY=1`; those versions do not report `multi-user.target`.
 - Volume replicas are placed only on nodes whose storage is on. Nodes from
   before this release, which do not report it, stay eligible.
 
@@ -55,6 +65,13 @@ History before 1.0.0 is not recorded here.
 
 ### Fixed
 
+- A SINGLETON block without `replicas` (allowed, and how the deploy form
+  writes prometheus, grafana, uptime-kuma, nfs, smb, s3, vaultwarden, caddy
+  and vm/instance) was never placed. It is now stored with `replicas: 1`, and
+  the scheduler counts one for a singleton either way.
+- A `vm/instance` deployed from the form never got its disk: the type's
+  template gave the volume no `mountPath`, and a volume without one is never
+  bound to its replica.
 - The worked example in `docs/BLOCKS.md` used lowercase enum values
   (`expose: vip`, `antiAffinity: node`, ...) that `expanse ctl block apply`
   rejects.

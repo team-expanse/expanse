@@ -224,6 +224,7 @@ func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	form := r.PostForm
 	cfg, cfgErrs := schemaform.Decode(bt.GetSchemaJson(), cfgPrefix, form)
+	cfgErrs = append(cfgErrs, s.importFormKeys(r.Context(), bt, cfg)...)
 	gen, err := generateSecrets(bt.GetSchemaJson(), cfg)
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
@@ -276,6 +277,7 @@ func (s *Server) handleEditSubmit(w http.ResponseWriter, r *http.Request) {
 	form := r.PostForm
 	before := cur.GetSpec().GetConfig().AsMap()
 	cfg, cfgErrs := schemaform.Decode(bt.GetSchemaJson(), cfgPrefix, form)
+	cfgErrs = append(cfgErrs, s.importFormKeys(r.Context(), bt, cfg)...)
 	keepSecrets(bt.GetSchemaJson(), cfg, before)
 	b := proto.Clone(cur).(*pb.Block)
 	st, err := structpb.NewStruct(cfg)

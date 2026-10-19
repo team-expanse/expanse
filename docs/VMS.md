@@ -85,26 +85,55 @@ to the request gets the guest OOM-killed under load.
 
 ## 3. Guest OS installation and boot
 
-**Out of this phase's own scope** (D4) — the exit criteria only require a guest that boots and is
-reachable, not an installer flow. `bootKernel`/`bootInitrd`/`bootCmdline` are exec'd directly against
-`qemu-kvm`'s own direct-kernel-boot mode (`-kernel`/`-initrd`/`-append`), so getting a first guest OS
-onto the raw volume is an operator-side step today, not something this project automates. Two
-recipes both work with no `expanse`-side code change: attach an installer ISO as a second, temporary
-boot device before first start, or seed a prebuilt cloud image onto the raw volume directly (e.g.
-`dd`/`qemu-img convert` against the volume's `/dev/drbdN` device from any node while it is DRBD
-primary and the block is not yet deployed). Neither is built or tested by this project's own VM
-suite; both are the same "document, don't build" treatment Phase 5's D6 gave backup hooks.
-[`PANDO.md`](PANDO.md) is a worked, VM-tested example of the second: a prebuilt image written onto a
-pre-created volume, BIOS-booted with no `bootKernel`.
+### From a cloud image
 
-**Validated guest OS: a minimal NixOS netboot image only** (R3) — every VM test in this project
-(`vm-instance.nix`, `vm-instance-failover.nix`, `vm-instance-fs-integrity.nix`,
-`vm-instance-vertical-slice.nix`) boots the exact same guest kernel/initrd this repo's own
-`packages.iso` target already builds, driven entirely through `-kernel`/`-initrd`/`-append` with no
-firmware-based (BIOS/UEFI) boot path exercised at all. Other guest OS families (Windows, other Linux
-distributions, BSDs) each carry their own boot-firmware and virtio-driver expectations this project
-has not measured — a documented scope limit, not a fixed one, mirroring Phase 4's initiator-diversity
-and Phase 5's client-diversity risk rows.
+The easiest way is the web UI: Blocks → Deploy → `vm/instance`. Pick an image (Debian 13 or
+Ubuntu 24.04 LTS, or Custom for your own URL), set CPUs, memory and the disk size, and paste your
+SSH public keys. `gh:<user>` in the key list imports a GitHub user's keys when you press Deploy.
+The same settings in a manifest:
+
+```yaml
+  config:
+    image:
+      url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+      checksumUrl: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS
+    cloudInit:
+      sshKeys: ["ssh-ed25519 AAAA... me@laptop"]
+      user: ops          # optional: a sudo user with the keys; unset, the keys go to the image's own user
+      hostname: web1     # optional: defaults to the block's name
+```
+
+On the VM's first start, its node downloads the image (qcow2 or raw) into
+`/var/lib/expanse/images`, checks it against `checksum` (SHA-256 or SHA-512 hex) or against the
+image's line in the `checksumUrl` file, and writes it onto the volume. The block's status shows the
+download's progress. The disk must be at least the image's size; the guest grows its root
+filesystem to the rest. A qcow2 that names a backing or external data file is refused.
+
+The image is written only while the volume's first MiB is still zero, and that MiB is written last.
+A later start or a failover therefore boots the disk as it is, and a write cut short is redone on
+the next start. Changing `image` later does not touch the disk.
+
+Each start attaches a NoCloud seed (an ISO labelled `cidata`) with the user, keys and hostname.
+cloud-init applies it on the first boot only, because the instance id stays the same; change keys
+inside the guest after that. Use images with systemd 254 or newer (Debian 12 has 252), or set
+`guestReady: none`; see below.
+
+The guest joins the LAN through macvtap and gets its address from your DHCP server. The block's
+page shows its MAC address and hostname, so you can find the address in your router's leases. The
+node running the VM cannot reach it; connect from another machine. Downloaded images stay in the
+cache for other VMs; remove files there by hand to free the space.
+
+### Other ways
+
+`bootKernel`/`bootInitrd`/`bootCmdline` boot a kernel directly (`-kernel`/`-initrd`/`-append`), and
+a disk can be prepared by hand: write an image onto the volume's `/dev/drbdN` from the node that is
+its DRBD primary before deploying the block, with `image` unset. [`PANDO.md`](PANDO.md) is a
+worked, VM-tested example. Installing from an ISO with a web console is not built yet.
+
+Tested guests: Debian 13 and Ubuntu 24.04 cloud images (checked in QEMU with the seed this
+project builds), the NixOS cloud-init image `nix/tests/ui-vm-cloud-image.nix` deploys from the web
+form, and the NixOS guests of the other `vm-instance*` tests. Other OS families (Windows, BSDs)
+carry their own firmware and driver expectations that have not been measured.
 
 ### When a VM counts as RUNNING
 
@@ -112,7 +141,8 @@ A VM replica is RUNNING once its guest has booted, not merely once `qemu-kvm` ha
 gets a vsock device and the systemd credential `vmm.notify_socket`, so a guest running systemd 254
 or newer reports its boot to `expanse-block-run` on its node. The guest counts as booted when it has
 sent `READY=1` and `multi-user.target` is active. A guest in emergency or rescue mode also sends
-`READY=1`, so it stays not ready. `nix/tests/vm-vsock-notify-probe.nix` measured these messages.
+`READY=1`, so it stays not ready. systemd 254 and 255 (Ubuntu 24.04) report no targets, so for them
+`READY=1` alone counts, and emergency mode cannot be told apart. `nix/tests/vm-vsock-notify-probe.nix` measured these messages.
 
 The guest's state is the unit's status text, so it can be read on the VM's node:
 

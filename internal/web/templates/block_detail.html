@@ -29,6 +29,17 @@
 </section>
 {{end}}
 
+{{with .Guest}}
+<section class="card" id="guest">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>Guest network</h2></div>
+  <dl class="dl">
+    <dt>MAC address</dt><dd><code>{{.MAC}}</code></dd>
+    <dt>Hostname</dt><dd><code>{{.Hostname}}</code></dd>
+  </dl>
+  <p class="field-hint">The VM joins your LAN directly and gets its address from your DHCP server: look up this MAC address in your router's lease list{{if .Login}}, then log in with <code>ssh {{.Login}}@&lt;address&gt;</code>, or <code>ssh {{.Login}}@{{.Hostname}}</code> where your network resolves DHCP hostnames{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
+</section>
+{{end}}
+
 <section class="card">
   <div class="card-head"><h2>Scale</h2></div>
   <form class="form-inline" hx-post="/blocks/{{$ns}}/{{$name}}/scale" hx-target="#block-fragment" hx-swap="innerHTML">

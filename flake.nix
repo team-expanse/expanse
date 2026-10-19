@@ -227,6 +227,7 @@
           ui-lan-range = mkTest "ui-lan-range" ./nix/tests/ui-lan-range.nix;
           ui-storage-enable = mkTest "ui-storage-enable" ./nix/tests/ui-storage-enable.nix;
           ui-secrets = mkTest "ui-secrets" ./nix/tests/ui-secrets.nix;
+          ui-vm-cloud-image = mkTest "ui-vm-cloud-image" ./nix/tests/ui-vm-cloud-image.nix;
           ui-cluster = mkTest "ui-cluster" ./nix/tests/ui-cluster.nix;
           ui-volumes = mkTest "ui-volumes" ./nix/tests/ui-volumes.nix;
           ui-vertical-slice = mkTest "ui-vertical-slice" ./nix/tests/ui-vertical-slice.nix;

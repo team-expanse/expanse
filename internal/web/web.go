@@ -74,6 +74,8 @@ type Server struct {
 	DataDir string
 	// VIPPoolFallback is this node's --external-vip-pool, in use while the cluster setting is unset.
 	VIPPoolFallback string
+	// GitHubURL serves <user>.keys for the gh:<user> SSH key shortcut; "" is https://github.com.
+	GitHubURL string
 
 	store         store.Store
 	blocks        pb.BlockServiceServer

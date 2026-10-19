@@ -165,6 +165,8 @@ in
     # block replica at all.
     systemd.tmpfiles.rules = [
       "d /var/lib/expanse/volumes 0755 root root -"
+      # vm/instance's downloaded cloud images, by digest (cmd/expanse-block-run imageCache).
+      "d /var/lib/expanse/images 0700 root root -"
       # rtslib-fb's dbroot (iscsi/target, PHASE-04-TASKS.md Stream B) —
       # see expanse-block-root@.service's ReadWritePaths comment.
       "d /etc/target 0700 root root -"
@@ -276,7 +278,8 @@ in
         # a lock-file accommodation, not a meaningfully wider surface for
         # a unit that already runs fully privileged.
         # /etc/lvm: util/restic-backup's lvcreate archives the VG metadata there, as the agent's does.
-        ReadWritePaths=/var/lib/expanse/volumes /etc/target /run -/etc/lvm
+        # /var/lib/expanse/images: vm/instance's cloud image cache.
+        ReadWritePaths=/var/lib/expanse/volumes /etc/target /run -/etc/lvm /var/lib/expanse/images
         # targetcli-fb's own shell layer (configshell-fb) separately
         # wants a writable preferences directory, ~/.targetcli by
         # default — root's $HOME is /root, made inaccessible by

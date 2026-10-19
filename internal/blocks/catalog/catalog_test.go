@@ -559,6 +559,34 @@ func TestVMInstanceCPUModelConfig(t *testing.T) {
 	}
 }
 
+// vm/instance's image needs a checksum or a checksum file; the cloud-init keys must be keys.
+func TestVMInstanceImageConfig(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	for name, tc := range map[string]struct {
+		cfg  map[string]any
+		path string
+	}{
+		"checksum file": {map[string]any{"image": map[string]any{"url": "https://x/a.qcow2", "checksumUrl": "https://x/SUMS"}}, ""},
+		"checksum":      {map[string]any{"image": map[string]any{"url": "https://x/a.qcow2", "checksum": strings.Repeat("a", 64)}}, ""},
+		"neither":       {map[string]any{"image": map[string]any{"url": "https://x/a.qcow2"}}, "/image/checksum"},
+		"no url":        {map[string]any{"image": map[string]any{"checksum": strings.Repeat("a", 64)}}, "/image/url"},
+		"keys":          {map[string]any{"cloudInit": map[string]any{"sshKeys": []any{"ssh-ed25519 AAAA x"}, "user": "ops"}}, ""},
+		"gh shortcut":   {map[string]any{"cloudInit": map[string]any{"sshKeys": []any{"gh:someone"}}}, "/cloudInit/sshKeys/0"},
+	} {
+		cfg, _ := structpb.NewStruct(tc.cfg)
+		errs := c.ValidateConfig("vm/instance", cfg)
+		if tc.path == "" && len(errs) != 0 {
+			t.Errorf("%s: rejected: %v", name, errs)
+		}
+		if tc.path != "" && (len(errs) == 0 || !strings.HasPrefix(errs[0], tc.path+":")) {
+			t.Errorf("%s: errors = %v, want one naming %s", name, errs, tc.path)
+		}
+	}
+}
+
 func TestShippedMonitoringBlocksValidate(t *testing.T) {
 	c, err := Load("../../../nix/blocks")
 	if err != nil {
