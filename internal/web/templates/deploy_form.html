@@ -51,6 +51,7 @@
       </details>
       <div class="form-actions">
         <button class="btn btn-primary" type="submit">{{if .Edit}}Save{{else}}Deploy{{end}}</button>
+        {{if not .Edit}}<button class="btn" type="submit" name="check" value="1">Check</button>{{end}}
         <a class="btn btn-ghost" href="{{.Cancel}}">Cancel</a>
       </div>
     </form>
@@ -64,6 +65,18 @@
     {{else if eq .Type.Name "vm/instance"}}<p class="muted">The VM joins your LAN with its own MAC address and gets its IP address from your DHCP server. The block's page shows the MAC.</p>
     {{else}}<p class="muted">This type has no network ports.</p>{{end}}
     {{if .ClusterOnly}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>No LAN address range is set, so this block will be reachable from inside the cluster only. <a href="/settings#network">Set a range</a> to reach blocks from your network.</p></div></div>{{end}}
+    {{with .Preflight}}
+    <div class="card-head" id="preflight"><h2>Pre-flight</h2></div>
+    <p class="field-hint">Where the block would run on the cluster as it is now. <b>Check</b> runs this again with your changes.</p>
+    <ul class="type-list">
+      {{range .Replicas}}
+      {{if .Node}}<li>{{.Label}} runs on <b>{{.Node}}</b></li>
+      {{else}}<li>{{.Label}} fits on no node:{{if .Problems}}<ul>{{range .Problems}}<li>{{.}}</li>{{end}}</ul>{{end}}{{with .Hint}}<span class="field-hint">{{.}}</span>{{end}}</li>{{end}}
+      {{end}}
+    </ul>
+    {{range .Ports}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{.}}</p></div></div>{{end}}
+    {{if .Fits}}<p class="muted">Ready to deploy: nothing found that stops this block from starting.</p>{{end}}
+    {{end}}
   </aside>
 </div>
 {{end}}

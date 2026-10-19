@@ -169,6 +169,7 @@ type deployFormData struct {
 	ClusterOnly  bool            // the block gets an address, but no LAN range is set
 	NoStorage    bool            // the block needs storage, but no node has it on
 	Stored       map[string]bool // secret fields with a sealed value
+	Preflight    *preflightView  // deploy only: where the block would run
 }
 
 // renderForm renders the deploy/edit form, saying what an empty secret input does.
@@ -210,6 +211,7 @@ func (s *Server) handleDeployForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := s.deployData(w, r, bt, b, fields)
+	data.Preflight = s.preflight(r.Context(), b)
 	s.renderForm(w, http.StatusOK, data)
 }
 
@@ -236,7 +238,7 @@ func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sub := formErrors{config: cfgErrs, general: applyCommon(b, form)}
-	if sub.admit(r.Context(), s.blocks, b, false) {
+	if sub.admit(r.Context(), s.blocks, b, false) && !form.Has("check") {
 		created, err := s.blocks.Create(r.Context(), b)
 		if err == nil {
 			ns, name := created.GetMetadata().GetNamespace(), created.GetMetadata().GetName()
@@ -249,7 +251,9 @@ func (s *Server) handleDeploySubmit(w http.ResponseWriter, r *http.Request) {
 		}
 		sub.general = append(sub.general, errText(err))
 	}
-	s.renderRejected(w, r, s.deployData(w, r, bt, b, nil), form, sub)
+	data := s.deployData(w, r, bt, b, nil)
+	data.Preflight = s.preflight(r.Context(), b)
+	s.renderRejected(w, r, data, form, sub)
 }
 
 func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +387,11 @@ func (s *Server) renderRejected(w http.ResponseWriter, r *http.Request, data dep
 	for i := range data.Storage {
 		data.Storage[i].Size = form.Get("storage/" + data.Storage[i].Name + "/size")
 	}
-	s.renderForm(w, http.StatusBadRequest, data)
+	status := http.StatusBadRequest
+	if len(e.config) == 0 && len(e.general) == 0 && e.name == "" {
+		status = http.StatusOK // a Check that found nothing wrong
+	}
+	s.renderForm(w, status, data)
 }
 
 // newBlock builds a block of typ fitted to the cluster: replicas and copies capped at the node count,
@@ -400,36 +408,54 @@ func (s *Server) newBlock(ctx context.Context, typ *catalog.Type, name string, c
 	return b, fitted.Defaults, nil
 }
 
-// usedPorts lists the ports existing blocks listen on: their port targets, probes and port settings.
-func (s *Server) usedPorts(ctx context.Context) map[int32]bool {
-	used := map[int32]bool{}
+// usedPorts maps each port existing blocks listen on to the first block ("ns/name") using it.
+func (s *Server) usedPorts(ctx context.Context) map[int32]string {
+	used := map[int32]string{}
 	resp, err := s.blocks.List(ctx, &pb.ListBlocksRequest{})
 	if err != nil {
 		return used
 	}
 	for _, b := range resp.GetBlocks() {
-		net := b.GetSpec().GetNetwork()
-		for _, p := range net.GetPorts() {
-			used[p.GetTargetPort()] = true
-		}
-		for _, probe := range []*pb.HealthProbe{net.GetHealthCheck().GetReadiness(), net.GetHealthCheck().GetLiveness()} {
-			if probe.GetPort() > 0 {
-				used[probe.GetPort()] = true
-			}
-		}
-		for k, v := range b.GetSpec().GetConfig().AsMap() {
-			if n, ok := portNumber(v); ok && isPortKey(k) {
-				used[n] = true
+		for _, p := range blockPorts(b) {
+			if _, ok := used[p]; !ok {
+				used[p] = b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
 			}
 		}
 	}
 	return used
 }
 
+// blockPorts lists the ports b listens on: its port targets, probes and port settings, sorted.
+func blockPorts(b *pb.Block) []int32 {
+	set := map[int32]bool{}
+	net := b.GetSpec().GetNetwork()
+	for _, p := range net.GetPorts() {
+		set[p.GetTargetPort()] = true
+	}
+	for _, probe := range []*pb.HealthProbe{net.GetHealthCheck().GetReadiness(), net.GetHealthCheck().GetLiveness()} {
+		if probe.GetPort() > 0 {
+			set[probe.GetPort()] = true
+		}
+	}
+	for k, v := range b.GetSpec().GetConfig().AsMap() {
+		if n, ok := portNumber(v); ok && isPortKey(k) {
+			set[n] = true
+		}
+	}
+	out := make([]int32, 0, len(set))
+	for p := range set {
+		if p > 0 {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 func isPortKey(k string) bool { return k == "port" || strings.HasSuffix(k, "Port") }
 
 // freePorts returns defaults with each port setting another block already uses moved to the next free port.
-func freePorts(defaults map[string]any, used map[int32]bool) map[string]any {
+func freePorts(defaults map[string]any, used map[int32]string) map[string]any {
 	out := make(map[string]any, len(defaults))
 	taken := make(map[int32]bool, len(used))
 	for p := range used {

@@ -37,6 +37,9 @@ History before 1.0.0 is not recorded here.
   no longer appear in `block get`, the web UI, generation diffs or replica spec
   files. The deploy form generates a required password left empty and shows it
   once.
+- The deploy form has a pre-flight: it shows the node each replica would run on,
+  or why no node takes it, and warns when another block uses the same port.
+  Check runs it, and admission, against the form's values without deploying.
 - VMs from cloud images: `vm/instance` takes an `image` (URL plus a checksum
   or checksum file) that the node downloads, checks and writes onto the blank
   disk on the first start, and `cloudInit` settings (SSH keys, user, hostname)

@@ -3,7 +3,8 @@
 On a one-node cluster, web/nginx is deployed from /deploy with only a name and a server name
 (everything else comes from the type's template and defaults), serves on its VIP to an outside
 client, then has its listen port changed through the edit form and still serves: the VIP's
-forwarding followed the port. Runs after cluster-common.py, block-common.py, vol_cluster.py and
+forwarding followed the port. The form's pre-flight places it on n1, and Check refuses a block too
+big for any node without creating it. Runs after cluster-common.py, block-common.py, vol_cluster.py and
 single_node_common.py; n9 is the external client.
 """
 
@@ -34,12 +35,21 @@ with subtest("the catalog page and the nginx form render"):
     assert 'href="/deploy/web/nginx"' in page, "nginx missing from /deploy"
     page = n1.succeed(f"{CURL} https://n1:8443/deploy/web/nginx")
     assert 'name="cfg/serverName"' in page, "the nginx form has no serverName field"
+    # n1 takes blocks once its status turns healthy, shortly after the cluster forms.
+    wait_for(lambda: "runs on <b>n1</b>" in n1.succeed(f"{CURL} https://n1:8443/deploy/web/nginx"),
+             "the pre-flight to place nginx on n1", 120)
 
 with subtest("a bad name is refused on its field and creates nothing"):
     status, _, body = post("/deploy/web/nginx", {"name": "Bad_Name", "cfg/serverName": "site.test"})
     assert status == "400", f"status {status}"
     assert "DNS-1123" in body, "the name error is not shown"
     n1.fail("expanse ctl block get Bad_Name")
+
+with subtest("Check reports a block that fits nowhere and creates nothing"):
+    status, _, body = post("/deploy/web/nginx", {"name": "huge", "cfg/serverName": "site.test", "memory": "512Gi", "check": "1"})
+    assert status == "200", f"status {status}"
+    assert "fits on no node" in body and "n1: needs 512Gi memory" in body, f"no pre-flight refusal:\n{body[-3000:]}"
+    n1.fail("expanse ctl block get huge")
 
 with subtest("nginx deployed from the form serves on its VIP"):
     status, loc, body = post("/deploy/web/nginx", {"name": "site", "cfg/serverName": "site.test"})
