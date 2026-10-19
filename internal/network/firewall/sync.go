@@ -48,22 +48,27 @@ func elements(keys []string) []nftables.SetElement {
 	return out
 }
 
+// setPlan is one set and the keys it should hold.
+type setPlan struct {
+	set     *nftables.Set
+	desired map[string]bool
+}
+
 // Sync moves all four dynamic sets to the desired contents using only
 // SetAddElements / SetDeleteElements. Idempotent: with no changes it
 // issues no kernel operations at all.
 func Sync(c Conn, d Desired) error {
 	want := d.normalize()
 	t := &nftables.Table{Family: nftables.TableFamilyINet, Name: Table}
-	plan := []struct {
-		set     *nftables.Set
-		desired map[string]bool
-		setName string
-	}{
-		{set4(t, SetPeers), want.peers, SetPeers},
-		{set4(t, SetVIPs), want.vips, SetVIPs},
-		{set16(t, SetTCPPorts), want.tcp, SetTCPPorts},
-		{set16(t, SetUDPPorts), want.udp, SetUDPPorts},
-	}
+	return syncSets(c, []setPlan{
+		{set4(t, SetPeers), want.peers},
+		{set4(t, SetVIPs), want.vips},
+		{set16(t, SetTCPPorts), want.tcp},
+		{set16(t, SetUDPPorts), want.udp},
+	})
+}
+
+func syncSets(c Conn, plan []setPlan) error {
 	for _, p := range plan {
 		add, del, err := diffSet(c, p.set, p.desired)
 		if err != nil {
@@ -71,12 +76,12 @@ func Sync(c Conn, d Desired) error {
 		}
 		if len(add) > 0 {
 			if err := c.SetAddElements(p.set, elements(add)); err != nil {
-				return fmt.Errorf("firewall: add to %s: %w", p.setName, err)
+				return fmt.Errorf("firewall: add to %s: %w", p.set.Name, err)
 			}
 		}
 		if len(del) > 0 {
 			if err := c.SetDeleteElements(p.set, elements(del)); err != nil {
-				return fmt.Errorf("firewall: delete from %s: %w", p.setName, err)
+				return fmt.Errorf("firewall: delete from %s: %w", p.set.Name, err)
 			}
 		}
 	}

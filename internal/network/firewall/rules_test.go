@@ -19,6 +19,8 @@ import (
 type fakeConn struct {
 	tables, chains, rules int
 	addedSets             []string
+	chainDefs             []*nftables.Chain
+	ruleDefs              []*nftables.Rule
 	// live set contents, mutated only by element ops after Bootstrap.
 	sets map[string]map[string]bool
 	ops  []string // human-readable op log: "addElem block_tcp_ports 8080"
@@ -41,14 +43,16 @@ func (f *fakeConn) AddTable(*nftables.Table) *nftables.Table {
 	return nil
 }
 
-func (f *fakeConn) AddChain(*nftables.Chain) *nftables.Chain {
+func (f *fakeConn) AddChain(c *nftables.Chain) *nftables.Chain {
 	f.chains++
+	f.chainDefs = append(f.chainDefs, c)
 	f.ops = append(f.ops, "addChain")
-	return nil
+	return c
 }
 
-func (f *fakeConn) AddRule(*nftables.Rule) *nftables.Rule {
+func (f *fakeConn) AddRule(r *nftables.Rule) *nftables.Rule {
 	f.rules++
+	f.ruleDefs = append(f.ruleDefs, r)
 	f.ops = append(f.ops, "addRule")
 	return nil
 }

@@ -6,6 +6,20 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- A block's LAN address is reachable on a node with the stock firewall. The
+  agent marks traffic for each block's address on its declared ports (nftables
+  table `inet expanse-admit`), and the node's firewall accepts that mark; before,
+  the port had to be opened by hand.
+- The agent builds a block type's runtime on first placement again: its nix
+  builds now go through nix-daemon. Before, they failed with `setting uid:
+  Operation not permitted`, and the block stayed in Scheduling.
+- A running singleton block no longer shows "Not fully placed: LeaseHeld" after
+  its agent restarts.
+
 ## 1.11.0 - 2026-10-18
 
 ### Added

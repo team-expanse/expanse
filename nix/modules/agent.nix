@@ -146,6 +146,12 @@ in
     services.lvm.enable = lib.mkDefault true;
     services.lvm.boot.thin.enable = lib.mkDefault true;
 
+    # The agent marks packets for a block's address on its declared ports (inet expanse-admit,
+    # internal/network/firewall/admit.go); the host firewall stays default-deny for the rest.
+    networking.firewall.extraInputRules = lib.mkIf config.networking.nftables.enable ''
+      meta mark & 0x02000000 == 0x02000000 accept comment "expanse block addresses"
+    '';
+
     # Out paths without their closures (all types: 5 GiB); the agent builds a missing one from the .nix.
     environment.etc."expanse/block-runtimes.json".text = builtins.toJSON
       (lib.mapAttrs (_: env: builtins.unsafeDiscardStringContext env.outPath) cfg.blockRuntimes);
@@ -338,6 +344,9 @@ in
       # the unit's own PATH is otherwise minimal. The clock-sync health check runs chronyc.
       # <nixpkgs> for building block runtimes: the nixpkgs the node itself is built from.
       environment.NIX_PATH = lib.concatStringsSep ":" config.nix.nixPath;
+      # Builds go through nix-daemon: building in-process needs CAP_SETUID for the nixbld users,
+      # which expansed lacks on a real node (node-stock-blocks test).
+      environment.NIX_REMOTE = "daemon";
       path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils postgresql_18 ]
         ++ lib.optional config.services.chrony.enable config.services.chrony.package;
       serviceConfig = {

@@ -55,6 +55,37 @@ func (a *Agent) firewallLoop(ctx context.Context) {
 	}
 }
 
+// admitLoop keeps the admit table's VIPs and ports current, recreating the table if it went
+// missing (a host firewall reload with flushRuleset). It runs whether or not --firewall is on.
+func (a *Agent) admitLoop(ctx context.Context) {
+	conn := &nftables.Conn{}
+	fresh := false
+	for {
+		if !fresh {
+			if err := fw.BootstrapAdmit(conn); err != nil {
+				a.logger.Warn("block port admit table setup failed; retrying", "err", err)
+			} else {
+				fresh = true
+			}
+		}
+		if fresh {
+			d, err := a.fwDesired(ctx)
+			if err == nil {
+				err = fw.SyncAdmit(conn, d)
+			}
+			if err != nil {
+				a.logger.Warn("block port admit sync failed; retrying", "err", err)
+				fresh = false
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(fwPeriod):
+		}
+	}
+}
+
 // fwSync recomputes the desired dynamic sets from the store and diffs
 // them into the kernel, then maintains the §4.6 policy chains.
 func (a *Agent) fwSync(ctx context.Context, conn *nftables.Conn) error {

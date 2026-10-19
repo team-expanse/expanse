@@ -777,6 +777,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.ctl != nil && !witness {
 		go a.pgLoop(ctx)
 	}
+	if a.ctl != nil && !witness {
+		go a.admitLoop(ctx)
+	}
 	if a.ctl != nil && a.cfg.Firewall && !witness {
 		a.initFirewall(ctx)
 	}

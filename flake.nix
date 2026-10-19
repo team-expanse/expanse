@@ -224,6 +224,7 @@
           ui-vip-failover = mkTest "ui-vip-failover" ./nix/tests/ui-vip-failover.nix;
           ui-blocks = mkTest "ui-blocks" ./nix/tests/ui-blocks.nix;
           ui-block-forms = mkTest "ui-block-forms" ./nix/tests/ui-block-forms.nix;
+          node-stock-blocks = mkTest "node-stock-blocks" ./nix/tests/node-stock-blocks.nix;
           ui-lan-range = mkTest "ui-lan-range" ./nix/tests/ui-lan-range.nix;
           ui-storage-enable = mkTest "ui-storage-enable" ./nix/tests/ui-storage-enable.nix;
           ui-secrets = mkTest "ui-secrets" ./nix/tests/ui-secrets.nix;
