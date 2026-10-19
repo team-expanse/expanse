@@ -48,15 +48,15 @@ in
     virtualisation.docker.enable = true;
     environment.systemPackages = [ pkgs.docker ];
 
-    # Seeds the editable settings once, loads any missing baked-in image, starts the stack, then syncs
-    # so the guest reports ready only once first-run state is on disk.
+    # Seeds the editable settings once, loads any missing baked-in image, starts the stack, waits for
+    # Pando to listen, then syncs, so the guest reports ready only once first-run state is on disk.
     systemd.services.pando = {
       description = "Pando under Docker Compose";
       wantedBy = [ "multi-user.target" ];
       after = [ "docker.service" "network-online.target" ];
       requires = [ "docker.service" ];
       wants = [ "network-online.target" ];
-      path = [ pkgs.docker ];
+      path = [ pkgs.docker pkgs.curl ];
       serviceConfig = { Type = "oneshot"; RemainAfterExit = true; TimeoutStartSec = "15min"; };
       script = ''
         mkdir -p ${stateDir}
@@ -65,7 +65,9 @@ in
           docker image inspect ${i.ref} >/dev/null 2>&1 || docker load -i ${i.tarball}
         '') images}
         docker compose -p pando -f ${./compose.yaml} --env-file ${stateDir}/pando.env up -d --wait
-        # First-run setup (Postgres's pg_hba.conf, Pando's secrets.key) is written without fsync.
+        # Pando writes secrets.key and token.key without fsync just before it listens; compose has no
+        # health check to wait for that, and a crash before the sync leaves them empty for good.
+        until curl -s -o /dev/null http://127.0.0.1:8080/; do sleep 2; done
         sync
       '';
     };
