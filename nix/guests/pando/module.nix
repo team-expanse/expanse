@@ -70,12 +70,16 @@ in
       '';
     };
 
-    # Prints the guest's address on the serial console, which lands in the host's journal.
+    # Prints the guest's address, or that Pando failed, on the serial console (the host's journal).
     systemd.services.pando-address = {
       wantedBy = [ "multi-user.target" ];
       after = [ "pando.service" ];
       serviceConfig = { Type = "oneshot"; StandardOutput = "tty"; TTYPath = "/dev/ttyS0"; };
       script = ''
+        if ! ${pkgs.systemd}/bin/systemctl is-active --quiet pando.service; then
+          echo "pando-guest: Pando failed to start; run journalctl -u pando in the guest"
+          exit 0
+        fi
         echo "pando-guest: console at http://$(${pkgs.iproute2}/bin/ip -4 -o addr show scope global | ${pkgs.gawk}/bin/awk '{sub("/.*","",$4); print $4; exit}'):8080"
       '';
     };

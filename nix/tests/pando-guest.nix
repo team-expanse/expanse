@@ -23,6 +23,14 @@ let
       networking.useDHCP = false;
       networking.interfaces.eth0.ipv4.addresses = [{ address = guestIP; prefixLength = 24; }];
       expanse.pandoGuest.settings.PANDO_ADMIN_PASSWORD = adminPassword;
+      # Test-only: Docker's and Pando's state on the serial console, which is all a failed run keeps.
+      systemd.services.pando-debug = {
+        wantedBy = [ "multi-user.target" ];
+        after = [ "pando.service" ];
+        path = [ pkgs.docker pkgs.systemd pkgs.coreutils ];
+        serviceConfig = { StandardOutput = "tty"; StandardError = "tty"; TTYPath = "/dev/ttyS0"; };
+        script = builtins.readFile ./pando-debug.sh;
+      };
     }];
   };
 

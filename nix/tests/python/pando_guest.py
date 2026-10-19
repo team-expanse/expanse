@@ -73,7 +73,7 @@ def console_up(m):
 
 
 def guest_console(m):
-    return m.execute(f"journalctl -u {UNIT} --no-pager -o cat 2>&1 | tail -40")[1]
+    return m.execute(f"journalctl -u {UNIT} --no-pager -o cat 2>&1 | tail -200")[1]
 
 
 form("pando")
