@@ -736,3 +736,31 @@ func TestInspectNamesTheTiebreakerOfATwoReplicaVolume(t *testing.T) {
 		}
 	}
 }
+
+// svr1: `volume list` shows the ID first, so commands take it as well as the name.
+func TestVolumeCommandsTakeTheIDShownByList(t *testing.T) {
+	v := fixtureVolume(t)
+	fs := &fakeStore{kv: map[string][]byte{
+		"/volumes/vol-abc/spec":   mustProto(t, v.spec),
+		"/volumes/vol-abc/status": mustProto(t, v.st),
+	}}
+	runVolumeOut(t, fs, "delete", "vol-abc")
+	if op := fs.kv["/volumes/_ops/delete/vol-abc"]; !strings.Contains(string(op), `"target":"db"`) {
+		t.Fatalf("delete by ID wrote %q, want the op to name the volume db", op)
+	}
+}
+
+// svr1: a long name pushed the rest of its row out of line with the header.
+func TestListColumnsLineUpWithLongNames(t *testing.T) {
+	short, long := fixtureVolume(t), fixtureVolume(t)
+	long.id, long.spec = "vol-def", &pb.VolumeSpec{Name: "a-volume-name-longer-than-its-column", SizeBytes: 1 << 30}
+	var out bytes.Buffer
+	printVolumeList(&out, map[string]*volEntry{"db": short, long.spec.GetName(): long}, nil)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	col := strings.Index(lines[0], "SIZE")
+	for _, l := range lines[1:] {
+		if l[col-1] != ' ' || l[col] == ' ' {
+			t.Fatalf("size column does not start at %d:\n%s", col, out.String())
+		}
+	}
+}

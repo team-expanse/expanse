@@ -91,8 +91,8 @@ type node struct {
 	props []prop
 }
 
-// Ref is x-expanse-ref: the field holds the address of a block of Type, written as Format
-// ("url" for http://addr[:port], "hostport" for addr:port).
+// Ref is x-expanse-ref: the field holds the address of a block of Type ("" is any), written as
+// Format ("url" for http://addr[:port], "hostport" for addr:port); a YAML field lists them.
 type Ref struct {
 	Type   string `json:"type"`
 	Format string `json:"format"`

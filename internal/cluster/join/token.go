@@ -35,8 +35,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
+	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 )
@@ -123,6 +126,23 @@ type NodeRecord struct {
 	// retired yet: not until every node's fingerprint matches the new
 	// primary.
 	CAFingerprint string `json:"ca_fp,omitempty"`
+}
+
+// API is the node's API address; one recorded without a host takes the raft address's host
+// (the first node records none, and joiners record ":<port>").
+func (r NodeRecord) API() string {
+	host, port, err := net.SplitHostPort(r.APIAddr)
+	if r.APIAddr == "" {
+		port, err = strconv.Itoa(config.PortAPI), nil
+	}
+	if err != nil || host != "" {
+		return r.APIAddr
+	}
+	raftHost, _, err := net.SplitHostPort(r.RaftAddr)
+	if err != nil {
+		return r.APIAddr
+	}
+	return net.JoinHostPort(raftHost, port)
 }
 
 // PubKeyFingerprint returns a stable, comparable fingerprint of a

@@ -120,6 +120,7 @@
   <textarea class="input" name="{{.Name}}" rows="3"{{if .Error}} aria-invalid="true"{{end}}>{{.Value}}</textarea>
   {{else if eq .Kind.String "yaml"}}
   <textarea class="input code" name="{{.Name}}" rows="6" spellcheck="false"{{with .Placeholder}} placeholder="{{.}}"{{end}}{{if .Error}} aria-invalid="true"{{end}}>{{.Value}}</textarea>
+  {{with .Choices}}<span class="field-hint">Block addresses: {{range $i, $c := .}}{{if $i}}, {{end}}<code>{{$c.Value}}</code> {{$c.Label}}{{end}}</span>{{end}}
   {{else if eq .Kind.String "secret"}}
   <input class="input" type="password" name="{{.Name}}" value="" autocomplete="new-password"{{if .Required}} required{{end}}{{if .Error}} aria-invalid="true"{{end}}>
   {{else if or (eq .Kind.String "integer") (eq .Kind.String "number")}}

@@ -149,14 +149,19 @@ nixos-rebuild switch
 The node builds from its own copy, so this works offline. It uses the nixpkgs the node was installed
 with (its `nixos` channel).
 
-**Upgrading** replaces that copy with the new release's source and rebuilds, which needs network:
+**Upgrading** replaces that copy with the new release's source and rebuilds, which needs network.
+Set `V` to the release you are upgrading to:
 
 ```sh
 cd /etc/nixos
-curl -fsSL https://github.com/team-expanse/expanse/archive/refs/tags/v1.10.1.tar.gz | tar xz
-mv expanse expanse.prev && mv expanse-1.10.1 expanse
+V=1.11.1
+curl -fsSL https://github.com/team-expanse/expanse/archive/refs/tags/v$V.tar.gz | tar xz
+rm -rf expanse.prev; [ -d expanse ] && mv expanse expanse.prev
+mv expanse-$V expanse
 nixos-rebuild switch          # roll back: swap the directories and switch again
 ```
+
+A node with no `expanse/` yet (installed with 1.10.0) gets one this way; see below for its imports.
 
 Upgrade a multi-node cluster one node at a time, draining each first (`docs/UPGRADE.md`).
 

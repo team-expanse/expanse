@@ -12,6 +12,7 @@ import (
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
+	"github.com/expanse/expanse/internal/version"
 )
 
 // Report is the `expanse cluster status` payload (§5): name/ID, node
@@ -129,7 +130,7 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 			}
 		}
 		rep.Nodes = append(rep.Nodes, NodeStatus{
-			ID: r.ID, RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, Role: role, State: state, Degraded: deg,
+			ID: r.ID, RaftAddr: r.RaftAddr, APIAddr: r.API(), Role: role, State: state, Degraded: deg,
 			Lifecycle: r.State,
 		})
 	}
@@ -147,7 +148,7 @@ func Status(ctx context.Context, st *raftstore.Store) (*Report, error) {
 func Render(r *Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "cluster:   %s (%s)\n", r.Name, r.ClusterID)
-	fmt.Fprintf(&b, "formed with: %s\n", r.Version)
+	fmt.Fprintf(&b, "formed with: %s%s\n", r.Version, runsIfOther(r.Version))
 	fmt.Fprintf(&b, "generation: %d\n", r.Generation)
 	fmt.Fprintf(&b, "leader:    %s\n", orNone(r.Leader))
 	fmt.Fprintf(&b, "quorum:    %d/%d%s\n", r.QuorumHave, r.QuorumNeed, degradedIf(r.Degraded))
@@ -160,6 +161,14 @@ func Render(r *Report) string {
 		fmt.Fprintf(&b, "\nDEGRADED: no quorum — serving stale reads only (§4.10)\n")
 	}
 	return b.String()
+}
+
+// runsIfOther names this node's version when the cluster was formed by another.
+func runsIfOther(formedWith string) string {
+	if v := version.Get().Version; v != formedWith {
+		return " (this node runs " + v + ")"
+	}
+	return ""
 }
 
 func orNone(s string) string {

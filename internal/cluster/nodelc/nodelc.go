@@ -184,7 +184,7 @@ func List(ctx context.Context, st store.Store) ([]Info, error) {
 func infoOf(r join.NodeRecord, st *store.Entry) Info {
 	in := Info{
 		ID: r.ID, Role: r.Role, Lifecycle: r.State, Cordoned: r.Cordoned, Draining: r.Draining,
-		RaftAddr: r.RaftAddr, APIAddr: r.APIAddr, LastSeen: time.Unix(0, r.JoinedAt),
+		RaftAddr: r.RaftAddr, APIAddr: r.API(), LastSeen: time.Unix(0, r.JoinedAt),
 	}
 	if in.Lifecycle == "" {
 		in.Lifecycle = "healthy"

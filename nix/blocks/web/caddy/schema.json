@@ -26,6 +26,7 @@
       "description": "ACME directory URL; defaults to Let's Encrypt, then ZeroSSL"
     },
     "sites": {
+      "x-expanse-ref": {"format": "hostport"},
       "examples": [[{"host": "app.example.com", "reverseProxy": ["10.0.0.21:8080"]}]],
       "type": "array",
       "minItems": 1,

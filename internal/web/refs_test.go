@@ -92,3 +92,18 @@ func TestOptionalRefIsOfferedNotFilled(t *testing.T) {
 		t.Error("r1's edit page offers r1 itself")
 	}
 }
+
+// haproxy's frontends and caddy's sites are YAML, so their forms list block addresses to paste in.
+func TestProxyFormsListBlockAddressesForTheirUpstreams(t *testing.T) {
+	srv, pw, st := newTestServerWith(t, withNodes)
+	seedNode(t, st, "n1", "")
+	c, csrf := loggedInClient(t, srv, pw)
+	addr := deployWithAddress(t, c, srv.URL, csrf, "db/redis", st, url.Values{"name": {"r1"}, "cpu": {"100m"}, "memory": {"128Mi"}})
+
+	for _, typ := range []string{"net/haproxy", "web/caddy"} {
+		_, body := get(t, c, srv.URL+"/deploy/"+typ)
+		if !strings.Contains(body, "<code>"+addr.String()+":6379</code> default/r1") {
+			t.Errorf("the %s form does not list r1's address", typ)
+		}
+	}
+}

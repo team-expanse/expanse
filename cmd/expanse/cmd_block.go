@@ -18,6 +18,14 @@ import (
 	pb "github.com/expanse/expanse/proto"
 )
 
+// blockRef reads a block argument as namespace/name, or as a name in the -n namespace.
+func blockRef(nsFlag, arg string) (ns, name string) {
+	if ns, name, ok := strings.Cut(arg, "/"); ok {
+		return ns, name
+	}
+	return nsFlag, arg
+}
+
 // newBlockCmd builds `expanse ctl block ...` and `expanse ctl catalog ...`
 // (PHASE04.md §7). All commands ride the agent unix socket's gRPC API.
 func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
@@ -74,13 +82,13 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	_ = outputFlag(list, "table")
 
 	get := &cobra.Command{
-		Use:   "get <name>",
+		Use:   "get <[namespace/]name>",
 		Short: "Show one block's status and replica health (-o yaml|json for the full record)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ns := nsFlag(cmd)
+			ns, name := blockRef(*nsFlag(cmd), args[0])
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				b, err := c.Get(ctx, &pb.GetBlockRequest{Namespace: *ns, Name: args[0]})
+				b, err := c.Get(ctx, &pb.GetBlockRequest{Namespace: ns, Name: name})
 				if err != nil {
 					return fmt.Errorf("get: %w", err)
 				}
@@ -143,17 +151,17 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	_ = applyCmd.MarkFlagRequired("file")
 
 	del := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   "delete <[namespace/]name>",
 		Short: "Delete a block",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ns := nsFlag(cmd)
+			ns, name := blockRef(*nsFlag(cmd), args[0])
 			wait, _ := cmd.Flags().GetBool("wait")
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				if _, err := c.Delete(ctx, &pb.DeleteBlockRequest{Namespace: *ns, Name: args[0]}); err != nil {
+				if _, err := c.Delete(ctx, &pb.DeleteBlockRequest{Namespace: ns, Name: name}); err != nil {
 					return fmt.Errorf("delete: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "deleted %s/%s\n", *ns, args[0])
+				fmt.Fprintf(cmd.OutOrStdout(), "deleted %s/%s\n", ns, name)
 				if wait {
 					// Phase 05: wait for teardown completion; today the
 					// delete removes desired state immediately.
@@ -166,14 +174,14 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	del.Flags().Bool("wait", false, "wait for teardown to finish")
 
 	scale := &cobra.Command{
-		Use:   "scale <name> --replicas N",
+		Use:   "scale <[namespace/]name> --replicas N",
 		Short: "Change replica count",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ns := nsFlag(cmd)
+			ns, name := blockRef(*nsFlag(cmd), args[0])
 			n, _ := cmd.Flags().GetInt32("replicas")
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				b, err := c.Scale(ctx, &pb.ScaleRequest{Namespace: *ns, Name: args[0], Replicas: n})
+				b, err := c.Scale(ctx, &pb.ScaleRequest{Namespace: ns, Name: name, Replicas: n})
 				if err != nil {
 					return fmt.Errorf("scale: %w", err)
 				}
@@ -187,14 +195,14 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	_ = scale.MarkFlagRequired("replicas")
 
 	restart := &cobra.Command{
-		Use:   "restart <name> [--replica N]",
+		Use:   "restart <[namespace/]name> [--replica N]",
 		Short: "Restart a replica (or all with --replica -1)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ns := nsFlag(cmd)
+			ns, name := blockRef(*nsFlag(cmd), args[0])
 			replica, _ := cmd.Flags().GetInt32("replica")
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				b, err := c.Restart(ctx, &pb.RestartRequest{Namespace: *ns, Name: args[0], Replica: replica})
+				b, err := c.Restart(ctx, &pb.RestartRequest{Namespace: ns, Name: name, Replica: replica})
 				if err != nil {
 					return fmt.Errorf("restart: %w", err)
 				}
@@ -207,13 +215,13 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	restart.Flags().Int32("replica", -1, "replica index (-1 = all)")
 
 	events := &cobra.Command{
-		Use:   "events <name>",
+		Use:   "events <[namespace/]name>",
 		Short: "Stream lifecycle events for one block",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ns := nsFlag(cmd)
+			ns, name := blockRef(*nsFlag(cmd), args[0])
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				stream, err := c.Watch(ctx, &pb.WatchBlocksRequest{Namespace: *ns, Name: args[0]})
+				stream, err := c.Watch(ctx, &pb.WatchBlocksRequest{Namespace: ns, Name: name})
 				if err != nil {
 					return fmt.Errorf("watch: %w", err)
 				}
@@ -234,10 +242,13 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	}
 
 	logsCmd := &cobra.Command{
-		Use:   "logs <namespace/name>",
+		Use:   "logs <[namespace/]name>",
 		Short: "Stream block logs from journald (SYSLOG_IDENTIFIER=expanse-block-<ns>-<name>-<idx>)",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return ctlBlockLogs(cmd, opts, args[0]) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ns, name := blockRef(*nsFlag(cmd), args[0])
+			return ctlBlockLogs(cmd, opts, ns, name)
+		},
 	}
 	var logReplica int32
 	var logAllReplicas, logFollow bool
@@ -250,13 +261,13 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 	logsCmd.Flags().StringVar(&logSince, "since", "", "start point: duration (1h) or RFC3339 timestamp")
 
 	explain := &cobra.Command{
-		Use:   "explain <name>",
+		Use:   "explain <[namespace/]name>",
 		Short: "Why is this block pending? Per-node filter/score breakdown (§7)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ns := nsFlag(cmd)
+			ns, name := blockRef(*nsFlag(cmd), args[0])
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				resp, err := c.Explain(ctx, &pb.ExplainRequest{Namespace: *ns, Name: args[0]})
+				resp, err := c.Explain(ctx, &pb.ExplainRequest{Namespace: ns, Name: name})
 				if err != nil {
 					return fmt.Errorf("explain: %w", err)
 				}
@@ -340,11 +351,7 @@ func flagString(cmd *cobra.Command, name string) string {
 	return v
 }
 
-func ctlBlockLogs(cmd *cobra.Command, opts *ctlOpts, ref string) error {
-	ns, name := "default", ref
-	if i := strings.IndexByte(ref, '/'); i >= 0 {
-		ns, name = ref[:i], ref[i+1:]
-	}
+func ctlBlockLogs(cmd *cobra.Command, opts *ctlOpts, ns, name string) error {
 	q, err := logs.ParseFlags(logs.Flags{
 		Replica:     logReplicaOf(cmd),
 		AllReplicas: flagBool(cmd, "all-replicas"),

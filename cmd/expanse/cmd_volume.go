@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	pbproto "google.golang.org/protobuf/proto"
@@ -137,7 +138,9 @@ func printVolumeList(w io.Writer, vols map[string]*volEntry, pending map[string]
 		return
 	}
 	// Columns stay space-free up to NODES: VM tests split rows on whitespace.
-	fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-8s %s\n", "ID", "NAME", "SIZE", "STATE", "REPLICAS", "NODES (PRIMARY)")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	defer func() { _ = tw.Flush() }()
+	fmt.Fprintln(tw, "ID\tNAME\tSIZE\tSTATE\tREPLICAS\tNODES (PRIMARY)")
 	for _, name := range slices.Sorted(maps.Keys(vols)) {
 		v := vols[name]
 		var nodes []string
@@ -148,7 +151,7 @@ func printVolumeList(w io.Writer, vols map[string]*volEntry, pending map[string]
 		if v.st.GetState() == pb.VolumeState_VOLUME_STATE_UNDER_REPLICATED {
 			note = "  no redundancy"
 		}
-		fmt.Fprintf(w, "%-24s %-14s %-12s %-16s %-8s %s (%s)%s\n", v.id, name, humanBytes(v.spec.GetSizeBytes()),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s (%s)%s\n", v.id, name, humanBytes(v.spec.GetSizeBytes()),
 			stateStr(v.st.GetState()), fmt.Sprintf("%d/%d", len(nodes), v.spec.GetReplication()),
 			strings.Join(nodes, ","), v.st.GetPrimary(), note)
 	}
@@ -157,7 +160,7 @@ func printVolumeList(w io.Writer, vols map[string]*volEntry, pending map[string]
 		if reason == "" {
 			reason = "waiting for the leader"
 		}
-		fmt.Fprintf(w, "%-24s %-14s pending: %s\n", "-", name, reason)
+		fmt.Fprintf(tw, "-\t%s\tpending: %s\n", name, reason)
 	}
 }
 

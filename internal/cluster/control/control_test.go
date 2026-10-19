@@ -298,3 +298,11 @@ func TestJoinersReplicateAndRead(t *testing.T) {
 	}
 	_ = raftstore.Config{}
 }
+
+// svr1: "formed with: 0.1.0" read as the running version; status now names both when they differ.
+func TestRenderSaysWhatThisNodeRunsWhenTheClusterWasFormedByAnother(t *testing.T) {
+	out := control.Render(&control.Report{Version: "0.1.0"})
+	if want := "formed with: 0.1.0 (this node runs " + version.Get().Version + ")\n"; !strings.Contains(out, want) {
+		t.Errorf("render missing %q:\n%s", want, out)
+	}
+}

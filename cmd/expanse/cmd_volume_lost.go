@@ -43,7 +43,7 @@ func newVolumeLostCmds(opts *ctlOpts) []*cobra.Command {
 				if err := checkRetire(v, node); err != nil {
 					return err
 				}
-				if err := putOp(ctx, cl, "retire", v.id, map[string]string{"target": args[0], "node": node}); err != nil {
+				if err := putOp(ctx, cl, "retire", v.id, map[string]string{"target": v.name(), "node": node}); err != nil {
 					return err
 				}
 				fmt.Fprintf(c.OutOrStdout(), "volume %q: the replica on %s will be given up if that node is down\n", args[0], node)

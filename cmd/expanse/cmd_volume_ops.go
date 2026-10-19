@@ -110,11 +110,23 @@ func resolveVol(ctx context.Context, cl pb.NodeServiceClient, name string) (*vol
 	if err != nil {
 		return nil, err
 	}
-	v, ok := vols[name]
-	if !ok {
-		return nil, fmt.Errorf("no such volume %q", name)
+	if v, ok := vols[name]; ok {
+		return v, nil
 	}
-	return v, nil
+	for _, v := range vols {
+		if v.id == name {
+			return v, nil
+		}
+	}
+	return nil, fmt.Errorf("no such volume %q", name)
+}
+
+// name is the volume's name, or its ID while the spec is unwritten.
+func (v *volEntry) name() string {
+	if n := v.spec.GetName(); n != "" {
+		return n
+	}
+	return v.id
 }
 
 // putOp writes an operation request for the leader's controller /
@@ -147,7 +159,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 				if err != nil {
 					return err
 				}
-				req := map[string]any{"target": args[0]}
+				req := map[string]any{"target": v.name()}
 				if force {
 					req["force"] = true
 				}
@@ -179,7 +191,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 				if have := v.spec.GetSizeBytes(); uint64(b.N) <= have {
 					return fmt.Errorf("--size %s is not larger than the current %s; volumes only grow", sizeStr, humanBytes(have))
 				}
-				if err := putOp(ctx, cl, "resize", v.id, map[string]any{"target": args[0], "sizeBytes": b.N}); err != nil {
+				if err := putOp(ctx, cl, "resize", v.id, map[string]any{"target": v.name(), "sizeBytes": b.N}); err != nil {
 					return err
 				}
 				fmt.Printf("volume %q resize to %s requested\n", args[0], sizeStr)
@@ -205,7 +217,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 				if err := checkSnapshotRequest(v, snapName); err != nil {
 					return err
 				}
-				if err := putOp(ctx, cl, "snapshot", v.id, map[string]string{"target": args[0], "name": snapName}); err != nil {
+				if err := putOp(ctx, cl, "snapshot", v.id, map[string]string{"target": v.name(), "name": snapName}); err != nil {
 					return err
 				}
 				if noWait {
@@ -240,7 +252,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 				if err := checkRestoreRequest(v, restoreName); err != nil {
 					return err
 				}
-				if err := putOp(ctx, cl, "restore", v.id, map[string]string{"target": args[0], "name": restoreName}); err != nil {
+				if err := putOp(ctx, cl, "restore", v.id, map[string]string{"target": v.name(), "name": restoreName}); err != nil {
 					return err
 				}
 				fmt.Fprintf(c.OutOrStdout(), "restore of volume %q to snapshot %q requested; every replica is overwritten\n", args[0], restoreName)
@@ -282,7 +294,7 @@ func newVolumeOpsCmds(opts *ctlOpts) []*cobra.Command {
 				if toNode == "" {
 					return fmt.Errorf("--to <node> is required")
 				}
-				if err := putOp(ctx, cl, "move-primary", v.id, map[string]string{"target": args[0], "to": toNode}); err != nil {
+				if err := putOp(ctx, cl, "move-primary", v.id, map[string]string{"target": v.name(), "to": toNode}); err != nil {
 					return err
 				}
 				fmt.Printf("primary move of %q to %s requested\n", args[0], toNode)

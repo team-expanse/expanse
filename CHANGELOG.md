@@ -6,6 +6,20 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- `expanse ctl volume` commands take the volume ID that `volume list` shows first, as well as the
+  name, and `volume list` keeps its columns lined up with long names.
+- `expanse ctl block` commands take `namespace/name`, the form `block list` prints, as well as `-n`.
+- The haproxy and caddy forms list the existing blocks' addresses under their frontends and sites.
+- `expanse cluster status` shows every node's API address (the first node's was blank, joined
+  nodes' had no host) and, when the cluster was formed by an older release, the version this node
+  runs.
+- `docs/INSTALL.md` §5 upgrades to the release you name and works on a node with no `expanse/` yet;
+  `docs/STORAGE.md` says the DRBD 8.4 caveat only applies to nodes that had storage off.
+
 ## 1.11.1 - 2026-10-19
 
 ### Fixed

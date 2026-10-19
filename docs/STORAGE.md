@@ -36,7 +36,8 @@ the VG's free space; the pool takes 95% of it by default (1–95%, the rest is h
 node's agent then creates the thin pool `expanse/pool`, starts its volume stack and reports the
 card as **On**. Do this on each node that should hold volume replicas; replicas are placed only on
 nodes whose storage is on. A node upgraded from 1.10.x that had storage off may still have the
-in-tree DRBD 8.4 loaded until its next reboot; its card then says **Reboot needed**.
+in-tree DRBD 8.4 loaded until its next reboot; its card then says **Reboot needed**. (Nodes that
+had storage on in 1.10.x already ran DRBD 9.)
 
 Under the hood the UI writes `/settings/storage/<node>` (`{"vg","pool","percent"}`) and each agent
 reports `/storage-nodes/<node>` (`state`: `off`, `ready`, `reboot` or `failed`, with sizes and a
@@ -56,7 +57,7 @@ lvcreate --type thin-pool -l 95%FREE -n pool expanse   # leave headroom; see §3
 ```
 
 The node's Storage card then shows **On**, set in its configuration. On a node still running the
-in-tree DRBD 8.4 (upgraded from 1.10.x without a reboot), `expansed` refuses to create volumes and
+in-tree DRBD 8.4 (upgraded from 1.10.x with storage off, and not rebooted since), `expansed` refuses to create volumes and
 logs "volumes need DRBD 9; reboot the node" (check with `head -1 /proc/drbd`).
 
 `expansed` then creates, resizes and deletes DRBD-backed thin LVs from that pool as volume requests
