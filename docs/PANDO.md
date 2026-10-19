@@ -6,9 +6,9 @@ when the node running it fails.
 ## 1. The design, in one paragraph
 
 Pando is a self-hosted platform that builds and runs your team's apps as Docker containers, with its
-own Postgres and a BuildKit builder beside it. It needs a Docker daemon, which Expanse nodes do not
+own Postgres and a BuildKit builder it starts itself. It needs a Docker daemon, which Expanse nodes do not
 run, so Pando is not a block of its own. Instead it runs inside a `vm/instance` block
-([`VMS.md`](VMS.md)): a NixOS guest with Docker, Pando 0.3.0 and its two companion images baked in.
+([`VMS.md`](VMS.md)): a NixOS guest with Docker, and Pando 0.10.0 and its Postgres image baked in.
 The guest's whole disk is the block's DRBD-replicated volume. When the node running it fails, the
 guest cold-boots on a survivor with the same MAC address, and Pando, its database and every app it
 hosts come back from that disk. Pando is AGPL-3.0; the license covers Pando, not the apps you host on
@@ -16,8 +16,9 @@ it.
 
 ## 2. Building the guest image
 
-The flake builds a raw, BIOS-bootable disk image with the three container images inside, so the
-first boot needs no registry:
+The flake builds a raw, BIOS-bootable disk image with Pando's and Postgres's container images inside,
+so the first boot needs no registry. Pando pulls its BuildKit image when it first builds an app, which
+needs network anyway:
 
 ```sh
 nix build .#pando-guest-image      # result/nixos.img, about 7.4 GB, about 3.4 GB of it data
@@ -47,8 +48,12 @@ pando-image = import "${expanse}/nix/guests/pando/image.nix" {
 
 `settings` is copied to `/var/lib/pando-guest/pando.env` on the first boot only. To change a
 setting later, edit that file in the guest and run `systemctl restart pando`. `PANDO_ADMIN_PASSWORD`
-(10 characters or more) is read on Pando's first run only; left unset, the first person to open the
-console creates the administrator. The guest takes its address by DHCP unless a module sets one.
+(10 characters or more) is read on Pando's first run only. Left unset, setting Pando up asks for a
+one-time token: run `docker exec pando-pando-1 pando admin setup-token` in the guest. Postgres's
+password is generated on the first start and kept in the `pando-secrets` Docker volume;
+`POSTGRES_PASSWORD` in `settings` is used instead only if it is there before that start.
+Pando holds the guest's Docker socket, so a compromise of Pando is root in the guest, but not on the
+node. The guest takes its address by DHCP unless a module sets one.
 
 ## 3. Deploying
 
