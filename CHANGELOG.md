@@ -6,10 +6,15 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
-## Unreleased
+## 1.11.2 - 2026-10-19
 
 ### Fixed
 
+- A restarted agent takes back its own singleton lease at once, so a singleton that needs placing
+  no longer waits out the old lease (up to its TTL) as "LeaseHeld".
+- The installer fetches `gh:<user>` SSH keys from GitHub instead of writing `gh:<user>` into
+  `authorized_keys`, where it let nobody in. It does so before touching any disk, and stops if the
+  keys can't be fetched.
 - `expanse ctl volume` commands take the volume ID that `volume list` shows first, as well as the
   name, and `volume list` keeps its columns lined up with long names.
 - `expanse ctl block` commands take `namespace/name`, the form `block list` prints, as well as `-n`.
