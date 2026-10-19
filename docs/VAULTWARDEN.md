@@ -57,9 +57,8 @@ Browsers open the web vault only over HTTPS, since it needs the Web Crypto API, 
 block's VIP (`expanse ctl block get vault`), and set `domain` to the `https://` address. Plain HTTP
 reaches only the API, and it sends every login over the network unencrypted.
 
-Each node needs `pkgs.vaultwarden` and, for the web vault, `pkgs.vaultwarden.webvault` in
-`environment.systemPackages`. Without the web vault, the block serves only the API that apps and
-extensions use.
+A node fetches Vaultwarden and its web vault the first time it runs the block
+([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 | Key | Default | Meaning |
 |---|---|---|

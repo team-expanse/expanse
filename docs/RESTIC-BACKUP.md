@@ -55,7 +55,8 @@ spec:
 ```
 
 The first backup of each volume runs as soon as the block starts; the repository is created if it
-does not exist. Each node needs `pkgs.restic` in `environment.systemPackages`.
+does not exist. A node fetches restic
+the first time it runs the block ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 | Key | Default | Meaning |
 |---|---|---|

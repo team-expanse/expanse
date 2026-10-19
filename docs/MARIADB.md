@@ -80,7 +80,7 @@ these include the passwordless `root@127.0.0.1`, `root@::1` and `root@<hostname>
 `mariadb-install-db` creates. Renaming `user` adds the new account and leaves the old one in place;
 removing `database` does not drop it.
 
-Each node must have `pkgs.mariadb` in `environment.systemPackages`.
+A node fetches the block's programs the first time it runs one ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 ## 3. Clients
 

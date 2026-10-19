@@ -7,6 +7,10 @@ complete lifecycle, with every command you need. For the clustering
 machinery underneath (Raft, leases, node lifecycle), see
 [CLUSTERING.md](CLUSTERING.md).
 
+Every type can also be deployed and edited without YAML from the web UI: **Blocks → Deploy block**
+builds a form from the type's schema ([WEB-UI.md](WEB-UI.md)). The per-type pages list the same
+settings the form shows.
+
 Concepts in one paragraph:
 
 - A **block** is authored as YAML (or Nix), validated against 24 rule

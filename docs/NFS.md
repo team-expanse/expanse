@@ -68,8 +68,8 @@ Ganesha runs on. Every config key is optional:
 | `squash` | `root` | Map client root (`root`), nobody (`none`) or every user (`all`) to `nobody` |
 | `gracePeriod` | `90` | Seconds after a start or failover during which clients reclaim state |
 
-One export per block; deploy another block for another export. Each node must have
-`pkgs.nfs-ganesha` in `environment.systemPackages`.
+One export per block; deploy another block for another export. A node fetches
+NFS-Ganesha the first time it runs the block ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 ## 3. Mounting
 

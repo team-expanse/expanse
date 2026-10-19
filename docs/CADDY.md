@@ -88,7 +88,7 @@ network; clients then need Caddy's root certificate, which is at
 
 With `caddyfile`, the block writes nothing for you: set the listening ports with the `http_port`
 and `https_port` global options, and the redirects too if you need them. The data directory is
-still the volume. Each node must have `pkgs.caddy` in `environment.systemPackages`.
+still the volume. A node fetches the block's programs the first time it runs one ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 ## 3. Failover, from a client's perspective
 

@@ -64,6 +64,7 @@ The project site is [expanseos.org](https://expanseos.org).
 - **Networking** — a WireGuard mesh, per-node nftables, and L4/L7 load
   balancing with VIP failover. [`docs/NETWORKING.md`](docs/NETWORKING.md).
 - **Web UI** — a browser-based cluster console (HTMX/SSE), OIDC login.
+  Deploy and edit any block, VMs included, from a form; turn storage on per node.
   [`docs/WEB-UI.md`](docs/WEB-UI.md).
 - **Backup/restore** — restic-based backup of both cluster config and
   volume data. [`docs/BACKUP.md`](docs/BACKUP.md).

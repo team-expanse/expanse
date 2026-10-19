@@ -117,7 +117,8 @@ vgs expanse                # the LVM data pool DRBD volumes are backed by
 ```
 
 The VG exists but is otherwise empty: replicated volumes (the thin pool, DRBD) are an explicit
-opt-in, not part of a fresh install. See `docs/STORAGE.md` to enable and operate them.
+opt-in, not part of a fresh install. Turn them on from the web UI (**Nodes → the node → Storage →
+Enable storage**); `docs/STORAGE.md` covers operating them.
 
 One installed node is already a usable cluster. Form it with the agent stopped (`cluster init`
 refuses while `expansed` runs, since the running agent would never join the new cluster):
@@ -129,8 +130,9 @@ systemctl start expansed
 expanse cluster status     # quorum: 1/1
 ```
 
-Volumes and blocks then run there. Everything on a single node has **no redundancy** until more nodes
-join (`docs/CLUSTERING.md`, `docs/STORAGE.md` §8).
+Volumes and blocks then run there: in the web UI, **Blocks → Deploy block** lists every block type, VMs
+included, each with a form (`docs/WEB-UI.md`). Nothing needs a change to `/etc/nixos`. Everything on
+a single node has **no redundancy** until more nodes join (`docs/CLUSTERING.md`, `docs/STORAGE.md` §8).
 
 ## 5. Changing the node and upgrading it
 

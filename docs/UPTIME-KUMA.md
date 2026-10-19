@@ -47,7 +47,7 @@ spec:
         period_seconds: 2
 ```
 
-Each node needs `pkgs.uptime-kuma` in `environment.systemPackages`.
+A node fetches the block's programs the first time it runs one ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 Open `http://<VIP>/` right after deploying: until the first account is created, anyone who reaches
 Uptime Kuma can create it. For HTTPS, put a `web/caddy` block in front and point it at this block's

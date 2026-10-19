@@ -55,8 +55,8 @@ spec:
 Jellyfin refuses to start with less than 2 GiB free for its data, so size the volume above that
 (it holds artwork, which grows with the library); the nodes' `/tmp` needs 2 GiB free for its cache.
 
-Each node needs `pkgs.jellyfin` in `environment.systemPackages`; it brings Jellyfin's web client
-and its own ffmpeg.
+A node fetches Jellyfin, with its web client and its own ffmpeg, the first time it runs the block
+([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 Jellyfin listens on 8096. Open `http://<VIP>/` right after deploying: until its startup wizard is
 finished, anyone who reaches Jellyfin can create the administrator. For HTTPS, put a `web/caddy`

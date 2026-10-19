@@ -15,7 +15,7 @@ History before 1.0.0 is not recorded here.
   returns the type's shipped `schema.json` as is, plus its defaults and
   template as JSON, so clients can build a deploy form from them.
 - Deploy any catalog type from the web UI without writing YAML: Blocks →
-  Deploy lists the catalog (types no node can run are greyed out), and each
+  Deploy block lists the catalog (types no node can run are greyed out), and each
   type gets a form built from its schema, template and defaults. Errors show on
   the field they belong to; "Show as YAML" gives the same block as a manifest.
   A block's Edit button opens the same form.
@@ -65,7 +65,6 @@ History before 1.0.0 is not recorded here.
   `READY=1`; those versions do not report `multi-user.target`.
 - Volume replicas are placed only on nodes whose storage is on. Nodes from
   before this release, which do not report it, stay eligible.
-
 - New `db/postgres`, `db/redis` and `ai/ollama` blocks built from the catalog
   defaults listen on 15432, 16379 and 21434, so their VIP can take the standard
   client port (5432, 6379, 11434) on the same node, as `db/mariadb` already
@@ -83,6 +82,10 @@ History before 1.0.0 is not recorded here.
 - The worked example in `docs/BLOCKS.md` used lowercase enum values
   (`expose: vip`, `antiAffinity: node`, ...) that `expanse ctl block apply`
   rejects.
+- The per-type docs no longer tell you to add the type's packages to
+  `environment.systemPackages`: a node has fetched them itself since 1.10.1.
+  `docs/OBSERVABILITY.md`'s Grafana example points at Prometheus's VIP on
+  port 80, not 9090.
 
 ## 1.10.1 - 2026-10-17
 

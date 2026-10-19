@@ -49,18 +49,9 @@ spec:
         period_seconds: 2
 ```
 
-Each node that may run the block needs these in `environment.systemPackages`:
-
-```nix
-pkgs.immich
-pkgs.immich.machine-learning  # unless machineLearning is false
-pkgs.redis
-(pkgs.postgresql_18.withPackages (ps: [ ps.pgvector ps.vectorchord ]))
-```
-
-The Postgres package is a superset of `pkgs.postgresql_18`, so `db/postgres` blocks on the same
-node keep working with it; ship it in place of `pkgs.postgresql_18`, not beside it. The block
-refuses to start, naming the package, when the `postgres` on the PATH lacks VectorChord.
+A node fetches Immich, its machine learning, Redis and a Postgres with pgvector and VectorChord
+the first time it runs the block ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)). The block refuses to start, naming the package,
+when its `postgres` lacks VectorChord.
 
 Open `http://<VIP>/` right after deploying: until the administrator account is created, anyone who
 reaches Immich can create it. For HTTPS, which the mobile apps want, put a `web/caddy` block in

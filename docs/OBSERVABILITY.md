@@ -120,7 +120,7 @@ spec:
   storage:
     - { name: data, size: 1Gi, replication: 3, mountPath: /var/lib/grafana }
   config:
-    prometheusUrl: http://<prometheus block address>:9090
+    prometheusUrl: http://<prometheus block address>
     adminPassword: <at least 8 characters>
 ```
 
@@ -129,11 +129,11 @@ cluster stores the token only as a hash. The token sits in the block's config th
 `db/postgres` passwords do. Give the Prometheus block a VIP (`expose: EXPOSE_VIP`) so Grafana's
 `prometheusUrl` survives a failover. Grafana applies `adminPassword` only when it first creates
 its database; change it later in Grafana itself. Neither block configures Alertmanager (section 3).
-Like every binary-backed block, the workload execs the upstream binary from the system PATH, so
-add `pkgs.prometheus` and `pkgs.grafana` to `environment.systemPackages` on nodes that may run them.
-Grafana 13.2 no longer includes its Prometheus datasource, so also add Expanse's
-`packages.grafana-plugins` (`nix/grafana-plugins.nix`, which ships `grafanaPlugins.prometheus`);
-the Grafana block links it into Grafana's plugins on every start.
+A node fetches Prometheus and Grafana the first time it runs them ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
+Grafana 13.2 no longer includes its Prometheus datasource, so Grafana's runtime adds Expanse's
+`packages.grafana-plugins` (`nix/grafana-plugins.nix`), which the block links into Grafana's
+plugins on every start. In the web UI's deploy form, Grafana's Prometheus URL lists the
+Prometheus blocks' addresses.
 
 ## 6. The in-cluster UI, with no Prometheus or Grafana at all
 

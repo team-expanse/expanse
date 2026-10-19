@@ -86,7 +86,7 @@ stopping HAProxy. A name takes the first address the node's resolver returns, wh
 name has one; give an IPv4 address instead if the server listens on IPv4 only. The block does not
 resolve names again later; a redeploy does. The stats port
 is not on the VIP: read each replica at its node's address, or add it to `network.ports` without
-`expose`. Each node must have `pkgs.haproxy` in `environment.systemPackages`.
+`expose`. A node fetches the block's programs the first time it runs one ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 ## 3. Failures, from a client's perspective
 

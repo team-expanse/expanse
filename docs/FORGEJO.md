@@ -97,8 +97,8 @@ A `db/mariadb` block's VIP can serve as the external database; the VM test cover
 The block hands `adminPassword` to Forgejo's command line at start, so it shows briefly in the
 serving node's process list. Settings the block writes itself, such as
 `ROOT_URL` or `[repository] ROOT`, can be overridden too; moving state off the volume means a
-failover no longer carries it. The SSH user in clone URLs is always `git`. Each node must have
-`pkgs.forgejo` in `environment.systemPackages`; it brings its own `git`.
+failover no longer carries it. The SSH user in clone URLs is always `git`. A node fetches
+Forgejo and `git` the first time it runs the block ([BLOCKS.md](BLOCKS.md#where-a-blocks-programs-come-from)).
 
 ## 3. Failover, from a user's perspective
 

@@ -87,7 +87,7 @@ to the request gets the guest OOM-killed under load.
 
 ### From a cloud image
 
-The easiest way is the web UI: Blocks → Deploy → `vm/instance`. Pick an image (Debian 13 or
+The easiest way is the web UI: Blocks → Deploy block → `vm/instance`. Pick an image (Debian 13 or
 Ubuntu 24.04 LTS, or Custom for your own URL), set CPUs, memory and the disk size, and paste your
 SSH public keys. `gh:<user>` in the key list imports a GitHub user's keys when you press Deploy.
 The same settings in a manifest:
