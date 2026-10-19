@@ -197,7 +197,7 @@ func TestProgressShowsPhaseElapsedAndLogTail(t *testing.T) {
 	m.appendLog("the last line")
 	m.tick(m.started.Add(83 * time.Second))
 	got := screen(t, m, tuikit.VT)
-	for _, want := range []string{"partition", "4 of 9", "01:23", "the last line", "[#"} {
+	for _, want := range []string{"partition", "5 of 10", "01:23", "the last line", "[#"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("progress lacks %q:\n%s", want, got)
 		}

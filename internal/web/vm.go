@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/vm"
+	"github.com/expanse/expanse/internal/sshkeys"
 	"github.com/expanse/expanse/internal/web/schemaform"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -77,8 +75,6 @@ func presetLogin(schema []byte, image any) string {
 	return ""
 }
 
-var githubUserRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
-
 // importFormKeys runs importKeys over the fields of bt's schema.
 func (s *Server) importFormKeys(ctx context.Context, bt *pb.BlockType, cfg map[string]any) []string {
 	fields, err := schemaform.Build(bt.GetSchemaJson(), cfgPrefix, nil)
@@ -105,7 +101,7 @@ func (s *Server) importKeys(ctx context.Context, fields []schemaform.Field, cfg 
 				out = append(out, it)
 				continue
 			}
-			keys, err := s.githubKeys(ctx, user)
+			keys, err := sshkeys.GitHub(ctx, s.GitHubURL, user)
 			if err != nil {
 				errs = append(errs, f.Path+": "+err.Error())
 				continue
@@ -119,44 +115,6 @@ func (s *Server) importKeys(ctx context.Context, fields []schemaform.Field, cfg 
 		}
 	}
 	return errs
-}
-
-// githubKeys fetches a GitHub user's public SSH keys from <GitHubURL>/<user>.keys.
-func (s *Server) githubKeys(ctx context.Context, user string) ([]string, error) {
-	if !githubUserRE.MatchString(user) {
-		return nil, fmt.Errorf("gh:%s: not a GitHub user name", user)
-	}
-	base := s.GitHubURL
-	if base == "" {
-		base = "https://github.com"
-	}
-	// user matched githubUserRE, so it cannot leave the GitHub host's path.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/"+user+".keys", nil) //nolint:gosec // see above
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // see above
-	if err != nil {
-		return nil, fmt.Errorf("gh:%s: cannot reach GitHub: %w", user, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gh:%s: GitHub answered %s", user, resp.Status)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("gh:%s: %w", user, err)
-	}
-	var keys []string
-	for _, line := range strings.Split(string(body), "\n") {
-		if k := strings.TrimSpace(line); k != "" {
-			keys = append(keys, k)
-		}
-	}
-	if len(keys) == 0 {
-		return nil, fmt.Errorf("gh:%s has no public SSH keys on GitHub", user)
-	}
-	return keys, nil
 }
 
 func flatten(fields []schemaform.Field) []schemaform.Field {

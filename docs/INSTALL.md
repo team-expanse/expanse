@@ -47,7 +47,8 @@ SSH (`ssh root@<ip>`, the installer advertises itself over mDNS as
    Disks holding data are marked `CONTAINS DATA` and require explicit
    confirmation.
 3. **Network** — DHCP (recommended) or static.
-4. **SSH key** — paste a key, or `gh:<username>` to fetch from GitHub.
+4. **SSH key** — paste a key, or `gh:<username>` to fetch from GitHub. The installer fetches it
+   before touching any disk, so this needs network; if GitHub can't be reached, the install stops.
 5. **Review** — the full plan, with a red list of what will be destroyed.
    Type `INSTALL` to proceed (the install starts on the last letter).
 6. **Progress** — the current stage, elapsed time and a tail of the log

@@ -1,6 +1,7 @@
 package install
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/sshkeys"
 	"github.com/expanse/expanse/internal/version"
 )
 
@@ -32,6 +34,7 @@ type RunContext struct {
 	Mount             string // /mnt
 	SkipSystemInstall bool
 	Identity          *Identity
+	GitHubURL         string // serves <user>.keys for gh:<user> SSH keys; "" is GitHub
 	Logger            func(format string, args ...any)
 	Exec              func(name string, args ...string) error // overridable for tests
 	Out               io.Writer                               // commands' stdout and stderr; nil = os.Stdout/os.Stderr
@@ -72,6 +75,10 @@ func Stages() []Stage {
 		{
 			Name: "preflight", Desc: "check hardware requirements (arch, RAM >= 2G, disk >= 20G, network)", Run: stagePreflight,
 			DryRun: "lsblk -J; free -m",
+		},
+		{
+			Name: "keys", Desc: "fetch the SSH keys of gh:<user> entries from GitHub", Run: stageKeys,
+			DryRun: "GET https://github.com/<user>.keys for each gh:<user> SSH key",
 		},
 		{
 			Name: "detect", Desc: "detect target disks", Run: stageDetect,
@@ -167,6 +174,18 @@ func stagePreflight(rc *RunContext) error {
 	for _, w := range pf.Warnings {
 		rc.Logger("warning: %s", w)
 	}
+	return nil
+}
+
+// stageKeys replaces gh:<user> SSH keys with the user's keys, failing before any disk is wiped.
+func stageKeys(rc *RunContext) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	keys, err := sshkeys.Expand(ctx, rc.GitHubURL, rc.Config.SSH.AuthorizedKeys)
+	if err != nil {
+		return err
+	}
+	rc.Config.SSH.AuthorizedKeys = keys
 	return nil
 }
 

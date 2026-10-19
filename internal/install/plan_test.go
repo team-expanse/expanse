@@ -3,8 +3,11 @@ package install
 import (
 	"bytes"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -27,7 +30,7 @@ func TestRunDryRunTouchesNothing(t *testing.T) {
 	}
 
 	text := out.String()
-	for _, stage := range []string{"preflight", "detect", "confirm", "partition", "snapshot", "config", "install", "identity", "verify"} {
+	for _, stage := range []string{"preflight", "keys", "detect", "confirm", "partition", "snapshot", "config", "install", "identity", "verify"} {
 		if !strings.Contains(text, stage) {
 			t.Errorf("dry-run output missing stage %q", stage)
 		}
@@ -151,5 +154,29 @@ func TestDiskoCommandPassesTheSystemSize(t *testing.T) {
 	_, args := rc.diskoCommand([]Disk{{Path: "/dev/vda", Size: "500G"}})
 	if !strings.Contains(strings.Join(args, " "), "--argstr systemSize 32G") {
 		t.Errorf("disko args %q lack --argstr systemSize 32G", args)
+	}
+}
+
+// The keys stage fetches gh:<user> keys before any disk is touched, so the node gets real keys.
+func TestStageKeysFetchesGitHubKeys(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/octo.keys" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte("ssh-ed25519 AAAAgh octo\n"))
+	}))
+	defer gh.Close()
+	rc := &RunContext{Config: DefaultConfig(), GitHubURL: gh.URL, Logger: t.Logf}
+	rc.Config.SSH.AuthorizedKeys = []string{"gh:octo"}
+	if err := stageKeys(rc); err != nil {
+		t.Fatal(err)
+	}
+	if got := rc.Config.SSH.AuthorizedKeys; !reflect.DeepEqual(got, []string{"ssh-ed25519 AAAAgh octo"}) {
+		t.Fatalf("authorized keys = %v", got)
+	}
+	rc.Config.SSH.AuthorizedKeys = []string{"gh:nobody"}
+	if err := stageKeys(rc); err == nil {
+		t.Fatal("an unknown GitHub user installed with no usable key")
 	}
 }
