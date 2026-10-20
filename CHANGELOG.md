@@ -14,6 +14,8 @@ History before 1.0.0 is not recorded here.
   agent build spaced a block's config JSON its own way, and the new agent took the difference
   for a config change. Configs are now encoded the same way by every build and compared by
   content, so an upgrade from 1.12.2 or earlier keeps them running too.
+- The web UI keeps its TLS certificate across agent restarts and upgrades, so a browser that
+  accepted it is not asked again. A node issued a new one at every start.
 
 ## 1.12.2 - 2026-10-20
 

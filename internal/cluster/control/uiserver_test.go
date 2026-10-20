@@ -117,3 +117,35 @@ func handshakeLeaf(t *testing.T, server, client *tls.Config) *x509.Certificate {
 	defer conn.Close()
 	return conn.ConnectionState().PeerCertificates[0]
 }
+
+// An agent restart serves the same UI certificate, so a browser's exception for it still holds;
+// an unreadable saved certificate is replaced.
+func TestWebUITLSKeepsItsCertificateAcrossRestarts(t *testing.T) {
+	r := newRig(t, "ui-keep")
+	ctx := context.Background()
+	res := r.initRes
+	serve := func() *x509.Certificate {
+		t.Helper()
+		cfg, err := control.WebUITLS(ctx, res.Store, res.Secret, r.dataDir, "n1", res.ClusterID)
+		if err != nil {
+			t.Fatalf("WebUITLS: %v", err)
+		}
+		return handshakeLeaf(t, cfg, &tls.Config{InsecureSkipVerify: true})
+	}
+
+	first := serve()
+	if again := serve(); again.SerialNumber.Cmp(first.SerialNumber) != 0 {
+		t.Errorf("restart issued a new UI certificate: serial %v -> %v", first.SerialNumber, again.SerialNumber)
+	}
+	saved := filepath.Join(r.dataDir, control.UICertFile)
+	if fi, err := os.Stat(saved); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("saved UI certificate %s: %v, mode %v; want 0600", saved, err, fi)
+	}
+
+	if err := os.WriteFile(saved, []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if fresh := serve(); fresh.SerialNumber.Cmp(first.SerialNumber) == 0 {
+		t.Error("an unreadable saved certificate was not replaced")
+	}
+}

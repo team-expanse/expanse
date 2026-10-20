@@ -2,11 +2,15 @@ package control
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,6 +24,8 @@ import (
 const (
 	UICAKey  = "/cluster/ui/ca"
 	UICAFile = "ca/ui-ca.pem"
+	// UICertFile keeps the node's UI certificate and key, so a restart serves the one browsers accepted.
+	UICertFile = "ca/ui-server.pem"
 )
 
 // EnsureUICA returns the cluster's UI CA, creating it once (expect-absent CAS) if the cluster has none.
@@ -80,7 +86,8 @@ func WebUITLS(ctx context.Context, st store.Store, secret []byte, dataDir, nodeI
 	if err := os.WriteFile(caPath, ca.MarshalCert(uiCA.Cert), 0o644); err != nil {
 		return nil, err
 	}
-	src := &uiCertSource{ca: uiCA, nodeID: nodeID}
+	src := &uiCertSource{ca: uiCA, nodeID: nodeID, path: filepath.Join(dataDir, UICertFile)}
+	src.cur = src.load(time.Now())
 	if _, err := src.get(time.Now()); err != nil {
 		return nil, err
 	}
@@ -93,6 +100,7 @@ func WebUITLS(ctx context.Context, st store.Store, secret []byte, dataDir, nodeI
 type uiCertSource struct {
 	ca     *ca.UICA
 	nodeID string
+	path   string
 	mu     sync.Mutex
 	cur    *tls.Certificate
 }
@@ -108,7 +116,48 @@ func (s *uiCertSource) get(now time.Time) (*tls.Certificate, error) {
 		return nil, err
 	}
 	s.cur = &tls.Certificate{Certificate: [][]byte{leaf.Raw, s.ca.Cert.Raw}, PrivateKey: priv, Leaf: leaf}
+	s.save(leaf, priv)
 	return s.cur, nil
+}
+
+// load returns the saved certificate when the UI CA signed it, it is not due for renewal and it
+// still names this node's hostname and addresses; otherwise nil.
+func (s *uiCertSource) load(now time.Time) *tls.Certificate {
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		return nil
+	}
+	c, err := tls.X509KeyPair(raw, raw)
+	if err != nil || c.Leaf == nil {
+		return nil
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(s.ca.Cert)
+	if _, err := c.Leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now}); err != nil ||
+		c.Leaf.Subject.CommonName != s.nodeID || c.Leaf.NotAfter.Sub(now) <= ca.UICertRenewLeft ||
+		c.Leaf.VerifyHostname(hostnameOrLocal()) != nil {
+		return nil
+	}
+	for _, ip := range localIPs() {
+		if !slices.ContainsFunc(c.Leaf.IPAddresses, ip.Equal) {
+			return nil
+		}
+	}
+	c.Certificate = append(c.Certificate[:1], s.ca.Cert.Raw)
+	return &c
+}
+
+// save writes the certificate and key for the next start; a failure only costs a new certificate then.
+func (s *uiCertSource) save(leaf *x509.Certificate, priv *ecdsa.PrivateKey) {
+	der, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return
+	}
+	out := append(ca.MarshalCert(leaf), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})...)
+	tmp := s.path + ".tmp"
+	if os.WriteFile(tmp, out, 0o600) == nil {
+		_ = os.Rename(tmp, s.path)
+	}
 }
 
 // localIPs lists this host's non-loopback addresses, so the UI verifies when reached by IP.
