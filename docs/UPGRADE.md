@@ -41,6 +41,12 @@ Nodes before 1.12 have no Upgrades page, so the move to 1.12 is done on each nod
 `scripts/upgrade-node.sh`. It is also the last upgrade that restarts blocks (the 1.11 agent
 empties `/run/expanse` when it stops), so each node is drained first. After it, use the web UI.
 
+The script swaps `/etc/nixos/expanse`, so `configuration.nix` must build from it, as installed
+nodes' does (`./expanse/nix/modules/expanse-node.nix`). A node set up by hand whose
+`configuration.nix` fetches expanse itself (`expanse = builtins.fetchTarball { url = ...; };`)
+needs that binding changed to `expanse = ./expanse;` first; otherwise the script stops, since the
+build would still run the old release.
+
 You need root on every node, and the nodes need to reach github.com and cache.nixos.org. Below,
 `V` is the release (for example `1.12.0`) and `NODE` is a node's hostname.
 

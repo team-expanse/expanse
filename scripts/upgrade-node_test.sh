@@ -16,13 +16,16 @@ mkdir -p "$stub"
 
 # A tiny "system" the stub nix-build prints; its switch-to-configuration records that it ran.
 sys=$tmp/system
-mkdir -p "$sys/bin"
+mkdir -p "$sys/bin" "$sys/sw/bin"
 for f in kernel initrd kernel-modules; do ln -s "$(readlink -f /run/booted-system/$f)" "$sys/$f"; done
 printf '#!/bin/sh\necho "$@" >>"%s/switched"\n' "$tmp" >"$sys/bin/switch-to-configuration"
 cat >"$stub/nix-build" <<SH
 #!/bin/sh
 echo "\$@" >>"$tmp/nix-build.args"
 [ -e "$tmp/build-fails" ] && exit 1
+v=\$(cat "$tmp/built-version" 2>/dev/null || echo 9.9.9)
+mkdir -p "$tmp/store/abc-expanse-\$v/bin" && touch "$tmp/store/abc-expanse-\$v/bin/expanse"
+ln -sfn "$tmp/store/abc-expanse-\$v/bin/expanse" "$sys/sw/bin/expanse"
 echo "$sys"
 SH
 printf '#!/bin/sh\necho "$@" >>"%s/nix-env.args"\n' "$tmp" >"$stub/nix-env"
@@ -56,9 +59,10 @@ release() {
   sign "$d/SHA256SUMS" >"$d/SHA256SUMS.sig"
 }
 
-# node: a fresh /etc/nixos holding the 1.11.3 source.
+# node [keep-cache]: a fresh /etc/nixos holding the 1.11.3 source.
 node() {
-  rm -rf "$tmp/nixos" "$tmp/cache" "$tmp"/*.args "$tmp/switched" "$tmp/build-fails"
+  [[ ${1:-} == keep-cache ]] || rm -rf "$tmp/cache"
+  rm -rf "$tmp/nixos" "$tmp"/*.args "$tmp/switched" "$tmp/build-fails" "$tmp/built-version"
   mkdir -p "$tmp/nixos/expanse/nix"
   echo '"1.11.3"' >"$tmp/nixos/expanse/nix/version.nix"
   echo '{ imports = [ ./expanse/nix/modules/expanse-node.nix ]; }' >"$tmp/nixos/configuration.nix"
@@ -102,6 +106,14 @@ grep -qF -- "--set $sys" "$tmp/nix-env.args" || fail "upgrade: profile not set"
 [[ -s $tmp/cache/9.9.9/upgrade-node.log ]] || fail "upgrade: no log"
 grep -q "reboot this node" <<<"$out" && fail "upgrade: asks for a reboot with the booted kernel, initrd and modules"
 
+# A rerun reuses downloads that still match SHA256SUMS.
+node keep-cache
+mkdir -p "$tmp/held"
+mv "$tmp/rel/v9.9.9/expanse-9.9.9"* "$tmp/held/"
+upgrade 9.9.9
+[[ $rc == 0 && $(version_in expanse) == 9.9.9 ]] || fail "rerun: did not reuse the downloads: rc $rc: $out"
+mv "$tmp/held/"* "$tmp/rel/v9.9.9/"
+
 # --boot: no drain question (stdin is closed), the new system is only made the boot default.
 node
 rc=0
@@ -136,6 +148,14 @@ upgrade 9.9.9
 expect_fail build-fails "the build failed"
 [[ $(version_in expanse) == 1.11.3 && ! -e $tmp/nixos/expanse.prev ]] || fail "build-fails: source not restored"
 [[ ! -e $tmp/switched ]] || fail "build-fails: switched anyway"
+
+# A configuration.nix that fetches expanse itself builds the old release from the new source.
+node
+echo 1.11.0 >"$tmp/built-version"
+upgrade 9.9.9
+expect_fail stale-expanse "runs expanse-1.11.0, not expanse-9.9.9"
+[[ $(version_in expanse) == 1.11.3 && ! -e $tmp/nix-env.args && ! -e $tmp/switched ]] ||
+  fail "stale-expanse: source not restored, or went on to switch"
 
 # 1.10.0: no expanse/ yet and imports from the installer's /etc/expanse/flake/.
 node

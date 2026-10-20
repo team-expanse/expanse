@@ -58,9 +58,13 @@ fetch() { # fetch DIR NAME: download a release asset into DIR
   curl -fsSL --retry 3 -o "$1/$2" "$url/$2" || die "download $url/$2 failed"
 }
 
-# check_sum DIR NAME: NAME matches its SHA256SUMS line.
-check_sum() {
-  (cd "$1" && grep -E "  \*?$2\$" SHA256SUMS | sha256sum -c --quiet -) || die "$2 does not match SHA256SUMS"
+sum_ok() { (cd "$1" && grep -E "  \*?$2\$" SHA256SUMS | sha256sum -c --quiet - 2>/dev/null); }
+
+# fetch_checked DIR NAME: NAME, matching its SHA256SUMS line, downloaded unless an earlier run has it.
+fetch_checked() {
+  if [[ -f $1/$2 ]] && sum_ok "$1" "$2"; then say "reusing $2 from an earlier run"; return; fi
+  fetch "$1" "$2"
+  sum_ok "$1" "$2" || die "$2 does not match SHA256SUMS"
 }
 
 source_version() { grep -v '^#' "$1/nix/version.nix" | tr -d '"[:space:]'; }
@@ -80,6 +84,14 @@ install_source() {
     sed -i 's|/etc/expanse/flake/|./expanse/|g' "$nixos/configuration.nix"
     say "configuration.nix now imports ./expanse/ (was /etc/expanse/flake/; kept as configuration.nix.pre-$ver)"
   fi
+}
+
+# built_release SYSTEM prints the expanse package the built system runs, e.g. expanse-1.12.0.
+built_release() {
+  local bin
+  bin=$(readlink -f "$1/sw/bin/expanse") || return 0
+  bin=$(basename "$(dirname "$(dirname "$bin")")")
+  echo "${bin#*-}"
 }
 
 restore_source() {
@@ -127,9 +139,9 @@ main() {
   local tarball=expanse-$ver.tar.gz cache subst=()
   cache=expanse-$ver-cache-$(uname -m)-linux.tar
   listed "$work" "$tarball" || die "SHA256SUMS does not list $tarball"
-  fetch "$work" "$tarball" && check_sum "$work" "$tarball"
+  fetch_checked "$work" "$tarball"
   if listed "$work" "$cache"; then
-    fetch "$work" "$cache" && check_sum "$work" "$cache"
+    fetch_checked "$work" "$cache"
     rm -rf "$work/cache" && mkdir "$work/cache" && tar -xf "$work/$cache" -C "$work/cache"
     subst=(--option extra-substituters "file://$work/cache" --option extra-trusted-public-keys "$key")
   fi
@@ -137,10 +149,15 @@ main() {
   say "installing the $ver source as $nixos/expanse"
   install_source "$work/$tarball"
   say "building the system (substitutes from cache.nixos.org and the release cache)"
-  local sys
+  local sys built
   if ! sys=$(nix-build "$nixos/expanse/nix/node-system.nix" -A config.system.build.toplevel --no-out-link "${subst[@]}"); then
     restore_source
     die "the build failed; the previous source is back in $nixos/expanse"
+  fi
+  built=$(built_release "$sys")
+  if [[ $built != "expanse-$ver" ]]; then
+    restore_source
+    die "the built system runs ${built:-no expanse}, not expanse-$ver: $nixos/configuration.nix must import ./expanse (see docs/UPGRADE.md); nothing was changed"
   fi
   nix-env -p /nix/var/nix/profiles/system --set "$sys"
   if [[ $mode == boot ]]; then

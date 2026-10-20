@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -94,6 +95,9 @@ func (u *Upgrader) run(ctx context.Context, st *Status, logs io.Writer) error {
 	}
 	file := filepath.Join(u.Tree.Dir, currentDir, "nix", "node-system.nix")
 	st.System, err = u.Nix.BuildSystem(ctx, file, substituter, logs)
+	if err == nil {
+		err = runsRelease(st.System, st.Version)
+	}
 	if err != nil {
 		if rerr := u.Tree.Restore(); rerr != nil {
 			return fmt.Errorf("build: %w (and restoring the previous source: %w)", err, rerr)
@@ -132,6 +136,20 @@ func (u *Upgrader) save(st *Status) error {
 		return err
 	}
 	return os.Rename(tmp, u.StatusPath)
+}
+
+// runsRelease checks the built system's expanse is version: a configuration.nix that does not
+// import ./expanse builds whatever release it names instead.
+func runsRelease(system, version string) error {
+	bin, err := filepath.EvalSymlinks(filepath.Join(system, "sw", "bin", "expanse"))
+	if err != nil {
+		return fmt.Errorf("the built system has no expanse: %w", err)
+	}
+	_, pkg, _ := strings.Cut(filepath.Base(filepath.Dir(filepath.Dir(bin))), "-") // drop the store hash
+	if pkg != "expanse-"+version {
+		return fmt.Errorf("the built system runs %s, not expanse-%s: configuration.nix must import ./expanse", pkg, version)
+	}
+	return nil
 }
 
 // rebootNeeded compares the kernel, initrd and modules the node booted with the new system's.

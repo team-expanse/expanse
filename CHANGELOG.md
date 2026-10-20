@@ -12,6 +12,15 @@ History before 1.0.0 is not recorded here.
 
 - `scripts/upgrade-node.sh --boot` builds the release and makes it the boot default without
   switching, so a node's blocks keep running until it is rebooted; no drain is needed.
+- `scripts/upgrade-node.sh` reuses a download from an earlier run when it still matches
+  `SHA256SUMS`, instead of fetching the release cache again.
+
+### Fixed
+
+- `expanse upgrade` and `scripts/upgrade-node.sh` refuse a built system that does not run the
+  release, put the previous source back and change nothing. A node whose `configuration.nix`
+  fetches expanse itself, instead of importing `./expanse`, was "upgraded" to the new nixpkgs
+  with the old expanse.
 
 ## 1.12.0 - 2026-10-19
 

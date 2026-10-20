@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -49,11 +50,26 @@ func newApplyRig(t *testing.T) *applyRig {
 	nixos := t.TempDir()
 	os.MkdirAll(filepath.Join(nixos, "expanse/nix"), 0o755)
 	os.WriteFile(filepath.Join(nixos, "expanse/nix/version.nix"), []byte(`"1.11.3"`), 0o644)
-	nx := &fakeNix{built: "/nix/store/abc-nixos-system"}
+	nx := &fakeNix{built: fakeSystem(t, "1.12.0")}
 	return &applyRig{
 		nix: nx, nixos: nixos,
 		u: &Upgrader{Source: r.source(t), Tree: &Tree{Dir: nixos}, Nix: nx, StatusPath: filepath.Join(t.TempDir(), "upgrade.json")},
 	}
+}
+
+// fakeSystem is a built system whose sw/bin/expanse comes from expanse-<version>.
+func fakeSystem(t *testing.T, version string) string {
+	t.Helper()
+	store := t.TempDir()
+	bin := filepath.Join(store, "abc-expanse-"+version, "bin")
+	sys := filepath.Join(store, "def-nixos-system")
+	os.MkdirAll(bin, 0o755)
+	os.WriteFile(filepath.Join(bin, "expanse"), nil, 0o755)
+	os.MkdirAll(filepath.Join(sys, "sw/bin"), 0o755)
+	if err := os.Symlink(filepath.Join(bin, "expanse"), filepath.Join(sys, "sw/bin/expanse")); err != nil {
+		t.Fatal(err)
+	}
+	return sys
 }
 
 func mustRead(t *testing.T, path string) []byte {
@@ -70,7 +86,8 @@ func TestApplyBuildsTheNewSourceThenSetsTheProfileAndSwitches(t *testing.T) {
 	if err := r.u.Apply(context.Background(), "1.12.0", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"build expanse", "profile /nix/store/abc-nixos-system", "switch /nix/store/abc-nixos-system"}
+	sys := r.nix.built
+	want := []string{"build expanse", "profile " + sys, "switch " + sys}
 	if !reflect.DeepEqual(r.nix.calls, want) {
 		t.Errorf("calls = %v, want %v", r.nix.calls, want)
 	}
@@ -78,7 +95,7 @@ func TestApplyBuildsTheNewSourceThenSetsTheProfileAndSwitches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.State != StateDone || st.Version != "1.12.0" || st.From != "1.11.3" || st.System != "/nix/store/abc-nixos-system" {
+	if st.State != StateDone || st.Version != "1.12.0" || st.From != "1.11.3" || st.System != sys {
 		t.Errorf("status = %+v", st)
 	}
 }
@@ -100,6 +117,22 @@ func TestApplyPutsTheOldSourceBackWhenTheBuildFails(t *testing.T) {
 		if c != "build expanse" {
 			t.Errorf("went on after the failed build: %v", r.nix.calls)
 		}
+	}
+}
+
+// A configuration.nix that takes expanse from elsewhere builds the old release from the new source.
+func TestApplyRefusesASystemThatDoesNotRunTheNewRelease(t *testing.T) {
+	r := newApplyRig(t)
+	r.nix.built = fakeSystem(t, "1.11.0")
+	err := r.u.Apply(context.Background(), "1.12.0", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "expanse-1.11.0") {
+		t.Fatalf("err = %v, want one naming expanse-1.11.0", err)
+	}
+	if v, _ := r.u.Tree.Version("expanse"); v != "1.11.3" {
+		t.Errorf("source after a refused build is %q", v)
+	}
+	if !reflect.DeepEqual(r.nix.calls, []string{"build expanse"}) {
+		t.Errorf("went on after the refused build: %v", r.nix.calls)
 	}
 }
 
