@@ -285,7 +285,8 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 		Type:      blk.GetSpec().GetType(),
 	}
 	if cfg := blk.GetSpec().GetConfig(); cfg != nil {
-		if raw, err := cfg.MarshalJSON(); err == nil {
+		// encoding/json, not protojson: protojson's spacing varies by build and would restart blocks on upgrade.
+		if raw, err := json.Marshal(cfg.AsMap()); err == nil {
 			spec.Args = []string{"--config", string(raw)}
 		}
 	}

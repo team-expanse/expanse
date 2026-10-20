@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/expanse/expanse/internal/blocks/vmready"
@@ -156,20 +157,40 @@ func (m *Manager) writeSpec(s Spec) error {
 	return nil
 }
 
-// specOnDiskMatches reports whether the spec file the running unit
-// reads equals the desired spec (canonical JSON comparison). A missing
-// file matches nothing — the unit has never been written for.
+// specOnDiskMatches reports whether the spec file the running unit reads equals the desired spec.
+// Config JSON compares by content, so an agent build that encodes it differently is no drift.
 func (m *Manager) specOnDiskMatches(s Spec) bool {
 	path := filepath.Join(m.specDir(), Instance(s.Namespace, s.Name, s.Index)+".json")
-	onDisk, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	want, err := json.Marshal(s)
-	if err != nil {
+	var onDisk Spec
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
 		return false
 	}
-	return string(onDisk) == string(want)
+	a, errA := json.Marshal(canonicalConfig(onDisk))
+	b, errB := json.Marshal(canonicalConfig(s))
+	return errA == nil && errB == nil && string(a) == string(b)
+}
+
+// canonicalConfig returns s with its --config JSON re-encoded by encoding/json (sorted keys, no spacing).
+func canonicalConfig(s Spec) Spec {
+	i := slices.Index(s.Args, "--config")
+	if i < 0 || i+1 >= len(s.Args) {
+		return s
+	}
+	var v any
+	if err := json.Unmarshal([]byte(s.Args[i+1]), &v); err != nil {
+		return s
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return s
+	}
+	s.Args = slices.Clone(s.Args)
+	s.Args[i+1] = string(out)
+	return s
 }
 
 // removeSpec drops the per-replica spec JSON (resource deletion).

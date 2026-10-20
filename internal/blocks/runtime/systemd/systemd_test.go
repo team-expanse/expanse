@@ -519,3 +519,44 @@ func TestOtherReplicasReportNoReadiness(t *testing.T) {
 		t.Errorf("ready = %v, want unreported", *o.Ready)
 	}
 }
+
+// rewriteSpecFile writes spec as the on-disk spec file, as an older agent would have.
+func rewriteSpecFile(t *testing.T, m *Manager, spec Spec) {
+	t.Helper()
+	b, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(m.SpecDir, Instance(spec.Namespace, spec.Name, spec.Index)+".json")
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An upgraded agent may encode the same block config with other spacing or key order;
+// that must not restart the block, while a real config change still does.
+func TestObserveComparesTheConfigByContent(t *testing.T) {
+	spec := sampleSpec()
+	spec.Args = []string{"--config", `{"a":1,"b":"x"}`, "--cpu", "2"}
+	api := &fakeUnitAPI{states: map[string][3]string{}}
+	m, res := converged(t, api, spec)
+
+	for onDisk, want := range map[string]bool{
+		`{"b":"x",  "a":1}`:          true,
+		"{\"a\": 1, \"b\": \"x\"}\n": true,
+		`{"a":1,"b":"y"}`:            false,
+		`{"a":1}`:                    false,
+		`not json`:                   false,
+	} {
+		old := spec
+		old.Args = []string{"--config", onDisk, "--cpu", "2"}
+		rewriteSpecFile(t, m, old)
+		o, err := m.Observe(context.Background(), res)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o.InSync != want {
+			t.Errorf("on-disk config %q: in_sync=%v, want %v", onDisk, o.InSync, want)
+		}
+	}
+}

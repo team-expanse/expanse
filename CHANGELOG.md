@@ -6,6 +6,15 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- Upgrading a node no longer restarts its blocks that have more than one config field. Each
+  agent build spaced a block's config JSON its own way, and the new agent took the difference
+  for a config change. Configs are now encoded the same way by every build and compared by
+  content, so an upgrade from 1.12.2 or earlier keeps them running too.
+
 ## 1.12.2 - 2026-10-20
 
 ### Fixed

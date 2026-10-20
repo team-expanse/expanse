@@ -7,6 +7,10 @@ Runs after cluster-common.py, block-common.py (json), vol_cluster.py and single_
 APP_MOUNT = "/mnt/app-data"
 APP_VOL = "blk-default-app-data"
 APP_UNIT = "expanse-block@default-app-0.service"
+APP_SPEC = "/run/expanse/block-replica/default-app-0.json"
+# Shell words: put a space after each comma in the spec's escaped --config JSON, and find one.
+RESPACE = "'s/,\\\\\"/, \\\\\"/g'"
+SPACED = "', \\\"'"
 NEW_VERSION = "99.0.0-upgraded"
 
 APP_MANIFEST = f"""apiVersion: expanse.io/v1
@@ -93,6 +97,12 @@ try:
         wait_agent_ready(n1)
         assert_untouched(pid, "an agent restart")
         n1.succeed("journalctl -u expansed.service | grep -q 'left primary for the next agent'")
+
+    with subtest("a config encoded with other spacing, as another agent build may write it, is no drift"):
+        n1.succeed(f"sed -i {RESPACE} {APP_SPEC}")
+        n1.succeed(f"grep -qF {SPACED} {APP_SPEC}")
+        n1.wait_until_succeeds(f"! grep -qF {SPACED} {APP_SPEC}", timeout=60)
+        assert_untouched(pid, "a respaced config")
 
     with subtest("switching to a new expanse build leaves the block and its volume alone"):
         n1.succeed("/run/current-system/specialisation/upgraded/bin/switch-to-configuration test")

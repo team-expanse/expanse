@@ -814,3 +814,25 @@ func TestBridgeLeavesTheReconcilersStatusRecordsAlone(t *testing.T) {
 		}
 	}
 }
+
+// The block config is encoded the same way by every agent build (protojson's spacing is not),
+// so an upgraded agent sees no spec drift.
+func TestReplicaSpecEncodesTheConfigCanonically(t *testing.T) {
+	cfg, err := structpb.NewStruct(map[string]any{"zeta": "z", "alpha": 1, "mid": map[string]any{"b": true, "a": []any{"x", 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk := &pb.Block{Spec: &pb.BlockSpec{Type: "util/echo", Config: cfg}}
+	raw, err := replicaSpec(blk, "default", "echo", 0, map[string]volumeRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec systemd.Spec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"alpha":1,"mid":{"a":["x",2],"b":true},"zeta":"z"}`
+	if len(spec.Args) < 2 || spec.Args[0] != "--config" || spec.Args[1] != want {
+		t.Errorf("Args = %q, want --config %s", spec.Args, want)
+	}
+}
