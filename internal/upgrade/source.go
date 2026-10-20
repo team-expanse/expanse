@@ -35,14 +35,18 @@ func (t *Tree) Install(tarball, version string) error {
 		_ = os.RemoveAll(next)
 		return err
 	}
-	if got, err := t.Version(nextDir); err != nil || got != version {
+	got, err := t.Version(nextDir)
+	if err == nil && got != version {
+		err = fmt.Errorf("the tarball holds release %q, not %s", got, version)
+	}
+	if err != nil {
 		_ = os.RemoveAll(next)
-		return fmt.Errorf("the tarball holds release %q, not %s: %w", got, version, err)
+		return err
 	}
 	if err := os.RemoveAll(filepath.Join(t.Dir, previousDir)); err != nil {
 		return err
 	}
-	err := os.Rename(filepath.Join(t.Dir, currentDir), filepath.Join(t.Dir, previousDir))
+	err = os.Rename(filepath.Join(t.Dir, currentDir), filepath.Join(t.Dir, previousDir))
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -66,13 +70,18 @@ func (t *Tree) Restore() error {
 	return os.Rename(prev, cur)
 }
 
-// Version reads the release a source directory under Dir holds (nix/version.nix).
+// Version reads the release a source directory under Dir holds (nix/version.nix), skipping comments.
 func (t *Tree) Version(dir string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(t.Dir, dir, "nix", "version.nix"))
 	if err != nil {
 		return "", err
 	}
-	return strings.Trim(strings.TrimSpace(string(b)), `"`), nil
+	for line := range strings.Lines(string(b)) {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			return strings.Trim(line, `"`), nil
+		}
+	}
+	return "", fmt.Errorf("%s/nix/version.nix names no release", dir)
 }
 
 // unpack extracts a tarball, gzipped or not, into dest. With top set, every entry must sit

@@ -5,6 +5,8 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -72,11 +74,40 @@ func TestInstallSwapsTheSourceAndKeepsThePrevious(t *testing.T) {
 
 func TestInstallRefusesATarballOfAnotherVersion(t *testing.T) {
 	tree := &Tree{Dir: t.TempDir()}
-	if err := tree.Install(writeTarball(t, release("1.11.0")), "1.12.0"); err == nil {
+	entries := release("1.12.0")
+	entries["expanse-1.12.0/nix/version.nix"] = `"1.11.0"`
+	err := tree.Install(writeTarball(t, entries), "1.12.0")
+	if err == nil {
 		t.Fatal("a 1.11.0 tarball was installed as 1.12.0")
+	}
+	if strings.Contains(err.Error(), "%!") {
+		t.Errorf("garbled error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tree.Dir, "expanse")); !os.IsNotExist(err) {
 		t.Error("a refused tarball still replaced the source")
+	}
+}
+
+// Releases' nix/version.nix may start with comment lines.
+func TestInstallReadsAVersionFileWithComments(t *testing.T) {
+	entries := release("1.12.2")
+	entries["expanse-1.12.2/nix/version.nix"] = "# The release version.\n\"1.12.2\"\n"
+	tree := &Tree{Dir: t.TempDir()}
+	if err := tree.Install(writeTarball(t, entries), "1.12.2"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Nodes on 1.12.0 and 1.12.1 read a release's version.nix as one quoted line, so the repo's
+// must stay that way for them to upgrade.
+func TestTheRepoVersionFileReadsAsOldUpgradersReadIt(t *testing.T) {
+	b, err := os.ReadFile("../../nix/version.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`).MatchString(v) {
+		t.Errorf("1.12.0's upgrader reads nix/version.nix as %q", v)
 	}
 }
 
