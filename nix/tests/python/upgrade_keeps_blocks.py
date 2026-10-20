@@ -8,9 +8,9 @@ APP_MOUNT = "/mnt/app-data"
 APP_VOL = "blk-default-app-data"
 APP_UNIT = "expanse-block@default-app-0.service"
 APP_SPEC = "/run/expanse/block-replica/default-app-0.json"
-# Shell words: put a space after each comma in the spec's escaped --config JSON, and find one.
-RESPACE = "'s/,\\\\\"/, \\\\\"/g'"
-SPACED = "', \\\"'"
+# Shell words: a space after the --config JSON's opening brace, which no agent build writes; and a match for it.
+RESPACE = """'s/"--config","{/"--config","{ /'"""
+SPACED = """'"--config","{ '"""
 NEW_VERSION = "99.0.0-upgraded"
 
 APP_MANIFEST = f"""apiVersion: expanse.io/v1
@@ -53,6 +53,11 @@ def main_pid():
 
 def lines_written():
     return int(n1.succeed(f"wc -l < {app_mount()}/writer.log").strip())
+
+
+def ticks():
+    out = n1.succeed("journalctl -u expansed.service -o cat | grep -c 'msg=\"tick complete\"' || true")
+    return int(out.strip() or 0)
 
 
 def assert_untouched(pid, what):
@@ -99,9 +104,11 @@ try:
         n1.succeed("journalctl -u expansed.service | grep -q 'left primary for the next agent'")
 
     with subtest("a config encoded with other spacing, as another agent build may write it, is no drift"):
+        n1.fail(f"grep -qF {SPACED} {APP_SPEC}")
         n1.succeed(f"sed -i {RESPACE} {APP_SPEC}")
         n1.succeed(f"grep -qF {SPACED} {APP_SPEC}")
-        n1.wait_until_succeeds(f"! grep -qF {SPACED} {APP_SPEC}", timeout=60)
+        before = ticks()
+        wait_for(lambda: ticks() >= before + 3, "three reconcile ticks over the respaced spec", 60)
         assert_untouched(pid, "a respaced config")
 
     with subtest("switching to a new expanse build leaves the block and its volume alone"):
