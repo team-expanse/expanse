@@ -48,7 +48,7 @@ needs that binding changed to `expanse = ./expanse;` first; otherwise the script
 build would still run the old release.
 
 You need root on every node, and the nodes need to reach github.com and cache.nixos.org. Below,
-`V` is the release (for example `1.12.0`) and `NODE` is a node's hostname.
+`V` is the release (for example `1.12.1`) and `NODE` is a node's hostname.
 
 **1. Check the cluster and pick the order.** On any node:
 
@@ -73,7 +73,7 @@ On a single-node cluster there is nowhere to move them: run
 **3. Run the upgrade on the node.** Fetch the script from the release's tag and run it:
 
 ```sh
-V=1.12.0
+V=1.12.1
 curl -fsSLO https://raw.githubusercontent.com/team-expanse/expanse/v$V/scripts/upgrade-node.sh
 bash upgrade-node.sh $V
 ```
@@ -90,8 +90,7 @@ wait for the node to come back.
 **Or, without draining: `bash upgrade-node.sh --boot $V`.** It builds the release and makes it the
 boot default without switching, so the node's blocks keep running until you reboot it; then
 skip step 2 and reboot in step 4 when it suits you. The blocks restart once, at the reboot. This
-suits a single node, whose blocks cannot move anyway. `--boot` is new after 1.12.0: until a later
-release, fetch the script from `main` instead of `v$V`.
+suits a single node, whose blocks cannot move anyway. `--boot` is in the script from 1.12.1 on.
 
 **5. Uncordon it and wait for the cluster:**
 
@@ -110,7 +109,7 @@ cluster** while any node still runs 1.11: it never reports back, and the rollout
 The same steps by hand, if you would rather not run the script:
 
 ```sh
-V=1.12.0
+V=1.12.1
 url=https://github.com/team-expanse/expanse/releases/download/v$V
 work=/var/cache/expanse/upgrade/$V
 mkdir -p $work && cd $work
