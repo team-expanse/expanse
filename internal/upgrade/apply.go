@@ -76,6 +76,9 @@ func (u *Upgrader) run(ctx context.Context, st *Status, logs io.Writer) error {
 	if err := u.step(st, StateFetching); err != nil {
 		return err
 	}
+	if err := u.Source.Prune(st.Version); err != nil {
+		fmt.Fprintf(logs, "removing old downloads: %v\n", err)
+	}
 	rel, err := u.Source.Fetch(ctx, st.Version)
 	if err != nil {
 		return err
@@ -113,6 +116,9 @@ func (u *Upgrader) run(ctx context.Context, st *Status, logs io.Writer) error {
 	st.RebootNeeded = u.rebootNeeded(st.System)
 	if err := u.Nix.Switch(ctx, st.System); err != nil {
 		return fmt.Errorf("switch: %w", err)
+	}
+	if err := u.Source.Prune(""); err != nil {
+		fmt.Fprintf(logs, "removing the downloads: %v\n", err)
 	}
 	return nil
 }

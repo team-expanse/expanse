@@ -90,6 +90,22 @@ func (s *Source) Fetch(ctx context.Context, version string) (*Fetched, error) {
 	return out, nil
 }
 
+// Prune removes every release's downloads from CacheDir except keep's ("" keeps none).
+func (s *Source) Prune(keep string) error {
+	ents, err := os.ReadDir(s.CacheDir)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, e := range ents {
+		if e.IsDir() && e.Name() != keep && versionRE.MatchString(e.Name()) {
+			if err := os.RemoveAll(filepath.Join(s.CacheDir, e.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Source) url(version, name string) string {
 	base := s.BaseURL
 	if base == "" {

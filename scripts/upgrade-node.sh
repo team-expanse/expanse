@@ -18,7 +18,7 @@ Moves this node to release VERSION (e.g. 1.12.0). Drain the node first
                    (default https://github.com/team-expanse/expanse/releases/download)
   --key KEY        public key the release is signed with (default: the Expanse release key)
   --nixos-dir DIR  the node's NixOS config, holding expanse/ (default /etc/nixos)
-  --cache-dir DIR  where downloads and the log are kept (default /var/cache/expanse/upgrade)
+  --cache-dir DIR  where downloads (until the upgrade succeeds) and the log go (default /var/cache/expanse/upgrade)
   --yes            skip the "is this node drained?" question
   --boot           build and make it the boot default without switching: running blocks are left
                    alone until you reboot, so no drain is needed
@@ -94,6 +94,9 @@ built_release() {
   echo "${bin#*-}"
 }
 
+# drop_downloads DIR: remove a release's downloads from DIR, keeping its log.
+drop_downloads() { find "$1" -mindepth 1 -maxdepth 1 ! -name upgrade-node.log -exec rm -rf {} +; }
+
 restore_source() {
   rm -rf "$nixos/expanse"
   if [[ $fresh == 0 ]]; then mv "$nixos/expanse.prev" "$nixos/expanse"; fi
@@ -132,6 +135,10 @@ main() {
     [[ $ok == [yY]* ]] || die "stopped; drain the node first"
   fi
 
+  local d
+  for d in "$cache_dir"/*/; do
+    [[ $d == "$work/" || ! $(basename "$d") =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || drop_downloads "$d"
+  done
   say "verifying the release signature"
   fetch "$work" SHA256SUMS
   fetch "$work" SHA256SUMS.sig
@@ -160,6 +167,7 @@ main() {
     die "the built system runs ${built:-no expanse}, not expanse-$ver: $nixos/configuration.nix must import ./expanse (see docs/UPGRADE.md); nothing was changed"
   fi
   nix-env -p /nix/var/nix/profiles/system --set "$sys"
+  drop_downloads "$work"
   if [[ $mode == boot ]]; then
     "$sys/bin/switch-to-configuration" boot || die "switch-to-configuration boot failed"
     say "done: $sys is the boot default; reboot this node to finish (the old system stays in the boot menu)"

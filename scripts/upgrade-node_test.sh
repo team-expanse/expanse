@@ -105,8 +105,17 @@ grep -qF -- "--set $sys" "$tmp/nix-env.args" || fail "upgrade: profile not set"
 [[ $(cat "$tmp/switched" 2>/dev/null) == switch ]] || fail "upgrade: no switch"
 [[ -s $tmp/cache/9.9.9/upgrade-node.log ]] || fail "upgrade: no log"
 grep -q "reboot this node" <<<"$out" && fail "upgrade: asks for a reboot with the booted kernel, initrd and modules"
+[[ $(ls "$tmp/cache/9.9.9") == upgrade-node.log ]] || fail "upgrade: downloads kept after the upgrade: $(ls "$tmp/cache/9.9.9")"
 
-# A rerun reuses downloads that still match SHA256SUMS.
+# Another release's downloads go before a fetch; its log stays.
+node
+mkdir -p "$tmp/cache/1.11.3" && touch "$tmp/cache/1.11.3/expanse-1.11.3.tar.gz" "$tmp/cache/1.11.3/upgrade-node.log"
+touch "$tmp/build-fails"
+upgrade 9.9.9
+[[ $(ls "$tmp/cache/1.11.3") == upgrade-node.log ]] || fail "prune: old downloads kept: $(ls "$tmp/cache/1.11.3")"
+[[ -f $tmp/cache/9.9.9/expanse-9.9.9.tar.gz ]] || fail "prune: a failed upgrade dropped its downloads"
+
+# A rerun after a failure reuses downloads that still match SHA256SUMS.
 node keep-cache
 mkdir -p "$tmp/held"
 mv "$tmp/rel/v9.9.9/expanse-9.9.9"* "$tmp/held/"

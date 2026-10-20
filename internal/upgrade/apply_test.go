@@ -17,11 +17,13 @@ type fakeNix struct {
 	switchErr error
 	built     string
 	subst     string
+	substInfo error // stat of the substituter's nix-cache-info at build time
 }
 
 func (f *fakeNix) BuildSystem(_ context.Context, file, substituter string, _ io.Writer) (string, error) {
 	f.calls = append(f.calls, "build "+filepath.Base(filepath.Dir(filepath.Dir(file))))
 	f.subst = substituter
+	_, f.substInfo = os.Stat(filepath.Join(strings.TrimPrefix(substituter, "file://"), "nix-cache-info"))
 	if f.buildErr != nil {
 		return "", f.buildErr
 	}
@@ -159,18 +161,42 @@ func TestApplyUsesTheReleaseCacheAsASubstituter(t *testing.T) {
 	if err := r.u.Apply(context.Background(), "1.12.0", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	dir, ok := cutPrefix(r.nix.subst, "file://")
-	if !ok {
+	if !strings.HasPrefix(r.nix.subst, "file://") {
 		t.Fatalf("substituter = %q", r.nix.subst)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "nix-cache-info")); err != nil {
-		t.Errorf("the cache was not unpacked where the substituter points: %v", err)
+	if r.nix.substInfo != nil {
+		t.Errorf("the cache was not unpacked where the substituter points: %v", r.nix.substInfo)
 	}
 }
 
-func cutPrefix(s, p string) (string, bool) {
-	if len(s) < len(p) || s[:len(p)] != p {
-		return "", false
+// Downloads are dropped once the node runs the release; other releases' downloads go before a fetch.
+func TestApplyRemovesDownloadsItNoLongerNeeds(t *testing.T) {
+	r := newApplyRig(t)
+	cache := r.u.Source.CacheDir
+	old := filepath.Join(cache, "1.11.3")
+	os.MkdirAll(old, 0o750)
+	os.WriteFile(filepath.Join(old, "expanse-1.11.3.tar.gz"), []byte("old"), 0o644)
+	os.WriteFile(filepath.Join(cache, "notes"), []byte("not a release"), 0o644)
+
+	r.nix.buildErr = errors.New("builder failed")
+	if err := r.u.Apply(context.Background(), "1.12.0", io.Discard); err == nil {
+		t.Fatal("a failed build was reported as success")
 	}
-	return s[len(p):], true
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("another release's downloads survived a fetch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "1.12.0", "expanse-1.12.0.tar.gz")); err != nil {
+		t.Errorf("a failed upgrade dropped its downloads: %v", err)
+	}
+
+	r.nix.buildErr = nil
+	if err := r.u.Apply(context.Background(), "1.12.0", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "1.12.0")); !os.IsNotExist(err) {
+		t.Errorf("downloads survived a finished upgrade: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cache, "notes")); err != nil {
+		t.Errorf("a file that is no release's downloads was removed: %v", err)
+	}
 }

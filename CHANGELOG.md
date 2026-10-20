@@ -16,6 +16,9 @@ History before 1.0.0 is not recorded here.
   content, so an upgrade from 1.12.2 or earlier keeps them running too.
 - The web UI keeps its TLS certificate across agent restarts and upgrades, so a browser that
   accepted it is not asked again. A node issued a new one at every start.
+- Upgrades remove the release downloads (source tarball and binary cache, several GB) once the
+  node runs the release, and remove an earlier release's downloads before fetching. Both the web
+  UI's upgrades and `scripts/upgrade-node.sh` kept every download. The script keeps its log.
 
 ## 1.12.2 - 2026-10-20
 
