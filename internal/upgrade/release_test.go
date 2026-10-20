@@ -131,3 +131,9 @@ func TestSignProducesWhatFetchVerifies(t *testing.T) {
 		t.Error("accepted a key that is not name:base64")
 	}
 }
+
+func TestTheBuildCarriesTheReleaseKey(t *testing.T) {
+	if !strings.HasPrefix(ReleaseKey(), "expanse-release-1:") {
+		t.Fatalf("release key = %q", ReleaseKey())
+	}
+}
