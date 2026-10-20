@@ -77,8 +77,15 @@ It asks whether the node is drained, then logs everything to
 release's signature or checksums do not match, and puts the previous source back if the build
 fails.
 
-**4. Reboot if it says so.** When the kernel changed, it ends with "reboot this node to finish":
-`systemctl reboot`, then wait for the node to come back.
+**4. Reboot if it says so.** When the kernel, initrd or kernel modules changed (moving from 1.11
+they do, for the DRBD module), it ends with "reboot this node to finish": `systemctl reboot`, then
+wait for the node to come back.
+
+**Or, without draining: `bash upgrade-node.sh --boot $V`.** It builds the release and makes it the
+boot default without switching, so the node's blocks keep running until you reboot it; then
+skip step 2 and reboot in step 4 when it suits you. The blocks restart once, at the reboot. This
+suits a single node, whose blocks cannot move anyway. `--boot` is new after 1.12.0: until a later
+release, fetch the script from `main` instead of `v$V`.
 
 **5. Uncordon it and wait for the cluster:**
 
@@ -125,7 +132,7 @@ sys=$(nix-build expanse/nix/node-system.nix -A config.system.build.toplevel --no
   --option extra-substituters file://$work/cache \
   --option extra-trusted-public-keys expanse-release-1:AnEv4AWuSplcqvtjB9OmACQbT6qfPSv82MjwzBSaLFM=)
 nix-env -p /nix/var/nix/profiles/system --set "$sys"
-"$sys"/bin/switch-to-configuration switch
+"$sys"/bin/switch-to-configuration switch     # or: boot, and reboot later (--boot)
 ```
 
 The build substitutes everything: from cache.nixos.org, and from the release's own cache for what

@@ -6,6 +6,13 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- `scripts/upgrade-node.sh --boot` builds the release and makes it the boot default without
+  switching, so a node's blocks keep running until it is rebooted; no drain is needed.
+
 ## 1.12.0 - 2026-10-19
 
 ### Added

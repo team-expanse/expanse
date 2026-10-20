@@ -102,6 +102,16 @@ grep -qF -- "--set $sys" "$tmp/nix-env.args" || fail "upgrade: profile not set"
 [[ -s $tmp/cache/9.9.9/upgrade-node.log ]] || fail "upgrade: no log"
 grep -q "reboot this node" <<<"$out" && fail "upgrade: asks for a reboot with the booted kernel, initrd and modules"
 
+# --boot: no drain question (stdin is closed), the new system is only made the boot default.
+node
+rc=0
+out=$("$here/upgrade-node.sh" --base-url "file://$tmp/rel" --key "$test_key" --nixos-dir "$tmp/nixos" \
+  --cache-dir "$tmp/cache" --boot 9.9.9 2>&1 </dev/null) || rc=$?
+[[ $rc == 0 ]] || fail "boot: rc $rc: $out"
+[[ $(cat "$tmp/switched" 2>/dev/null) == boot ]] || fail "boot: switch-to-configuration not run with boot"
+grep -qF -- "--set $sys" "$tmp/nix-env.args" || fail "boot: profile not set"
+grep -q "reboot this node" <<<"$out" || fail "boot: does not ask for a reboot"
+
 node
 upgrade 9.9.9 --key "$(cat "$here/../internal/upgrade/release-key.pub")"
 expect_fail wrong-key "is not signed by expanse-release-1"

@@ -9,7 +9,7 @@ release_key=expanse-release-1:AnEv4AWuSplcqvtjB9OmACQbT6qfPSv82MjwzBSaLFM=
 
 usage() {
   cat <<'EOF'
-Usage: upgrade-node.sh [--base-url URL] [--key NAME:BASE64] [--nixos-dir DIR] [--cache-dir DIR] [--yes] VERSION
+Usage: upgrade-node.sh [--base-url URL] [--key NAME:BASE64] [--nixos-dir DIR] [--cache-dir DIR] [--yes] [--boot] VERSION
 
 Moves this node to release VERSION (e.g. 1.12.0). Drain the node first
 (expanse ctl node drain <hostname>) and upgrade one node at a time.
@@ -20,6 +20,8 @@ Moves this node to release VERSION (e.g. 1.12.0). Drain the node first
   --nixos-dir DIR  the node's NixOS config, holding expanse/ (default /etc/nixos)
   --cache-dir DIR  where downloads and the log are kept (default /var/cache/expanse/upgrade)
   --yes            skip the "is this node drained?" question
+  --boot           build and make it the boot default without switching: running blocks are left
+                   alone until you reboot, so no drain is needed
 EOF
 }
 
@@ -95,14 +97,14 @@ reboot_needed() {
 }
 
 main() {
-  local base=https://github.com/team-expanse/expanse/releases/download yes=0
+  local base=https://github.com/team-expanse/expanse/releases/download yes=0 mode=switch
   local cache_dir=/var/cache/expanse/upgrade
   key=$release_key nixos=/etc/nixos
   while (($#)); do
     case $1 in
       --base-url) base=${2:?}; shift ;; --key) key=${2:?}; shift ;; --nixos-dir) nixos=${2:?}; shift ;;
       --cache-dir) cache_dir=${2:?}; shift ;;
-      --yes) yes=1 ;; -h | --help) usage; exit 0 ;; -*) usage >&2; exit 2 ;; *) ver=$1 ;;
+      --yes) yes=1 ;; --boot) mode=boot ;; -h | --help) usage; exit 0 ;; -*) usage >&2; exit 2 ;; *) ver=$1 ;;
     esac
     shift
   done
@@ -113,7 +115,7 @@ main() {
   mkdir -p "$work"
   exec > >(tee "$work/upgrade-node.log") 2>&1
   say "upgrading $(hostname) from $(expanse version 2>/dev/null | head -1 || echo unknown) to $ver; log: $work/upgrade-node.log"
-  if [[ $yes == 0 ]]; then
+  if [[ $yes == 0 && $mode == switch ]]; then
     read -r -p "Is this node drained (expanse ctl node drain $(hostname)) and the cluster otherwise healthy? [y/N] " ok
     [[ $ok == [yY]* ]] || die "stopped; drain the node first"
   fi
@@ -140,8 +142,13 @@ main() {
     restore_source
     die "the build failed; the previous source is back in $nixos/expanse"
   fi
-  say "switching to $sys"
   nix-env -p /nix/var/nix/profiles/system --set "$sys"
+  if [[ $mode == boot ]]; then
+    "$sys/bin/switch-to-configuration" boot || die "switch-to-configuration boot failed"
+    say "done: $sys is the boot default; reboot this node to finish (the old system stays in the boot menu)"
+    return
+  fi
+  say "switching to $sys"
   "$sys/bin/switch-to-configuration" switch || die "switch-to-configuration failed; the new system is the boot default, the old one is still in the boot menu"
   if reboot_needed /run/booted-system "$sys"; then
     say "the kernel, initrd or kernel modules changed: reboot this node to finish, before upgrading the next one"
