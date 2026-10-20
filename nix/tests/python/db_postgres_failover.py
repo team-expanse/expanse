@@ -308,4 +308,14 @@ with subtest("every acknowledged write survived the failover -- no acked transac
     )
     print(f"verified all {len(acked_ids)} acknowledged writes survived failover onto {new_primary_name}")
 
+with subtest("the replication password stays out of postgresql.auto.conf and the block's log"):
+    for name in survivor_names:
+        m = NODE_BY_NAME[name]
+        autoconfs = "/var/lib/expanse/volumes/*/mnt/pgdata/postgresql.auto.conf"
+        m.fail(f"grep -F {REPL_PASSWORD} {autoconfs}")
+        m.fail(f"journalctl -u 'expanse-block*' --no-pager | grep -F {REPL_PASSWORD}")
+    standby = next(n for n in survivor_names if n != new_primary_name)
+    NODE_BY_NAME[standby].succeed(
+        "grep -q \"primary_conninfo = .*passfile=\" /var/lib/expanse/volumes/*/mnt/pgdata/postgresql.auto.conf")
+
 print("DB-POSTGRES-FAILOVER DONE")

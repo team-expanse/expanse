@@ -741,3 +741,37 @@ func TestPgCmdPassesStdinAndEnv(t *testing.T) {
 		t.Fatalf("pgCmd: %v", err)
 	}
 }
+
+// The replication password lives in a 0600 passfile, rewritten at each start in case it changed.
+func TestWritePGPassfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pgpass")
+	if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePGPassfile(path, "s3:cret"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	fi, _ := os.Stat(path)
+	if string(got) != `*:*:*:replicator:s3\:cret`+"\n" || fi.Mode().Perm() != 0o600 {
+		t.Errorf("passfile = %q, mode %v; want the replicator entry, 0600", got, fi.Mode().Perm())
+	}
+}
+
+// A standby cloned before 1.12.3 keeps its password in postgresql.auto.conf; a start moves it to the passfile.
+func TestScrubStandbyConninfo(t *testing.T) {
+	pgdata := t.TempDir()
+	auto := filepath.Join(pgdata, "postgresql.auto.conf")
+	os.WriteFile(auto, []byte("primary_conninfo = 'user=replicator password=s3cret host=10.0.0.2'\n"), 0o600)
+	if err := scrubStandbyConninfo(pgdata, "/m/pgpass"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(auto)
+	if string(got) != "primary_conninfo = 'user=replicator host=10.0.0.2 passfile=/m/pgpass'\n" {
+		t.Errorf("auto.conf = %q", got)
+	}
+	os.Remove(auto)
+	if err := scrubStandbyConninfo(pgdata, "/m/pgpass"); err != nil {
+		t.Errorf("a missing auto.conf is not an error: %v", err)
+	}
+}

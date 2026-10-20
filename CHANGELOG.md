@@ -19,6 +19,10 @@ History before 1.0.0 is not recorded here.
 - Upgrades remove the release downloads (source tarball and binary cache, several GB) once the
   node runs the release, and remove an earlier release's downloads before fetching. Both the web
   UI's upgrades and `scripts/upgrade-node.sh` kept every download. The script keeps its log.
+- A `db/postgres` block's replication password no longer reaches `postgresql.auto.conf` or the
+  block's log. Standbys connect with a libpq passfile on their volume (0600) instead, and a standby
+  cloned by an earlier release has its stored connection string rewritten at its next start.
+  Earlier failovers logged the password in the block's journal, so rotate it if that matters.
 
 ## 1.12.2 - 2026-10-20
 

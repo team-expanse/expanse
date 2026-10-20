@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/expanse/expanse/internal/blocks/pgconn"
 	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/network/vip"
@@ -976,10 +977,15 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 		return fmt.Errorf("db/postgres: %w", err)
 	}
 
+	passfile := pgconn.PassfilePath(mountPath)
+	if err := writePGPassfile(passfile, replPassword); err != nil {
+		return fmt.Errorf("db/postgres: %w", err)
+	}
+
 	roleFile := filepath.Join(stateDir, "role")
 	if _, err := os.Stat(filepath.Join(pgdata, "PG_VERSION")); err != nil {
 		slot := pgSlotName(instance)
-		if err := bootstrapPostgres(ctx, pgdata, roleFile, sockDir,
+		if err := bootstrapPostgres(ctx, pgdata, roleFile, sockDir, passfile,
 			port, database, replPassword, superPassword, slot,
 			sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
 			return fmt.Errorf("db/postgres: %w", err)
@@ -993,9 +999,14 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 	// clean shutdown -- exactly the case that must instead force a
 	// non-zero return here, so systemd's Restart=on-failure actually
 	// restarts the unit and re-bootstraps fresh (X4).
+	watching := isLocalPrimary(pgdata)
+	if !watching {
+		if err := scrubStandbyConninfo(pgdata, passfile); err != nil {
+			return fmt.Errorf("db/postgres: %w", err)
+		}
+	}
 	var demoted atomic.Bool
 	demoteDone := make(chan struct{})
-	watching := isLocalPrimary(pgdata)
 	if watching {
 		go func() {
 			watchForDemotion(ctx, roleFile, pgdata, pgDemotePollInterval, &demoted)
@@ -1036,6 +1047,39 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 // budget to race here, just a "don't sit diverged any longer than
 // necessary" one.
 const pgDemotePollInterval = 3 * time.Second
+
+// writePGPassfile writes the replicator's libpq passfile (0600, as libpq requires).
+func writePGPassfile(path, password string) error {
+	return writeFileAtomic(path, []byte(pgconn.PassfileLine(password)), 0o600)
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// scrubStandbyConninfo moves a standby's primary_conninfo from a password to the passfile.
+func scrubStandbyConninfo(pgdata, passfile string) error {
+	path := filepath.Join(pgdata, "postgresql.auto.conf")
+	conf, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	out, changed := pgconn.ScrubAutoConf(string(conf), passfile)
+	if !changed {
+		return nil
+	}
+	return writeFileAtomic(path, []byte(out), 0o600)
+}
 
 // isLocalPrimary reports whether pgdata's own on-disk state currently
 // configures it as a primary rather than a streaming standby.
@@ -1568,7 +1612,7 @@ func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string)
 // documents: wait for the controller's role decision, then either
 // initdb a fresh primary (and create the replicator role + initial
 // database) or pg_basebackup from the elected primary as a standby.
-func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, database, replPassword, superPassword, slot,
+func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, passfile, port, database, replPassword, superPassword, slot,
 	sharedBuffers string, maxWalSenders, maxReplicationSlots int,
 ) error {
 	kind, host, peerport, err := waitForPGRole(ctx, roleFile, pgBootstrapTimeout, time.Second)
@@ -1636,7 +1680,8 @@ func bootstrapPostgres(ctx context.Context, pgdata, roleFile, sockDir, port, dat
 		// eventually connect and authenticate against it.
 		return writePGConf(pgdata, sockDir, port, sharedBuffers, maxWalSenders, maxReplicationSlots, true)
 	case "replica":
-		env := []string{"PGPASSWORD=" + replPassword}
+		// A passfile, not PGPASSWORD: pg_basebackup -R copies the connection's password into postgresql.auto.conf.
+		env := []string{"PGPASSFILE=" + passfile}
 		// Create the slot as its own idempotent step rather than via
 		// pg_basebackup's own -C: found via the X1 VM test, a transient
 		// backup failure (once, a WAL segment recycled out from under a

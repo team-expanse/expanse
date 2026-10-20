@@ -22,6 +22,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/blocks/controller"
+	"github.com/expanse/expanse/internal/blocks/pgconn"
 	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/cluster/lease"
@@ -368,8 +369,7 @@ func (a *Agent) pgReconfigure(inst pgha.Instance, newHost string) error {
 	}
 
 	sockDir := filepath.Join(inst.MountPath, ".expanse-postgres", "sock")
-	conninfo := fmt.Sprintf("host=%s port=%d user=replicator password=%s application_name=expanse",
-		newHost, inst.Port, inst.ReplPassword)
+	conninfo := pgconn.Replication(newHost, inst.Port, pgconn.PassfilePath(inst.MountPath))
 	retarget := fmt.Sprintf(
 		"ALTER SYSTEM SET primary_conninfo = %s; ALTER SYSTEM SET primary_slot_name = %s; SELECT pg_reload_conf();",
 		sqlQuote(conninfo), sqlQuote(slot))

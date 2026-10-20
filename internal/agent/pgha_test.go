@@ -339,10 +339,15 @@ func TestPgReconfigureCreatesSlotOnNewPrimaryThenRetargetsLocally(t *testing.T) 
 	if retargetCall.user != "postgres" || retargetCall.password != "" {
 		t.Errorf("retarget authenticated as %q/%q, want postgres over the local trust rule (no password)", retargetCall.user, retargetCall.password)
 	}
-	for _, want := range []string{"primary_conninfo", "192.168.1.9", wantSlot, "pg_reload_conf"} {
+	passfile := "passfile=/var/lib/expanse/volumes/vol-a/mnt/.expanse-postgres/pgpass"
+	for _, want := range []string{"primary_conninfo", "192.168.1.9", wantSlot, "pg_reload_conf", passfile} {
 		if !strings.Contains(retargetCall.sql, want) {
 			t.Errorf("retarget SQL %q missing %q", retargetCall.sql, want)
 		}
+	}
+	// postgres logs a reloaded primary_conninfo, and ALTER SYSTEM writes it to postgresql.auto.conf.
+	if strings.Contains(retargetCall.sql, "repl-s3cret") || strings.Contains(retargetCall.sql, "password") {
+		t.Errorf("retarget SQL carries the replication password: %q", retargetCall.sql)
 	}
 }
 
