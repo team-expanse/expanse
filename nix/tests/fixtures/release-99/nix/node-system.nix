@@ -1,3 +1,11 @@
-# The rollout test's "release": each node's prebuilt specialisation, so upgrading builds nothing.
+# The rollout test's "release": a link to each node's prebuilt specialisation, so nothing compiles.
 { ... }:
-{ config.system.build.toplevel = builtins.storePath "/run/current-system/specialisation/upgraded"; }
+let upgraded = builtins.storePath "/run/current-system/specialisation/upgraded";
+in {
+  config.system.build.toplevel = derivation {
+    name = "nixos-system-upgraded";
+    system = builtins.currentSystem;
+    builder = "/bin/sh";
+    args = [ "-c" "exec ${upgraded}/sw/bin/ln -s ${upgraded} $out" ];
+  };
+}

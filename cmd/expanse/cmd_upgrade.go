@@ -58,6 +58,8 @@ func newUpgradeApplyCmd() *cobra.Command {
 		Use:   "apply VERSION",
 		Short: "Fetch, verify, build and switch to a release (blocks until done)",
 		Args:  cobra.ExactArgs(1),
+		// A failed upgrade is not a usage mistake; its log should end with the reason.
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if key == "" {
 				key = upgrade.ReleaseKey()

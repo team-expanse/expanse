@@ -15,6 +15,8 @@ import (
 // copy of the running release; expanse.prev is the one before it.
 type Tree struct {
 	Dir string // /etc/nixos
+	// fresh: the last Install found no source to keep, so Restore removes the new one.
+	fresh bool
 }
 
 const (
@@ -40,14 +42,19 @@ func (t *Tree) Install(tarball, version string) error {
 	if err := os.RemoveAll(filepath.Join(t.Dir, previousDir)); err != nil {
 		return err
 	}
-	if err := os.Rename(filepath.Join(t.Dir, currentDir), filepath.Join(t.Dir, previousDir)); err != nil && !os.IsNotExist(err) {
+	err := os.Rename(filepath.Join(t.Dir, currentDir), filepath.Join(t.Dir, previousDir))
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	t.fresh = os.IsNotExist(err)
 	return os.Rename(next, filepath.Join(t.Dir, currentDir))
 }
 
-// Restore puts expanse.prev back as the node's source.
+// Restore puts expanse.prev back as the node's source, or none after a first Install.
 func (t *Tree) Restore() error {
+	if t.fresh {
+		return os.RemoveAll(filepath.Join(t.Dir, currentDir))
+	}
 	prev := filepath.Join(t.Dir, previousDir)
 	if _, err := os.Stat(prev); err != nil {
 		return fmt.Errorf("no previous source to restore: %w", err)

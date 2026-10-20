@@ -100,3 +100,16 @@ func TestInstallOnANodeWithoutASourceYet(t *testing.T) {
 		t.Errorf("installed source is %q", v)
 	}
 }
+
+func TestRestoreAfterAFirstInstallLeavesNoSource(t *testing.T) {
+	tree := &Tree{Dir: t.TempDir()}
+	if err := tree.Install(writeTarball(t, release("1.12.0")), "1.12.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tree.Restore(); err != nil {
+		t.Fatalf("restoring a node that had no source: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tree.Dir, "expanse")); !os.IsNotExist(err) {
+		t.Error("the failed release's source was left in place")
+	}
+}
