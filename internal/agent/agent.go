@@ -747,6 +747,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.ctl != nil && !witness {
 		go a.storageLoop(ctx)
 	}
+	// Witnesses too: every node in the cluster is upgraded by the rollout.
+	if a.ctl != nil {
+		go a.upgradeLoop(ctx)
+	}
 	if a.volctl != nil {
 		go a.volctl.Run(ctx)
 	}

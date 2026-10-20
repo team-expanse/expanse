@@ -12,10 +12,7 @@ import (
 	"github.com/expanse/expanse/internal/upgrade"
 )
 
-const (
-	upgradeStatusPath = "/persist/expanse/upgrade.json"
-	upgradeUnit       = "expanse-upgrade"
-)
+const upgradeUnit = "expanse-upgrade"
 
 func newUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "upgrade", Short: "Move this node to another Expanse release"}
@@ -70,7 +67,7 @@ func newUpgradeApplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&nixosDir, "nixos-dir", "/etc/nixos", "the node's NixOS config, holding expanse/")
 	cmd.Flags().StringVar(&cacheDir, "cache-dir", "/var/cache/expanse/upgrade", "where downloads are kept")
 	cmd.Flags().StringVar(&baseURL, "base-url", upgrade.DefaultBaseURL, "release download URL, one directory per tag")
-	cmd.Flags().StringVar(&status, "status", upgradeStatusPath, "status file")
+	cmd.Flags().StringVar(&status, "status", upgrade.DefaultStatusPath, "status file")
 	return cmd
 }
 
@@ -93,6 +90,6 @@ func newUpgradeStatusCmd() *cobra.Command {
 			return enc.Encode(st)
 		},
 	}
-	cmd.Flags().StringVar(&status, "status", upgradeStatusPath, "status file")
+	cmd.Flags().StringVar(&status, "status", upgrade.DefaultStatusPath, "status file")
 	return cmd
 }

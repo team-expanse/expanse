@@ -22,6 +22,9 @@ const (
 	StateFailed     State = "failed"
 )
 
+// DefaultStatusPath is where a node keeps its last upgrade's Status.
+const DefaultStatusPath = "/persist/expanse/upgrade.json"
+
 // Status is the node's last upgrade, kept in a file the agent reports to the cluster.
 type Status struct {
 	Version string `json:"version"`
