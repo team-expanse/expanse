@@ -641,3 +641,23 @@ func TestReconcileCreatesTheConfigDirectory(t *testing.T) {
 		t.Errorf("config not written into a missing directory: %v", err)
 	}
 }
+
+// The config carries the resync discard granularity the kernel keeps for the backing device,
+// read once the LV exists, so adjust's dry run finds nothing to change on every pass.
+func TestReconcileRendersTheBackingDevicesDiscardGranularity(t *testing.T) {
+	r := newRig(t)
+	r.rt.DiscardLimits = func(dev string) *drbd.DiscardLimits {
+		if _, err := r.lvm.Get(context.Background(), "vg0", "vol-a1"); err != nil || dev != "/dev/vg0/vol-a1" {
+			return nil
+		}
+		return &drbd.DiscardLimits{Granularity: 1 << 20, MaxBytes: 1 << 30}
+	}
+	reconcile(t, r, desired())
+	body, err := os.ReadFile(filepath.Join(r.dir, "vol-a1.res"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "rs-discard-granularity 1048576;") {
+		t.Errorf("config lacks the device's granularity:\n%s", body)
+	}
+}

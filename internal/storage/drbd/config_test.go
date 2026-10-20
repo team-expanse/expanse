@@ -215,6 +215,32 @@ func TestRenderResyncsZeroBlocksAsDiscards(t *testing.T) {
 	}
 }
 
+// The kernel rounds rs-discard-granularity up to the backing device's discard granularity and caps
+// it at its largest discard; rendering anything else makes every adjust dry run find a change.
+func TestRenderUsesTheGranularityTheKernelKeeps(t *testing.T) {
+	for _, c := range []struct {
+		limits *DiscardLimits
+		want   uint64
+	}{
+		{nil, 65536},
+		{&DiscardLimits{Granularity: 4096, MaxBytes: 1 << 30}, 65536},
+		{&DiscardLimits{Granularity: 1 << 20, MaxBytes: 1 << 30}, 1 << 20},
+		{&DiscardLimits{Granularity: 3 << 15, MaxBytes: 1 << 30}, 3 << 15},
+		{&DiscardLimits{Granularity: 4096, MaxBytes: 32768}, 32768},
+		{&DiscardLimits{}, 0}, // no discard support
+	} {
+		r := resource(3)
+		r.Discard = c.limits
+		got, err := r.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := fmt.Sprintf("    rs-discard-granularity %d;\n", c.want); !strings.Contains(got, want) {
+			t.Errorf("limits %+v: want %q in:\n%s", c.limits, want, got)
+		}
+	}
+}
+
 func tiebroken() Resource {
 	r := resource(3)
 	r.Members[2].Diskless = true

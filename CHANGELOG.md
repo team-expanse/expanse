@@ -23,6 +23,10 @@ History before 1.0.0 is not recorded here.
   block's log. Standbys connect with a libpq passfile on their volume (0600) instead, and a standby
   cloned by an earlier release has its stored connection string rewritten at its next start.
   Earlier failovers logged the password in the block's journal, so rotate it if that matters.
+- A node no longer runs `drbdadm adjust` on every volume pass, logging "rs_discard_granularity
+  changed to 1048576" every 2 s. The volume config now asks for the resync discard granularity
+  the kernel keeps for the backing LV (a thin pool's chunk size, 1 MiB on larger pools), so
+  `adjust` finds nothing to change.
 
 ## 1.12.2 - 2026-10-20
 

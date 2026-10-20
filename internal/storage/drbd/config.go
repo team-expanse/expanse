@@ -52,6 +52,24 @@ type Resource struct {
 	// connection. It must only record the event; it never resolves it.
 	SplitBrainCmd string
 	Members       []Member
+	// Discard is the backing device's discard limits; nil (unknown) renders the default granularity.
+	Discard *DiscardLimits
+}
+
+// DiscardLimits are a block device's discard_granularity and discard_max_bytes, in bytes.
+type DiscardLimits struct{ Granularity, MaxBytes uint64 }
+
+// rsDiscardGranularity is the value the kernel keeps for the resync discard granularity:
+// rounded up to the device's granularity, capped at its largest discard (0 without discard).
+func (r Resource) rsDiscardGranularity() uint64 {
+	v := uint64(resyncDiscardGranularity)
+	if r.Discard == nil {
+		return v
+	}
+	if g := r.Discard.Granularity; g > 0 {
+		v = (v + g - 1) / g * g
+	}
+	return min(v, r.Discard.MaxBytes)
 }
 
 // Render returns the resource file. Output is deterministic: members are
@@ -67,7 +85,7 @@ func (r Resource) Render() (string, error) {
 	fmt.Fprintf(&b, "resource %s {\n", r.Name)
 	fmt.Fprintf(&b, "  device /dev/drbd%d minor %d;\n  disk %s;\n  meta-disk internal;\n", r.Minor, r.Minor, r.Disk)
 	fmt.Fprintf(&b, "  disk {\n    c-min-rate %s;\n    rs-discard-granularity %d;\n  }\n",
-		resyncMinRate, resyncDiscardGranularity)
+		resyncMinRate, r.rsDiscardGranularity())
 	b.WriteString("  net {\n    protocol C;\n    verify-alg sha1;\n")
 	b.WriteString("    after-sb-0pri disconnect;\n    after-sb-1pri disconnect;\n    after-sb-2pri disconnect;\n")
 	b.WriteString("    rr-conflict disconnect;\n  }\n")

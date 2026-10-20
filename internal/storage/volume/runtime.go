@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 
 	experrors "github.com/expanse/expanse/internal/errors"
@@ -64,7 +66,39 @@ type Runtime struct {
 	// CheckKernel refuses a kernel that cannot run volumes (DRBD older than 9) before a pass
 	// creates or writes anything; nil skips it.
 	CheckKernel func() error
-	mu          sync.Mutex
+	// DiscardLimits reads a block device's discard limits; nil reads sysfs. nil limits mean unknown.
+	DiscardLimits func(dev string) *drbd.DiscardLimits
+	mu            sync.Mutex
+}
+
+func (r *Runtime) discardLimits(dev string) *drbd.DiscardLimits {
+	if r.DiscardLimits != nil {
+		return r.DiscardLimits(dev)
+	}
+	return sysfsDiscardLimits(dev)
+}
+
+// sysfsDiscardLimits reads dev's queue limits from sysfs; nil when dev or its limits are unreadable.
+func sysfsDiscardLimits(dev string) *drbd.DiscardLimits {
+	real, err := filepath.EvalSymlinks(dev)
+	if err != nil {
+		return nil
+	}
+	queue := filepath.Join("/sys/class/block", filepath.Base(real), "queue")
+	read := func(name string) (uint64, bool) {
+		b, err := os.ReadFile(filepath.Join(queue, name))
+		if err != nil {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+		return v, err == nil
+	}
+	g, ok1 := read("discard_granularity")
+	m, ok2 := read("discard_max_bytes")
+	if !ok1 || !ok2 {
+		return nil
+	}
+	return &drbd.DiscardLimits{Granularity: g, MaxBytes: m}
 }
 
 func (r *Runtime) configPath(name string) string { return filepath.Join(r.ConfigDir, name+".res") }
@@ -101,10 +135,10 @@ func (r *Runtime) Reconcile(ctx context.Context, d Desired) (Result, error) {
 
 type pass struct {
 	*Runtime
-	d       Desired
-	cfg     string
-	created bool // the backing LV was created by this pass
-	res     Result
+	d        Desired
+	resource drbd.Resource
+	created  bool // the backing LV was created by this pass
+	res      Result
 }
 
 func (p *pass) did(a Action) { p.res.Actions = append(p.res.Actions, a) }
@@ -117,11 +151,11 @@ func (p *pass) prepare() error {
 	if p.d.Thin && p.Pool == "" {
 		return experrors.New(experrors.KindInvalid, "volume.Reconcile", "thin volume requested but no thin pool configured")
 	}
-	cfg, err := drbd.Resource{
+	p.resource = drbd.Resource{
 		Name: p.d.Name, Minor: p.d.Minor, Port: p.d.Port, Disk: lvm.DevicePath(p.VG, p.d.Name),
 		SplitBrainCmd: p.SplitBrainCmd, Members: p.d.Members,
-	}.Render()
-	p.cfg = cfg
+	}
+	_, err := p.resource.Render()
 	return err
 }
 
@@ -145,14 +179,21 @@ func (p *pass) backing(ctx context.Context) error {
 }
 
 func (p *pass) config(context.Context) error {
+	// Rendered now, after backing: the device's discard limits set the resync discard granularity.
+	res := p.resource
+	res.Discard = p.discardLimits(res.Disk)
+	cfg, err := res.Render()
+	if err != nil {
+		return err
+	}
 	path := p.configPath(p.d.Name)
-	if have, err := os.ReadFile(path); err == nil && string(have) == p.cfg {
+	if have, err := os.ReadFile(path); err == nil && string(have) == cfg {
 		return nil
 	}
 	if err := os.MkdirAll(p.ConfigDir, 0o750); err != nil {
 		return experrors.Wrap(err, experrors.KindInternal, "volume.config", "create "+p.ConfigDir)
 	}
-	if err := writeAtomic(path, p.cfg); err != nil {
+	if err := writeAtomic(path, cfg); err != nil {
 		return experrors.Wrap(err, experrors.KindInternal, "volume.config", "write "+path)
 	}
 	p.did(WriteConfig)
