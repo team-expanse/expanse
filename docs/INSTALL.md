@@ -147,24 +147,26 @@ rest of `/` is wiped on every boot). It holds the generated `configuration.nix`,
 nixos-rebuild switch
 ```
 
-The node builds from its own copy, so this works offline. It uses the nixpkgs the node was installed
-with (its `nixos` channel).
+The node builds from its own copy, so this works offline. From 1.12 it uses the nixpkgs that copy
+pins (its `flake.lock`), not the `nixos` channel.
 
-**Upgrading** replaces that copy with the new release's source and rebuilds, which needs network.
-Set `V` to the release you are upgrading to:
+**Upgrading** a cluster on 1.12 or later is done from the web UI: **Operations → Upgrades →
+Upgrade cluster** (`docs/UPGRADE.md`). Nodes on 1.11 or earlier are upgraded by hand once, one node
+at a time, draining each first (`docs/UPGRADE.md`, "By hand"). Set `V` to the release:
 
 ```sh
 cd /etc/nixos
-V=1.11.3
-curl -fsSL https://github.com/team-expanse/expanse/archive/refs/tags/v$V.tar.gz | tar xz
+V=1.12.0
+curl -fsSLO https://github.com/team-expanse/expanse/releases/download/v$V/expanse-$V.tar.gz
+tar xzf expanse-$V.tar.gz
 rm -rf expanse.prev; [ -d expanse ] && mv expanse expanse.prev
 mv expanse-$V expanse
-nixos-rebuild switch          # roll back: swap the directories and switch again
+sys=$(nix-build expanse/nix/node-system.nix -A config.system.build.toplevel --no-out-link)
+nix-env -p /nix/var/nix/profiles/system --set "$sys"
+"$sys"/bin/switch-to-configuration switch   # roll back: swap the directories and repeat
 ```
 
 A node with no `expanse/` yet (installed with 1.10.0) gets one this way; see below for its imports.
-
-Upgrade a multi-node cluster one node at a time, draining each first (`docs/UPGRADE.md`).
 
 **From 1.10.0:** its `configuration.nix` imports `/etc/expanse/flake/...`, which only exists on the
 installer, so `nixos-rebuild` fails. Fetch the source as above, then point the imports at it:

@@ -1,4 +1,41 @@
-# Rolling Upgrade
+# Upgrading
+
+## From the web UI
+
+**Operations → Upgrades** shows each node's version, the newest release and the rollout. Press
+**Upgrade cluster** to move every node to a release, one at a time:
+
+1. The leader picks the next node only while the cluster is healthy: a leader, every node
+   reachable and in quorum, and every volume Healthy (or UnderReplicated, on a cluster too small
+   for its replication). The leader itself goes last, so the rollout causes one election.
+2. That node runs `expanse upgrade apply` as its own unit, `expanse-upgrade.service`. It downloads
+   the release's source tarball and `SHA256SUMS` from GitHub, and checks the signature on
+   `SHA256SUMS` with the release key built into expanse, then the tarball against it. A release that
+   ships a binary cache for the node's system is used as a substituter, trusted only with that
+   key. The source replaces `/etc/nixos/expanse` (the previous one is kept as `expanse.prev`), the
+   system is built from it with the nixpkgs the release pins, set as the boot default and
+   switched to. A build that fails puts the previous source back.
+3. Blocks and VMs keep running through the switch, and the agent's restart leaves their volumes
+   Primary. A VM picks up the new release when you restart it.
+4. Once the node runs the release and the cluster is healthy again, the next node starts.
+
+**Pause** stops before the next node; the one upgrading now finishes. A node that fails, or
+reports nothing for 45 minutes, **halts** the rollout with its reason. **Retry** tries it again,
+and **Cancel** stops the rollout. Nodes already upgraded stay upgraded. If a switch leaves a
+node unreachable, the switch watchdog rolls it back and reboots it after 10 minutes.
+
+A node whose kernel changed shows **reboot to finish**. Reboot such nodes one at a time, waiting
+for the cluster to be healthy in between.
+
+The leader checks GitHub for a new release once a day; **Check now** checks at once, and the
+check can be turned off on the same page. `expanse upgrade status` on a node shows its last
+upgrade, and `journalctl -u expanse-upgrade` its log. `expanse upgrade start <version>` upgrades
+one node by hand.
+
+A cluster can fetch releases from a mirror: set `expanse.agent.releaseURL` (one directory per tag,
+holding the release's assets) and, if the mirror re-signs them, `expanse.agent.releaseKey`.
+
+## By hand (rolling upgrade)
 
 How to move a live cluster from one `expanse` build to another, one node
 at a time, without losing quorum, without losing an acked write, and
@@ -7,7 +44,7 @@ client. Written from what `nix/tests/cluster-rolling-upgrade.nix`
 actually proved (Phase 11, X3), not speculated in advance — see
 `ARCHITECTURE.md` A44 for the full account and the bugs it found.
 
-## Mechanism
+### Mechanism
 
 An upgrade is an ordinary `nix-config` resource apply (`docs/AGENT.md`'s
 "Nix switches and the watchdog"): the agent builds a flake attribute with
@@ -36,7 +73,14 @@ marker stale past 10 minutes triggers an automatic rollback to the
 previous generation and a reboot, so a bad remote config change can never
 brick a node.
 
-## Before switching a node that holds a volume Primary
+### Before switching a node that holds a volume Primary
+
+**Since 1.12 no drain is needed.** Block units are not restarted by a switch, and an agent that
+stops while a workload still has a volume open leaves it Primary for the next agent, which takes
+it back without unmounting it (`nix/tests/node-upgrade-keeps-blocks.nix`). The rest of this
+section describes nodes before 1.12. The upgrade *to* 1.12 is the last one that restarts blocks:
+the 1.11 agent still empties `/run/expanse` when it stops. Nodes before 1.12 also have no rollout,
+so that upgrade is done by hand on each node (`docs/INSTALL.md` §5).
 
 **Drain it first.** Switching a node's `expanse` build restarts
 `expansed.service`, whose `ExecStopPost` demotes every DRBD volume it
@@ -61,7 +105,7 @@ re-promotes the *same* node rather than handing off to a survivor. Either
 outcome is correct; wait for "exactly one Primary somewhere among all
 nodes," not "a survivor became Primary."
 
-## Sequencing
+### Sequencing
 
 For each node, one at a time:
 
@@ -82,7 +126,7 @@ fully rejoined) is the one thing that can cost the cluster a majority:
 with 3 nodes and quorum 2, a second node down before the first is back
 loses quorum outright.
 
-## What continuous availability actually looks like mid-switch
+### What continuous availability actually looks like mid-switch
 
 A surviving node's own KV reads/writes keep working throughout another
 node's switch — proven by a background put loop against each node's own
@@ -95,7 +139,7 @@ matters is that writes resume immediately and no node goes dark for more
 than that one moment; a real multi-second-or-longer stall on a surviving
 node would be a genuine regression, not this.
 
-## Version compatibility
+### Version compatibility
 
 `proto/store.proto` and `raftstore.CommandVersion` (the replicated log's
 wire encoding) have not changed since Phase 3 — confirmed by this
@@ -119,7 +163,7 @@ versions for one release before writers are allowed to emit the new one)
 before a rolling upgrade across that boundary can be trusted the way an
 ordinary code-only upgrade already is.
 
-## What the VM test proves vs. production
+### What the VM test proves vs. production
 
 `nix/tests/cluster-rolling-upgrade.nix` switches each node via its own
 pre-built `specialisation.upgraded` and `switch-to-configuration test`
