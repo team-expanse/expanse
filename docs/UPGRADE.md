@@ -35,6 +35,105 @@ one node by hand.
 A cluster can fetch releases from a mirror: set `expanse.agent.releaseURL` (one directory per tag,
 holding the release's assets) and, if the mirror re-signs them, `expanse.agent.releaseKey`.
 
+## From 1.11 or earlier (once per node, by hand)
+
+Nodes before 1.12 have no Upgrades page, so the move to 1.12 is done on each node with
+`scripts/upgrade-node.sh`. It is also the last upgrade that restarts blocks (the 1.11 agent
+empties `/run/expanse` when it stops), so each node is drained first. After it, use the web UI.
+
+You need root on every node, and the nodes need to reach github.com and cache.nixos.org. Below,
+`V` is the release (for example `1.12.0`) and `NODE` is a node's hostname.
+
+**1. Check the cluster and pick the order.** On any node:
+
+```sh
+expanse cluster status       # quorum N/majority (a healthy 3-node cluster reads 3/2), every volume UpToDate
+expanse ctl node list        # every node healthy, none cordoned
+```
+
+Upgrade the nodes one at a time, the leader last (`leader:` in `expanse cluster status` gives its
+address; `expanse ctl node list` maps it to a hostname), so the upgrade causes one election.
+
+**2. Drain the node.** Its blocks move to other nodes:
+
+```sh
+expanse ctl node drain NODE
+expanse ctl block list -n ""   # wait until every block is RUNNING again (on other nodes)
+```
+
+On a single-node cluster there is nowhere to move them: run
+`expanse ctl node drain NODE --ignore-unplaceable`, and the blocks stop until step 5.
+
+**3. Run the upgrade on the node.** Fetch the script from the release's tag and run it:
+
+```sh
+V=1.12.0
+curl -fsSLO https://raw.githubusercontent.com/team-expanse/expanse/v$V/scripts/upgrade-node.sh
+bash upgrade-node.sh $V
+```
+
+It asks whether the node is drained, then logs everything to
+`/var/cache/expanse/upgrade/$V/upgrade-node.log`. It stops without changing anything if the
+release's signature or checksums do not match, and puts the previous source back if the build
+fails.
+
+**4. Reboot if it says so.** When the kernel changed, it ends with "reboot this node to finish":
+`systemctl reboot`, then wait for the node to come back.
+
+**5. Uncordon it and wait for the cluster:**
+
+```sh
+expanse ctl node uncordon NODE
+expanse cluster status       # quorum N/majority again, every volume UpToDate, before the next node
+```
+
+Repeat steps 2–5 for the next node. Once every node runs `V` (`expanse ctl node list`, or
+**Operations → Upgrades**), later releases are upgraded from the web UI. Do not press **Upgrade
+cluster** while any node still runs 1.11: it never reports back, and the rollout halts on it after
+45 minutes.
+
+### What upgrade-node.sh does
+
+The same steps by hand, if you would rather not run the script:
+
+```sh
+V=1.12.0
+url=https://github.com/team-expanse/expanse/releases/download/v$V
+work=/var/cache/expanse/upgrade/$V
+mkdir -p $work && cd $work
+for f in SHA256SUMS SHA256SUMS.sig expanse-$V.tar.gz expanse-$V-cache-x86_64-linux.tar; do
+  curl -fsSLO $url/$f
+done
+
+# The release key (internal/upgrade/release-key.pub) as openssl reads it.
+cat >release-key.pem <<'EOF'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAAnEv4AWuSplcqvtjB9OmACQbT6qfPSv82MjwzBSaLFM=
+-----END PUBLIC KEY-----
+EOF
+base64 -d SHA256SUMS.sig >SHA256SUMS.sig.bin
+nix-shell -p openssl --run 'openssl pkeyutl -verify -pubin -inkey release-key.pem -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig.bin'
+grep -v '\.iso$' SHA256SUMS | sha256sum -c   # both must pass; stop here if either fails
+
+mkdir -p cache && tar -xf expanse-$V-cache-x86_64-linux.tar -C cache
+cd /etc/nixos
+tar -xzf $work/expanse-$V.tar.gz
+rm -rf expanse.prev; [ -d expanse ] && mv expanse expanse.prev
+mv expanse-$V expanse
+sed -i 's|/etc/expanse/flake/|./expanse/|g' configuration.nix   # only matters on 1.10.0 nodes
+sys=$(nix-build expanse/nix/node-system.nix -A config.system.build.toplevel --no-out-link \
+  --option extra-substituters file://$work/cache \
+  --option extra-trusted-public-keys expanse-release-1:AnEv4AWuSplcqvtjB9OmACQbT6qfPSv82MjwzBSaLFM=)
+nix-env -p /nix/var/nix/profiles/system --set "$sys"
+"$sys"/bin/switch-to-configuration switch
+```
+
+The build substitutes everything: from cache.nixos.org, and from the release's own cache for what
+cache.nixos.org lacks (expanse itself, the headless qemu). It compiles nothing heavy.
+
+**Rolling back** a node: `cd /etc/nixos && rm -rf expanse && mv expanse.prev expanse`, then
+`nixos-rebuild switch`, or pick the previous generation in the boot menu.
+
 ## By hand (rolling upgrade)
 
 How to move a live cluster from one `expanse` build to another, one node
@@ -80,7 +179,7 @@ stops while a workload still has a volume open leaves it Primary for the next ag
 it back without unmounting it (`nix/tests/node-upgrade-keeps-blocks.nix`). The rest of this
 section describes nodes before 1.12. The upgrade *to* 1.12 is the last one that restarts blocks:
 the 1.11 agent still empties `/run/expanse` when it stops. Nodes before 1.12 also have no rollout,
-so that upgrade is done by hand on each node (`docs/INSTALL.md` §5).
+so that upgrade is done by hand on each node ("From 1.11 or earlier", above).
 
 **Drain it first.** Switching a node's `expanse` build restarts
 `expansed.service`, whose `ExecStopPost` demotes every DRBD volume it

@@ -151,31 +151,9 @@ The node builds from its own copy, so this works offline. From 1.12 it uses the 
 pins (its `flake.lock`), not the `nixos` channel.
 
 **Upgrading** a cluster on 1.12 or later is done from the web UI: **Operations → Upgrades →
-Upgrade cluster** (`docs/UPGRADE.md`). Nodes on 1.11 or earlier are upgraded by hand once, one node
-at a time, draining each first (`docs/UPGRADE.md`, "By hand"). Set `V` to the release:
-
-```sh
-cd /etc/nixos
-V=1.12.0
-curl -fsSLO https://github.com/team-expanse/expanse/releases/download/v$V/expanse-$V.tar.gz
-tar xzf expanse-$V.tar.gz
-rm -rf expanse.prev; [ -d expanse ] && mv expanse expanse.prev
-mv expanse-$V expanse
-sys=$(nix-build expanse/nix/node-system.nix -A config.system.build.toplevel --no-out-link)
-nix-env -p /nix/var/nix/profiles/system --set "$sys"
-"$sys"/bin/switch-to-configuration switch   # roll back: swap the directories and repeat
-```
-
-A node with no `expanse/` yet (installed with 1.10.0) gets one this way; see below for its imports.
-
-**From 1.10.0:** its `configuration.nix` imports `/etc/expanse/flake/...`, which only exists on the
-installer, so `nixos-rebuild` fails. Fetch the source as above, then point the imports at it:
-
-```sh
-cd /etc/nixos
-sed -i 's|/etc/expanse/flake/|./expanse/|g' configuration.nix
-nixos-rebuild switch
-```
+Upgrade cluster** (`docs/UPGRADE.md`). Nodes on 1.11 or earlier, including 1.10.0 nodes with no
+`expanse/` yet, are moved to 1.12 once by hand with `scripts/upgrade-node.sh`, one node at a time:
+`docs/UPGRADE.md`, "From 1.11 or earlier".
 
 ## 6. Moving /nix onto a logical volume
 
