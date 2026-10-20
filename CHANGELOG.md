@@ -6,6 +6,44 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.12.0 - 2026-10-19
+
+### Added
+
+- Upgrade the cluster from the web UI: Operations → Upgrades shows the newest release, each node's
+  version and last upgrade, and the rollout. Upgrade cluster moves one node at a time, the leader
+  last, and only while the cluster is healthy (every node in quorum, every volume Healthy or
+  UnderReplicated); it halts on a node that fails or goes silent. Pause, Resume, Retry and Cancel
+  change the rollout, and a node whose kernel, initrd or modules changed says "reboot to finish".
+  See `docs/UPGRADE.md`.
+- The leader checks GitHub for a new release once a day; the check can be turned off on the
+  Upgrades page. `expansed --release-url/--release-key` point nodes at a mirror.
+- `expanse upgrade start|apply|status`: download a release, check it, build and switch this node.
+  Each release publishes its source tarball and a binary cache beside the ISO, and a `SHA256SUMS`
+  signed with the Expanse release key (`expanse-release-1`). A node verifies the signature before
+  it uses any of them, and trusts the release cache only with that key. A failed build puts the
+  previous source back.
+- `scripts/upgrade-node.sh` moves a node from 1.11 or earlier (no Upgrades page) to a release by
+  hand, with the same checks; `docs/UPGRADE.md` "From 1.11 or earlier" walks a cluster through it.
+
+### Changed
+
+- An installed node builds with the nixpkgs its release's `flake.lock` pins (`nix/node-system.nix`),
+  and its `NIX_PATH` names that same nixpkgs; the nixos channel no longer decides it. Every node
+  built from one release builds the same system.
+- Restarting or upgrading the agent leaves running blocks alone: block units are not restarted by a
+  switch, `/run/expanse` survives an agent stop, and a volume a block holds open stays primary.
+  No drain is needed to upgrade from 1.12 on. The move *to* 1.12 still restarts blocks, and asks
+  for one reboot per node, since the DRBD module is rebuilt.
+
+### Fixed
+
+- After a `db/postgres` failover the surviving replicas follow the new primary again. Since 1.11.0
+  the replication password is sealed, but failover still read it from the block's config, so the
+  replicas retargeted with an empty password and stopped streaming.
+- The DRBD module no longer depends on the `$SHELL` of whoever builds it, so a node's build matches
+  the release cache instead of compiling DRBD and asking for a reboot.
+
 ## 1.11.3 - 2026-10-19
 
 ### Changed
