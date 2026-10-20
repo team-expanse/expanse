@@ -123,6 +123,28 @@ page shows its MAC address and hostname, so you can find the address in your rou
 node running the VM cannot reach it; connect from another machine. Downloaded images stay in the
 cache for other VMs; remove files there by hand to free the space.
 
+### First-boot setup
+
+`cloudInit.setup` installs packages, then runs shell commands as root, on the first boot only (a
+failover boots the same disk and runs nothing again). In the web form, First-boot setup offers
+ready-made setups; **Pando 0.12.0 under Docker** installs Docker and starts Pando from its release
+compose file, checked against a pinned SHA-256. Give that VM 2 CPUs, 4 GiB and a 40 GiB disk or more.
+
+```yaml
+    cloudInit:
+      sshKeys: ["ssh-ed25519 AAAA... me@laptop"]
+      setup:
+        packages: [nginx]
+        runcmd:
+          - systemctl enable --now nginx
+```
+
+The commands run as one shell script in order, and a failing one does not stop the rest; end a line
+with `|| exit 1` to stop there. The VM counts as RUNNING before they finish. Their output is in the
+VM's console log (`journalctl -u expanse-block-root@<namespace>-<name>-0` on its node) and in
+`/var/log/cloud-init-output.log` in the guest. Like the rest of `cloudInit`, the setup sits in the
+seed ISO on the node and is readable in the guest, so keep passwords out of it.
+
 ### Other ways
 
 `bootKernel`/`bootInitrd`/`bootCmdline` boot a kernel directly (`-kernel`/`-initrd`/`-append`), and

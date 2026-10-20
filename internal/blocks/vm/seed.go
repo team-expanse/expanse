@@ -16,25 +16,38 @@ type CloudInit struct {
 	User     string
 	SSHKeys  []string
 	Hostname string
+	// Packages and RunCmd are cloudInit.setup: installed, then run as root, on the first boot.
+	Packages []string
+	RunCmd   []string
 }
 
 // CloudInitFromConfig reads config's cloudInit; the zero value when unset.
 func CloudInitFromConfig(cfg map[string]any) (CloudInit, error) {
 	m, _ := cfg["cloudInit"].(map[string]any)
 	str := func(k string) string { s, _ := m[k].(string); return strings.TrimSpace(s) }
-	ci := CloudInit{User: str("user"), Hostname: str("hostname")}
-	keys, _ := m["sshKeys"].([]any)
-	for _, k := range keys {
-		s, _ := k.(string)
-		if s = strings.TrimSpace(s); s == "" {
-			continue
+	setup, _ := m["setup"].(map[string]any)
+	ci := CloudInit{
+		User: str("user"), Hostname: str("hostname"), SSHKeys: nonBlank(m["sshKeys"]),
+		Packages: nonBlank(setup["packages"]), RunCmd: nonBlank(setup["runcmd"]),
+	}
+	for _, k := range ci.SSHKeys {
+		if strings.HasPrefix(k, "gh:") {
+			return CloudInit{}, fmt.Errorf("cloudInit.sshKeys: %q is a shortcut the web form resolves; give the public key itself", k)
 		}
-		if strings.HasPrefix(s, "gh:") {
-			return CloudInit{}, fmt.Errorf("cloudInit.sshKeys: %q is a shortcut the web form resolves; give the public key itself", s)
-		}
-		ci.SSHKeys = append(ci.SSHKeys, s)
 	}
 	return ci, nil
+}
+
+// nonBlank is v's non-blank strings, trimmed.
+func nonBlank(v any) []string {
+	items, _ := v.([]any)
+	var out []string
+	for _, it := range items {
+		if s, _ := it.(string); strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	return out
 }
 
 // SeedFiles renders NoCloud user-data and meta-data. Without a user, the keys go to the
@@ -48,6 +61,13 @@ func SeedFiles(instanceID string, ci CloudInit, hostname string) (userData, meta
 		}}
 	} else if len(ci.SSHKeys) > 0 {
 		cc["ssh_authorized_keys"] = ci.SSHKeys
+	}
+	if len(ci.Packages) > 0 {
+		cc["package_update"] = true
+		cc["packages"] = ci.Packages
+	}
+	if len(ci.RunCmd) > 0 {
+		cc["runcmd"] = ci.RunCmd
 	}
 	if ci.Hostname != "" {
 		hostname = ci.Hostname

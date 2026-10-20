@@ -575,6 +575,8 @@ func TestVMInstanceImageConfig(t *testing.T) {
 		"no url":        {map[string]any{"image": map[string]any{"checksum": strings.Repeat("a", 64)}}, "/image/url"},
 		"keys":          {map[string]any{"cloudInit": map[string]any{"sshKeys": []any{"ssh-ed25519 AAAA x"}, "user": "ops"}}, ""},
 		"gh shortcut":   {map[string]any{"cloudInit": map[string]any{"sshKeys": []any{"gh:someone"}}}, "/cloudInit/sshKeys/0"},
+		"setup":         {map[string]any{"cloudInit": map[string]any{"setup": map[string]any{"packages": []any{"curl"}, "runcmd": []any{"true"}}}}, ""},
+		"bad package":   {map[string]any{"cloudInit": map[string]any{"setup": map[string]any{"packages": []any{"curl; rm"}}}}, "/cloudInit/setup/packages/0"},
 	} {
 		cfg, _ := structpb.NewStruct(tc.cfg)
 		errs := c.ValidateConfig("vm/instance", cfg)
@@ -1075,6 +1077,48 @@ func TestShippedSecretsAreWriteOnly(t *testing.T) {
 		typ, _ := c.GetType(id)
 		if got := typ.WriteOnly; !slices.Equal(got, want[id]) {
 			t.Errorf("%s: writeOnly fields %v, want %v", id, got, want[id])
+		}
+	}
+}
+
+// Every first-boot setup preset the web form offers must pass vm/instance's own schema.
+func TestVMInstanceSetupPresetsValidate(t *testing.T) {
+	c, err := Load("../../../nix/blocks")
+	if err != nil {
+		t.Fatalf("Load(nix/blocks): %v", err)
+	}
+	raw, err := os.ReadFile("../../../nix/blocks/vm/instance/schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s struct {
+		Properties struct {
+			CloudInit struct {
+				Properties struct {
+					Setup struct {
+						Presets []struct {
+							Label string         `json:"label"`
+							Value map[string]any `json:"value"`
+						} `json:"x-expanse-presets"`
+					} `json:"setup"`
+				} `json:"properties"`
+			} `json:"cloudInit"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	presets := s.Properties.CloudInit.Properties.Setup.Presets
+	if len(presets) == 0 {
+		t.Fatal("cloudInit.setup offers no presets")
+	}
+	for _, p := range presets {
+		cfg, err := structpb.NewStruct(map[string]any{"cloudInit": map[string]any{"setup": p.Value}})
+		if err != nil {
+			t.Fatalf("%s: %v", p.Label, err)
+		}
+		if errs := c.ValidateConfig("vm/instance", cfg); len(errs) != 0 {
+			t.Errorf("%s: %v", p.Label, errs)
 		}
 	}
 }

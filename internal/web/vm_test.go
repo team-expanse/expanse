@@ -97,3 +97,24 @@ func TestVMDetailShowsTheGuestsMAC(t *testing.T) {
 		t.Error("the page does not say how to log in")
 	}
 }
+
+func TestVMDeployWithThePandoSetup(t *testing.T) {
+	const pando = "Pando 0.12.0 under Docker (Debian 13 or Ubuntu 24.04, 40 GiB disk or more)"
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "kvm")
+	c, csrf := loggedInClient(t, srv, pw)
+	if _, body := get(t, c, srv.URL+"/deploy/vm/instance"); !strings.Contains(body, pando) {
+		t.Fatal("the form does not offer the Pando setup")
+	}
+	resp, body := postForm(t, c, srv.URL+"/deploy/vm/instance", csrf, url.Values{
+		"name": {"pando"}, "cfg/image" + schemaform.PresetSuffix: {"Debian 13 (log in as debian)"},
+		"cfg/cloudInit/sshKeys": {"ssh-ed25519 AAAAown"}, "cfg/cloudInit/setup" + schemaform.PresetSuffix: {pando},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+	setup := getBlock(t, st, "default/pando").GetSpec().GetConfig().AsMap()["cloudInit"].(map[string]any)["setup"].(map[string]any)
+	if pk := setup["packages"].([]any); pk[0] != "docker.io" || len(setup["runcmd"].([]any)) == 0 {
+		t.Errorf("setup = %v", setup)
+	}
+}

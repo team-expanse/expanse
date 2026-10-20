@@ -14,6 +14,12 @@ guest cold-boots on a survivor with the same MAC address, and Pando, its databas
 hosts come back from that disk. Pando is AGPL-3.0; the license covers Pando, not the apps you host on
 it.
 
+The quickest way needs no image build: deploy a `vm/instance` from the web UI with the Debian 13
+image and the **Pando 0.12.0 under Docker** first-boot setup ([`VMS.md`](VMS.md) §3). The guest pulls
+Pando's images on the first boot, prints the console's address in its console log once Pando is up,
+and syncs Pando's first-run state to disk before it does. The rest of this document is the
+baked-image guest, which boots without a registry and is VM-tested for failover.
+
 ## 2. Building the guest image
 
 The flake builds a raw, BIOS-bootable disk image with Pando's and Postgres's container images inside,

@@ -6,6 +6,14 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- A VM's `cloudInit.setup` installs packages and runs commands on its first boot. The web form
+  offers ready-made setups, starting with Pando 0.12.0 under Docker on a Debian 13 or Ubuntu 24.04
+  image, so Pando deploys from the UI with no image to build.
+
 ## 1.12.3 - 2026-10-20
 
 ### Changed

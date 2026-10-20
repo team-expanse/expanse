@@ -83,6 +83,50 @@
           "type": "string",
           "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
           "description": "Left unset, the block's name"
+        },
+        "setup": {
+          "type": "object",
+          "additionalProperties": false,
+          "title": "First-boot setup",
+          "description": "Packages to install, then shell commands to run as root, on the first boot only. Their output is in the VM's console log. The VM counts as RUNNING before they finish",
+          "x-expanse-presets": [
+            {
+              "label": "Pando 0.12.0 under Docker (Debian 13 or Ubuntu 24.04, 40 GiB disk or more)",
+              "value": {
+                "packages": [
+                  "docker.io",
+                  "curl"
+                ],
+                "runcmd": [
+                  "apt-get install -y docker-compose-v2 || apt-get install -y docker-compose",
+                  "mkdir -p /opt/pando && curl -fsSLo /opt/pando/docker-compose.yml https://github.com/trypando/pando/releases/download/v0.12.0/docker-compose.yml || exit 1",
+                  "echo '0ed6762f6feb5e017077c3fa9b9dfe848e6ef6f647424e8b87f084c3b64e45fd  /opt/pando/docker-compose.yml' | sha256sum -c || exit 1",
+                  "docker compose -p pando -f /opt/pando/docker-compose.yml up -d --wait || exit 1",
+                  "until curl -s -o /dev/null http://127.0.0.1:8080/; do sleep 2; done; sync",
+                  "echo \"pando: console at http://$(hostname -I | cut -d' ' -f1):8080; sign-in token: docker exec pando-pando-1 pando admin setup-token\""
+                ]
+              }
+            }
+          ],
+          "properties": {
+            "packages": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9+.:=~-]*$"
+              },
+              "description": "Package names for the image's package manager (apt on Debian and Ubuntu)"
+            },
+            "runcmd": {
+              "type": "array",
+              "title": "Commands",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "One shell command per line, run in order after the packages are installed. A failing command does not stop the rest; end it with || exit 1 to stop there"
+            }
+          }
         }
       }
     },

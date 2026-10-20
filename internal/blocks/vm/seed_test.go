@@ -23,6 +23,15 @@ func TestCloudInitFromConfig(t *testing.T) {
 	}
 }
 
+func TestCloudInitFromConfigReadsTheSetup(t *testing.T) {
+	ci, err := CloudInitFromConfig(map[string]any{"cloudInit": map[string]any{"setup": map[string]any{
+		"packages": []any{"docker.io", " "}, "runcmd": []any{"echo hi", ""},
+	}}})
+	if err != nil || len(ci.Packages) != 1 || ci.Packages[0] != "docker.io" || len(ci.RunCmd) != 1 || ci.RunCmd[0] != "echo hi" {
+		t.Fatalf("%+v, %v", ci, err)
+	}
+}
+
 func cloudConfig(t *testing.T, ud []byte) map[string]any {
 	t.Helper()
 	if !strings.HasPrefix(string(ud), "#cloud-config\n") {
@@ -65,6 +74,26 @@ func TestSeedWithoutAUserGivesTheKeysToTheImagesDefaultUser(t *testing.T) {
 	}
 	if !strings.Contains(string(md), "local-hostname: named") {
 		t.Errorf("meta-data = %s", md)
+	}
+}
+
+func TestSeedInstallsPackagesThenRunsCommands(t *testing.T) {
+	ud, _ := SeedFiles("i", CloudInit{Packages: []string{"docker.io"}, RunCmd: []string{"echo a", "echo b"}}, "vm1")
+	cc := cloudConfig(t, ud)
+	if cc["package_update"] != true || cc["packages"].([]any)[0] != "docker.io" {
+		t.Errorf("packages without a package index refresh: %v", cc)
+	}
+	if cmds := cc["runcmd"].([]any); len(cmds) != 2 || cmds[1] != "echo b" {
+		t.Errorf("runcmd = %v", cmds)
+	}
+}
+
+func TestSeedWithoutASetupLeavesPackagesAndCommandsOut(t *testing.T) {
+	cc := cloudConfig(t, func() []byte { ud, _ := SeedFiles("i", CloudInit{}, "vm1"); return ud }())
+	for _, k := range []string{"packages", "package_update", "runcmd"} {
+		if _, ok := cc[k]; ok {
+			t.Errorf("%s set without a setup", k)
+		}
 	}
 }
 
