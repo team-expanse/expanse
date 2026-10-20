@@ -10,6 +10,7 @@ import (
 	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/storage/lvm"
+	"github.com/expanse/expanse/internal/storage/volume"
 	"github.com/expanse/expanse/internal/store/boltstore"
 )
 
@@ -173,5 +174,30 @@ func TestStoppedVolumesNeverStartAgain(t *testing.T) {
 	a.storagePass(ctx)
 	if len(node.started) != 0 {
 		t.Fatal("volumes started during shutdown")
+	}
+}
+
+// causeVolNode records why its context ended.
+type causeVolNode struct{ cause chan error }
+
+func (f *causeVolNode) Run(ctx context.Context, _ time.Duration) {
+	<-ctx.Done()
+	f.cause <- context.Cause(ctx)
+}
+
+func TestVolumesOutliveTheAgentContextAndStopAsAShutdown(t *testing.T) {
+	a, _, _ := newStorageAgent(t)
+	node := &causeVolNode{cause: make(chan error, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.startVolumes(ctx, func() volumeRunner { return node })
+	cancel()
+	select {
+	case err := <-node.cause:
+		t.Fatalf("volumes stopped with the agent's context (%v), before stopVolumes", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	a.stopVolumes()
+	if err := <-node.cause; !errors.Is(err, volume.ErrShutdown) {
+		t.Fatalf("cause = %v, want volume.ErrShutdown so busy volumes stay primary", err)
 	}
 }

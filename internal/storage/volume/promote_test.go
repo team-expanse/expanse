@@ -729,3 +729,76 @@ func TestHoldLogsWhyTheLeaseWasLost(t *testing.T) {
 		t.Errorf("log does not say why the lease was lost:\n%s", out)
 	}
 }
+
+func (r *leaderRig) shutdown(t *testing.T) (time.Duration, error) {
+	t.Helper()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.ended = make(chan error, 1)
+	go func() { r.ended <- r.p.Lead(ctx, r.mine, leaseName, "vol-a1", r.ttl, HoldOptions{}) }()
+	waitFor(t, "promotion", func() bool { return r.role() == drbd.RolePrimary })
+	r.drbd.mu.Lock()
+	r.drbd.secondaryFails = 1 << 30 // a workload has the device open
+	r.drbd.mu.Unlock()
+	start := time.Now()
+	cancel(ErrShutdown)
+	select {
+	case err := <-r.ended:
+		return time.Since(start), err
+	case <-time.After(3 * time.Second):
+		t.Fatal("Lead did not return")
+		return 0, nil
+	}
+}
+
+func TestShutdownLeavesABusyVolumePrimaryForTheNextAgent(t *testing.T) {
+	r := newLeaderRig(t, status(drbd.RoleSecondary, true, drbd.DiskUpToDate))
+	r.ttl = time.Minute
+	r.p.StepDownTimeout = 2 * time.Second
+	took, err := r.shutdown(t)
+	if err != nil {
+		t.Fatalf("leaving a busy volume to the next agent is not an error: %v", err)
+	}
+	if took > time.Second {
+		t.Errorf("shutdown took %v; a busy device must not be retried until the timeout", took)
+	}
+	if r.role() != drbd.RolePrimary {
+		t.Error("demoted a device a workload still has open")
+	}
+	if _, err := r.other.TryAcquire(context.Background(), leaseName, time.Second); err == nil {
+		t.Fatal("another node was admitted while this one is still primary")
+	}
+}
+
+func TestShutdownStillStepsDownAVolumeNobodyUses(t *testing.T) {
+	r := newLeaderRig(t, status(drbd.RoleSecondary, true, drbd.DiskUpToDate))
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.ended = make(chan error, 1)
+	go func() { r.ended <- r.p.Lead(ctx, r.mine, leaseName, "vol-a1", r.ttl, HoldOptions{}) }()
+	waitFor(t, "promotion", func() bool { return r.role() == drbd.RolePrimary })
+	cancel(ErrShutdown)
+	if err := <-r.ended; err != nil {
+		t.Fatal(err)
+	}
+	if r.role() != drbd.RoleSecondary || r.holder(t) != "" {
+		t.Errorf("role %s, holder %q; want Secondary and the lease released", r.role(), r.holder(t))
+	}
+}
+
+func TestNextAgentAdoptsItsOwnBusyPrimaryWithoutTouchingIt(t *testing.T) {
+	r := newLeaderRig(t, status(drbd.RoleSecondary, true, drbd.DiskUpToDate))
+	r.ttl = time.Minute
+	if _, err := r.shutdown(t); err != nil {
+		t.Fatal(err)
+	}
+	before := len(r.tr.all())
+	r.lead(HoldOptions{})
+	t.Cleanup(func() { r.stop(t) })
+	waitFor(t, "the lease to be held again", func() bool { return r.holder(t) == "n1" })
+	time.Sleep(30 * time.Millisecond)
+	if calls := r.tr.all()[before:]; slices.Contains(calls, "release") || slices.Contains(calls, "secondary") {
+		t.Errorf("the restarted agent unmounted or demoted a volume in use: %v", calls)
+	}
+	if r.role() != drbd.RolePrimary {
+		t.Error("no longer primary")
+	}
+}

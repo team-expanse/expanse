@@ -737,7 +737,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		})
 	}
 
-	// DRBD volume node loop. Its stop demotes every primary, so shutdown waits for
+	// DRBD volume node loop. Its stop demotes every unused primary, so shutdown waits for
 	// it, and before the store closes: releasing a volume lease needs the store.
 	stopVolumes := a.stopVolumes
 	if a.volnode != nil {

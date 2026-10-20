@@ -11,6 +11,13 @@ import (
 	"github.com/expanse/expanse/internal/storage/drbd"
 )
 
+// ErrShutdown is the cancel cause for an agent shutdown. A volume still in use then stays
+// primary under its lease record, for the next agent to adopt, rather than being retried.
+var ErrShutdown = errors.New("agent shutting down")
+
+// errLeftPrimary marks a busy volume left primary on shutdown; it is not a failure.
+var errLeftPrimary = errors.New("volume in use; left primary for the next agent")
+
 // Lease is the authority to be a volume's primary. *lease.Held satisfies it.
 type Lease interface {
 	Valid() bool
@@ -129,7 +136,21 @@ func (p *Promoter) Hold(ctx context.Context, res string, l Lease, opt HoldOption
 	if ctx.Err() == nil {
 		p.log().Warn("volume lease lost", "vol", res, "err", l.Err())
 	}
+	if errors.Is(context.Cause(ctx), ErrShutdown) {
+		return p.leaveIfBusy(res)
+	}
 	return p.stepDown(res)
+}
+
+// leaveIfBusy steps down once; a device still open is left primary for the next agent.
+func (p *Promoter) leaveIfBusy(res string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), or(p.StepDownTimeout, 30*time.Second))
+	defer cancel()
+	if err := p.stepDownOnce(ctx, res); err != nil {
+		p.log().Info("volume in use; left primary for the next agent", "vol", res, "err", err)
+		return errLeftPrimary
+	}
+	return nil
 }
 
 // holding is one Hold call; lastErr keeps a refused promotion from flooding the log.
@@ -228,15 +249,11 @@ func (p *Promoter) stepDownOnce(ctx context.Context, res string) error {
 // demotes whatever role the previous agent left behind.
 func (p *Promoter) Lead(ctx context.Context, mgr *lease.Manager, name, res string, ttl time.Duration, opt HoldOptions) error {
 	for {
-		err := p.stepDown(res)
-		switch {
-		case ctx.Err() != nil:
-		case err == nil:
-			err = p.holdLease(ctx, mgr, name, res, ttl, opt)
-		default:
-			err = p.holdStuck(ctx, mgr, name, res, ttl, opt, err)
-		}
+		err := p.resume(ctx, mgr, name, res, ttl, opt)
 		if ctx.Err() != nil {
+			if errors.Is(err, errLeftPrimary) {
+				return nil
+			}
 			return err
 		}
 		p.log().Warn("leading interrupted", "vol", res, "err", err)
@@ -246,6 +263,27 @@ func (p *Promoter) Lead(ctx context.Context, mgr *lease.Manager, name, res strin
 		}
 	}
 }
+
+// resume adopts a volume this node is still primary for when it can take the lease at once
+// (the agent restarted under a running workload); otherwise it steps down before leading.
+func (p *Promoter) resume(ctx context.Context, mgr *lease.Manager, name, res string, ttl time.Duration, opt HoldOptions) error {
+	if st, err := p.DRBD.Status(ctx, res); err == nil && st.Role == drbd.RolePrimary {
+		if err := p.holdStuck(ctx, mgr, name, res, ttl, opt, errNotAdopted); !errors.Is(err, errNotAdopted) {
+			return err
+		}
+	}
+	err := p.stepDown(res)
+	switch {
+	case ctx.Err() != nil:
+		return err
+	case err == nil:
+		return p.holdLease(ctx, mgr, name, res, ttl, opt)
+	}
+	return p.holdStuck(ctx, mgr, name, res, ttl, opt, err)
+}
+
+// errNotAdopted: the lease was not free to take, so an inherited primary must step down.
+var errNotAdopted = errors.New("lease not free")
 
 // holdLease acquires the lease and holds the volume under it until either ends.
 func (p *Promoter) holdLease(ctx context.Context, mgr *lease.Manager, name, res string, ttl time.Duration, opt HoldOptions) error {

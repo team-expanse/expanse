@@ -199,6 +199,8 @@ in
         StartLimitBurst=3
 
         [Service]
+        # A switch to a new expanse leaves running blocks alone (switch-to-configuration reads [Service]).
+        X-RestartIfChanged=false
         Slice=expanse-blocks.slice
         # Tags every log line so StreamLogs's journalctl --identifier
         # query (internal/blocks/logs) matches it: without this,
@@ -254,6 +256,8 @@ in
         StartLimitBurst=3
 
         [Service]
+        # A switch to a new expanse leaves running blocks alone (switch-to-configuration reads [Service]).
+        X-RestartIfChanged=false
         Slice=expanse-blocks.slice
         SyslogIdentifier=expanse-block-%i
         Restart=on-failure
@@ -384,6 +388,8 @@ in
         StateDirectory = "expanse";
         RuntimeDirectory = "expanse";
         RuntimeDirectoryMode = "0755";
+        # Running blocks read their specs and secrets here; an agent restart or upgrade must keep them.
+        RuntimeDirectoryPreserve = "yes";
 
         # Hardening (tightened further in Phase 14). sysctl writes need
         # kernel tunables; the store lives under /persist.

@@ -43,20 +43,21 @@ func (a *Agent) startVolumes(ctx context.Context, build func() volumeRunner) {
 		return
 	}
 	node := build()
-	vctx, cancel := context.WithCancel(ctx)
+	// Detached from ctx: only stopVolumes ends it, as a shutdown, so busy volumes stay primary.
+	vctx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		node.Run(vctx, volumeSyncInterval)
 	}()
 	a.volStop = func() {
-		cancel()
+		cancel(volume.ErrShutdown)
 		<-done
 	}
 }
 
 // stopVolumes stops the volume node loop, waiting until it has demoted every
-// volume, and keeps it from starting again.
+// volume nothing uses, and keeps it from starting again.
 func (a *Agent) stopVolumes() {
 	a.volMu.Lock()
 	defer a.volMu.Unlock()
