@@ -142,6 +142,9 @@ func (a *Agent) scanPostgresInstances(ctx context.Context) map[string]pgha.Insta
 		// simply comes back "", and Reconfigure fails loudly rather than
 		// silently misconnecting.
 		replPassword := b.GetSpec().GetConfig().GetFields()["replicationPassword"].GetStringValue()
+		if replPassword == "" {
+			replPassword = a.sealedField(ctx, &b, blockNamespace(ref), "replicationPassword")
+		}
 		out[ref] = pgha.Instance{BlockRef: ref, MountPath: mount, Port: port, Index: idx, ReplPassword: replPassword}
 	}
 	return out
@@ -374,4 +377,30 @@ func (a *Agent) pgReconfigure(inst pgha.Instance, newHost string) error {
 		return fmt.Errorf("retarget local standby: %w: %s", err, bytes.TrimSpace(out))
 	}
 	return nil
+}
+
+// sealedField unseals a block's write-only config field, which the secret store holds since 1.11.
+func (a *Agent) sealedField(ctx context.Context, b *pb.Block, ns, field string) string {
+	sealer := a.secretStore()
+	if sealer == nil {
+		return ""
+	}
+	for _, r := range b.GetSpec().GetSecrets() {
+		if r.GetPath() != field {
+			continue
+		}
+		v, err := sealer.Get(ctx, ns, r.GetName())
+		if err != nil {
+			a.logger.Warn("pgha: block secret unreadable", "field", field, "err", err)
+			return ""
+		}
+		return string(v)
+	}
+	return ""
+}
+
+// blockNamespace is ns from a "ns/name" block ref.
+func blockNamespace(ref string) string {
+	ns, _, _ := strings.Cut(ref, "/")
+	return ns
 }

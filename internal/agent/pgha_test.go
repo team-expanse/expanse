@@ -23,6 +23,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/pgha"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/reconcile"
+	"github.com/expanse/expanse/internal/secrets"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
 	pb "github.com/expanse/expanse/proto"
@@ -366,5 +367,46 @@ func TestPgReconfigureFailsIfLocalRetargetFails(t *testing.T) {
 	}
 	if len(*calls) != 2 {
 		t.Errorf("runReconfigureSQL called %d times, want 2", len(*calls))
+	}
+}
+
+// Since 1.11 the replication password is sealed in the secret store, not left in the config.
+func TestScanPostgresInstancesUnsealsTheReplicationPassword(t *testing.T) {
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	fakeMounted(t, true)
+	putPGBlock(t, st, "default", "pg", "n1", 0, pb.Phase_RUNNING)
+	putReplicaResource(t, st, "n1", "default", "pg", 0, "/var/lib/expanse/volumes/vol-a/mnt")
+
+	clusterSecret := make([]byte, 32)
+	op, err := (&secrets.Store{St: st, ClusterSecret: clusterSecret}).PutOp("default", "pg.replicationPassword.x1", []byte("repl-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Put(ctx, op.Key, op.Value); err != nil {
+		t.Fatal(err)
+	}
+	e, err := st.Get(ctx, store.Key("/blocks/default/pg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b pb.Block
+	if err := proto.Unmarshal(e.Value, &b); err != nil {
+		t.Fatal(err)
+	}
+	b.Spec.Secrets = []*pb.SecretRef{{Path: "replicationPassword", Name: "pg.replicationPassword.x1"}}
+	raw, _ := proto.Marshal(&b)
+	if _, err := st.Put(ctx, store.Key("/blocks/default/pg"), raw); err != nil {
+		t.Fatal(err)
+	}
+
+	a := pgTestAgent(t, st, "n1")
+	a.ctl = &clusterCtl{secret: clusterSecret}
+	if got := a.scanPostgresInstances(ctx)["default/pg"].ReplPassword; got != "repl-secret" {
+		t.Fatalf("ReplPassword = %q, want the unsealed secret", got)
 	}
 }
