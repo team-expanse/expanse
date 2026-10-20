@@ -1,9 +1,9 @@
-# Pando 0.10.0's release compose file (docker-compose.yml at tag v0.10.0, comments dropped), with the
+# Pando 0.12.0's release compose file (docker-compose.yml at tag v0.12.0, comments dropped), with the
 # pando service on the published image and Postgres by tag, so the baked-in images are used.
 # Source: https://github.com/trypando/pando
 services:
   pando:
-    image: trypando/pando:0.10.0
+    image: trypando/pando:0.12.0
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

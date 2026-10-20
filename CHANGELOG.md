@@ -8,6 +8,12 @@ History before 1.0.0 is not recorded here.
 
 ## Unreleased
 
+### Changed
+
+- The Pando guest (`docs/PANDO.md`) runs Pando 0.12.0, up from 0.10.0. Pando now flushes its secrets
+  and API token keys to disk when it first creates them, creates its GitHub App itself, and connects
+  Slack in one step. The compose file is unchanged. Existing guests are not upgraded in place.
+
 ### Fixed
 
 - Upgrading a node no longer restarts its blocks that have more than one config field. Each

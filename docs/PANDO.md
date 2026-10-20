@@ -8,7 +8,7 @@ when the node running it fails.
 Pando is a self-hosted platform that builds and runs your team's apps as Docker containers, with its
 own Postgres and a BuildKit builder it starts itself. It needs a Docker daemon, which Expanse nodes do not
 run, so Pando is not a block of its own. Instead it runs inside a `vm/instance` block
-([`VMS.md`](VMS.md)): a NixOS guest with Docker, and Pando 0.10.0 and its Postgres image baked in.
+([`VMS.md`](VMS.md)): a NixOS guest with Docker, and Pando 0.12.0 and its Postgres image baked in.
 The guest's whole disk is the block's DRBD-replicated volume. When the node running it fails, the
 guest cold-boots on a survivor with the same MAC address, and Pando, its database and every app it
 hosts come back from that disk. Pando is AGPL-3.0; the license covers Pando, not the apps you host on

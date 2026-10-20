@@ -8,10 +8,10 @@ map
   [
     {
       imageName = "trypando/pando";
-      imageDigest = "sha256:624fdd622c95b05a58c21e3a9dfd4944d7326db98ea82041ada053ae0634187c";
-      hash = "sha256-LexVmouL2IC5JAdX4tg8TKDMqQl4QXEnuXhLy/3Gf7M=";
+      imageDigest = "sha256:b0012818446ff99595858ce6b2de25522803de552a95230f396d76367fc44212";
+      hash = "sha256-k6QA/Ihy4hiU9rrGndwZJRd1YOvSXAlZ4xolNxCXp6M=";
       finalImageName = "trypando/pando";
-      finalImageTag = "0.10.0";
+      finalImageTag = "0.12.0";
     }
     {
       imageName = "postgres";
