@@ -3,13 +3,15 @@ package main
 import (
 	"fmt"
 	"net/http"
-	_ "net/http/pprof" //nolint:gosec // opt-in: registers /debug/pprof/* on http.DefaultServeMux, served only when --pprof-addr is set
 	"os"
 	"time"
+
+	_ "net/http/pprof" //nolint:gosec // opt-in: registers /debug/pprof/* on http.DefaultServeMux, served only when --pprof-addr is set
 
 	"github.com/spf13/cobra"
 
 	"github.com/expanse/expanse/internal/agent"
+	"github.com/expanse/expanse/internal/upgrade"
 )
 
 func newAgentCmd() *cobra.Command {
@@ -37,6 +39,8 @@ func newAgentCmd() *cobra.Command {
 		lostAfter        string
 		firewall         bool
 		pprofAddr        string
+		releaseURL       string
+		releaseKey       string
 	)
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -61,6 +65,8 @@ func newAgentCmd() *cobra.Command {
 				BlocksFlakeRef:    blockFlake,
 				BlockRuntimes:     blockRuntimes,
 				ExternalVIPPool:   extPool,
+				ReleaseURL:        releaseURL,
+				ReleaseKey:        releaseKey,
 				ExternalInterface: extIface,
 				DNSUpstreams:      dnsUp,
 				StorageVG:         storageVG,
@@ -115,6 +121,8 @@ func newAgentCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&enableTCP, "enable-tcp", false, "enable the TCP gRPC listener (no mTLS yet; off by default)")
 	cmd.Flags().StringVar(&role, "role", "", "cluster role override (§4.9: voter | witness; default: from the node record)")
 	cmd.Flags().StringVar(&raftBind, "raft-bind", "", "raft transport bind addr (default 0.0.0.0:7444; must match the join-time bind)")
+	cmd.Flags().StringVar(&releaseURL, "release-url", upgrade.DefaultBaseURL, "where upgrades download releases, one directory per tag")
+	cmd.Flags().StringVar(&releaseKey, "release-key", "", "public key releases are signed with (name:base64); default: this build's")
 	cmd.Flags().StringVar(&extPool, "external-vip-pool", os.Getenv("EXPANSE_EXTERNAL_VIP_POOL"),
 		"external VIP pool (§4.2), e.g. 192.168.1.100-192.168.1.120; empty = internal VIPs only")
 	cmd.Flags().StringVar(&extIface, "external-interface", "",

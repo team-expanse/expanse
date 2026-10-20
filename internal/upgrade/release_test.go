@@ -115,3 +115,19 @@ func TestFetchRejectsAVersionThatIsNotOne(t *testing.T) {
 		}
 	}
 }
+
+func TestSignProducesWhatFetchVerifies(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	secret := "expanse-test-1:" + base64.StdEncoding.EncodeToString(priv)
+	sums := []byte("abc  expanse-1.12.0.tar.gz\n")
+	sig, err := Sign(secret, sums)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySignature("expanse-test-1:"+base64.StdEncoding.EncodeToString(pub), sums, sig); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sign("no-colon", sums); err == nil {
+		t.Error("accepted a key that is not name:base64")
+	}
+}

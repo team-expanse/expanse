@@ -125,12 +125,19 @@ func sameReport(a, b rollout.Report) bool {
 }
 
 // startUpgrade runs `expanse upgrade start`, which detaches the upgrade into its own unit.
-func startUpgrade(ctx context.Context, version string) error {
+func (a *Agent) startUpgrade(ctx context.Context, version string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	out, err := exec.CommandContext(ctx, self, "upgrade", "start", version).CombinedOutput()
+	args := []string{"upgrade", "start", version}
+	if a.cfg.ReleaseURL != "" {
+		args = append(args, "--base-url", a.cfg.ReleaseURL)
+	}
+	if a.cfg.ReleaseKey != "" {
+		args = append(args, "--key", a.cfg.ReleaseKey)
+	}
+	out, err := exec.CommandContext(ctx, self, args...).CombinedOutput()
 	if err != nil {
 		return errors.Join(err, errors.New(string(out)))
 	}
@@ -166,7 +173,7 @@ func (a *Agent) rolloutHealth(ctx context.Context) rollout.Health {
 func (a *Agent) upgradeLoop(ctx context.Context) {
 	u := &nodeUpgrades{
 		node: a.cfg.NodeID, version: version.Get().Version, statusPath: upgrade.DefaultStatusPath,
-		start:    startUpgrade,
+		start:    a.startUpgrade,
 		isLeader: func() bool { return a.ctl.store.IsLeader() },
 		health:   a.rolloutHealth,
 		latest: func(ctx context.Context) (string, error) {

@@ -66,6 +66,18 @@ in
         serves it).'';
     };
 
+    releaseURL = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Where upgrades download releases, one directory per tag. Empty = GitHub.";
+    };
+
+    releaseKey = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Public key (name:base64) releases are signed with. Empty = the one built into expanse.";
+    };
+
     externalVIPPool = lib.mkOption {
       type = lib.types.str;
       default = "";
@@ -364,6 +376,8 @@ in
           optionalString (cfg.blocksCatalog != null) " --blocks-catalog ${cfg.blocksCatalog}" +
           optionalString (cfg.blocksFlakeRef != "") " --blocks-flake-ref ${cfg.blocksFlakeRef}" +
           optionalString (cfg.externalVIPPool != "") " --external-vip-pool ${cfg.externalVIPPool}" +
+          optionalString (cfg.releaseURL != "") " --release-url ${cfg.releaseURL}" +
+          optionalString (cfg.releaseKey != "") " --release-key ${cfg.releaseKey}" +
           optionalString (cfg.externalInterface != "") " --external-interface ${cfg.externalInterface}" +
           optionalString (cfg.dnsUpstreams != "") " --dns-upstreams ${cfg.dnsUpstreams}" +
           optionalString (cfg.storageVG != "") " --storage-vg ${cfg.storageVG}" +

@@ -195,3 +195,17 @@ func parseSums(sums []byte) (map[string]string, error) {
 
 // ValidVersion reports whether v names a release (1.12.0, 1.12.0-rc.1).
 func ValidVersion(v string) bool { return versionRE.MatchString(v) }
+
+// Sign signs sums with a Nix-format secret key ("name:base64" of the 64-byte ed25519 key, as
+// `nix key generate-secret` writes it), returning the base64 signature SHA256SUMS.sig holds.
+func Sign(secretKey string, sums []byte) ([]byte, error) {
+	_, b64, ok := strings.Cut(strings.TrimSpace(secretKey), ":")
+	if !ok {
+		return nil, fmt.Errorf("secret key is not name:base64")
+	}
+	priv, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(priv) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("secret key is not an ed25519 key")
+	}
+	return []byte(base64.StdEncoding.EncodeToString(ed25519.Sign(priv, sums)) + "\n"), nil
+}

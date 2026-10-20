@@ -108,6 +108,9 @@ type Config struct {
 	// BlockRuntimes is a JSON map of block type -> runtime out path; missing ones are built from
 	// the .nix beside it on first placement.
 	BlockRuntimes string
+	// ReleaseURL and ReleaseKey are where upgrades fetch releases and the key they verify them
+	// with ("" = the build's own key).
+	ReleaseURL, ReleaseKey string
 	// ExternalVIPPool is the cluster.network.externalVIPPool value
 	// (§4.2): e.g. "192.168.1.100-192.168.1.120". Empty = no external
 	// VIPs; VIP-exposed blocks allocate from the internal range.
