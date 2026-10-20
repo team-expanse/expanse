@@ -6,6 +6,15 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.12.2 - 2026-10-20
+
+### Fixed
+
+- Upgrading from the web UI works: a node read every release's `nix/version.nix` with its leading
+  comment, and refused the release as "the tarball holds release \"# The release version...\"".
+  `nix/version.nix` is now a single line, so nodes on 1.12.0 and 1.12.1 can upgrade to this
+  release from the Upgrades page; from this release on, comments there are skipped.
+
 ## 1.12.1 - 2026-10-20
 
 ### Added
