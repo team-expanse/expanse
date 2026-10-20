@@ -13,7 +13,7 @@ expect_out() { # expect_out PATTERN: the dry run's output mentions PATTERN
 }
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+trap '[[ -n ${KEEP:-} ]] || rm -rf "$tmp"' EXIT
 cat >"$tmp/CHANGELOG.md" <<'MD'
 # Changelog
 
@@ -55,12 +55,28 @@ git -C "$repo" add -A
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m 'release: 1.2.0 -- faster boots'
 git -C "$repo" tag v1.2.0
 git -C "$repo" remote add origin git@github.com:team-expanse/expanse.git
+# nix builds a tiny ISO, knows one of two store paths on cache.nixos.org, copies into a file://
+# cache, and signs through `nix shell ... expanse upgrade sign`.
 cat >"$stub/nix" <<'SH'
 #!/usr/bin/env bash
-args=("$@"); for i in "${!args[@]}"; do [[ ${args[i]} == -o ]] && out=${args[i+1]}; done
-if [[ -n ${out:-} ]]; then mkdir -p "$out/iso"; echo iso >"$out/iso/expanse-1.2.0-x86_64-linux.iso"; fi
 echo "nix $*" >>"$STUB_LOG"
+args=("$@"); for i in "${!args[@]}"; do [[ ${args[i]} == -o ]] && out=${args[i+1]}; done
+case $1 in
+  path-info) echo '{"/nix/store/aaa-on-cache":{"narHash":"x"}}' ;;
+  copy) dir=${3#file://}; dir=${dir%%\?*}; mkdir -p "$dir"; printf '%s\n' "${@:4}" >"$dir/copied"
+    [[ $3 == *secret-key=/dev/fd/3* ]] && cat <&3 >"$dir/signed-with" ;;
+  shell) echo "sig-of-$(sha256sum <"${!#}" | cut -c1-8)" >"${!#}.sig" ;;
+  *) if [[ -n ${out:-} ]]; then mkdir -p "$out/iso"; echo iso >"$out/iso/expanse-1.2.0-x86_64-linux.iso"; fi ;;
+esac
+exit 0
 SH
+cat >"$stub/nix-build" <<'SH'
+#!/usr/bin/env bash
+echo "nix-build $*" >>"$STUB_LOG"
+args=("$@"); for i in "${!args[@]}"; do [[ ${args[i]} == -o ]] && mkdir -p "${args[i+1]}"; done
+exit 0
+SH
+printf '#!/bin/sh\necho /nix/store/aaa-on-cache\necho /nix/store/bbb-ours\n' >"$stub/nix-store"
 cat >"$stub/gh" <<'SH'
 #!/usr/bin/env bash
 echo "gh $*" >>"$STUB_LOG"
@@ -69,18 +85,29 @@ printf '#!/bin/sh\n' >"$site/tools/sync-release"
 chmod +x "$stub"/* "$site/tools/sync-release"
 
 export STUB_LOG=$tmp/log
-out=$(cd "$repo" && PATH="$stub:$PATH" EXPANSE_WEBSITE=$site "$here/release.sh" --dry-run 2>&1) || { echo "$out"; fails=$((fails + 1)); }
+out=$(cd "$repo" && PATH="$stub:$PATH" EXPANSE_WEBSITE=$site EXPANSE_RELEASE_KEY=test-1:secret "$here/release.sh" --dry-run 2>&1) ||
+  { echo "$out"; fails=$((fails + 1)); }
 dist=$repo/dist/1.2.0
 sum=$(echo iso | sha256sum | cut -d' ' -f1)
 check manifest-sha "\"sha256\": \"$sum\"," "$(grep '"sha256"' "$dist/release.json" | sed 's/^ *//')"
 check manifest-url '"url": "https://github.com/team-expanse/expanse/releases/download/v1.2.0/expanse-1.2.0-x86_64-linux.iso",' \
   "$(grep '"url"' "$dist/release.json" | sed 's/^ *//')"
-check sums "$sum  expanse-1.2.0-x86_64-linux.iso" "$(cat "$dist/SHA256SUMS")"
+check sums-iso "$sum  expanse-1.2.0-x86_64-linux.iso" "$(head -1 "$dist/SHA256SUMS")"
+check sums-assets "expanse-1.2.0.tar.gz expanse-1.2.0-cache-x86_64-linux.tar" "$(tail -n +2 "$dist/SHA256SUMS" | awk '{print $2}' | xargs)"
+check sums-signed "sig-of-$(sha256sum <"$dist/SHA256SUMS" | cut -c1-8)" "$(cat "$dist/SHA256SUMS.sig")"
+check tarball-source '"1.2.0"' "$(tar -xzOf "$dist/expanse-1.2.0.tar.gz" expanse-1.2.0/nix/version.nix)"
+check cache-only-missing /nix/store/bbb-ours "$(tar -xOf "$dist/expanse-1.2.0-cache-x86_64-linux.tar" ./copied)"
+check cache-signed test-1:secret "$(tar -xOf "$dist/expanse-1.2.0-cache-x86_64-linux.tar" ./signed-with)"
 check notes-file "$(changelog_notes 1.2.0 "$tmp/CHANGELOG.md")" "$(cat "$dist/notes.md")"
 check no-gh-in-dry-run '' "$(grep '^gh ' "$tmp/log" || true)"
 expect_out 'would run: git push origin v1.2.0'
 expect_out 'would run: gh release create v1.2.0'
 expect_out "would run: $site/tools/sync-release $dist"
+
+# A real run refuses to start without the signing key.
+if (cd "$repo" && PATH="$stub:$PATH" EXPANSE_RELEASE_KEY='' "$here/release.sh" --yes >/dev/null 2>&1); then
+  echo "FAIL published without EXPANSE_RELEASE_KEY"; fails=$((fails + 1))
+fi
 
 # Refuses a version whose tag is missing.
 git -C "$repo" tag -d v1.2.0 >/dev/null

@@ -119,6 +119,9 @@
             assert lib.assertMsg (rev "$Format:%H$\n" == "installer-rev") "a checkout's source-rev placeholder is not ignored";
             assert lib.assertMsg (rev "d7dec57a\n" == "d7dec57a") "an archived source-rev is not used";
             pkgs.writeText "source-rev" "ok";
+          # release.sh builds this from the release tarball for the release's binary cache.
+          release-cache-eval = pkgs.writeText "release-cache-eval"
+            (builtins.unsafeDiscardStringContext (import ./nix/release-cache.nix { inherit system; }).drvPath);
           node-config-eval =
             let
               refs = import ./nix/installer/reference-nodes.nix {
@@ -432,6 +435,7 @@
           # Phase 12 C1: a one-node cluster -- default volume 1/3, block storage, a VIP, reboot.
           cluster-single-node = mkTest "cluster-single-node" ./nix/tests/cluster-single-node.nix;
           node-upgrade-keeps-blocks = mkTest "node-upgrade-keeps-blocks" ./nix/tests/node-upgrade-keeps-blocks.nix;
+          ui-rolling-upgrade = mkTest "ui-rolling-upgrade" ./nix/tests/ui-rolling-upgrade.nix;
           storage-enable-switch = mkTest "storage-enable-switch" ./nix/tests/storage-enable-switch.nix;
           # Phase 12 B3: 1 -> 3 growth under acked writes, zero loss, DRBD quorum on at 3.
           cluster-single-node-grow = mkTest "cluster-single-node-grow" ./nix/tests/cluster-single-node-grow.nix;
