@@ -114,7 +114,7 @@ func newUpgradeSignCmd() *cobra.Command {
 		Short: "Sign a release's SHA256SUMS with a Nix secret key, writing SHA256SUMS.sig",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			secret, err := os.ReadFile(keyFile)
+			secret, err := releaseSecret(keyFile)
 			if err != nil {
 				return err
 			}
@@ -129,7 +129,19 @@ func newUpgradeSignCmd() *cobra.Command {
 			return os.WriteFile(args[0]+".sig", sig, 0o644)
 		},
 	}
-	cmd.Flags().StringVar(&keyFile, "key", "", "Nix secret key file (nix key generate-secret)")
-	_ = cmd.MarkFlagRequired("key")
+	cmd.Flags().StringVar(&keyFile, "key", "", "Nix secret key file (nix key generate-secret); default: $"+releaseKeyEnv)
 	return cmd
+}
+
+// releaseKeyEnv holds the release signing key, so it need never be written to a file.
+const releaseKeyEnv = "EXPANSE_RELEASE_KEY"
+
+func releaseSecret(keyFile string) ([]byte, error) {
+	if keyFile != "" {
+		return os.ReadFile(keyFile)
+	}
+	if v := os.Getenv(releaseKeyEnv); v != "" {
+		return []byte(v), nil
+	}
+	return nil, fmt.Errorf("no signing key: pass --key or set %s", releaseKeyEnv)
 }

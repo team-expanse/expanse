@@ -27,3 +27,15 @@ func TestVersionCommandReportsTheStampedVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseSecretComesFromTheEnvironmentWithoutAFile(t *testing.T) {
+	t.Setenv(releaseKeyEnv, "expanse-release-1:abc")
+	got, err := releaseSecret("")
+	if err != nil || string(got) != "expanse-release-1:abc" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	t.Setenv(releaseKeyEnv, "")
+	if _, err := releaseSecret(""); err == nil {
+		t.Error("no key and no variable was accepted")
+	}
+}
