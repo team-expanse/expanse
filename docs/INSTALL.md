@@ -155,7 +155,7 @@ Set `V` to the release you are upgrading to:
 
 ```sh
 cd /etc/nixos
-V=1.11.2
+V=1.11.3
 curl -fsSL https://github.com/team-expanse/expanse/archive/refs/tags/v$V.tar.gz | tar xz
 rm -rf expanse.prev; [ -d expanse ] && mv expanse expanse.prev
 mv expanse-$V expanse

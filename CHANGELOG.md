@@ -6,6 +6,20 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.11.3 - 2026-10-19
+
+### Changed
+
+- The Pando guest (`docs/PANDO.md`) runs Pando 0.10.0, up from 0.3.0. Pando now starts its own
+  BuildKit, generates its Postgres password on the first start, and asks for a one-time setup token
+  when no `PANDO_ADMIN_PASSWORD` is set. Existing guests are not upgraded in place.
+
+### Fixed
+
+- The Pando guest reports ready only once Pando answers and its key files are on disk. A crash
+  soon after the first boot no longer leaves `token.key` empty, which kept Pando restarting forever.
+- The Pando guest prints that Pando failed to start, instead of its console address, when it did.
+
 ## 1.11.2 - 2026-10-19
 
 ### Fixed
