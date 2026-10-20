@@ -128,6 +128,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s.registerEventRoutes()
 	s.registerSettingsRoutes()
 	s.registerNetworkRoutes()
+	s.registerUpgradeRoutes()
 	return s, nil
 }
 

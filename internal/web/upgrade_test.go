@@ -1,0 +1,133 @@
+package web
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/expanse/expanse/internal/store"
+	"github.com/expanse/expanse/internal/upgrade"
+	"github.com/expanse/expanse/internal/upgrade/rollout"
+)
+
+func newUpgradeTestServer(t *testing.T) (*http.Client, string, string, store.Store) {
+	t.Helper()
+	srv, pw, st := newTestServerWith(t, func(s *Server) { s.cluster = previewCluster{} })
+	c, csrf := loggedInClient(t, srv, pw)
+	ctx := context.Background()
+	for _, n := range []string{"n1", "n2", "n3"} {
+		if err := rollout.SaveReport(ctx, st, n, rollout.Report{Version: "1.11.3", Updated: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rollout.SaveLatest(ctx, st, rollout.Latest{Version: "1.12.0", Checked: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	return c, srv.URL, csrf, st
+}
+
+func TestUpgradePageShowsVersionsAndOffersTheNewestRelease(t *testing.T) {
+	c, base, _, _ := newUpgradeTestServer(t)
+	_, body := get(t, c, base+"/upgrade")
+	for _, want := range []string{"1.12.0", "1.11.3", `href="/nodes/n2"`, `name="version" value="1.12.0"`, `action="/upgrade/start"`, `action="/upgrade/check"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upgrade page missing %q", want)
+		}
+	}
+}
+
+func TestUpgradeStartWritesAPlanWithTheLeaderLast(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	resp, body := postForm(t, c, base+"/upgrade/start", csrf, url.Values{"version": {"1.12.0"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("start: status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+	p, err := rollout.LoadPlan(context.Background(), st)
+	if err != nil || p == nil {
+		t.Fatalf("plan %v, err %v", p, err)
+	}
+	if p.Target != "1.12.0" || p.State != rollout.Running || strings.Join(p.Order, ",") != "n2,n3,n1" {
+		t.Errorf("plan = %+v", p)
+	}
+	resp, body = postForm(t, c, base+"/upgrade/start", csrf, url.Values{"version": {"1.12.1"}})
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "already") {
+		t.Errorf("a second rollout: status %d", resp.StatusCode)
+	}
+}
+
+func TestUpgradeStartRefusesWhatIsNotAVersion(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	resp, _ := postForm(t, c, base+"/upgrade/start", csrf, url.Values{"version": {"latest; rm -rf /"}})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status %d", resp.StatusCode)
+	}
+	if p, _ := rollout.LoadPlan(context.Background(), st); p != nil {
+		t.Errorf("a plan was stored: %+v", p)
+	}
+}
+
+func TestUpgradePauseResumeAndCancel(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	ctx := context.Background()
+	postForm(t, c, base+"/upgrade/start", csrf, url.Values{"version": {"1.12.0"}})
+	started, _ := rollout.LoadPlan(ctx, st)
+
+	postForm(t, c, base+"/upgrade/pause", csrf, nil)
+	if p, _ := rollout.LoadPlan(ctx, st); p.State != rollout.Paused {
+		t.Errorf("after pause: %+v", p)
+	}
+	time.Sleep(time.Millisecond)
+	postForm(t, c, base+"/upgrade/resume", csrf, nil)
+	p, _ := rollout.LoadPlan(ctx, st)
+	if p.State != rollout.Running || !p.Started.After(started.Started) {
+		t.Errorf("after resume: %+v (a resume must retry a failed node)", p)
+	}
+	postForm(t, c, base+"/upgrade/cancel", csrf, nil)
+	if p, _ := rollout.LoadPlan(ctx, st); p.State != rollout.Cancelled {
+		t.Errorf("after cancel: %+v", p)
+	}
+	if resp, _ := postForm(t, c, base+"/upgrade/start", csrf, url.Values{"version": {"1.12.0"}}); resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("a new rollout after a cancel: status %d", resp.StatusCode)
+	}
+}
+
+func TestUpgradePageShowsWhyARolloutHalted(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	ctx := context.Background()
+	rollout.SavePlan(ctx, st, rollout.Plan{
+		Target: "1.12.0", State: rollout.Halted, Order: []string{"n2", "n3", "n1"},
+		Current: "n2", Reason: "n2: build: builder failed",
+	})
+	rollout.SaveReport(ctx, st, "n2", rollout.Report{Version: "1.11.3", Upgrade: &upgrade.Status{
+		Version: "1.12.0", State: upgrade.StateFailed, Error: "build: builder failed",
+	}})
+	_, body := get(t, c, base+"/upgrade")
+	for _, want := range []string{"builder failed", `action="/upgrade/resume"`, `action="/upgrade/cancel"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("halted page missing %q", want)
+		}
+	}
+	if strings.Contains(body, `action="/upgrade/start"`) {
+		t.Error("offers a new rollout while one is halted")
+	}
+}
+
+func TestUpgradeCheckNowAndTurningTheCheckOff(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	ctx := context.Background()
+	postForm(t, c, base+"/upgrade/check", csrf, nil)
+	if l, _ := rollout.LoadLatest(ctx, st); !l.Requested {
+		t.Errorf("check now not recorded: %+v", l)
+	}
+	postForm(t, c, base+"/upgrade/auto-check", csrf, url.Values{"enabled": {"off"}})
+	if l, _ := rollout.LoadLatest(ctx, st); !l.Disabled {
+		t.Errorf("check not turned off: %+v", l)
+	}
+	postForm(t, c, base+"/upgrade/auto-check", csrf, url.Values{"enabled": {"on"}})
+	if l, _ := rollout.LoadLatest(ctx, st); l.Disabled {
+		t.Errorf("check not turned on: %+v", l)
+	}
+}

@@ -192,3 +192,6 @@ func parseSums(sums []byte) (map[string]string, error) {
 	}
 	return out, sc.Err()
 }
+
+// ValidVersion reports whether v names a release (1.12.0, 1.12.0-rc.1).
+func ValidVersion(v string) bool { return versionRE.MatchString(v) }
