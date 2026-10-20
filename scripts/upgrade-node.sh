@@ -85,6 +85,15 @@ restore_source() {
   if [[ $fresh == 0 ]]; then mv "$nixos/expanse.prev" "$nixos/expanse"; fi
 }
 
+# reboot_needed BOOTED NEW: the new system's kernel, initrd or modules differ from the booted ones.
+reboot_needed() {
+  local f
+  for f in kernel initrd kernel-modules; do
+    [[ $(readlink -f "$1/$f") == $(readlink -f "$2/$f") ]] || return 0
+  done
+  return 1
+}
+
 main() {
   local base=https://github.com/team-expanse/expanse/releases/download yes=0
   local cache_dir=/var/cache/expanse/upgrade
@@ -134,8 +143,8 @@ main() {
   say "switching to $sys"
   nix-env -p /nix/var/nix/profiles/system --set "$sys"
   "$sys/bin/switch-to-configuration" switch || die "switch-to-configuration failed; the new system is the boot default, the old one is still in the boot menu"
-  if [[ $(readlink -f /run/booted-system/kernel) != $(readlink -f "$sys/kernel") ]]; then
-    say "the kernel changed: reboot this node to finish, before upgrading the next one"
+  if reboot_needed /run/booted-system "$sys"; then
+    say "the kernel, initrd or kernel modules changed: reboot this node to finish, before upgrading the next one"
   fi
   say "done: $(expanse version | head -1). Wait for the cluster to be healthy, then: expanse ctl node uncordon $(hostname)"
 }

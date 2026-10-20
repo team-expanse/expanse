@@ -10,6 +10,12 @@
             url = "https://pkg.linbit.com//downloads/drbd/9/drbd-9.2.16.tar.gz";
             hash = "sha256-2ff9XtSlUnJG5y6qrRYGTgQiZdEnzywKaKR96ItF8Zw=";
           };
+          # nixpkgs substitutes builtins.getEnv "SHELL", so each evaluator got its own drv and the
+          # release cache never matched what a node asked for.
+          postPatch = ''
+            patchShebangs .
+            substituteInPlace Makefile --replace 'SHELL=/bin/bash' 'SHELL=${final.runtimeShell}'
+          '';
           meta = old.meta // { broken = false; };
         });
       });

@@ -17,7 +17,7 @@ mkdir -p "$stub"
 # A tiny "system" the stub nix-build prints; its switch-to-configuration records that it ran.
 sys=$tmp/system
 mkdir -p "$sys/bin"
-ln -s "$(readlink -f /run/booted-system/kernel)" "$sys/kernel"
+for f in kernel initrd kernel-modules; do ln -s "$(readlink -f /run/booted-system/$f)" "$sys/$f"; done
 printf '#!/bin/sh\necho "$@" >>"%s/switched"\n' "$tmp" >"$sys/bin/switch-to-configuration"
 cat >"$stub/nix-build" <<SH
 #!/bin/sh
@@ -83,6 +83,13 @@ grep -qF "$(key_pem "$release_key" | sed -n 2p)" "$here/../docs/UPGRADE.md" || f
 [[ $release_key == "$(cat "$here/../internal/upgrade/release-key.pub")" ]] ||
   fail "release_key differs from internal/upgrade/release-key.pub"
 
+b=$tmp/booted n=$tmp/new
+mkdir -p "$b" "$n"
+for f in kernel initrd kernel-modules; do touch "$tmp/$f" "$tmp/$f.new"; ln -s "$tmp/$f" "$b/$f"; ln -s "$tmp/$f" "$n/$f"; done
+reboot_needed "$b" "$n" && fail "reboot_needed: same kernel, initrd and modules"
+ln -sf "$tmp/kernel-modules.new" "$n/kernel-modules"
+reboot_needed "$b" "$n" || fail "reboot_needed: new kernel modules"
+
 release 9.9.9
 node
 upgrade 9.9.9
@@ -93,6 +100,7 @@ grep -qF "extra-substituters file://$tmp/cache/9.9.9/cache --option extra-truste
 grep -qF -- "--set $sys" "$tmp/nix-env.args" || fail "upgrade: profile not set"
 [[ $(cat "$tmp/switched" 2>/dev/null) == switch ]] || fail "upgrade: no switch"
 [[ -s $tmp/cache/9.9.9/upgrade-node.log ]] || fail "upgrade: no log"
+grep -q "reboot this node" <<<"$out" && fail "upgrade: asks for a reboot with the booted kernel, initrd and modules"
 
 node
 upgrade 9.9.9 --key "$(cat "$here/../internal/upgrade/release-key.pub")"

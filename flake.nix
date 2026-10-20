@@ -157,6 +157,10 @@
                 # The upgrader's entry point builds this same system.
                 assert lib.assertMsg ((import ./nix/node-system.nix { configuration = node.configFile; inherit system; }).config.system.build.toplevel.drvPath == c.system.build.toplevel.drvPath)
                   "nix/node-system.nix builds a different ${layout} node";
+                # nixpkgs' drbd reads $SHELL at eval time, so nodes and the release cache disagree on its drv.
+                assert lib.assertMsg (lib.hasInfix (builtins.unsafeDiscardStringContext "'SHELL=${node.pkgs.runtimeShell}'")
+                  (builtins.unsafeDiscardStringContext c.boot.kernelPackages.drbd.postPatch))
+                  "installed ${layout} node's drbd module depends on the evaluator's $SHELL";
                 assert lib.assertMsg (lib.elem "/share/licenses" c.environment.pathsToLink)
                   "installed ${layout} node does not link /run/current-system/sw/share/licenses";
                 assert lib.assertMsg (layout != "mirror" || mirrorBootsDegraded c)
