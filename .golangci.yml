@@ -15,6 +15,10 @@ linters:
     - nilerr
 
   settings:
+    misspell:
+      # Nix's option name (extra-substituters), not a typo.
+      ignore-rules:
+        - substituters
     revive:
       rules:
         # Style-only rules: doc-comment and parameter-naming style is
