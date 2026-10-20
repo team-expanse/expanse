@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"reflect"
@@ -31,7 +32,9 @@ type nodeUpgrades struct {
 	start                     func(ctx context.Context, version string) error
 	isLeader                  func() bool
 	health                    func(ctx context.Context) rollout.Health
-	log                       *slog.Logger
+	// latest returns the newest published release; nil turns the check off.
+	latest func(ctx context.Context) (string, error)
+	log    *slog.Logger
 
 	last      *rollout.Report
 	lastSaved time.Time
@@ -45,6 +48,9 @@ func (u *nodeUpgrades) pass(ctx context.Context, st store.Store, now time.Time) 
 		} else {
 			u.last, u.lastSaved = &rep, now
 		}
+	}
+	if u.isLeader() {
+		u.checkLatest(ctx, st, now)
 	}
 	plan, err := rollout.LoadPlan(ctx, st)
 	if err != nil || plan == nil {
@@ -75,6 +81,24 @@ func (u *nodeUpgrades) lead(ctx context.Context, st store.Store, plan rollout.Pl
 		return
 	}
 	u.logger().Info("rollout", "target", next.Target, "state", next.State, "current", next.Current, "reason", next.Reason)
+}
+
+// checkLatest records the newest release when a check is due.
+func (u *nodeUpgrades) checkLatest(ctx context.Context, st store.Store, now time.Time) {
+	l, err := rollout.LoadLatest(ctx, st)
+	if err != nil || u.latest == nil || !l.Due(now) {
+		return
+	}
+	v, err := u.latest(ctx)
+	l.Checked, l.Requested, l.Error = now, false, ""
+	if err != nil {
+		l.Error = err.Error()
+	} else {
+		l.Version = v
+	}
+	if err := rollout.SaveLatest(ctx, st, l); err != nil {
+		u.logger().Warn("newest release not recorded", "err", err)
+	}
 }
 
 func (u *nodeUpgrades) report(now time.Time) rollout.Report {
@@ -145,7 +169,12 @@ func (a *Agent) upgradeLoop(ctx context.Context) {
 		start:    startUpgrade,
 		isLeader: func() bool { return a.ctl.store.IsLeader() },
 		health:   a.rolloutHealth,
-		log:      a.logger,
+		latest: func(ctx context.Context) (string, error) {
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // the loop must not hang on GitHub
+			defer cancel()
+			return upgrade.FetchLatest(ctx, http.DefaultClient, upgrade.LatestURL)
+		},
+		log: a.logger,
 	}
 	tick := time.NewTicker(upgradePassInterval)
 	defer tick.Stop()

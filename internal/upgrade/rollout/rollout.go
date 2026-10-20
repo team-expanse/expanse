@@ -18,6 +18,8 @@ const (
 	Paused  State = "paused"
 	Halted  State = "halted"
 	Done    State = "done"
+	// Cancelled: stopped by the user; nodes already upgraded stay upgraded.
+	Cancelled State = "cancelled"
 )
 
 // NodeTimeout halts a rollout whose current node has reported nothing for this long.

@@ -82,3 +82,38 @@ func TestUpgradePassOnAFollowerLeavesThePlanAlone(t *testing.T) {
 		t.Fatalf("a follower moved the plan: %+v, started %v", got, r.started)
 	}
 }
+
+func TestTheLeaderChecksForANewReleaseDailyOrWhenAsked(t *testing.T) {
+	r := newUpgradeRig(t, "n1", "1.11.3")
+	ctx := context.Background()
+	checks := 0
+	r.u.latest = func(context.Context) (string, error) { checks++; return "1.12.0", nil }
+	now := time.Now()
+	r.u.pass(ctx, r.st, now)
+	if checks != 0 {
+		t.Fatal("a follower checked for releases")
+	}
+	r.leader = true
+	r.u.pass(ctx, r.st, now)
+	r.u.pass(ctx, r.st, now.Add(time.Hour))
+	if checks != 1 {
+		t.Fatalf("checked %d times in an hour, want once", checks)
+	}
+	got, _ := rollout.LoadLatest(ctx, r.st)
+	if got.Version != "1.12.0" {
+		t.Fatalf("latest = %+v", got)
+	}
+	got.Requested = true
+	rollout.SaveLatest(ctx, r.st, got)
+	r.u.pass(ctx, r.st, now.Add(2*time.Hour))
+	if checks != 2 {
+		t.Fatal("Check now was not honoured")
+	}
+	got, _ = rollout.LoadLatest(ctx, r.st)
+	got.Disabled = true
+	rollout.SaveLatest(ctx, r.st, got)
+	r.u.pass(ctx, r.st, now.Add(48*time.Hour))
+	if checks != 2 {
+		t.Fatal("checked although the check is turned off")
+	}
+}

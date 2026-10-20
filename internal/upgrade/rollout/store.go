@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
@@ -14,7 +15,45 @@ const (
 	PlanKey = "/upgrade/plan"
 	// ReportPrefix holds each node's Report, keyed by node ID.
 	ReportPrefix = "/upgrade/nodes/"
+	// LatestKey holds the newest release the leader found.
+	LatestKey = "/upgrade/latest"
 )
+
+// Latest is the newest published release, checked daily by the leader unless Disabled.
+type Latest struct {
+	Version string    `json:"version,omitempty"`
+	Checked time.Time `json:"checked"`
+	Error   string    `json:"error,omitempty"`
+	// Requested asks the leader to check now ("Check now" in the UI).
+	Requested bool `json:"requested,omitempty"`
+	Disabled  bool `json:"disabled,omitempty"`
+}
+
+// LatestInterval is how often the leader checks for a new release.
+const LatestInterval = 24 * time.Hour
+
+// Due reports whether the leader should check for a new release now.
+func (l Latest) Due(now time.Time) bool {
+	return !l.Disabled && (l.Requested || now.Sub(l.Checked) >= LatestInterval)
+}
+
+// LoadLatest returns the record, zero when none was written yet.
+func LoadLatest(ctx context.Context, st store.Store) (Latest, error) {
+	var l Latest
+	e, err := st.Get(ctx, store.Key(LatestKey))
+	if experrors.KindOf(err) == experrors.KindNotFound {
+		return l, nil
+	}
+	if err != nil {
+		return l, err
+	}
+	return l, json.Unmarshal(e.Value, &l)
+}
+
+// SaveLatest writes the record.
+func SaveLatest(ctx context.Context, st store.Store, l Latest) error {
+	return put(ctx, st, LatestKey, l)
+}
 
 // LoadPlan returns the rollout, or nil when none was ever started.
 func LoadPlan(ctx context.Context, st store.Store) (*Plan, error) {
