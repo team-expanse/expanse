@@ -1,0 +1,2 @@
+# GitHub release tarballs carry their commit here (git archive); a checkout keeps the placeholder.
+nix/source-rev export-subst

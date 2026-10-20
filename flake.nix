@@ -112,6 +112,13 @@
             ${pkgs.bash}/bin/bash ${./nix/tests/package-licenses.sh} ${self.packages.${system}.expanse} ${./vendor/modules.txt} | tee $out
           '';
           # The configuration.nix the installer writes (Go goldens) evaluates to a system, as nixos-install needs.
+          # A release tarball's commit wins over the installer's; a checkout falls back.
+          source-rev =
+            let rev = text: import ./nix/source-rev.nix { fallback = "installer-rev"; file = builtins.toFile "source-rev" text; };
+            in
+            assert lib.assertMsg (rev "$Format:%H$\n" == "installer-rev") "a checkout's source-rev placeholder is not ignored";
+            assert lib.assertMsg (rev "d7dec57a\n" == "d7dec57a") "an archived source-rev is not used";
+            pkgs.writeText "source-rev" "ok";
           node-config-eval =
             let
               refs = import ./nix/installer/reference-nodes.nix {
@@ -141,6 +148,12 @@
                 # The same derivation as the ISO's, so nixos-install copies it off the ISO instead of compiling it.
                 assert lib.assertMsg (node.pkgs.expanse.drvPath == self.packages.${system}.expanse.drvPath)
                   "installed ${layout} node builds a different expanse from the installer's";
+                # nixos-rebuild and block builds use the release's pinned nixpkgs, not the channel.
+                assert lib.assertMsg (lib.elem "nixpkgs=${nixpkgs}" c.nix.nixPath)
+                  "installed ${layout} node's NIX_PATH does not name the pinned nixpkgs";
+                # The upgrader's entry point builds this same system.
+                assert lib.assertMsg ((import ./nix/node-system.nix { configuration = node.configFile; inherit system; }).config.system.build.toplevel.drvPath == c.system.build.toplevel.drvPath)
+                  "nix/node-system.nix builds a different ${layout} node";
                 assert lib.assertMsg (lib.elem "/share/licenses" c.environment.pathsToLink)
                   "installed ${layout} node does not link /run/current-system/sw/share/licenses";
                 assert lib.assertMsg (layout != "mirror" || mirrorBootsDegraded c)
