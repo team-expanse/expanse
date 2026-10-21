@@ -390,3 +390,29 @@ func TestBlockPagesShareOverviewLogsSettingsTabs(t *testing.T) {
 		t.Error("Delete belongs on the Settings tab, not the overview")
 	}
 }
+
+func TestDeployCatalogGroupsTypesAndShowsTheSteps(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "")
+	c, _ := loggedInClient(t, srv, pw)
+	_, body := get(t, c, srv.URL+"/deploy")
+	db, web := strings.Index(body, "Databases and storage"), strings.Index(body, "Web and network")
+	if db < 0 || web < 0 || !(db < strings.Index(body, `/deploy/db/postgres"`) && web < strings.Index(body, `/deploy/web/nginx"`)) {
+		t.Error("types are not grouped under their categories")
+	}
+	if !strings.Contains(body, `class="step" aria-current="step"><b>1</b>`) {
+		t.Error("the catalog is not marked as step 1")
+	}
+	_, form := get(t, c, srv.URL+"/deploy/web/nginx")
+	if !strings.Contains(form, `aria-current="step"><b>2</b>`) {
+		t.Error("the form is not marked as step 2")
+	}
+}
+
+func TestTypeCategory(t *testing.T) {
+	for id, want := range map[string]string{"db/postgres": "Databases and storage", "share/nfs": "Databases and storage", "net/haproxy": "Web and network", "monitor/grafana": "Monitoring", "util/echo": "Utilities and tests", "media/jellyfin": "Apps", "x": "Apps"} {
+		if got := typeCategory(id); got != want {
+			t.Errorf("typeCategory(%q) = %q, want %q", id, got, want)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,8 +88,52 @@ type deployTypeView struct {
 }
 
 type deployCatalogData struct {
-	Page  page
+	Page   page
+	Groups []deployGroup
+}
+
+type deployGroup struct {
+	Name  string
 	Types []deployTypeView
+}
+
+// typeCategories are the catalog's groups in order; a type's prefix picks its group.
+var typeCategories = []struct {
+	Name     string
+	Prefixes []string
+}{
+	{"Databases and storage", []string{"db", "storage", "share", "iscsi"}},
+	{"Web and network", []string{"web", "net"}},
+	{"Apps", nil},
+	{"Monitoring", []string{"monitor"}},
+	{"Utilities and tests", []string{"util"}},
+}
+
+func typeCategory(id string) string {
+	prefix, _, _ := strings.Cut(id, "/")
+	for _, c := range typeCategories {
+		if slices.Contains(c.Prefixes, prefix) {
+			return c.Name
+		}
+	}
+	return "Apps"
+}
+
+// groupTypes buckets sorted views by category, dropping empty groups.
+func groupTypes(views []deployTypeView) []deployGroup {
+	var out []deployGroup
+	for _, c := range typeCategories {
+		g := deployGroup{Name: c.Name}
+		for _, v := range views {
+			if typeCategory(v.ID) == c.Name {
+				g.Types = append(g.Types, v)
+			}
+		}
+		if len(g.Types) > 0 {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func (s *Server) handleDeployCatalog(w http.ResponseWriter, r *http.Request) {
@@ -116,8 +161,8 @@ func (s *Server) handleDeployCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].ID < views[j].ID })
 	s.render(w, http.StatusOK, "deploy_catalog.html", deployCatalogData{
-		Page:  s.newPage(w, r, "Deploy a block", "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: "Deploy"}),
-		Types: views,
+		Page:   s.newPage(w, r, "Deploy a block", "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: "Deploy"}),
+		Groups: groupTypes(views),
 	})
 }
 

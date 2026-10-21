@@ -2,10 +2,13 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">Deploy a block</h1>
-    <p class="page-sub">Pick a type. The next page has its settings, already filled in with working defaults.</p>
+    <p class="page-sub">Pick a type. The next step has its settings, already filled in with working defaults.</p>
   </div>
   <div class="page-actions"><a class="btn btn-ghost" href="/blocks/new">Paste YAML instead</a></div>
 </div>
+{{template "deploy-steps" 1}}
+{{range .Groups}}
+<h2 class="group-title">{{.Name}}</h2>
 <div class="grid-3 type-grid">
   {{range .Types}}
   <a class="card type-card{{if .Missing}} type-card-off{{end}}" href="/deploy/{{.ID}}">
@@ -14,8 +17,9 @@
     {{if .Missing}}<p class="text-warn">No node has {{join .Missing ", "}}.</p>
     {{else if .Needs}}<p class="muted">Needs {{join .Needs ", "}}.</p>{{end}}
   </a>
-  {{else}}
-  {{template "empty" "The catalog is not available on this node."}}
   {{end}}
 </div>
+{{else}}
+{{template "empty" "The catalog is not available on this node."}}
+{{end}}
 {{end}}

@@ -5,7 +5,7 @@
     {{with .Type.Description}}<p class="page-sub">{{.}}</p>{{end}}
   </div>
 </div>
-{{if .Edit}}{{template "block-tabs" (blockTabs .Editing "settings")}}{{end}}
+{{if .Edit}}{{template "block-tabs" (blockTabs .Editing "settings")}}{{else}}{{template "deploy-steps" 2}}{{end}}
 <div class="grid-form">
   <section class="card">
     <form method="post" action="{{.Action}}" class="form" novalidate>

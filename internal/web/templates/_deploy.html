@@ -1,0 +1,6 @@
+{{/* deploy-steps: the three-step strip on the deploy pages; . is the current step. */}}
+{{define "deploy-steps"}}<ol class="steps-bar" aria-label="Deploy steps">
+  <li class="step{{if gt . 1}} step-done{{end}}"{{if eq . 1}} aria-current="step"{{end}}><b>1</b>Pick a type</li>
+  <li class="step{{if gt . 2}} step-done{{end}}"{{if eq . 2}} aria-current="step"{{end}}><b>2</b>Configure and check</li>
+  <li class="step"{{if eq . 3}} aria-current="step"{{end}}><b>3</b>Deployed</li>
+</ol>{{end}}

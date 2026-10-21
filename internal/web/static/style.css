@@ -292,7 +292,8 @@ strong { font-weight: 600; }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.2rem; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
 .grid-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr); gap: 1rem; }
-.grid-2 > .card, .grid-3 > .card, .grid-form > .card { margin-bottom: 1rem; }
+.grid-2, .grid-3, .grid-form { margin-bottom: 1.2rem; }
+.grid-2 > .card, .grid-3 > .card, .grid-form > .card, .stack > .card:last-child { margin-bottom: 0; }
 .stack { display: flex; flex-direction: column; min-width: 0; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.85rem; margin-bottom: 1rem; }
@@ -572,9 +573,18 @@ progress.meter-sm { width: 5rem; vertical-align: middle; }
 }
 
 /* Deploy pages (deploy_catalog.html, deploy_form.html). */
+.steps-bar { list-style: none; margin: 0 0 1.4rem; padding: 0; display: flex; gap: 1.2rem; flex-wrap: wrap; }
+.step { display: inline-flex; align-items: center; gap: 0.55rem; font-size: 0.87rem; font-weight: 600; color: var(--fg-muted); }
+.step b { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 0.8rem; background: var(--neutral-bg); color: var(--neutral-fg); }
+.step[aria-current="step"] { color: var(--fg); }
+.step[aria-current="step"] b { background: var(--accent); color: var(--accent-fg); box-shadow: 0 0 14px color-mix(in srgb, var(--accent) calc(var(--glow) * 100%), transparent); }
+.step-done b { background: var(--ok-bg); color: var(--ok-fg); }
+.group-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--fg-muted); margin: 0.6rem 0 0.8rem; }
 .type-card { display: block; color: inherit; text-decoration: none; }
 .type-card:hover { border-color: var(--fg-faint); }
 .type-card p { margin: 0.3rem 0 0; font-size: 0.88rem; }
+.type-card .card-head h2 { text-transform: none; letter-spacing: 0; font-size: 0.95rem; color: var(--fg); }
+.type-card .card-head h2 code { border: 0; background: none; padding: 0; font-weight: 700; color: var(--accent-ink); }
 .type-card-off { opacity: 0.65; }
 .form-section { font-size: 1rem; margin: 0.6rem 0 0; }
 .field-group { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.7rem; }
