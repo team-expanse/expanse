@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/expanse/expanse/internal/blocks/controller"
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/vm"
+	"github.com/expanse/expanse/internal/blocks/vmready"
+	"github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/sshkeys"
+	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/web/schemaform"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -18,6 +22,9 @@ type vmGuest struct {
 	MAC      string
 	Hostname string
 	Login    string // the user to SSH in as, "" when unknown
+	// Status and Addresses are what the running guest reports; Addresses come from its guest agent.
+	Status    string
+	Addresses []string
 }
 
 // guestInfo describes b's guest, nil for other types. schema is the type's config schema.
@@ -37,6 +44,21 @@ func guestInfo(b *pb.Block, schema []byte) *vmGuest {
 		g.Login = presetLogin(schema, cfg["image"])
 	}
 	return g
+}
+
+// guestStatus fills in g's status and addresses from the status record of replica 0's node.
+func (s *Server) guestStatus(ctx context.Context, g *vmGuest, b *pb.Block) {
+	ns, name := b.GetMetadata().GetNamespace(), b.GetMetadata().GetName()
+	for _, p := range b.GetStatus().GetPlacements() {
+		if p.GetReplicaIndex() != 0 {
+			continue
+		}
+		key := "/node/" + p.GetNodeId() + "/status/resources/" + controller.ReplicaResourceID(ns, name, 0)
+		if e, err := s.store.Get(store.WithStale(ctx), store.Key(key)); err == nil {
+			g.Status, g.Addresses = vmready.SplitAddresses(reconcile.RecordedStatusText(string(e.Value)))
+		}
+		return
+	}
 }
 
 // typeSchema is type t's config schema, nil when the catalog cannot say.

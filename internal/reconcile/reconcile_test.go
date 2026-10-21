@@ -576,18 +576,24 @@ func TestUndecodableDesiredEntryKeepsItsResource(t *testing.T) {
 // readyManager reports every resource converged and healthy, with a fixed readiness.
 type readyManager struct {
 	fakeManager
-	ready *bool
+	ready  *bool
+	status string
 }
 
 func (m *readyManager) Observe(ctx context.Context, r Resource) (Observed, error) {
-	return Observed{Exists: true, InSync: true, Health: HealthHealthy, Ready: m.ready}, nil
+	return Observed{Exists: true, InSync: true, Health: HealthHealthy, Ready: m.ready, Details: map[string]string{"status": m.status}}, nil
 }
 
 func tickWithReadiness(t *testing.T, ready *bool) (resource, node string) {
 	t.Helper()
+	return tickWithStatus(t, ready, "")
+}
+
+func tickWithStatus(t *testing.T, ready *bool, status string) (resource, node string) {
+	t.Helper()
 	s := testStore(t)
 	r := New(s, Options{NodeID: "n1", Logger: testLogger(), Period: time.Hour})
-	r.Register(&readyManager{fakeManager: fakeManager{converged: map[string]bool{}}, ready: ready})
+	r.Register(&readyManager{fakeManager: fakeManager{converged: map[string]bool{}}, ready: ready, status: status})
 	putDesired(t, s, "n1", "vm", "")
 	if err := r.Tick(context.Background()); err != nil {
 		t.Fatal(err)
@@ -647,6 +653,21 @@ func TestReadinessIsOmittedWhenNotReported(t *testing.T) {
 	yes := true
 	if res, _ := tickWithReadiness(t, &yes); !contains(res, " ready=true") {
 		t.Errorf("resource status = %q, want ready=true", res)
+	}
+}
+
+func TestTheWorkloadsStatusTextIsRecorded(t *testing.T) {
+	no := false
+	const text = `not ready: guest "x" error=1 (addresses: 192.168.1.50)`
+	res, _ := tickWithStatus(t, &no, text)
+	if got := RecordedStatusText(res); got != text {
+		t.Errorf("RecordedStatusText(%q) = %q, want %q", res, got, text)
+	}
+	if !contains(res, " ready=false") {
+		t.Errorf("resource status = %q, want ready=false kept", res)
+	}
+	if res, _ := tickWithStatus(t, &no, ""); RecordedStatusText(res) != "" || contains(res, "status=") {
+		t.Errorf("resource status = %q, want no status text", res)
 	}
 }
 

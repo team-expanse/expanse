@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -28,5 +29,25 @@ func TestPrepareGuestRefusesABadImageSetting(t *testing.T) {
 	defer cleanup()
 	if err == nil {
 		t.Fatal("an image without a checksum was accepted")
+	}
+}
+
+func TestGuestStateCarriesTheAddressesAcrossStateChanges(t *testing.T) {
+	var sent []string
+	g := &guestState{notify: func(s string) { sent = append(sent, s) }}
+	g.setState("booting")
+	if !g.setAddrs([]string{"192.168.1.50"}) || g.setAddrs([]string{"192.168.1.50"}) {
+		t.Error("setAddrs should report only a change")
+	}
+	g.setState("ready: multi-user.target reached")
+	g.setAddrs(nil)
+	want := []string{
+		"booting",
+		"booting (addresses: 192.168.1.50)",
+		"ready: multi-user.target reached (addresses: 192.168.1.50)",
+		"ready: multi-user.target reached",
+	}
+	if !slices.Equal(sent, want) {
+		t.Errorf("sent %q, want %q", sent, want)
 	}
 }

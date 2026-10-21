@@ -13,6 +13,9 @@ History before 1.0.0 is not recorded here.
 - A VM's `cloudInit.setup` installs packages and runs commands on its first boot. The web form
   offers ready-made setups, starting with Pando 0.12.0 under Docker on a Debian 13 or Ubuntu 24.04
   image, so Pando deploys from the UI with no image to build.
+- A VM's block page shows the guest's address and an `ssh` line to log in with. Each VM gets a QEMU
+  guest agent port, the cloud-init seed installs `qemu-guest-agent` (`cloudInit.guestAgent: skip`
+  leaves it out), and the node passes the addresses the agent reports to the page.
 
 ## 1.12.3 - 2026-10-20
 

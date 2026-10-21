@@ -84,6 +84,14 @@
           "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
           "description": "Left unset, the block's name"
         },
+        "guestAgent": {
+          "enum": [
+            "install",
+            "skip"
+          ],
+          "title": "Guest agent",
+          "description": "Left unset, install: qemu-guest-agent tells the node the guest's addresses, which the block page shows. Installing it runs the package manager's update on the first boot"
+        },
         "setup": {
           "type": "object",
           "additionalProperties": false,

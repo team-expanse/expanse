@@ -119,9 +119,22 @@ inside the guest after that. Use images with systemd 254 or newer (Debian 12 has
 `guestReady: none`; see below.
 
 The guest joins the LAN through macvtap and gets its address from your DHCP server. The block's
-page shows its MAC address and hostname, so you can find the address in your router's leases. The
-node running the VM cannot reach it; connect from another machine. Downloaded images stay in the
-cache for other VMs; remove files there by hand to free the space.
+page shows its MAC address, hostname and, once the guest agent answers, its address with a ready
+`ssh` line (see below). The node running the VM cannot reach it; connect from another machine.
+Downloaded images stay in the cache for other VMs; remove files there by hand to free the space.
+
+### The guest's address
+
+Every VM gets a virtio-serial port for the QEMU guest agent. Every 15 seconds, `expanse-block-run`
+asks the agent for the addresses on the interface with the block's MAC address and adds them to
+the unit's status text, e.g. `ready: multi-user.target reached (addresses: 192.168.1.50)`. The node's
+Expanse agent copies it into the replica's status record (`/node/<node>/status/resources/block-replica:<ns>/<name>/0`),
+and the block page shows it. Link-local addresses are left out.
+
+The seed installs `qemu-guest-agent` and starts it on the first boot, which also runs the package
+manager's update. Set `cloudInit.guestAgent: skip` to leave it out; the page then says no agent has
+answered, and the router's lease list is the way to find the address. A VM deployed before this
+change installs nothing new, as cloud-init runs once; install the package in the guest by hand.
 
 ### First-boot setup
 

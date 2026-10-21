@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -141,6 +142,7 @@ type Status struct {
 	InSync     bool
 	Ready      *bool
 	Error      string
+	Text       string // the workload's own status line, e.g. a VM guest's boot state and addresses
 	Actions    int
 	UpdatedAt  time.Time
 }
@@ -518,7 +520,7 @@ func (r *Reconciler) processResource(ctx context.Context, res Resource) *Status 
 	}
 	if obs.InSync {
 		r.markSuccess(res.ID())
-		st.Health, st.Ready = obs.Health, obs.Ready
+		st.Health, st.Ready, st.Text = obs.Health, obs.Ready, obs.Details["status"]
 		st.InSync = true
 		return st
 	}
@@ -651,9 +653,26 @@ func (r *Reconciler) recordStatus(ctx context.Context, st *Status) {
 		val += fmt.Sprintf(" ready=%t", *st.Ready) // before the free-text error, so parsers never confuse the two
 	}
 	val += fmt.Sprintf(" actions=%d error=%q updated=%d", st.Actions, st.Error, st.UpdatedAt.UnixNano())
+	if st.Text != "" {
+		val += fmt.Sprintf(" status=%q", st.Text) // last, so RecordedStatusText can find it
+	}
 	if _, err := r.store.Put(ctx, key, []byte(val)); err != nil {
 		r.logger.Error("record status failed", "id", st.ResourceID, "err", err)
 	}
+}
+
+// RecordedStatusText is the workload's status line in a record from recordStatus, "" when it has none.
+func RecordedStatusText(record string) string {
+	// %q escapes every quote, so the error field cannot hold this marker.
+	_, q, ok := strings.Cut(record, ` status="`)
+	if !ok {
+		return ""
+	}
+	text, err := strconv.Unquote(`"` + q)
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 // sweepStatus deletes status records whose resource is no longer desired, including ones

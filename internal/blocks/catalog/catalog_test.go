@@ -577,6 +577,8 @@ func TestVMInstanceImageConfig(t *testing.T) {
 		"gh shortcut":   {map[string]any{"cloudInit": map[string]any{"sshKeys": []any{"gh:someone"}}}, "/cloudInit/sshKeys/0"},
 		"setup":         {map[string]any{"cloudInit": map[string]any{"setup": map[string]any{"packages": []any{"curl"}, "runcmd": []any{"true"}}}}, ""},
 		"bad package":   {map[string]any{"cloudInit": map[string]any{"setup": map[string]any{"packages": []any{"curl; rm"}}}}, "/cloudInit/setup/packages/0"},
+		"no agent":      {map[string]any{"cloudInit": map[string]any{"guestAgent": "skip"}}, ""},
+		"agent false":   {map[string]any{"cloudInit": map[string]any{"guestAgent": false}}, "/cloudInit/guestAgent"},
 	} {
 		cfg, _ := structpb.NewStruct(tc.cfg)
 		errs := c.ValidateConfig("vm/instance", cfg)

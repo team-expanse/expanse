@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,5 +115,32 @@ func TestBuildSeedMakesACidataISO(t *testing.T) {
 	// The primary volume descriptor's volume id, at 32 KiB + 40: cloud-init finds the seed by it.
 	if id := strings.TrimSpace(string(raw[32768+40 : 32768+72])); !strings.EqualFold(id, "cidata") {
 		t.Errorf("volume id %q", id)
+	}
+}
+
+func TestTheGuestAgentIsOnUnlessTurnedOff(t *testing.T) {
+	if ci, _ := CloudInitFromConfig(map[string]any{"image": map[string]any{}}); !ci.GuestAgent {
+		t.Error("the guest agent is off by default")
+	}
+	off := map[string]any{"cloudInit": map[string]any{"guestAgent": "skip"}}
+	if ci, _ := CloudInitFromConfig(off); ci.GuestAgent {
+		t.Error("guestAgent: skip left it on")
+	}
+}
+
+func TestSeedInstallsTheGuestAgentOnce(t *testing.T) {
+	ud, _ := SeedFiles("default-vm1-0", CloudInit{GuestAgent: true, Packages: []string{"curl", "qemu-guest-agent"}}, "vm1")
+	cc := cloudConfig(t, ud)
+	pkgs := fmt.Sprint(cc["packages"])
+	if pkgs != "[qemu-guest-agent curl]" || cc["package_update"] != true {
+		t.Errorf("packages = %s, package_update = %v", pkgs, cc["package_update"])
+	}
+	// Debian's package leaves the agent stopped until the next boot.
+	if cmds := fmt.Sprint(cc["runcmd"]); cmds != "[systemctl start qemu-guest-agent]" {
+		t.Errorf("runcmd = %s, want the agent started", cmds)
+	}
+	ud, _ = SeedFiles("default-vm1-0", CloudInit{GuestAgent: true, RunCmd: []string{"echo hi"}}, "vm1")
+	if cmds := fmt.Sprint(cloudConfig(t, ud)["runcmd"]); cmds != "[systemctl start qemu-guest-agent echo hi]" {
+		t.Errorf("runcmd = %s, want the agent started first", cmds)
 	}
 }

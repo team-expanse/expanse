@@ -192,7 +192,9 @@ func (s *Server) handleBlockDetail(w http.ResponseWriter, r *http.Request) {
 	if p, scope, ok := vip.Lookup(store.WithStale(r.Context()), s.store, full); d.HasVIP && ok {
 		d.Address, d.ClusterOnly = p.Addr().String(), scope == vip.ScopeInternal
 	}
-	d.Guest = guestInfo(b, s.typeSchema(r.Context(), b.GetSpec().GetType()))
+	if d.Guest = guestInfo(b, s.typeSchema(r.Context(), b.GetSpec().GetType())); d.Guest != nil {
+		s.guestStatus(r.Context(), d.Guest, b)
+	}
 	s.render(w, http.StatusOK, "block_detail.html", d)
 }
 

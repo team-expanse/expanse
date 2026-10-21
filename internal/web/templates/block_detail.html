@@ -35,8 +35,14 @@
   <dl class="dl">
     <dt>MAC address</dt><dd><code>{{.MAC}}</code></dd>
     <dt>Hostname</dt><dd><code>{{.Hostname}}</code></dd>
+    {{if .Status}}<dt>Guest</dt><dd>{{.Status}}</dd>{{end}}
+    <dt>Address</dt><dd>{{range $i, $a := .Addresses}}{{if $i}}, {{end}}<code>{{$a}}</code>{{else}}<span class="muted">No guest agent has answered yet</span>{{end}}</dd>
   </dl>
-  <p class="field-hint">The VM joins your LAN directly and gets its address from your DHCP server: look up this MAC address in your router's lease list{{if .Login}}, then log in with <code>ssh {{.Login}}@&lt;address&gt;</code>, or <code>ssh {{.Login}}@{{.Hostname}}</code> where your network resolves DHCP hostnames{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
+  {{if .Addresses}}
+  <p class="field-hint">The VM joins your LAN directly{{if .Login}}; log in with <code>ssh {{.Login}}@{{index .Addresses 0}}</code>{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
+  {{else}}
+  <p class="field-hint">The VM joins your LAN directly and gets its address from your DHCP server. The address shows here once the guest's QEMU guest agent (the <code>qemu-guest-agent</code> package) answers; until then, look up this MAC address in your router's lease list{{if .Login}}, then log in with <code>ssh {{.Login}}@&lt;address&gt;</code>, or <code>ssh {{.Login}}@{{.Hostname}}</code> where your network resolves DHCP hostnames{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
+  {{end}}
 </section>
 {{end}}
 

@@ -53,6 +53,8 @@ let
         prefixLength = 24;
       }];
       networking.firewall.enable = false;
+      # Reports the guest's address to the node (internal/blocks/vm/qga).
+      services.qemuGuest.enable = true;
       systemd.services.canary = {
         description = "write a boot marker to the raw disk (X1's own persistent disk)";
         wantedBy = [ "multi-user.target" ];

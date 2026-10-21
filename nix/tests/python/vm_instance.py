@@ -111,10 +111,23 @@ def status_text(m, name):
     return m.succeed(f"systemctl show -p StatusText --value {unit_of(name)}").strip()
 
 
+def boot_state(m, name):
+    """The status text without the addresses the guest agent adds."""
+    return status_text(m, name).split(" (addresses: ")[0]
+
+
 with subtest("the booted guest reported ready over vsock, and that is what made it RUNNING"):
     text = status_text(host, NAME)
     print(f"{NAME} status: {text}")
     assert text.startswith("ready:"), f"{NAME} is RUNNING but its unit status is {text!r}"
+
+with subtest("the guest agent's address reaches the node's status record, which the block page reads"):
+    def record():
+        rc, out = kv(n1, f"get /node/{host_name}/status/resources/block-replica:default/{NAME}/0")
+        return out if rc == 0 else ""
+
+    wait_for(lambda: f"(addresses: {GUEST_IP})" in record(), f"{NAME}'s status record to carry {GUEST_IP}", timeout=180)
+    print(record())
 
 STUCK = "vm2"
 WAITING = "not ready: guest started, waiting for multi-user.target"
@@ -132,9 +145,9 @@ with subtest("a guest that starts but never reaches multi-user.target is never R
     wait_for(lambda: stuck_node() != "", f"{STUCK} placed", timeout=300)
     stuck_host = ALL[stuck_node()]
     stuck_host.wait_until_succeeds(f"systemctl is-active {unit_of(STUCK)}", timeout=300)
-    wait_for(lambda: status_text(stuck_host, STUCK) == WAITING, f"{STUCK} to report {WAITING!r}", timeout=300)
+    wait_for(lambda: boot_state(stuck_host, STUCK) == WAITING, f"{STUCK} to report {WAITING!r}", timeout=300)
     time.sleep(30)  # many controller passes, any one of which would promote a ready replica
-    text = status_text(stuck_host, STUCK)
+    text = boot_state(stuck_host, STUCK)
     phase = ((get_json(n1, STUCK) or {}).get("status") or {}).get("phase", "")
     print(f"{STUCK}: phase {phase}, status {text!r}")
     assert text == WAITING, f"{STUCK} status moved on to {text!r}"

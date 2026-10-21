@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -19,6 +20,8 @@ type CloudInit struct {
 	// Packages and RunCmd are cloudInit.setup: installed, then run as root, on the first boot.
 	Packages []string
 	RunCmd   []string
+	// GuestAgent installs qemu-guest-agent, which tells the node the guest's addresses.
+	GuestAgent bool
 }
 
 // CloudInitFromConfig reads config's cloudInit; the zero value when unset.
@@ -29,6 +32,7 @@ func CloudInitFromConfig(cfg map[string]any) (CloudInit, error) {
 	ci := CloudInit{
 		User: str("user"), Hostname: str("hostname"), SSHKeys: nonBlank(m["sshKeys"]),
 		Packages: nonBlank(setup["packages"]), RunCmd: nonBlank(setup["runcmd"]),
+		GuestAgent: m["guestAgent"] != "skip",
 	}
 	for _, k := range ci.SSHKeys {
 		if strings.HasPrefix(k, "gh:") {
@@ -50,6 +54,8 @@ func nonBlank(v any) []string {
 	return out
 }
 
+const guestAgentPackage = "qemu-guest-agent"
+
 // SeedFiles renders NoCloud user-data and meta-data. Without a user, the keys go to the
 // image's own default user (debian, ubuntu, ...). hostname is used when ci names none.
 func SeedFiles(instanceID string, ci CloudInit, hostname string) (userData, metaData []byte) {
@@ -62,12 +68,18 @@ func SeedFiles(instanceID string, ci CloudInit, hostname string) (userData, meta
 	} else if len(ci.SSHKeys) > 0 {
 		cc["ssh_authorized_keys"] = ci.SSHKeys
 	}
-	if len(ci.Packages) > 0 {
-		cc["package_update"] = true
-		cc["packages"] = ci.Packages
+	pkgs, cmds := ci.Packages, ci.RunCmd
+	if ci.GuestAgent {
+		pkgs = append([]string{guestAgentPackage}, slices.DeleteFunc(slices.Clone(pkgs), func(p string) bool { return p == guestAgentPackage })...)
+		// Debian's package leaves the agent stopped until the next boot.
+		cmds = append([]string{"systemctl start " + guestAgentPackage}, cmds...)
 	}
-	if len(ci.RunCmd) > 0 {
-		cc["runcmd"] = ci.RunCmd
+	if len(pkgs) > 0 {
+		cc["package_update"] = true
+		cc["packages"] = pkgs
+	}
+	if len(cmds) > 0 {
+		cc["runcmd"] = cmds
 	}
 	if ci.Hostname != "" {
 		hostname = ci.Hostname

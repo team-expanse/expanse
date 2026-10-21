@@ -33,6 +33,7 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/pgconn"
 	"github.com/expanse/expanse/internal/blocks/vm"
+	"github.com/expanse/expanse/internal/blocks/vm/qga"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/quantity"
@@ -1334,6 +1335,8 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 	// not guaranteed to unlink a stale path first).
 	qmpSock := "/tmp/expblk-" + instance + "-qmp.sock"
 	_ = os.Remove(qmpSock)
+	qgaSock := "/tmp/expblk-" + instance + "-qga.sock"
+	_ = os.Remove(qgaSock)
 
 	qemuArgv := []string{
 		"-enable-kvm", "-nodefaults", "-display", "none", "-no-reboot",
@@ -1351,6 +1354,7 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		"-qmp", "unix:" + qmpSock + ",server,nowait",
 	}
 	qemuArgv = append(qemuArgv, cpuArgs...)
+	qemuArgv = append(qemuArgv, qga.QEMUArgs(qgaSock)...)
 	if seed != "" {
 		qemuArgv = append(qemuArgv, "-drive", "file="+seed+",if=virtio,format=raw,readonly=on")
 	}
@@ -1396,6 +1400,7 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d memMiB=%d)\n", instance, dev, mac, cpus, memMiB)
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
+	go pollGuestAgent(watchCtx, instance, qgaSock, mac)
 	if watch != nil {
 		go watch.serve(watchCtx, instance)
 	} else if cfgStr(cfg, "guestReady") == "none" {

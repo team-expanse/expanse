@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/web/schemaform"
+	pb "github.com/expanse/expanse/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 const debian13 = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
@@ -95,6 +98,39 @@ func TestVMDetailShowsTheGuestsMAC(t *testing.T) {
 	}
 	if !strings.Contains(body, "ssh debian@vm1") {
 		t.Error("the page does not say how to log in")
+	}
+}
+
+func TestVMDetailShowsTheAddressesTheGuestAgentReports(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "kvm")
+	c, csrf := loggedInClient(t, srv, pw)
+	if resp, body := postForm(t, c, srv.URL+"/deploy/vm/instance", csrf, url.Values{
+		"name": {"vm1"}, "cfg/image" + schemaform.PresetSuffix: {"Debian 13 (log in as debian)"},
+	}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("deploy: %d\n%s", resp.StatusCode, alerts(body))
+	}
+	_, body := get(t, c, srv.URL+"/blocks/default/vm1")
+	if !strings.Contains(body, "No guest agent has answered yet") {
+		t.Error("the page does not say the address is not known yet")
+	}
+	status, _ := proto.Marshal(&pb.BlockStatus{Placements: []*pb.PlacementStatus{
+		{ReplicaIndex: -1, FormerIndex: 0, NodeId: "n2", Phase: pb.Phase_FAILED},
+		{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_RUNNING},
+	}})
+	ctx := context.Background()
+	if _, err := st.Put(ctx, "/blocks/default/vm1/status", status); err != nil {
+		t.Fatal(err)
+	}
+	rec := `health=healthy in_sync=true ready=true actions=0 error="" updated=1 status="ready: multi-user.target reached (addresses: 192.168.1.50 fd00::5)"`
+	if _, err := st.Put(ctx, "/node/n1/status/resources/block-replica:default/vm1/0", []byte(rec)); err != nil {
+		t.Fatal(err)
+	}
+	_, body = get(t, c, srv.URL+"/blocks/default/vm1")
+	for _, want := range []string{"192.168.1.50", "fd00::5", "ssh debian@192.168.1.50", "ready: multi-user.target reached"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page lacks %q", want)
+		}
 	}
 }
 

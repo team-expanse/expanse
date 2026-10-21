@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-systemd/v22/daemon"
 
 	"github.com/expanse/expanse/internal/blocks/vm"
+	"github.com/expanse/expanse/internal/blocks/vm/qga"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 )
 
@@ -45,12 +49,60 @@ func (w *guestWatch) close() {
 	_ = w.l.Close()
 }
 
-// publishGuestStatus sets the unit's status text, which the agent reads back as the replica's readiness.
-func publishGuestStatus(instance, s string) {
-	if _, err := daemon.SdNotify(false, "STATUS="+s); err != nil {
-		fmt.Fprintf(os.Stderr, "expanse-block-run: vm %s: sd_notify: %v\n", instance, err)
+// guestState is the unit's status text: the guest's boot state, then the addresses its agent reports.
+type guestState struct {
+	mu     sync.Mutex
+	state  string
+	addrs  []string
+	notify func(string)
+}
+
+func (g *guestState) setState(s string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.state = s
+	g.notify(vmready.WithAddresses(s, g.addrs))
+}
+
+// setAddrs reports whether the addresses changed.
+func (g *guestState) setAddrs(a []string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if slices.Equal(a, g.addrs) {
+		return false
 	}
+	g.addrs = a
+	g.notify(vmready.WithAddresses(g.state, a))
+	return true
+}
+
+// guest is this process's one VM; the agent reads its status text back as the replica's readiness.
+var guest = &guestState{notify: func(s string) {
+	if _, err := daemon.SdNotify(false, "STATUS="+s); err != nil {
+		fmt.Fprintf(os.Stderr, "expanse-block-run: sd_notify: %v\n", err)
+	}
+}}
+
+func publishGuestStatus(instance, s string) {
+	guest.setState(s)
 	fmt.Printf("expanse-block-run: vm %s guest %s\n", instance, s)
+}
+
+// pollGuestAgent publishes the addresses the guest agent reports on the block's NIC until ctx ends.
+func pollGuestAgent(ctx context.Context, instance, sock, mac string) {
+	t := time.NewTicker(15 * time.Second)
+	defer t.Stop()
+	for {
+		addrs, _ := qga.Addresses(ctx, sock, mac) // none while the guest runs no agent
+		if guest.setAddrs(addrs) {
+			fmt.Printf("expanse-block-run: vm %s guest addresses: %s\n", instance, strings.Join(addrs, " "))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // imageCache holds downloaded VM images by digest, shared by the node's VMs.
