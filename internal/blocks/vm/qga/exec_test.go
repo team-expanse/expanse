@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -117,5 +118,16 @@ func TestExecReportsTheAgentRefusingTheCommand(t *testing.T) {
 func TestSocketPathIsOutsideTheUnitsPrivateTmp(t *testing.T) {
 	if got := SocketPath("default-vm1-0"); got != "/run/expblk-default-vm1-0-qga.sock" {
 		t.Errorf("SocketPath = %q", got)
+	}
+}
+
+func TestTheAgentsRefusalIsAnAgentError(t *testing.T) {
+	sock := serveAgent(t, func(command) string {
+		return `{"error":{"class":"GenericError","desc":"no such program"}}`
+	})
+	_, err := Exec(context.Background(), sock, []string{"nope"}, nil)
+	var ae *AgentError
+	if !errors.As(err, &ae) || ae.Desc != "no such program" {
+		t.Errorf("Exec error = %#v, want an *AgentError", err)
 	}
 }

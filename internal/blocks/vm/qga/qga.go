@@ -81,6 +81,13 @@ func sync(w io.Writer, r *bufio.Reader, id int64) error {
 	}
 }
 
+// AgentError is the guest agent's own refusal of a command, as opposed to no answer at all.
+type AgentError struct{ Command, Class, Desc string }
+
+func (e *AgentError) Error() string {
+	return fmt.Sprintf("guest agent %s: %s: %s", e.Command, e.Class, e.Desc)
+}
+
 func call(w io.Writer, r io.Reader, cmd string, args, out any) error {
 	req, err := json.Marshal(struct {
 		Execute   string `json:"execute"`
@@ -100,7 +107,7 @@ func call(w io.Writer, r io.Reader, cmd string, args, out any) error {
 		return fmt.Errorf("guest agent %s: %w", cmd, err)
 	}
 	if reply.Error != nil {
-		return fmt.Errorf("guest agent %s: %s: %s", cmd, reply.Error.Class, reply.Error.Desc)
+		return &AgentError{Command: cmd, Class: reply.Error.Class, Desc: reply.Error.Desc}
 	}
 	if reply.Return == nil {
 		return errors.New("guest agent " + cmd + ": empty reply")

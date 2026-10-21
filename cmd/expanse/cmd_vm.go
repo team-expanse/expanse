@@ -19,8 +19,12 @@ type exitCode int
 
 func (e exitCode) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
+type execFunc func(ctx context.Context, sock, ref string, argv []string, stdin []byte, stdout, stderr io.Writer) error
+
 // newVMCmd builds `expanse ctl vm ...`, which talks to a VM's guest agent on this node.
-func newVMCmd() *cobra.Command {
+func newVMCmd() *cobra.Command { return newVMCmdWith(vmExec) }
+
+func newVMCmdWith(run execFunc) *cobra.Command {
 	vm := &cobra.Command{Use: "vm", Short: "Commands for vm/instance blocks running on this node"}
 	var ns string
 	var withStdin bool
@@ -36,6 +40,14 @@ and its exit code becomes this command's. Ctrl-C stops waiting; the guest comman
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			bns, name := blockRef(ns, args[0])
+			// Without interspersed flags, cobra leaves the "--" in args.
+			argv := args[1:]
+			if argv[0] == "--" {
+				argv = argv[1:]
+			}
+			if len(argv) == 0 {
+				return errors.New("vm exec: no command after the block name")
+			}
 			var stdin []byte
 			if withStdin {
 				b, err := io.ReadAll(cmd.InOrStdin())
@@ -45,7 +57,7 @@ and its exit code becomes this command's. Ctrl-C stops waiting; the guest comman
 				stdin = b
 			}
 			sock := qga.SocketPath(systemd.Instance(bns, name, 0))
-			return vmExec(cmd.Context(), sock, bns+"/"+name, args[1:], stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return run(cmd.Context(), sock, bns+"/"+name, argv, stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	// Flags after the block name belong to the guest command.
@@ -63,9 +75,18 @@ func vmExec(ctx context.Context, sock, ref string, argv []string, stdin []byte, 
 	}
 	res, err := qga.Exec(ctx, sock, argv, stdin)
 	if err != nil {
-		return fmt.Errorf("%w (is qemu-guest-agent installed and running in the guest?)", err)
+		return execError(err)
 	}
 	return printResult(res, stdout, stderr)
+}
+
+// execError adds the install hint only when the agent did not answer.
+func execError(err error) error {
+	var refused *qga.AgentError
+	if errors.As(err, &refused) {
+		return err
+	}
+	return fmt.Errorf("%w (is qemu-guest-agent installed and running in the guest?)", err)
 }
 
 func printResult(res qga.Result, stdout, stderr io.Writer) error {
