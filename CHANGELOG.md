@@ -6,6 +6,47 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.13.1 - 2026-10-21
+
+### Security
+
+- A block's log lines are HTML-escaped before the web UI shows them. A block could log markup that
+  the page acted on, such as a form posting with the signed-in operator's credentials.
+- The deploy form's YAML view masks every secret field at any depth. A rejected deploy or a Check
+  showed typed and generated passwords in it.
+- Sign-in is bounded: at most two password checks run at once, a busy sign-in gets "try again"
+  (429), and each failed attempt answers after a second, so a login flood cannot exhaust a node's
+  memory. Changing the admin password shares the same limits.
+- Signing out, or a session expiring, ends the live updates of pages still open in other tabs.
+
+### Changed
+
+- The web UI names nodes by hostname wherever it shows one, rather than the install UUID: lists,
+  the node page, volumes, block replicas, deploy pre-flight, alerts, event keys and messages. Each
+  node publishes its hostname; links still use the ID, and a node on an earlier release shows its ID
+  until it is upgraded.
+- Every page that shows changing state updates live, now including the blocks and volumes lists,
+  the node page, generations and a block's address and guest network. Nothing reloads the whole
+  page: a new volume's actions and a rollback's result arrive in place. Updates wait while a
+  confirm dialog is open or a field has focus.
+
+### Fixed
+
+- The Health and alerts page no longer re-renders in a fast loop; its node checks keep their order.
+- Live pages keep updating while the cluster has no leader, and recover from a failed read on
+  their own rather than needing a reload.
+- An expired session sends forms and live pages to the login page instead of failing silently.
+- Single sign-on finishes signing in reliably and says why it failed (provider unreachable, expired
+  request, the provider's refusal, or an email outside the allow-list), which ignores letter case.
+- Forms submit once, keep what was typed when refused, and explain refusals: volume names and sizes,
+  enabling storage, upgrade versions and the deploy form's ports.
+- A block page no longer says "This block was deleted." when one of its replicas stops.
+- Rollback is not offered when the current generation is unknown, Scale is offered only where it
+  applies, the logs page lists only running replicas, and the Events page keeps 500 rows.
+- A volume cannot be named `new`, which its page could never open.
+- Smaller fixes: no "1970" probe times, long names wrap at phone width, a forced theme also themes
+  form controls, and a click inside a dialog's padding no longer cancels it.
+
 ## 1.13.0 - 2026-10-20
 
 ### Added
