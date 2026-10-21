@@ -16,7 +16,7 @@
     <div class="login-brand"><svg class="icon brand-mark"><use href="#i-logo"/></svg><span>Expanse</span></div>
     <h1>Sign in</h1>
     <p class="muted">Cluster management interface</p>
-    {{if .Error}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>Invalid username or password.</div>{{end}}
+    {{with .Error}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>{{.}}</div>{{end}}
     <form method="post" action="/login" class="form">
       <label class="field"><span class="field-label">Username</span><input class="input" type="text" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required autofocus></label>
       <label class="field"><span class="field-label">Password</span><input class="input" type="password" name="password" autocomplete="current-password" required></label>

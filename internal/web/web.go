@@ -20,6 +20,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -85,6 +86,7 @@ type Server struct {
 	clusterSecret []byte
 	tmpl          *templates
 	events        *eventLog
+	loginSlots    chan struct{} // bounds concurrent argon2id checks (32 MiB each)
 	routes        *http.ServeMux
 	mux           http.Handler
 }
@@ -109,6 +111,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s := &Server{
 		NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, cluster: cluster,
 		clusterSecret: clusterSecret, tmpl: tmpl, names: names, events: newEventLog(eventLogSize),
+		loginSlots: make(chan struct{}, 2),
 	}
 
 	s.routes = http.NewServeMux()
@@ -170,7 +173,7 @@ func (s *Server) fragment(name string, data any) (string, error) {
 }
 
 type loginData struct {
-	Error      bool
+	Error      string
 	SSOEnabled bool
 	Version    string
 }
@@ -178,7 +181,7 @@ type loginData struct {
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.renderLogin(w, r, http.StatusOK, false)
+		s.renderLogin(w, r, http.StatusOK, "")
 	case http.MethodPost:
 		s.handleLoginSubmit(w, r)
 	default:
@@ -186,19 +189,28 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int, failed bool) {
-	s.render(w, status, "login.html", loginData{Error: failed, SSOEnabled: oidc.IsConfigured(r.Context(), s.store), Version: version.Get().Version})
+// badPassword is the one answer for any failed password sign-in.
+const badPassword = "Invalid username or password."
+
+func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	s.render(w, status, "login.html", loginData{Error: msg, SSOEnabled: oidc.IsConfigured(r.Context(), s.store), Version: version.Get().Version})
 }
 
 func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		s.renderLogin(w, r, http.StatusBadRequest, true)
+		s.renderLogin(w, r, http.StatusBadRequest, badPassword)
 		return
 	}
 	username := r.PostForm.Get("username")
 	password := r.PostForm.Get("password")
-	if username != auth.AdminUsername || !auth.VerifyAdminPassword(r.Context(), s.store, password) {
-		s.renderLogin(w, r, http.StatusUnauthorized, true)
+	ok, busy := s.checkLogin(r.Context(), username, password)
+	if busy {
+		http.Error(w, "Too many sign-in attempts at once; try again shortly.", http.StatusTooManyRequests)
+		return
+	}
+	if !ok {
+		time.Sleep(loginFailDelay) // slows guessing; the slot is already free
+		s.renderLogin(w, r, http.StatusUnauthorized, badPassword)
 		return
 	}
 	sess, err := auth.IssueSession(r.Context(), s.store, username)
@@ -208,6 +220,24 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	setAuthCookies(w, sess)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// loginWait is how long a sign-in waits for a free slot; loginFailDelay
+// is added to every failed attempt.
+var loginWait, loginFailDelay = 3 * time.Second, time.Second
+
+// checkLogin verifies the admin password in one of the bounded slots, so a
+// flood of logins cannot exhaust memory; busy means no slot came free.
+func (s *Server) checkLogin(ctx context.Context, username, password string) (ok, busy bool) {
+	select {
+	case s.loginSlots <- struct{}{}:
+		defer func() { <-s.loginSlots }()
+	case <-time.After(loginWait):
+		return false, true
+	case <-ctx.Done():
+		return false, true
+	}
+	return username == auth.AdminUsername && auth.VerifyAdminPassword(ctx, s.store, password), false
 }
 
 // handleOIDCStart begins the authorization-code flow (oidc.StartLogin):
@@ -222,7 +252,7 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 	}
 	authURL, state, nonce, err := oidc.StartLogin(r.Context(), cfg, s.clusterSecret)
 	if err != nil {
-		s.renderLogin(w, r, http.StatusServiceUnavailable, true)
+		s.renderLogin(w, r, http.StatusServiceUnavailable, "The sign-in provider could not be reached; try again, or sign in with the password.")
 		return
 	}
 	setOIDCCookies(w, state, nonce)
@@ -245,17 +275,21 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	clearOIDCCookies(w)
 	if errState != nil || errNonce != nil || r.URL.Query().Get("state") == "" ||
 		subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(stateCookie.Value)) != 1 {
-		s.renderLogin(w, r, http.StatusForbidden, true)
+		s.renderLogin(w, r, http.StatusForbidden, "That sign-in expired or began in another tab; start the sign-in again.")
+		return
+	}
+	if refused := r.URL.Query().Get("error"); refused != "" {
+		s.renderLogin(w, r, http.StatusUnauthorized, "The sign-in provider refused: "+short(refused, 64)+".")
 		return
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		s.renderLogin(w, r, http.StatusBadRequest, true)
+		s.renderLogin(w, r, http.StatusBadRequest, "The sign-in provider sent no code; start the sign-in again.")
 		return
 	}
 	userID, err := oidc.HandleCallback(r.Context(), cfg, s.clusterSecret, code, nonceCookie.Value)
 	if err != nil {
-		s.renderLogin(w, r, http.StatusUnauthorized, true)
+		s.renderLogin(w, r, http.StatusUnauthorized, "Sign-in refused: "+errMessage(err)+".")
 		return
 	}
 	sess, err := auth.IssueSession(r.Context(), s.store, userID)
@@ -264,7 +298,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setAuthCookies(w, sess)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	// A redirect chain the IdP started withholds SameSite=Strict cookies, so
+	// our own page moves on to /, which a browser treats as same-site.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, `<!doctype html><meta http-equiv="refresh" content="0;url=/"><a href="/">Continue</a>`)
 }
 
 func setOIDCCookies(w http.ResponseWriter, state, nonce string) {

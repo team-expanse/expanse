@@ -5,12 +5,14 @@
 package web
 
 import (
+	stderrors "errors"
 	"strings"
 
 	"google.golang.org/grpc/status"
 
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/nodelc"
+	experrors "github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/storage"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -190,6 +192,15 @@ func leaderID(rep *control.Report) string {
 		}
 	}
 	return ""
+}
+
+// errMessage is an internal error's own message, without its kind and operation.
+func errMessage(err error) string {
+	var e *experrors.Error
+	if stderrors.As(err, &e) && e.Message != "" {
+		return e.Message
+	}
+	return errText(err)
 }
 
 // errText is an error as an operator reads it: a gRPC status's message without the "rpc error: code = …" prefix.

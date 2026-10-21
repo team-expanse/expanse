@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/expanse/expanse/internal/blocks/catalog"
 	"github.com/expanse/expanse/internal/blocks/service"
@@ -326,5 +327,25 @@ func TestExpiredSessionSendsHTMXToLogin(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("HX-Redirect") != "/login" {
 			t.Errorf("%s: status %d, HX-Redirect %q; want 401 and /login", method, resp.StatusCode, resp.Header.Get("HX-Redirect"))
 		}
+	}
+}
+
+// Each password check takes argon2id's 32 MiB, so concurrent logins are capped.
+func TestLoginRefusesBeyondTheConcurrencyCap(t *testing.T) {
+	old := loginWait
+	loginWait = 50 * time.Millisecond
+	t.Cleanup(func() { loginWait = old })
+	var busy *Server
+	srv, _, _ := newTestServerWith(t, func(s *Server) { busy = s })
+	for range cap(busy.loginSlots) {
+		busy.loginSlots <- struct{}{} // every slot is taken
+	}
+	resp, err := http.PostForm(srv.URL+"/login", url.Values{"username": {auth.AdminUsername}, "password": {"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status %d with every slot busy, want 429", resp.StatusCode)
 	}
 }

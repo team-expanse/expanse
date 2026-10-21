@@ -190,3 +190,14 @@ func TestHandleCallbackWrongClientSecretCannotUnseal(t *testing.T) {
 		t.Fatal("expected an error unsealing the client secret with the wrong cluster secret")
 	}
 }
+
+// Providers vary the case of an address; the allow-list compares without it.
+func TestHandleCallbackEmailIgnoresCase(t *testing.T) {
+	idp := newTestIdP(t)
+	cfg := testConfig(t, idp.Server.URL)
+	idp.nonce = "n1"
+	idp.email = "Alice@Example.COM"
+	if _, err := HandleCallback(context.Background(), cfg, testSecret, "any-code", "n1"); err != nil {
+		t.Fatalf("an allowed email in other case was refused: %v", err)
+	}
+}

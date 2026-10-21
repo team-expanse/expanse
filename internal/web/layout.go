@@ -142,13 +142,16 @@ func templateFuncs(names *nodeNames) template.FuncMap {
 		"sub64":           func(a, b int64) int64 { return a - b },
 		"pct":             func(a, b int64) int { return int(pctOf(a, b)) },
 		"nav":             navGroups,
-		"short": func(s string, n int) string {
-			if len(s) > n {
-				return s[:n]
-			}
-			return s
-		},
+		"short":           short,
 	}
+}
+
+// short cuts s to at most n characters, never splitting one.
+func short(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }
 
 // nodeNames resolves node IDs, which may be UUIDs, to published hostnames.

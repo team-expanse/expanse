@@ -132,3 +132,13 @@ func TestErrorPagesStillStreamAndRecover(t *testing.T) {
 		}
 	}
 }
+
+// short feeds the avatar initial; a byte cut would split a non-ASCII letter.
+func TestShortKeepsWholeCharacters(t *testing.T) {
+	if got := short("Élodie", 1); got != "É" {
+		t.Errorf("short = %q, want É", got)
+	}
+	if got := short("ab", 5); got != "ab" {
+		t.Errorf("short = %q, want ab", got)
+	}
+}

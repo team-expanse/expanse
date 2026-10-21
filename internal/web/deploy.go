@@ -652,12 +652,12 @@ func manifestYAML(b *pb.Block, schema []byte) string {
 func hideSecrets(cfg map[string]any, fields []schemaform.Field) {
 	for _, f := range fields {
 		key := f.Path[strings.LastIndex(f.Path, "/")+1:]
-		switch {
-		case f.Kind == schemaform.Group:
+		switch f.Kind {
+		case schemaform.Group:
 			if sub, ok := cfg[key].(map[string]any); ok {
 				hideSecrets(sub, f.Fields)
 			}
-		case f.Kind == schemaform.Secret:
+		case schemaform.Secret:
 			if _, set := cfg[key]; set {
 				cfg[key] = "<hidden>"
 			}

@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,12 +197,12 @@ func TestOIDCLoginFullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET callback: %v", err)
 	}
+	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("callback status = %d, want 303", resp.StatusCode)
-	}
-	if loc := resp.Header.Get("Location"); loc != "/" {
-		t.Fatalf("callback redirected to %q, want /", loc)
+	// Not a 303: a redirect chain the IdP started withholds the SameSite=Strict
+	// session cookie, so our own page moves on to / instead.
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `http-equiv="refresh" content="0;url=/"`) {
+		t.Fatalf("callback status = %d, want 200 with a refresh to /: %s", resp.StatusCode, body)
 	}
 
 	srvURL, _ := url.Parse(srv.URL)
@@ -235,6 +236,9 @@ func TestOIDCCallbackRejectsForgedState(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 for a forged state param", resp.StatusCode)
 	}
+	if body, _ := io.ReadAll(resp.Body); !strings.Contains(string(body), "start the sign-in again") {
+		t.Errorf("a forged state should say to start again, not blame the password")
+	}
 }
 
 func TestOIDCCallbackRejectsUnauthorizedEmail(t *testing.T) {
@@ -260,4 +264,37 @@ func TestOIDCCallbackRejectsUnauthorizedEmail(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 for an unauthorized email", resp.StatusCode)
 	}
+	if body, _ := io.ReadAll(resp.Body); !strings.Contains(string(body), "allow-list") {
+		t.Errorf("an unauthorized email should say so")
+	}
+}
+
+func TestOIDCCallbackReportsTheProvidersRefusal(t *testing.T) {
+	srv, st, idp := newOIDCTestServer(t)
+	writeOIDCConfig(t, st, idp.Server.URL, srv.URL+"/login/oidc/callback", []string{"alice@example.com"})
+	client, _ := oidcClient(t)
+	resp, err := client.Get(srv.URL + "/login/oidc/start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	state := mustState(t, resp)
+
+	resp, err = client.Get(srv.URL + "/login/oidc/callback?error=access_denied&state=" + state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if body, _ := io.ReadAll(resp.Body); !strings.Contains(string(body), "access_denied") {
+		t.Errorf("the provider's refusal is not shown")
+	}
+}
+
+func mustState(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	u, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Query().Get("state")
 }

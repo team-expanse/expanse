@@ -3,6 +3,7 @@ package oidc
 import (
 	"context"
 	"slices"
+	"strings"
 
 	goidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -101,7 +102,7 @@ func HandleCallback(ctx context.Context, cfg *Config, clusterSecret []byte, code
 	if claims.Email == "" || !claims.EmailVerified {
 		return "", errors.New(errors.KindPermission, "oidc.HandleCallback", "id_token has no verified email claim")
 	}
-	if !slices.Contains(cfg.AllowedEmails, claims.Email) {
+	if !slices.ContainsFunc(cfg.AllowedEmails, func(e string) bool { return strings.EqualFold(e, claims.Email) }) {
 		return "", errors.New(errors.KindPermission, "oidc.HandleCallback", "email not in the configured allow-list")
 	}
 	return claims.Email, nil
