@@ -365,15 +365,22 @@ func TestVolumeEventsSSEStreamsLiveUpdate(t *testing.T) {
 	}
 
 	drain("Healthy", 10*time.Second)
-	// The page loaded without the volume's actions; it must reload to get them.
-	drain("data-reload-page", 10*time.Second)
+	// The page loaded without the volume's actions; the stream swaps them in.
+	drain(`id="volume-actions" hx-swap-oob="true"`, 10*time.Second)
+	if !strings.Contains(got, "Take snapshot") || strings.Contains(got, "data-reload-page") {
+		t.Error("the actions arrive by reloading the page, not in the stream")
+	}
 
 	for _, k := range []store.Key{storage.StatusKey("vol-live1"), storage.SpecKey("vol-live1")} {
 		if err := st.Delete(context.Background(), k, 0); err != nil {
 			t.Fatalf("Delete %s: %v", k, err)
 		}
 	}
+	got = ""
 	drain("This volume was deleted", 10*time.Second)
+	if !strings.Contains(got, `<div id="volume-actions" hx-swap-oob="true"></div>`) {
+		t.Error("a deleted volume keeps its actions")
+	}
 }
 
 // Names go into store keys and URLs; sizes must be real; names must be free.
@@ -388,6 +395,7 @@ func TestVolumeCreateRejectsBadNamesSizesAndDuplicates(t *testing.T) {
 		"a space":       {"name": {"my vol"}, "size": {"1Gi"}},
 		"zero size":     {"name": {"ok"}, "size": {"0"}},
 		"existing name": {"name": {"taken"}, "size": {"1Gi"}},
+		"a page path":   {"name": {"new"}, "size": {"1Gi"}},
 	}
 	for what, form := range cases {
 		form.Set("class", "default")

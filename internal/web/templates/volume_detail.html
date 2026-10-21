@@ -6,7 +6,7 @@
   </div>
   <div class="page-actions">
     {{template "live"}}
-    {{if .Volume}}<button class="btn btn-danger" type="button" data-confirm="confirm-delete"><svg class="icon"><use href="#i-trash"/></svg>Delete</button>{{end}}
+    <span id="volume-delete">{{template "volume-delete" .}}</span>
   </div>
 </div>
 
@@ -14,42 +14,11 @@
   <div id="volume-fragment" sse-swap="volume" hx-swap="innerHTML">{{template "volume-fragment" .}}</div>
 </div>
 
-{{if .Volume}}
-<div class="grid-2">
-  <section class="card">
-    <div class="card-head"><h2>Snapshot</h2></div>
-    <form class="form-inline" hx-post="/volumes/{{.Name}}/snapshot" hx-swap="none" data-reset>
-      <label class="field"><span class="field-label">Name</span><input class="input input-sm" type="text" name="name" placeholder="before-upgrade" pattern="[a-z0-9][a-z0-9-]{0,62}" required></label>
-      <button class="btn btn-primary" type="submit">Take snapshot</button>
-    </form>
-    <p class="field-hint">Lower-case letters, digits and dashes. Taken on the primary, asynchronously.</p>
-  </section>
-  <section class="card">
-    <div class="card-head"><h2>Resize</h2></div>
-    <form class="form-inline" hx-post="/volumes/{{.Name}}/resize" hx-swap="none" data-reset>
-      <label class="field"><span class="field-label">New size</span><input class="input input-sm" type="text" name="size" placeholder="e.g. 20Gi" required></label>
-      <button class="btn btn-primary" type="submit">Grow</button>
-    </form>
-    <p class="field-hint">Volumes only grow; the new size must exceed {{.Volume.Size}}.</p>
-  </section>
-</div>
-
-<form id="delete-form" hx-post="/volumes/{{.Name}}/delete" hx-swap="none"></form>
-<dialog id="confirm-delete" class="dialog" data-submit="#delete-form">
-  <form method="dialog">
-    <h2>Delete volume {{.Name}}?</h2>
-    <p>Every replica's data on every node is removed, including its snapshots. This cannot be undone.</p>
-    <div class="dialog-actions">
-      <button class="btn btn-ghost" value="cancel">Cancel</button>
-      <button class="btn btn-danger" value="confirm">Delete volume</button>
-    </div>
-  </form>
-</dialog>
-{{end}}
+<div id="volume-actions">{{template "volume-actions" .}}</div>
 {{end}}
 
 {{define "volume-fragment"}}
-{{if .Reload}}<span hidden data-reload-page></span>{{end}}
+{{if .SwapActions}}<span id="volume-delete" hx-swap-oob="true">{{template "volume-delete" .}}</span><div id="volume-actions" hx-swap-oob="true">{{template "volume-actions" .}}</div>{{end}}
 {{if .Gone}}
 <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>This volume was deleted.</strong><p><a href="/volumes">Back to volumes</a></p></div></div>
 {{else if not .Volume}}
@@ -100,3 +69,38 @@
 </section>
 {{end}}
 {{end}}
+
+{{define "volume-delete"}}{{if .Volume}}<button class="btn btn-danger" type="button" data-confirm="confirm-delete"><svg class="icon"><use href="#i-trash"/></svg>Delete</button>{{end}}{{end}}
+
+{{define "volume-actions"}}{{if .Volume}}
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Snapshot</h2></div>
+    <form class="form-inline" hx-post="/volumes/{{.Name}}/snapshot" hx-swap="none" data-reset>
+      <label class="field"><span class="field-label">Name</span><input class="input input-sm" type="text" name="name" placeholder="before-upgrade" pattern="[a-z0-9][a-z0-9-]{0,62}" required></label>
+      <button class="btn btn-primary" type="submit">Take snapshot</button>
+    </form>
+    <p class="field-hint">Lower-case letters, digits and dashes. Taken on the primary, asynchronously.</p>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Resize</h2></div>
+    <form class="form-inline" hx-post="/volumes/{{.Name}}/resize" hx-swap="none" data-reset>
+      <label class="field"><span class="field-label">New size</span><input class="input input-sm" type="text" name="size" placeholder="e.g. 20Gi" required></label>
+      <button class="btn btn-primary" type="submit">Grow</button>
+    </form>
+    <p class="field-hint">Volumes only grow; the new size must exceed {{.Volume.Size}}.</p>
+  </section>
+</div>
+
+<form id="delete-form" hx-post="/volumes/{{.Name}}/delete" hx-swap="none"></form>
+<dialog id="confirm-delete" class="dialog" data-submit="#delete-form">
+  <form method="dialog">
+    <h2>Delete volume {{.Name}}?</h2>
+    <p>Every replica's data on every node is removed, including its snapshots. This cannot be undone.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" value="cancel">Cancel</button>
+      <button class="btn btn-danger" value="confirm">Delete volume</button>
+    </div>
+  </form>
+</dialog>
+{{end}}{{end}}

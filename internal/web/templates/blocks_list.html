@@ -4,9 +4,15 @@
     <h1 class="page-title">Blocks</h1>
     <p class="page-sub">Deployed workloads and their replicas across the cluster.</p>
   </div>
-  <div class="page-actions"><a class="btn btn-primary" href="/deploy"><svg class="icon"><use href="#i-plus"/></svg>Deploy block</a></div>
+  <div class="page-actions">{{template "live"}}<a class="btn btn-primary" href="/deploy"><svg class="icon"><use href="#i-plus"/></svg>Deploy block</a></div>
 </div>
 
+<div hx-ext="sse" sse-connect="/blocks/events">
+  <div id="blocks-fragment" sse-swap="blocks" hx-swap="innerHTML">{{template "blocks-fragment" .}}</div>
+</div>
+{{end}}
+
+{{define "blocks-fragment"}}
 {{if .Blocks}}
 <section class="stats stats-compact" aria-label="Blocks by phase">
   <div class="stat stat-ok"><div class="stat-label">Running</div><div class="stat-value">{{.Counts.Running}}</div></div>

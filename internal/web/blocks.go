@@ -28,6 +28,7 @@ import (
 // "/blocks/{ns}/{name}" (2 segments).
 func (s *Server) registerBlockRoutes() {
 	s.routes.Handle("GET /blocks", s.requireAuth(http.HandlerFunc(s.handleBlocksList)))
+	s.routes.Handle("GET /blocks/events", s.requireAuth(http.HandlerFunc(s.handleBlocksEvents)))
 	s.routes.Handle("GET /blocks/new", s.requireAuth(http.HandlerFunc(s.handleBlockNew)))
 	s.routes.Handle("POST /blocks", s.requireAuth(http.HandlerFunc(s.handleBlockCreate)))
 	s.routes.Handle("GET /blocks/{ns}/{name}", s.requireAuth(http.HandlerFunc(s.handleBlockDetail)))
@@ -85,6 +86,25 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "blocks_list.html", blocksListData{
 		Page:   s.newPage(w, r, "Blocks", "blocks", crumb{Label: "Blocks"}),
 		Blocks: resp.GetBlocks(), Counts: countPhases(resp.GetBlocks()),
+	})
+}
+
+// handleBlocksEvents streams the list as blocks are deployed, change phase or go.
+func (s *Server) handleBlocksEvents(w http.ResponseWriter, r *http.Request) {
+	if s.blocksUnavailable(w, r) {
+		return
+	}
+	changes, err := fanInWatches(r.Context(), s.store, store.Key("/blocks/"))
+	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	streamFragments(w, r, "blocks", changes, 0, func(ctx context.Context) (string, error) {
+		resp, err := s.blocks.List(store.WithStale(ctx), &pb.ListBlocksRequest{})
+		if err != nil {
+			return "", nil //nolint:nilerr // transient; the next change retries
+		}
+		return s.fragment("blocks-fragment", blocksListData{Blocks: resp.GetBlocks(), Counts: countPhases(resp.GetBlocks())})
 	})
 }
 

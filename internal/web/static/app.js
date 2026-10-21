@@ -190,8 +190,6 @@
       var newestFirst = list.getAttribute("hx-swap") === "afterbegin";
       while (list.children.length > limit) list.removeChild(newestFirst ? list.lastElementChild : list.firstElementChild);
     }
-    // A swap that brings page-level actions the first render lacked.
-    if (ev.target.querySelector && ev.target.querySelector("[data-reload-page]")) window.location.reload();
     var hide = document.querySelector("[data-hide-on-rows]");
     if (hide) hide.hidden = true;
   });

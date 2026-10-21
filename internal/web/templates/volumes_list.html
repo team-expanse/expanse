@@ -4,9 +4,15 @@
     <h1 class="page-title">Volumes</h1>
     <p class="page-sub">Replicated block storage and where each replica lives.</p>
   </div>
-  <div class="page-actions"><a class="btn btn-primary" href="/volumes/new"><svg class="icon"><use href="#i-plus"/></svg>Create volume</a></div>
+  <div class="page-actions">{{template "live"}}<a class="btn btn-primary" href="/volumes/new"><svg class="icon"><use href="#i-plus"/></svg>Create volume</a></div>
 </div>
 
+<div hx-ext="sse" sse-connect="/volumes/_events">
+  <div id="volumes-fragment" sse-swap="volumes" hx-swap="innerHTML">{{template "volumes-fragment" .}}</div>
+</div>
+{{end}}
+
+{{define "volumes-fragment"}}
 {{if .Volumes}}
 <section class="stats stats-compact" aria-label="Volumes by state">
   <div class="stat stat-ok"><div class="stat-label">Healthy</div><div class="stat-value">{{.Counts.Healthy}}</div></div>

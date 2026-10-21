@@ -32,6 +32,7 @@ const volumeOpsPrefix = "/volumes/_ops/"
 
 func (s *Server) registerVolumeRoutes() {
 	s.routes.Handle("GET /volumes", s.requireAuth(http.HandlerFunc(s.handleVolumesList)))
+	s.routes.Handle("GET /volumes/_events", s.requireAuth(http.HandlerFunc(s.handleVolumesEvents)))
 	s.routes.Handle("GET /volumes/new", s.requireAuth(http.HandlerFunc(s.handleVolumeNew)))
 	s.routes.Handle("POST /volumes", s.requireAuth(http.HandlerFunc(s.handleVolumeCreate)))
 	s.routes.Handle("GET /volumes/{name}", s.requireAuth(http.HandlerFunc(s.handleVolumeDetail)))
@@ -132,22 +133,46 @@ type volumesListData struct {
 }
 
 func (s *Server) handleVolumesList(w http.ResponseWriter, r *http.Request) {
-	ids, err := storage.ListVolumeIDs(r.Context(), s.store)
+	views, err := s.loadVolumesList(r.Context())
 	if err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
+	s.render(w, http.StatusOK, "volumes_list.html", volumesListData{
+		Page: s.newPage(w, r, "Volumes", "volumes", crumb{Label: "Volumes"}), Volumes: views, Counts: countVolumes(views),
+	})
+}
+
+func (s *Server) loadVolumesList(ctx context.Context) ([]*volumeView, error) {
+	ids, err := storage.ListVolumeIDs(ctx, s.store)
+	if err != nil {
+		return nil, err
+	}
 	var views []*volumeView
 	for _, id := range ids {
-		v, err := s.loadVolumeView(r.Context(), id)
+		v, err := s.loadVolumeView(ctx, id)
 		if err != nil {
 			continue // a volume mid-delete/creation with a half-written record; skip rather than fail the whole list
 		}
 		views = append(views, v)
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].Name < views[j].Name })
-	s.render(w, http.StatusOK, "volumes_list.html", volumesListData{
-		Page: s.newPage(w, r, "Volumes", "volumes", crumb{Label: "Volumes"}), Volumes: views, Counts: countVolumes(views),
+	return views, nil
+}
+
+// handleVolumesEvents streams the list; "_events" can't collide with a volume name.
+func (s *Server) handleVolumesEvents(w http.ResponseWriter, r *http.Request) {
+	changes, err := fanInWatches(r.Context(), s.store, store.Key(storage.VolumePrefix))
+	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	streamFragments(w, r, "volumes", changes, 0, func(ctx context.Context) (string, error) {
+		views, err := s.loadVolumesList(store.WithStale(ctx))
+		if err != nil {
+			return "", nil //nolint:nilerr // transient; the next change retries
+		}
+		return s.fragment("volumes-fragment", volumesListData{Volumes: views, Counts: countVolumes(views)})
 	})
 }
 
@@ -192,6 +217,10 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		fail("name", "Name: "+errMessage(err)+".")
 		return
 	}
+	if name == "new" {
+		fail("name", "“new” is the create page's address; choose another name.")
+		return
+	}
 	if _, err := s.findVolumeByName(r.Context(), name); err == nil || s.volumePending(r.Context(), name) {
 		fail("name", "A volume named "+name+" already exists.")
 		return
@@ -232,7 +261,8 @@ type volumeDetailData struct {
 	// "creating" placeholder rather than a 404.
 	Volume *volumeView
 	Gone   bool // deleted while the page was open
-	Reload bool // created while the page was open, which lacks its actions
+	// SwapActions sends the actions out of band: they appeared, went, or show a new size.
+	SwapActions bool
 }
 
 func (s *Server) handleVolumeDetail(w http.ResponseWriter, r *http.Request) {
@@ -268,19 +298,26 @@ func (s *Server) handleVolumeEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var wasPending bool
+	shown := "" // the size the page's actions show, "" while they are absent
+	if v, err := s.findVolumeByName(r.Context(), name); err == nil {
+		shown = v.Size
+	}
 	streamFragments(w, r, "volume", changes, 0, func(ctx context.Context) (string, error) {
 		data := volumeDetailData{Name: name}
 		v, err := s.findVolumeByName(ctx, name)
 		switch {
 		case err == nil:
-			data.Volume, data.Reload = v, wasPending
+			data.Volume = v
 		case errors.KindOf(err) == errors.KindNotFound:
-			wasPending = s.volumePending(ctx, name)
-			data.Gone = !wasPending
+			data.Gone = !s.volumePending(ctx, name)
 		default:
 			return "", nil // transient read error; the next event retries
 		}
+		size := ""
+		if v != nil {
+			size = v.Size
+		}
+		data.SwapActions, shown = size != shown, size
 		return s.fragment("volume-fragment", data)
 	})
 }
