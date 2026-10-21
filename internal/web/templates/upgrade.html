@@ -21,8 +21,8 @@
   {{if not .Checked.IsZero}}<span class="muted">Checked {{.Checked.Format "2006-01-02 15:04"}}.</span>{{end}}
   {{with .Error}}<span class="text-warn">The last check failed: {{.}}</span>{{end}}</p>
   <div class="form-actions">
-    <form method="post" action="/upgrade/check"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn" type="submit"{{if .Disabled}} disabled{{end}}>Check now</button></form>
-    <form method="post" action="/upgrade/auto-check"><input type="hidden" name="csrf_token" value="{{$csrf}}">
+    <form method="post" action="/upgrade/check" hx-post="/upgrade/check" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn" type="submit"{{if .Disabled}} disabled{{end}}>Check now</button></form>
+    <form method="post" action="/upgrade/auto-check" hx-post="/upgrade/auto-check" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}">
       {{if .Disabled}}<input type="hidden" name="enabled" value="on"><button class="btn btn-ghost" type="submit">Check daily</button><span class="field-hint">The daily check is off.</span>
       {{else}}<input type="hidden" name="enabled" value="off"><button class="btn btn-ghost" type="submit">Turn the daily check off</button>{{end}}
     </form>
@@ -36,13 +36,13 @@
   <p>Upgrading to <strong>{{.Target}}</strong>: {{.State}}{{with .Current}}, now on <a href="/nodes/{{.}}"><strong>{{nodename .}}</strong></a>{{end}}.</p>
   {{with .Reason}}<div class="callout {{if eq $.View.Plan.State "halted"}}callout-crit{{else}}callout-warn{{end}}"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{.}}</p></div></div>{{end}}
   <div class="form-actions">
-    {{if eq .State "running"}}<form method="post" action="/upgrade/pause"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn" type="submit">Pause</button></form>
-    {{else}}<form method="post" action="/upgrade/resume"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn btn-primary" type="submit">{{if eq .State "halted"}}Retry{{else}}Resume{{end}}</button></form>{{end}}
-    <form method="post" action="/upgrade/cancel"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn btn-ghost" type="submit">Cancel</button></form>
+    {{if eq .State "running"}}<form method="post" action="/upgrade/pause" hx-post="/upgrade/pause" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn" type="submit">Pause</button></form>
+    {{else}}<form method="post" action="/upgrade/resume" hx-post="/upgrade/resume" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn btn-primary" type="submit">{{if eq .State "halted"}}Retry{{else}}Resume{{end}}</button></form>{{end}}
+    <form method="post" action="/upgrade/cancel" hx-post="/upgrade/cancel" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn btn-ghost" type="submit">Cancel</button></form>
   </div>
   {{else}}<p class="muted">The last rollout, to {{.Target}}, is {{.State}}.</p>{{end}}{{end}}
   {{if not .View.Running}}
-  <form method="post" action="/upgrade/start" class="form">
+  <form method="post" action="/upgrade/start" hx-post="/upgrade/start" hx-swap="none" class="form">
     <input type="hidden" name="csrf_token" value="{{$csrf}}">
     <label class="field">
       <span class="field-label">Upgrade the cluster to</span>

@@ -355,7 +355,7 @@ type errorData struct {
 // surfaces as a toast, never a page swapped into a fragment), otherwise
 // the styled error page inside the shell.
 func (s *Server) renderError(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	if isHTMX(r) || r.Method != http.MethodGet {
+	if isHTMX(r) {
 		http.Error(w, msg, status)
 		return
 	}

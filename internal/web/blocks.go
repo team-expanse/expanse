@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -343,14 +344,24 @@ func (s *Server) handleBlockLogs(w http.ResponseWriter, r *http.Request) {
 	full := ns + "/" + name
 	var replicas []int32
 	if b, err := s.getBlock(r.Context(), r); err == nil {
-		for _, p := range b.GetStatus().GetPlacements() {
-			replicas = append(replicas, p.GetReplicaIndex())
-		}
+		replicas = logReplicas(b)
 	}
 	s.render(w, http.StatusOK, "block_logs.html", blockLogsData{
 		Page:      s.newPage(w, r, full+" logs", "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full, Href: "/blocks/" + full}, crumb{Label: "Logs"}),
 		Namespace: ns, Name: name, Replica: int32(replica), Replicas: replicas,
 	})
+}
+
+// logReplicas is the block's running replica indices, sorted, once each.
+func logReplicas(b *pb.Block) []int32 {
+	var out []int32
+	for _, p := range b.GetStatus().GetPlacements() {
+		if p.GetReplicaIndex() >= 0 {
+			out = append(out, p.GetReplicaIndex())
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // handleBlockLogsStream tails one replica's log via SSE (X5's "tail its

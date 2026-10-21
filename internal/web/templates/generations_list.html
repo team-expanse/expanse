@@ -8,6 +8,7 @@
 {{if .Error}}
 <div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Generation history unavailable</strong><p>{{.Error}}</p></div></div>
 {{end}}
+{{if .Generations}}{{if not $.Current}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>The cluster status is unavailable, so the current generation is unknown; rollback is off until it returns.</p></div></div>{{end}}{{end}}
 
 {{if gt (len .Generations) 1}}
 <section class="card">
@@ -38,7 +39,7 @@
           <td class="muted">{{if .Parent}}<a href="/generations/diff?a={{.Parent}}&b={{.Number}}">{{.Parent}} → {{.Number}}</a>{{else}}bootstrap{{end}}</td>
           <td><code title="{{.Hash}}">{{short .Hash 12}}</code></td>
           <td class="text-right">
-            {{if ne .Number $.Current}}<button class="btn btn-ghost btn-sm" type="button" data-confirm="confirm-rollback-{{.Number}}"><svg class="icon"><use href="#i-rollback"/></svg>Roll back</button>{{end}}
+            {{if and $.Current (ne .Number $.Current)}}<button class="btn btn-ghost btn-sm" type="button" data-confirm="confirm-rollback-{{.Number}}"><svg class="icon"><use href="#i-rollback"/></svg>Roll back</button>{{end}}
           </td>
         </tr>
         {{else}}
@@ -49,7 +50,7 @@
   </div>
 </section>
 
-{{range .Generations}}{{if ne .Number $.Current}}
+{{range .Generations}}{{if and $.Current (ne .Number $.Current)}}
 <form id="rollback-form-{{.Number}}" hx-post="/generations/{{.Number}}/rollback" hx-swap="none"></form>
 <dialog id="confirm-rollback-{{.Number}}" class="dialog" data-submit="#rollback-form-{{.Number}}">
   <form method="dialog">

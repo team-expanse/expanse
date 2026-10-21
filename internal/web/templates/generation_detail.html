@@ -7,9 +7,10 @@
   </div>
   <div class="page-actions">
     {{if $g.Parent}}<a class="btn btn-ghost" href="/generations/diff?a={{$g.Parent}}&b={{$g.Number}}"><svg class="icon"><use href="#i-diff"/></svg>Diff with {{$g.Parent}}</a>{{end}}
-    {{if ne $g.Number .Current}}<button class="btn btn-primary" type="button" data-confirm="confirm-rollback"><svg class="icon"><use href="#i-rollback"/></svg>Roll back to this</button>{{end}}
+    {{if and .Current (ne $g.Number .Current)}}<button class="btn btn-primary" type="button" data-confirm="confirm-rollback"><svg class="icon"><use href="#i-rollback"/></svg>Roll back to this</button>{{end}}
   </div>
 </div>
+{{if not $.Current}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>The cluster status is unavailable, so the current generation is unknown; rollback is off until it returns.</p></div></div>{{end}}
 
 <section class="kv-cards">
   <div class="kv-card"><div class="kv-label">Store revision</div><div class="kv-value">{{$g.Revision}}</div><div class="kv-sub">at commit</div></div>
@@ -27,7 +28,7 @@
   {{end}}
 </section>
 
-{{if ne $g.Number .Current}}
+{{if and .Current (ne $g.Number .Current)}}
 <form id="rollback-form" hx-post="/generations/{{$g.Number}}/rollback" hx-swap="none"></form>
 <dialog id="confirm-rollback" class="dialog" data-submit="#rollback-form">
   <form method="dialog">

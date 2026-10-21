@@ -9,6 +9,7 @@ import (
 
 	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/store"
+	pb "github.com/expanse/expanse/proto"
 )
 
 // importGeneration commits a new generation whose desired state is the
@@ -139,5 +140,30 @@ func TestGenerationRollbackFromTheListReloadsIt(t *testing.T) {
 	resp.Body.Close()
 	if resp.Header.Get("HX-Refresh") != "true" {
 		t.Errorf("rollback from the list does not reload it (status %d)", resp.StatusCode)
+	}
+}
+
+// When the cluster can't say which generation is live, nothing offers a rollback.
+func TestGenerationsHideRollbackWhenCurrentIsUnknown(t *testing.T) {
+	tmpl, err := loadTemplates(templateFS, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gens := []*pb.GenerationInfo{{Number: 2, Parent: 1}, {Number: 1}}
+	pages := map[string]any{
+		"generations_list.html":  generationsListData{Generations: gens},
+		"generation_detail.html": generationDetailData{Generation: gens[0]},
+	}
+	for name, data := range pages {
+		var buf strings.Builder
+		if err := tmpl.execute(&buf, name, data); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(buf.String(), "Roll back") {
+			t.Errorf("%s offers a rollback with the current generation unknown", name)
+		}
+		if !strings.Contains(buf.String(), "current generation is unknown") {
+			t.Errorf("%s does not say the current generation is unknown", name)
+		}
 	}
 }

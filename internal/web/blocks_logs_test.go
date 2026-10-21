@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -115,5 +116,15 @@ func TestBlockDetailOffersScaleOnlyWhenItApplies(t *testing.T) {
 		if got := strings.Contains(buf.String(), "<h2>Scale</h2>"); got != want {
 			t.Errorf("%v: Scale card shown = %v, want %v", kind, got, want)
 		}
+	}
+}
+
+// Stopped placements (index -1) are not replicas to read logs from.
+func TestLogReplicasSkipStoppedPlacements(t *testing.T) {
+	b := &pb.Block{Status: &pb.BlockStatus{Placements: []*pb.PlacementStatus{
+		{ReplicaIndex: 1}, {ReplicaIndex: -1}, {ReplicaIndex: 0}, {ReplicaIndex: -1}, {ReplicaIndex: 1},
+	}}}
+	if got := logReplicas(b); !slices.Equal(got, []int32{0, 1}) {
+		t.Errorf("logReplicas = %v, want [0 1]", got)
 	}
 }

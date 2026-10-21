@@ -154,3 +154,19 @@ func TestUpgradePageShowsEveryLoadError(t *testing.T) {
 		t.Errorf("upgrade page does not show both errors")
 	}
 }
+
+// Upgrade forms post through htmx, so a refusal is a toast and the typed version stays.
+func TestUpgradeFormsKeepThePageOnARefusal(t *testing.T) {
+	c, base, csrf, _ := newUpgradeTestServer(t)
+	_, body := get(t, c, base+"/upgrade")
+	for _, act := range []string{"/upgrade/start", "/upgrade/check", "/upgrade/auto-check"} {
+		if !strings.Contains(body, `hx-post="`+act+`" hx-swap="none"`) {
+			t.Errorf("form %s does not post through htmx", act)
+		}
+	}
+	// Without JavaScript a refusal is still a styled page, not bare text.
+	resp, body := postForm(t, c, base+"/upgrade/start", csrf, url.Values{"version": {"1.12"}})
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, `class="error-page"`) || !strings.Contains(body, "not a release version") {
+		t.Errorf("refusal: status %d, styled %v", resp.StatusCode, strings.Contains(body, "error-page"))
+	}
+}
