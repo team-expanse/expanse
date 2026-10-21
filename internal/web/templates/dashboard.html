@@ -26,7 +26,7 @@
   <a class="stat {{if not .Report.Leader}}stat-crit{{else if .Report.Degraded}}stat-warn{{else}}stat-ok{{end}}" href="/cluster">
     <div class="stat-label"><svg class="icon"><use href="#i-cluster"/></svg>Quorum</div>
     <div class="stat-value">{{.Report.QuorumHave}}<span class="stat-of">/{{.Report.QuorumNeed}}</span></div>
-    <div class="stat-sub">{{if .Report.Leader}}leader {{.Report.Leader}}{{else}}no leader — read-only{{end}}</div>
+    <div class="stat-sub">{{if .Report.Leader}}leader {{with leaderID .Report}}{{nodename .}}{{else}}{{.Report.Leader}}{{end}}{{else}}no leader — read-only{{end}}</div>
   </a>
   {{end}}
   {{if .BlocksAPI}}
@@ -66,7 +66,7 @@
       <li class="attention-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>{{.Name}}</strong><span>{{.Summary}}</span></div></li>
       {{end}}
       {{range .NodesDown}}
-      <li class="attention-{{(nodeState .).Tone}}"><svg class="icon"><use href="#i-nodes"/></svg><div><a href="/nodes/{{.ID}}">Node {{.ID}}</a><span>{{.Lifecycle}} — {{.RaftAddr}}</span></div>{{template "pill" (nodeState .)}}</li>
+      <li class="attention-{{(nodeState .).Tone}}"><svg class="icon"><use href="#i-nodes"/></svg><div><a href="/nodes/{{.ID}}">Node {{nodename .ID}}</a><span>{{.Lifecycle}} — {{.RaftAddr}}</span></div>{{template "pill" (nodeState .)}}</li>
       {{end}}
       {{range .Degraded}}
       <li class="attention-{{(volstate .State).Tone}}"><svg class="icon"><use href="#i-volumes"/></svg><div><a href="/volumes/{{.Name}}">Volume {{.Name}}</a><span>{{.ReplicaSummary}} replicas · {{.Size}}</span></div>{{template "pill" (volstate .State)}}</li>
@@ -103,7 +103,7 @@
       <tbody>
         {{range .Report.Nodes}}
         <tr>
-          <td><a href="/nodes/{{.ID}}"><strong>{{.ID}}</strong></a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
+          <td><a href="/nodes/{{.ID}}"><strong>{{nodename .ID}}</strong></a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
           <td>{{role .Role}}</td>
           <td>{{template "pill" (nodeState .)}}</td>
           <td><code>{{.RaftAddr}}</code></td>

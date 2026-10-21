@@ -180,6 +180,18 @@ func isLeader(n control.NodeStatus) bool {
 	return n.State == "leader" || strings.HasPrefix(n.State, "leader/")
 }
 
+// leaderID is the leading node's ID, or "" when the report names none.
+func leaderID(rep *control.Report) string {
+	if rep != nil {
+		for _, n := range rep.Nodes {
+			if isLeader(n) {
+				return n.ID
+			}
+		}
+	}
+	return ""
+}
+
 // errText is an error as an operator reads it: a gRPC status's message without the "rpc error: code = …" prefix.
 func errText(err error) string {
 	if s, ok := status.FromError(err); ok {

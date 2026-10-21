@@ -135,3 +135,40 @@ func TestNodeUIURLFallsBackToTheRaftHost(t *testing.T) {
 		}
 	}
 }
+
+// Node IDs may be UUIDs: pages name nodes by their published hostname, linking by ID.
+func TestNodeListsShowPublishedHostnames(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+	putTestNode(t, st, join.NodeRecord{ID: "n2", RaftAddr: "10.0.0.2:7447", APIAddr: "10.0.0.2:7443", Role: "voter"}, "health=healthy")
+	putTestNode(t, st, join.NodeRecord{ID: "n3", RaftAddr: "10.0.0.3:7447", APIAddr: "10.0.0.3:7443", Role: "voter"}, "health=healthy")
+	if _, err := st.Put(context.Background(), join.HostnameKey("n2"), []byte("rack1-b")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/cluster", "/nodes"} {
+		_, body := getPage(t, client, srv, path)
+		for _, want := range []string{`href="/nodes/n2"><strong>rack1-b</strong>`, `href="/nodes/n3"><strong>n3</strong>`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q", path, want)
+			}
+		}
+	}
+	if _, body := getPage(t, client, srv, "/nodes/n2"); !strings.Contains(body, `<h1 class="page-title">rack1-b `) {
+		t.Errorf("node page not titled by hostname")
+	}
+}
+
+// The Leader cards name the leader by hostname rather than its raft address.
+func TestLeaderCardsNameTheLeaderNode(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+	if _, err := st.Put(context.Background(), join.HostnameKey("n1"), []byte("rack1-a")); err != nil {
+		t.Fatal(err)
+	}
+	card := `Leader</div><div class="kv-value"><a href="/nodes/n1"><strong>rack1-a</strong></a></div><div class="kv-sub">raft `
+	for path, want := range map[string]string{"/": "leader rack1-a", "/cluster": card, "/health": card} {
+		if _, body := getPage(t, client, srv, path); !strings.Contains(body, want) {
+			t.Errorf("%s missing %q", path, want)
+		}
+	}
+}

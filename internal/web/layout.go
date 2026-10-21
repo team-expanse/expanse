@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/version"
@@ -69,8 +70,8 @@ type templates struct {
 
 // loadTemplates parses layout.html and every _partial into a base set,
 // then clones it per page file so each page's "content" is distinct.
-func loadTemplates(fsys fs.FS) (*templates, error) {
-	base, err := template.New("").Funcs(templateFuncs()).ParseFS(fsys, "templates/layout.html", "templates/_*.html")
+func loadTemplates(fsys fs.FS, names *nodeNames) (*templates, error) {
+	base, err := template.New("").Funcs(templateFuncs(names)).ParseFS(fsys, "templates/layout.html", "templates/_*.html")
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +115,9 @@ func (t *templates) execute(w io.Writer, name string, data any) error {
 	return set.ExecuteTemplate(w, name, data)
 }
 
-func templateFuncs() template.FuncMap {
+func templateFuncs(names *nodeNames) template.FuncMap {
 	return template.FuncMap{
+		"nodename":        names.name,
 		"phase":           phasePill,
 		"replica":         replicaRow,
 		"live":            livePlacements,
@@ -126,6 +128,7 @@ func templateFuncs() template.FuncMap {
 		"agentState":      agentPill,
 		"role":            roleLabel,
 		"isLeader":        isLeader,
+		"leaderID":        leaderID,
 		"upgradeFragment": func(v upgradeView, csrf string) upgradeFragment { return upgradeFragment{View: v, CSRF: csrf} },
 		"bytes":           humanBytesAny,
 		"mib":             func(n int64) string { return humanBytesAny(n << 20) },
@@ -146,6 +149,18 @@ func templateFuncs() template.FuncMap {
 			return s
 		},
 	}
+}
+
+// nodeNames resolves node IDs, which may be UUIDs, to published hostnames.
+type nodeNames struct{ st store.Store }
+
+func (n *nodeNames) name(id string) string {
+	if n != nil && n.st != nil && id != "" {
+		if e, err := n.st.Get(store.WithStale(context.Background()), join.HostnameKey(id)); err == nil && len(e.Value) > 0 {
+			return string(e.Value)
+		}
+	}
+	return id
 }
 
 // humanBytesAny renders a measured byte count rounded to one decimal in binary units ("894.3 GiB").

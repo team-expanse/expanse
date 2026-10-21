@@ -148,7 +148,8 @@ func (s *Server) nodeDetail(w http.ResponseWriter, r *http.Request) (nodeDetailD
 		s.renderError(w, r, http.StatusServiceUnavailable, errText(err))
 		return nodeDetailData{}, false
 	}
-	data := nodeDetailData{Page: s.newPage(w, r, id, "nodes", crumb{Label: "Nodes", Href: "/nodes"}, crumb{Label: id})}
+	name := s.names.name(id)
+	data := nodeDetailData{Page: s.newPage(w, r, name, "nodes", crumb{Label: "Nodes", Href: "/nodes"}, crumb{Label: name})}
 	found := false
 	for _, n := range nodes {
 		if n.ID == id {

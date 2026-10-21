@@ -65,6 +65,7 @@ const (
 
 // Server is the UI's HTTP server.
 type Server struct {
+	names *nodeNames // node IDs to hostnames, for display
 	// NodeID is this node's identity, shown in the footer so an
 	// operator reaching the UI through the VIP can tell which node
 	// answered.
@@ -100,13 +101,14 @@ type Server struct {
 // (the SSO button never renders, /login/oidc/* 404) without otherwise
 // affecting a non-cluster agent's password login.
 func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb.CatalogServiceServer, cluster pb.NodeServiceServer, clusterSecret []byte) (*Server, error) {
-	tmpl, err := loadTemplates(templateFS)
+	names := &nodeNames{st: st}
+	tmpl, err := loadTemplates(templateFS, names)
 	if err != nil {
 		return nil, fmt.Errorf("web: parse templates: %w", err)
 	}
 	s := &Server{
 		NodeID: nodeID, store: st, blocks: blocks, catalog: catalog, cluster: cluster,
-		clusterSecret: clusterSecret, tmpl: tmpl, events: newEventLog(eventLogSize),
+		clusterSecret: clusterSecret, tmpl: tmpl, names: names, events: newEventLog(eventLogSize),
 	}
 
 	s.routes = http.NewServeMux()

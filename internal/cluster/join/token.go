@@ -56,6 +56,9 @@ const TokenKeyPrefix = "/cluster/tokens/"
 // NodesKeyPrefix is the store prefix holding node records.
 const NodesKeyPrefix = "/nodes/"
 
+// HostnameKey holds the hostname a node publishes, since its ID may be a UUID.
+func HostnameKey(nodeID string) store.Key { return store.Key(NodesKeyPrefix + nodeID + "/hostname") }
+
 const (
 	payloadLen = 8 + 8 + 8 // clusterID[0:8] || expiry || nonce
 	macLen     = sha256.Size

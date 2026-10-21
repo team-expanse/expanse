@@ -229,7 +229,7 @@ func TestBuildAlertsMirrorsCriticalRules(t *testing.T) {
 		Nodes: []control.NodeStatus{{ID: "n3", Lifecycle: nodelc.StateUnreachable}},
 	}
 
-	alerts := buildAlerts(checks, resources, volumes, report)
+	alerts := buildAlerts(checks, resources, volumes, report, (*nodeNames)(nil).name)
 
 	want := map[string]bool{
 		"ExpanseNodeUnhealthy":     false,
@@ -265,7 +265,7 @@ func TestBuildAlertsHealthyClusterFiresNone(t *testing.T) {
 	volumes := []*volumeView{{Name: "ok-vol", State: storage.StateHealthy}}
 	report := &control.Report{Leader: "n1", Degraded: false}
 
-	if alerts := buildAlerts(checks, resources, volumes, report); len(alerts) != 0 {
+	if alerts := buildAlerts(checks, resources, volumes, report, (*nodeNames)(nil).name); len(alerts) != 0 {
 		t.Errorf("healthy snapshot fired alerts: %+v", alerts)
 	}
 }

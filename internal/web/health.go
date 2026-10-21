@@ -107,7 +107,7 @@ func (s *Server) loadHealthOverview(ctx context.Context) (healthOverviewData, er
 	}
 	data.Report = report
 
-	data.Alerts = buildAlerts(checks, resources, data.Volumes, report)
+	data.Alerts = buildAlerts(checks, resources, data.Volumes, report, s.names.name)
 	return data, nil
 }
 
@@ -116,7 +116,7 @@ func (s *Server) loadHealthOverview(ctx context.Context) (healthOverviewData, er
 // deploy/prometheus/expanse-alerts.rules.yml's seven `for: 0s` rules --
 // the warning-severity rules (which wait out a `for` window to avoid
 // flapping) are left to Prometheus/Alertmanager, not reimplemented here.
-func buildAlerts(checks []*pb.CheckResult, resources []*pb.Resource, volumes []*volumeView, report *control.Report) []alertView {
+func buildAlerts(checks []*pb.CheckResult, resources []*pb.Resource, volumes []*volumeView, report *control.Report, nodeName func(string) string) []alertView {
 	var alerts []alertView
 	for _, c := range checks {
 		if c.GetStatus() == pb.Health_HEALTH_UNHEALTHY {
@@ -152,7 +152,7 @@ func buildAlerts(checks []*pb.CheckResult, resources []*pb.Resource, volumes []*
 		// only nodelc's leader-side detector (§4.8) notices this.
 		for _, n := range report.Nodes {
 			if n.Lifecycle == nodelc.StateUnreachable || n.Lifecycle == nodelc.StateFailed {
-				alerts = append(alerts, alertView{Name: "ExpanseNodeUnreachable", Summary: "node " + n.ID + " is unreachable"})
+				alerts = append(alerts, alertView{Name: "ExpanseNodeUnreachable", Summary: "node " + nodeName(n.ID) + " is unreachable"})
 			}
 		}
 	}

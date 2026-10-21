@@ -77,7 +77,7 @@
     <p class="field-hint">Where the block would run on the cluster as it is now. <b>Check</b> runs this again with your changes.</p>
     <ul class="type-list">
       {{range .Replicas}}
-      {{if .Node}}<li>{{.Label}} runs on <b>{{.Node}}</b></li>
+      {{if .Node}}<li>{{.Label}} runs on <b>{{nodename .Node}}</b></li>
       {{else}}<li>{{.Label}} fits on no node:{{if .Problems}}<ul>{{range .Problems}}<li>{{.}}</li>{{end}}</ul>{{end}}{{with .Hint}}<span class="field-hint">{{.}}</span>{{end}}</li>{{end}}
       {{end}}
     </ul>

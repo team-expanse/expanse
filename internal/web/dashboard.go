@@ -108,7 +108,7 @@ func (s *Server) currentAlerts(ctx context.Context, vols []*volumeView, rep *con
 	if rr, err := s.cluster.ListResources(ctx, &pb.ListResourcesRequest{}); err == nil {
 		resources = rr.GetResources()
 	}
-	return buildAlerts(checks, resources, vols, rep)
+	return buildAlerts(checks, resources, vols, rep, s.names.name)
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {

@@ -28,7 +28,7 @@
           <td class="muted">{{.Class}}</td>
           <td>{{.ReplicaSummary}}</td>
           <td>{{template "pill" (volstate .State)}}</td>
-          <td>{{if .Primary}}<a href="/nodes/{{.Primary}}">{{.Primary}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
+          <td>{{if .Primary}}<a href="/nodes/{{.Primary}}">{{nodename .Primary}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
         </tr>
         {{else}}
         <tr><td colspan="6"><div class="empty"><svg class="icon"><use href="#i-volumes"/></svg><p>No volumes yet.</p><a class="btn btn-primary" href="/volumes/new">Create your first volume</a></div></td></tr>

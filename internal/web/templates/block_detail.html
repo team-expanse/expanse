@@ -79,7 +79,7 @@
   <div class="kv-card"><div class="kv-label">Placed on</div>{{$live := live .Status}}<div class="kv-value">{{$live}}</div><div class="kv-sub">replica slot{{if ne $live 1}}s{{end}}</div></div>
 </section>
 {{with .Status.GetPendingReason}}
-<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><strong>{{if eq .GetCode "LivenessFailed"}}Replica stopped{{else}}Not fully placed{{end}}: {{.GetCode}}</strong><p>{{.GetMessage}}</p>{{if .GetPerNode}}<ul class="plain">{{range $n, $why := .GetPerNode}}<li><code>{{$n}}</code>: {{$why}}</li>{{end}}</ul>{{end}}</div></div>
+<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><strong>{{if eq .GetCode "LivenessFailed"}}Replica stopped{{else}}Not fully placed{{end}}: {{.GetCode}}</strong><p>{{.GetMessage}}</p>{{if .GetPerNode}}<ul class="plain">{{range $n, $why := .GetPerNode}}<li>{{nodename $n}}: {{$why}}</li>{{end}}</ul>{{end}}</div></div>
 {{end}}
 <section class="card">
   <div class="card-head"><h2>Replicas</h2></div>
@@ -90,7 +90,7 @@
         {{range .Status.GetPlacements}}{{$r := replica .}}
         <tr>
           <td>#{{$r.Index}}{{if not $r.Live}} <span class="tag">Stopped here</span>{{end}}</td>
-          <td><a href="/nodes/{{.GetNodeId}}">{{.GetNodeId}}</a></td>
+          <td><a href="/nodes/{{.GetNodeId}}">{{nodename .GetNodeId}}</a></td>
           <td>{{template "pill" (phase .GetPhase)}}</td>
           <td>{{if $r.Live}}{{template "pill" $r.Ready}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
           <td>{{if $r.Live}}{{$r.Restarts}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>

@@ -59,7 +59,7 @@
   <div class="kv-card"><div class="kv-label">State</div><div class="kv-value">{{template "pill" (volstate .Volume.State)}}</div><div class="kv-sub"><code>{{.Volume.ID}}</code></div></div>
   <div class="kv-card"><div class="kv-label">Size</div><div class="kv-value">{{.Volume.Size}}</div><div class="kv-sub">class {{.Volume.Class}}</div></div>
   <div class="kv-card"><div class="kv-label">Replicas</div><div class="kv-value">{{len .Volume.Placement}}<span class="stat-of">/{{.Volume.Replication}}</span></div><div class="kv-sub">{{if eq .Volume.State "UnderReplicated"}}<span class="text-warn">{{.Volume.ReplicaSummary}}</span>{{else}}{{.Volume.ReplicaSummary}} placed{{end}}</div></div>
-  <div class="kv-card"><div class="kv-label">Primary</div><div class="kv-value">{{if .Volume.Primary}}<a href="/nodes/{{.Volume.Primary}}">{{.Volume.Primary}}</a>{{else}}<span class="muted">none</span>{{end}}</div><div class="kv-sub">serves I/O</div></div>
+  <div class="kv-card"><div class="kv-label">Primary</div><div class="kv-value">{{if .Volume.Primary}}<a href="/nodes/{{.Volume.Primary}}">{{nodename .Volume.Primary}}</a>{{else}}<span class="muted">none</span>{{end}}</div><div class="kv-sub">serves I/O</div></div>
 </section>
 <section class="card">
   <div class="card-head"><h2>Replicas</h2></div>
@@ -69,7 +69,7 @@
       <tbody>
         {{range .Volume.Placement}}
         <tr>
-          <td><a href="/nodes/{{.NodeID}}"><strong>{{.NodeID}}</strong></a></td>
+          <td><a href="/nodes/{{.NodeID}}"><strong>{{nodename .NodeID}}</strong></a></td>
           <td>{{.Role}}</td>
           <td>{{if .Healthy}}<span class="pill pill-ok"><span class="dot"></span>Healthy</span>{{else}}<span class="pill pill-crit"><span class="dot"></span>Unhealthy</span>{{end}}</td>
           <td>{{if .SyncPercent}}<span class="sync"><progress class="meter meter-sm" max="100" value="{{printf "%.0f" .SyncPercent}}"></progress> {{printf "%.0f" .SyncPercent}}%</span>{{else if .Verifying}}<span class="muted">verifying</span>{{else}}<span class="muted">in sync</span>{{end}}</td>
@@ -90,7 +90,7 @@
       <thead><tr><th>Name</th><th>Held by</th><th>Taken</th></tr></thead>
       <tbody>
         {{range .Volume.Snapshots}}
-        <tr><td><strong>{{.Name}}</strong></td><td><a href="/nodes/{{.Node}}">{{.Node}}</a></td><td class="muted" title="{{stamp .CreatedAt}}">{{stamp .CreatedAt}}</td></tr>
+        <tr><td><strong>{{.Name}}</strong></td><td><a href="/nodes/{{.Node}}">{{nodename .Node}}</a></td><td class="muted" title="{{stamp .CreatedAt}}">{{stamp .CreatedAt}}</td></tr>
         {{else}}
         <tr><td colspan="3">{{template "empty" "No snapshots."}}</td></tr>
         {{end}}

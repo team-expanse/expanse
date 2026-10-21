@@ -51,6 +51,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/wire"
 	"github.com/expanse/expanse/internal/cluster/ca"
 	"github.com/expanse/expanse/internal/cluster/control"
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/config"
 	"github.com/expanse/expanse/internal/install"
@@ -1101,6 +1102,19 @@ func (a *Agent) refreshInventory(ctx context.Context) {
 		a.logger.Error("write node capabilities failed", "err", err)
 	}
 	a.publishCapacity(ctx, inv)
+	a.publishHostname(ctx, inv.Hostname)
+}
+
+// publishHostname records the node's hostname for display, writing only on a
+// change: every write under /nodes/ wakes the web UI's live pages.
+func (a *Agent) publishHostname(ctx context.Context, hostname string) {
+	key := join.HostnameKey(a.cfg.NodeID)
+	if e, err := a.store.Get(store.WithStale(ctx), key); hostname == "" || (err == nil && string(e.Value) == hostname) {
+		return
+	}
+	if _, err := a.store.Put(ctx, key, []byte(hostname)); err != nil {
+		a.logger.Error("write node hostname failed", "err", err)
+	}
 }
 
 func (a *Agent) loop(ctx context.Context, every time.Duration, name string, fn func()) {

@@ -1,11 +1,11 @@
 {{define "content"}}
 <div class="page-head">
   <div>
-    <h1 class="page-title">{{.Node.ID}} {{template "pill" .Node.State}}{{if .Node.Leader}} <span class="tag tag-leader">Leader</span>{{end}}</h1>
+    <h1 class="page-title">{{nodename .Node.ID}} {{template "pill" .Node.State}}{{if .Node.Leader}} <span class="tag tag-leader">Leader</span>{{end}}</h1>
     <p class="page-sub">{{role .Node.Role}} · joined {{ago .Node.JoinedAt}}{{if .Node.Serving}} · this node is serving you{{end}}</p>
   </div>
   <div class="page-actions">
-    {{if and (not .Node.Serving) .Node.UIURL}}<a class="btn btn-ghost" href="{{.Node.UIURL}}"><svg class="icon"><use href="#i-external"/></svg>Open on {{.Node.ID}}</a>{{end}}
+    {{if and (not .Node.Serving) .Node.UIURL}}<a class="btn btn-ghost" href="{{.Node.UIURL}}"><svg class="icon"><use href="#i-external"/></svg>Open on {{nodename .Node.ID}}</a>{{end}}
   </div>
 </div>
 
@@ -57,7 +57,7 @@
 {{end}}
 
 {{if not .Node.Serving}}
-<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeName}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{.Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
+<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeName}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{nodename .Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
 {{else}}
 
 <div class="grid-2">

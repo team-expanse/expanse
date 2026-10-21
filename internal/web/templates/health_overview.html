@@ -29,7 +29,7 @@
 
 <section class="kv-cards">
   {{if .Report}}
-  <div class="kv-card"><div class="kv-label">Leader</div><div class="kv-value">{{if .Report.Leader}}<code>{{.Report.Leader}}</code>{{else}}<span class="text-crit">none</span>{{end}}</div><div class="kv-sub">raft address</div></div>
+  <div class="kv-card"><div class="kv-label">Leader</div><div class="kv-value">{{$leader := leaderID .Report}}{{if $leader}}<a href="/nodes/{{$leader}}"><strong>{{nodename $leader}}</strong></a>{{else if .Report.Leader}}<code>{{.Report.Leader}}</code>{{else}}<span class="text-crit">none</span>{{end}}</div><div class="kv-sub">{{if .Report.Leader}}raft {{.Report.Leader}}{{else}}raft address{{end}}</div></div>
   <div class="kv-card"><div class="kv-label">Quorum</div><div class="kv-value">{{.Report.QuorumHave}}<span class="stat-of">/{{.Report.QuorumNeed}}</span></div><div class="kv-sub">{{if .Report.Degraded}}<span class="text-crit">degraded</span>{{else}}voters reachable / needed{{end}}</div></div>
   {{else}}
   <div class="kv-card"><div class="kv-label">Quorum</div><div class="kv-value muted">—</div><div class="kv-sub">status unavailable</div></div>

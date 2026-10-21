@@ -27,7 +27,7 @@
           <td><code>{{.Spec.GetType}}</code></td>
           <td>{{.Status.GetReplicas.GetReady}}<span class="muted">/{{.Spec.GetReplicas}} ready</span></td>
           <td>{{template "pill" (phase .Status.GetPhase)}}</td>
-          <td class="muted">{{range $i, $p := .Status.GetPlacements}}{{if $i}}, {{end}}{{$p.GetNodeId}}{{end}}</td>
+          <td class="muted">{{range $i, $p := .Status.GetPlacements}}{{if $i}}, {{end}}<a href="/nodes/{{$p.GetNodeId}}">{{nodename $p.GetNodeId}}</a>{{end}}</td>
         </tr>
         {{else}}
         <tr><td colspan="5"><div class="empty"><svg class="icon"><use href="#i-blocks"/></svg><p>No blocks deployed yet.</p><a class="btn btn-primary" href="/deploy">Deploy your first block</a></div></td></tr>

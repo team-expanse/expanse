@@ -21,7 +21,7 @@
 {{end}}
 <section class="kv-cards">
   <div class="kv-card"><div class="kv-label">Cluster</div><div class="kv-value">{{.Name}}</div><div class="kv-sub"><code>{{.ClusterID}}</code></div></div>
-  <div class="kv-card"><div class="kv-label">Leader</div><div class="kv-value">{{if .Leader}}<code>{{.Leader}}</code>{{else}}<span class="text-crit">none</span>{{end}}</div><div class="kv-sub">raft address</div></div>
+  <div class="kv-card"><div class="kv-label">Leader</div><div class="kv-value">{{$leader := leaderID .}}{{if $leader}}<a href="/nodes/{{$leader}}"><strong>{{nodename $leader}}</strong></a>{{else if .Leader}}<code>{{.Leader}}</code>{{else}}<span class="text-crit">none</span>{{end}}</div><div class="kv-sub">{{if .Leader}}raft {{.Leader}}{{else}}raft address{{end}}</div></div>
   <div class="kv-card"><div class="kv-label">Quorum</div><div class="kv-value">{{.QuorumHave}}<span class="stat-of">/{{.QuorumNeed}}</span></div><div class="kv-sub">{{if .Degraded}}<span class="text-crit">lost</span>{{else}}voters reachable / needed{{end}}</div></div>
   <div class="kv-card"><div class="kv-label">Generation</div><div class="kv-value"><a href="/generations">{{.Generation}}</a></div><div class="kv-sub">{{if .Version}}version {{.Version}}{{else}}desired state{{end}}</div></div>
 </section>
@@ -33,7 +33,7 @@
       <tbody>
         {{range .Nodes}}
         <tr>
-          <td><a href="/nodes/{{.ID}}"><strong>{{.ID}}</strong></a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
+          <td><a href="/nodes/{{.ID}}"><strong>{{nodename .ID}}</strong></a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
           <td>{{role .Role}}</td>
           <td>{{template "pill" (nodeState .)}}</td>
           <td><code>{{.RaftAddr}}</code></td>

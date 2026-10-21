@@ -23,7 +23,7 @@
       <tbody>
         {{range .Nodes}}
         <tr>
-          <td><a href="/nodes/{{.ID}}"><strong>{{.ID}}</strong></a>{{if .Leader}} <span class="tag tag-leader">Leader</span>{{end}}{{if .Serving}} <span class="tag">serving you</span>{{end}}</td>
+          <td><a href="/nodes/{{.ID}}"><strong>{{nodename .ID}}</strong></a>{{if .Leader}} <span class="tag tag-leader">Leader</span>{{end}}{{if .Serving}} <span class="tag">serving you</span>{{end}}</td>
           <td>{{role .Role}}</td>
           <td>{{template "pill" .State}}</td>
           <td>{{template "pill" .Health}}</td>
