@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/store"
@@ -130,5 +131,25 @@ func TestChangePasswordRequiresCSRF(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// Re-checking the current password shares the sign-in cap, so it can't be brute-forced.
+func TestChangePasswordSharesTheLoginCap(t *testing.T) {
+	old := loginWait
+	loginWait = 50 * time.Millisecond
+	t.Cleanup(func() { loginWait = old })
+	var busy *Server
+	srv, pw, _ := newTestServerWith(t, func(s *Server) { busy = s })
+	client, csrf := loggedInClient(t, srv, pw)
+	for range cap(busy.loginSlots) {
+		busy.loginSlots <- struct{}{}
+	}
+	resp := postVolumeForm(t, client, csrf, srv.URL+"/settings/password", url.Values{
+		"current": {"guess"}, "password": {"new-password-123"}, "confirm": {"new-password-123"},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status %d with every slot busy, want 429", resp.StatusCode)
 	}
 }

@@ -49,6 +49,7 @@ type alertView struct {
 
 type healthOverviewData struct {
 	Page       page
+	NodeName   string // set here too, since the live fragment has no Page
 	NodeChecks []nodeCheckView
 	Resources  []resourceView
 	Volumes    []*volumeView
@@ -63,7 +64,7 @@ type healthOverviewData struct {
 // genuinely degraded cluster is exactly when this page must keep
 // rendering, not block on a 5s leader-wait timeout.
 func (s *Server) loadHealthOverview(ctx context.Context) (healthOverviewData, error) {
-	var data healthOverviewData
+	data := healthOverviewData{NodeName: s.nodeName(ctx)}
 
 	var checks []*pb.CheckResult
 	if rep, err := s.cluster.GetHealth(ctx, &pb.GetHealthRequest{}); err == nil {
@@ -192,6 +193,7 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 		store.Key(join.NodesKeyPrefix), store.Key("/cluster/"),
 	)
 	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	streamFragments(w, r, "health", changes, healthTick, func(ctx context.Context) (string, error) {

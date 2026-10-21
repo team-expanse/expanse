@@ -265,6 +265,7 @@ func (s *Server) handleVolumeEvents(w http.ResponseWriter, r *http.Request) {
 	// snapshot read and the watch's starting revision would be missed.
 	changes, err := fanInWatches(r.Context(), s.store, store.Key(storage.VolumePrefix))
 	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	var wasPending bool

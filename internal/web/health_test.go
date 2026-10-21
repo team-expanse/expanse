@@ -324,3 +324,21 @@ func TestPagesNameTheServingNodeByHostname(t *testing.T) {
 		})
 	}
 }
+
+// The live fragment must carry the same node name as the first render.
+func TestHealthEventsNameTheServingNode(t *testing.T) {
+	srv, pw, _ := newHealthTestServerWithInventory(t, &inventory.Inventory{Hostname: "rack1-a"})
+	client, _ := loggedInClient(t, srv, pw)
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/health/events", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /health/events: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if want := `<h2>Node checks</h2><span class="muted">rack1-a</span>`; !strings.Contains(string(body), want) {
+		t.Errorf("stream missing %q", want)
+	}
+}

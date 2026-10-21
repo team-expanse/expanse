@@ -3,10 +3,14 @@ package web
 import (
 	"context"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/expanse/expanse/internal/store"
+	"github.com/expanse/expanse/internal/store/boltstore"
 )
 
 // runFragments streams until changes closes, returning the body and render count.
@@ -140,5 +144,29 @@ func TestShortKeepsWholeCharacters(t *testing.T) {
 	}
 	if got := short("ab", 5); got != "ab" {
 		t.Errorf("short = %q, want ab", got)
+	}
+}
+
+// noLeaderStore fails linearizable revision reads, as a raftstore does without quorum.
+type noLeaderStore struct{ store.Store }
+
+func (s noLeaderStore) Revision(ctx context.Context) (store.Revision, error) {
+	if !store.StaleFrom(ctx) {
+		return 0, context.DeadlineExceeded
+	}
+	return s.Store.Revision(ctx)
+}
+
+// Live pages must keep streaming when the cluster has lost its leader.
+func TestFanInWatchesWorksWithoutALeader(t *testing.T) {
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("boltstore.New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := fanInWatches(ctx, noLeaderStore{st}, "/a/"); err != nil {
+		t.Fatalf("fanInWatches without a leader: %v", err)
 	}
 }

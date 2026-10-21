@@ -79,6 +79,7 @@ func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
 	// the two would otherwise wait for some later, unrelated write.
 	changes, err := s.watchClusterPrefixes(r.Context())
 	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	streamFragments(w, r, "cluster", changes, 0, func(ctx context.Context) (string, error) {

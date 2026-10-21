@@ -123,6 +123,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDashboardEvents(w http.ResponseWriter, r *http.Request) {
 	changes, err := fanInWatches(r.Context(), s.store, store.Key("/"))
 	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	streamFragments(w, r, "dashboard", changes, 5*time.Second, func(ctx context.Context) (string, error) {

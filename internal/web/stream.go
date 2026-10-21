@@ -42,7 +42,8 @@ func (s *logLineStream) Send(l *pb.LogLine) error { return s.send(l) }
 // same starting revision, so a write landing between calls is never
 // missed by one prefix and caught by another watching from later.
 func fanInWatches(ctx context.Context, st store.Store, prefixes ...store.Key) (<-chan struct{}, error) {
-	cur, err := st.Revision(ctx)
+	// Stale: Watch reads the local FSM, and a stream must outlive a lost leader.
+	cur, err := st.Revision(store.WithStale(ctx))
 	if err != nil {
 		return nil, err
 	}

@@ -106,6 +106,7 @@ func (s *Server) handleNodesEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	changes, err := s.watchClusterPrefixes(r.Context())
 	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	streamFragments(w, r, "nodes", changes, 0, func(ctx context.Context) (string, error) {

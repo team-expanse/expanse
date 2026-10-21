@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"time"
 	"unicode/utf8"
 
 	"github.com/expanse/expanse/internal/cluster/control"
@@ -73,8 +74,13 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		d.Error, d.Field = msg, field
 		s.render(w, http.StatusBadRequest, "settings.html", d)
 	}
+	ok, busy := s.checkLogin(r.Context(), auth.AdminUsername, current)
 	switch {
-	case !auth.VerifyAdminPassword(r.Context(), s.store, current):
+	case busy:
+		http.Error(w, "Too many password checks at once; try again shortly.", http.StatusTooManyRequests)
+		return
+	case !ok:
+		time.Sleep(loginFailDelay)
 		fail("current", "The current password is not correct.")
 		return
 	case utf8.RuneCountInString(password) < minPasswordLen:

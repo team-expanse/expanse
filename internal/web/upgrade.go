@@ -86,6 +86,7 @@ func (s *Server) handleUpgradeEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	changes, err := fanInWatches(r.Context(), s.store, store.Key("/upgrade/"))
 	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	csrf := sessionFromContext(r.Context()).CSRFToken
