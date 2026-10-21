@@ -57,7 +57,7 @@ func (s *Server) handleGenerationsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := s.loadGenerations(r.Context())
-	data.Page = s.newPage(w, r, "Generations", "generations", crumb{Label: "Generations"})
+	data.Page = s.newPage(w, r, "Changes", "generations", crumb{Label: "Changes"})
 	s.render(w, http.StatusOK, "generations_list.html", data)
 }
 
@@ -97,6 +97,9 @@ type generationDetailData struct {
 	Page       page
 	Generation *pb.GenerationInfo
 	Current    uint64
+	// Change is the diff from the parent; nil for the bootstrap generation.
+	Change      *pb.DiffGenerationsResponse
+	ChangeError string
 }
 
 func (s *Server) handleGenerationDetail(w http.ResponseWriter, r *http.Request) {
@@ -115,11 +118,18 @@ func (s *Server) handleGenerationDetail(w http.ResponseWriter, r *http.Request) 
 	}
 	label := "Generation " + r.PathValue("n")
 	data := generationDetailData{
-		Page:       s.newPage(w, r, label, "generations", crumb{Label: "Generations", Href: "/generations"}, crumb{Label: label}),
+		Page:       s.newPage(w, r, label, "generations", crumb{Label: "Changes", Href: "/generations"}, crumb{Label: label}),
 		Generation: g,
 	}
 	if rep, err := s.getClusterReport(r.Context()); err == nil {
 		data.Current = uint64(rep.Generation)
+	}
+	if p := g.GetParent(); p != 0 {
+		if diff, err := s.cluster.DiffGenerations(r.Context(), &pb.DiffGenerationsRequest{A: p, B: n}); err == nil {
+			data.Change = diff
+		} else {
+			data.ChangeError = errText(err)
+		}
 	}
 	s.render(w, http.StatusOK, "generation_detail.html", data)
 }
@@ -147,7 +157,7 @@ func (s *Server) handleGenerationsDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	label := "Diff " + r.URL.Query().Get("a") + " → " + r.URL.Query().Get("b")
 	s.render(w, http.StatusOK, "generations_diff.html", generationsDiffData{
-		Page: s.newPage(w, r, label, "generations", crumb{Label: "Generations", Href: "/generations"}, crumb{Label: label}),
+		Page: s.newPage(w, r, label, "generations", crumb{Label: "Changes", Href: "/generations"}, crumb{Label: label}),
 		A:    a, B: b, Diff: diff,
 	})
 }

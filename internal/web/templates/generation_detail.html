@@ -6,7 +6,6 @@
     <p class="page-sub">{{if $g.Description}}{{$g.Description}} · {{end}}created {{stamp (nanos $g.CreatedAtUnixNs)}} by {{$g.CreatedBy}}</p>
   </div>
   <div class="page-actions">
-    {{if $g.Parent}}<a class="btn btn-ghost" href="/generations/diff?a={{$g.Parent}}&b={{$g.Number}}"><svg class="icon"><use href="#i-diff"/></svg>Diff with {{$g.Parent}}</a>{{end}}
     {{if and .Current (ne $g.Number .Current)}}<button class="btn btn-primary" type="button" data-confirm="confirm-rollback"><svg class="icon"><use href="#i-rollback"/></svg>Roll back to this</button>{{end}}
   </div>
 </div>
@@ -18,6 +17,13 @@
   <div class="kv-card"><div class="kv-label">Keys</div><div class="kv-value">{{len $g.Keys}}</div><div class="kv-sub">desired-state entries</div></div>
   <div class="kv-card"><div class="kv-label">Hash</div><div class="kv-value"><code title="{{$g.Hash}}">{{short $g.Hash 16}}</code></div><div class="kv-sub">sha256 of the snapshot</div></div>
 </section>
+
+{{if .Change}}
+<div class="card-head"><h2>Change from {{$g.Parent}}</h2><a class="btn btn-ghost btn-sm" href="/generations/diff?a={{$g.Parent}}&b={{$g.Number}}"><svg class="icon"><use href="#i-diff"/></svg>Full diff</a></div>
+{{template "generation-change" (genChange $g.Parent $g.Number .Change)}}
+{{else if .ChangeError}}
+<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>The change from {{$g.Parent}} is unavailable: {{.ChangeError}}</p></div></div>
+{{end}}
 
 <section class="card">
   <div class="card-head"><h2>Desired-state keys</h2></div>

@@ -37,6 +37,32 @@ type upgradeView struct {
 	Offer   string   // the version the start form proposes
 	Errors  []string // every read that failed, so none hides another
 	Running bool     // a rollout is running or paused, so no new one can start
+	Steps   []rolloutStep
+}
+
+// rolloutStep is one node's place in the running rollout.
+type rolloutStep struct {
+	ID     string
+	Status pill
+}
+
+// rolloutSteps walks the plan's order: nodes on the target are done, the
+// current one is upgrading (or halted), the rest wait their turn.
+func rolloutSteps(p *rollout.Plan, reports map[string]rollout.Report) []rolloutStep {
+	var out []rolloutStep
+	for _, id := range p.Order {
+		st := pill{"Waiting", "neutral"}
+		switch {
+		case reports[id].Version == p.Target:
+			st = pill{"Done", "ok"}
+		case id == p.Current && p.State == rollout.Halted:
+			st = pill{"Halted", "crit"}
+		case id == p.Current:
+			st = pill{"Upgrading", "info"}
+		}
+		out = append(out, rolloutStep{ID: id, Status: st})
+	}
+	return out
 }
 
 type upgradeData struct {
@@ -66,6 +92,9 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 		v.Errors = append(v.Errors, "The node list is unavailable: "+errText(err))
 	}
 	v.Running = v.Plan != nil && (v.Plan.State == rollout.Running || v.Plan.State == rollout.Paused || v.Plan.State == rollout.Halted)
+	if v.Running {
+		v.Steps = rolloutSteps(v.Plan, reports)
+	}
 	v.Offer = v.Latest.Version
 	return v
 }

@@ -35,6 +35,11 @@
   {{with .View.Plan}}{{if $.View.Running}}
   <p>Upgrading to <strong>{{.Target}}</strong>: {{.State}}{{with .Current}}, now on <a href="/nodes/{{.}}"><strong>{{nodename .}}</strong></a>{{end}}.</p>
   {{with .Reason}}<div class="callout {{if eq $.View.Plan.State "halted"}}callout-crit{{else}}callout-warn{{end}}"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{.}}</p></div></div>{{end}}
+  {{with $.View.Steps}}
+  <ol class="rollout">
+    {{range .}}<li><span class="ring ring-{{.Status.Tone}}" aria-hidden="true"></span><a class="host" href="/nodes/{{.ID}}">{{nodename .ID}}</a>{{template "pill" .Status}}</li>{{end}}
+  </ol>
+  {{end}}
   <div class="form-actions">
     {{if eq .State "running"}}<form method="post" action="/upgrade/pause" hx-post="/upgrade/pause" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn" type="submit">Pause</button></form>
     {{else}}<form method="post" action="/upgrade/resume" hx-post="/upgrade/resume" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn btn-primary" type="submit">{{if eq .State "halted"}}Retry{{else}}Resume{{end}}</button></form>{{end}}
@@ -51,6 +56,12 @@
     </label>
     <div class="form-actions"><button class="btn btn-primary" type="submit">Upgrade cluster</button></div>
   </form>
+  {{else}}
+  {{/* Shown but inert during a rollout, with the reason beside the button. */}}
+  <form class="form"><fieldset disabled aria-describedby="upgrade-busy">
+    <label class="field"><span class="field-label">Upgrade the cluster to</span><input class="input" type="text" value="{{.View.Plan.Target}}"></label>
+    <div class="form-actions"><button class="btn btn-primary" type="button">Upgrade cluster</button><span class="field-hint" id="upgrade-busy">Disabled while the rollout to {{.View.Plan.Target}} runs; cancel it or let it finish first.</span></div>
+  </fieldset></form>
   {{end}}
 </section>
 
@@ -62,7 +73,7 @@
       <tbody>
         {{range .View.Nodes}}
         <tr>
-          <td><a href="/nodes/{{.ID}}"><strong>{{nodename .ID}}</strong></a>{{if .Current}} <span class="tag">upgrading</span>{{end}}</td>
+          <td><a class="host" href="/nodes/{{.ID}}">{{nodename .ID}}</a>{{if .Current}} <span class="tag">upgrading</span>{{end}}</td>
           <td>{{with .Report.Version}}{{.}}{{else}}<span class="muted">unknown</span>{{end}}</td>
           <td>{{with .Report.Upgrade}}{{.Version}}: {{.State}}{{with .Error}} <span class="text-crit">{{.}}</span>{{end}}{{if .RebootNeeded}} <span class="text-warn">reboot to finish</span>{{end}}{{else}}<span class="muted">none</span>{{end}}</td>
         </tr>
@@ -74,3 +85,4 @@
   </div>
 </section>
 {{end}}
+

@@ -114,6 +114,25 @@ func TestUpgradePageShowsWhyARolloutHalted(t *testing.T) {
 	if strings.Contains(body, `action="/upgrade/start"`) {
 		t.Error("offers a new rollout while one is halted")
 	}
+	if !strings.Contains(body, "Disabled while the rollout to 1.12.0 runs") || !strings.Contains(body, `<fieldset disabled aria-describedby="upgrade-busy">`) {
+		t.Error("the start form is not shown disabled with its reason")
+	}
+}
+
+func TestRolloutStepsFollowThePlanOrder(t *testing.T) {
+	plan := &rollout.Plan{Target: "1.12.0", State: rollout.Running, Order: []string{"n2", "n3", "n1"}, Current: "n3"}
+	reports := map[string]rollout.Report{"n2": {Version: "1.12.0"}, "n3": {Version: "1.11.3"}, "n1": {Version: "1.11.3"}}
+	got := rolloutSteps(plan, reports)
+	want := []string{"n2 Done", "n3 Upgrading", "n1 Waiting"}
+	for i, st := range got {
+		if i >= len(want) || st.ID+" "+st.Status.Label != want[i] {
+			t.Fatalf("rolloutSteps = %+v, want %v", got, want)
+		}
+	}
+	plan.State = rollout.Halted
+	if got := rolloutSteps(plan, reports); got[1].Status.Label != "Halted" || got[1].Status.Tone != "crit" {
+		t.Errorf("a halted node shows %+v", got[1].Status)
+	}
 }
 
 func TestUpgradeCheckNowAndTurningTheCheckOff(t *testing.T) {

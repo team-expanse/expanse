@@ -173,3 +173,19 @@ func TestGenerationsHideRollbackWhenCurrentIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerationDetailShowsItsChangeFromTheParent(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+	importGeneration(t, st, "two", map[string]string{"/networks/keep": "1", "/networks/gone": "1"})
+	importGeneration(t, st, "three", map[string]string{"/networks/keep": "2", "/networks/new": "1"})
+	_, body := getPage(t, client, srv, "/generations/3")
+	for _, want := range []string{"Change from 2", "+ /networks/new", "- /networks/gone", "~ /networks/keep"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("generation 3 lacks %q", want)
+		}
+	}
+	if _, body := getPage(t, client, srv, "/generations"); !strings.Contains(body, `<h1 class="page-title">Changes</h1>`) {
+		t.Error("the history page is not titled Changes")
+	}
+}
