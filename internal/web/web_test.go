@@ -308,3 +308,23 @@ func TestPlainPostFormsCarryTheCSRFField(t *testing.T) {
 		}
 	}
 }
+
+// htmx follows a 303 silently and swaps the login page into the page, so an
+// htmx request without a session is told to navigate to /login instead.
+func TestExpiredSessionSendsHTMXToLogin(t *testing.T) {
+	srv, _ := newTestServer(t)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		req, _ := http.NewRequest(method, srv.URL+"/blocks", nil)
+		req.Header.Set("HX-Request", "true")
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "expired"})
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("HX-Redirect") != "/login" {
+			t.Errorf("%s: status %d, HX-Redirect %q; want 401 and /login", method, resp.StatusCode, resp.Header.Get("HX-Redirect"))
+		}
+	}
+}

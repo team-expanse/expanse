@@ -104,7 +104,16 @@
     // The server replays the log tail on every (re)connect.
     ev.target.querySelectorAll("[data-clear-on-open]").forEach(function (el) { el.replaceChildren(); });
   });
-  document.body.addEventListener("htmx:sseError", function () { setLive("error"); });
+  document.body.addEventListener("htmx:sseError", function (ev) {
+    setLive("error");
+    // A closed stream may mean the session expired: ask as htmx does, and
+    // follow the server to /login rather than retrying forever.
+    var src = ev.detail && ev.detail.source;
+    if (!src || src.readyState !== EventSource.CLOSED) return;
+    fetch(window.location.href, { headers: { "HX-Request": "true" } }).then(function (res) {
+      if (res.status === 401) window.location.assign(res.headers.get("HX-Redirect") || "/login");
+    }).catch(function () {});
+  });
   document.body.addEventListener("htmx:sseClose", function () { setLive("closed"); });
 
   // ---- confirm dialogs -------------------------------------------------

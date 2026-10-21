@@ -326,6 +326,17 @@ func sessionFromContext(ctx context.Context) *auth.Session {
 	return sess
 }
 
+// toLogin sends a request without a valid session to /login. htmx would follow
+// a redirect silently and swap the login page in, so it is told to navigate.
+func toLogin(w http.ResponseWriter, r *http.Request) {
+	if isHTMX(r) {
+		w.Header().Set("HX-Redirect", "/login")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
 // requireAuth gates a handler behind a valid session cookie (X3) and, for
 // mutating methods, a matching CSRF header (D7, double-submit cookie). An
 // unauthenticated request is redirected to /login, never served the page.
@@ -333,12 +344,12 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
 		if err != nil {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			toLogin(w, r)
 			return
 		}
 		sess, err := auth.GetSession(r.Context(), s.store, c.Value)
 		if err != nil {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			toLogin(w, r)
 			return
 		}
 		if isMutating(r.Method) {
