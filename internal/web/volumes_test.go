@@ -3,9 +3,11 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -381,6 +383,26 @@ func TestVolumeEventsSSEStreamsLiveUpdate(t *testing.T) {
 	if !strings.Contains(got, `<div id="volume-actions" hx-swap-oob="true"></div>`) {
 		t.Error("a deleted volume keeps its actions")
 	}
+}
+
+// The stream compares against what the page rendered, not what the volume
+// was when the stream connected, so a placement in between still swaps.
+func TestVolumeStreamSwapsActionsThePageLacked(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	c, _ := loggedInClient(t, srv, pw)
+	putTestVolume(t, st, storage.Spec{ID: "vol-r1", Name: "raced", SizeBytes: 1 << 30, Class: "default", Replication: 1}, storage.Status{State: storage.StateHealthy, Primary: "n1"})
+	_, body := get(t, c, srv.URL+"/volumes/raced")
+	m := regexp.MustCompile(`sse-connect="(/volumes/raced/events\?shown=[^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("the page does not tell its stream what it shows")
+	}
+	current := openSSE(t, c, srv.URL+html.UnescapeString(m[1]))
+	current.expect("Healthy", 5*time.Second)
+	if strings.Contains(current.got(), "hx-swap-oob") {
+		t.Error("the stream re-sent actions the page already has")
+	}
+	creating := openSSE(t, c, srv.URL+"/volumes/raced/events?shown=")
+	creating.expect(`id="volume-actions" hx-swap-oob="true"`, 5*time.Second)
 }
 
 // Names go into store keys and URLs; sizes must be real; names must be free.

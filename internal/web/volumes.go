@@ -298,10 +298,7 @@ func (s *Server) handleVolumeEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	shown := "" // the size the page's actions show, "" while they are absent
-	if v, err := s.findVolumeByName(r.Context(), name); err == nil {
-		shown = v.Size
-	}
+	shown := r.URL.Query().Get("shown") // the size the page's actions show, "" while they are absent
 	streamFragments(w, r, "volume", changes, 0, func(ctx context.Context) (string, error) {
 		data := volumeDetailData{Name: name}
 		v, err := s.findVolumeByName(ctx, name)

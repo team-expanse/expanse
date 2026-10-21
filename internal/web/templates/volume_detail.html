@@ -10,7 +10,7 @@
   </div>
 </div>
 
-<div hx-ext="sse" sse-connect="/volumes/{{.Name}}/events">
+<div hx-ext="sse" sse-connect="/volumes/{{.Name}}/events?shown={{with .Volume}}{{.Size}}{{end}}">
   <div id="volume-fragment" sse-swap="volume" hx-swap="innerHTML">{{template "volume-fragment" .}}</div>
 </div>
 
