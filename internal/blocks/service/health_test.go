@@ -117,3 +117,32 @@ func TestReadyCountsRunningReplicasNotFailingReadiness(t *testing.T) {
 		t.Errorf("ready = %d with replica 1 failing readiness, want 1", n)
 	}
 }
+
+// Retiring a stopped replica's probe record deletes a sub-key, not the block.
+func TestWatchReportsARetiredProbeAsAModification(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newServer(t)
+	placeOn(t, ctx, s)
+	if err := health.StorePublisher(s.St, key("default", "web"), 1, "n2")(ctx, health.Record{OK: true}); err != nil {
+		t.Fatal(err)
+	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	recv := make(chan *pb.BlockEvent, 4)
+	go func() {
+		_ = s.Watch(&pb.WatchBlocksRequest{Namespace: "default", Name: "web"}, &fakeWatchServer{ctx: watchCtx, recv: recv})
+	}()
+	time.Sleep(50 * time.Millisecond) // let Watch start listening
+
+	if err := health.Retire(ctx, s.St, key("default", "web"), 1, "n2"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-recv:
+		if ev.GetType() != pb.EventType_EVENT_MODIFIED || ev.GetBlock() == nil {
+			t.Errorf("event = %v with block %v, want MODIFIED with the block", ev.GetType(), ev.GetBlock() != nil)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Watch never delivered the retirement")
+	}
+}

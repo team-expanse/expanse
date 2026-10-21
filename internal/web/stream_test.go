@@ -85,6 +85,27 @@ func TestStreamFragmentsRendersOnTick(t *testing.T) {
 	}
 }
 
+func TestStreamEventsSendsEachRegionOnlyWhenItChanges(t *testing.T) {
+	changes := make(chan struct{})
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		close(changes)
+	}()
+	var n atomic.Int32
+	rec := httptest.NewRecorder()
+	streamEvents(rec, httptest.NewRequest("GET", "/x/events", nil), changes, 20*time.Millisecond, func(context.Context) ([]sseEvent, error) {
+		i := n.Add(1)
+		return []sseEvent{{"ticking", string(rune('a' + i%26))}, {"steady", "same"}}, nil
+	})
+	body := rec.Body.String()
+	if got := strings.Count(body, "event: steady"); got != 1 {
+		t.Errorf("sent the unchanged region %d times, want once", got)
+	}
+	if got := strings.Count(body, "event: ticking"); got < 3 {
+		t.Errorf("sent the changing region %d times, want several", got)
+	}
+}
+
 // Live lists must stay bounded, and the log tail, which the server replays on
 // each reconnect, must clear first; app.js acts on these attributes.
 func TestLiveListsAreBoundedAndLogsClearOnReconnect(t *testing.T) {

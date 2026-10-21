@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -44,10 +45,28 @@ func TestNodeDetailUpdatesLive(t *testing.T) {
 		t.Error("the node page is not a live region")
 	}
 	sse := openSSE(t, c, srv.URL+"/nodes/n1/events")
+	sse.expect("event: node-storage", 2*time.Second)
 	sse.expect("Enable storage", 2*time.Second)
 	if strings.Contains(sse.got(), `name="csrf_token" value=""`) {
 		t.Error("the live storage form has no CSRF token")
 	}
 	reportStorage(t, st, "n1", storage.NodeStorage{State: storage.NodeStorageReboot, Source: storage.SourceUI, VG: "expanse", Pool: "pool"})
 	sse.expect("Reboot n1", 2*time.Second)
+}
+
+// A refused submit's message must not be replaced by the stream's first render.
+func TestNodeStorageErrorIsNotStreamedAway(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	c, csrf := loggedInClient(t, srv, pw)
+	reportStorage(t, st, "n1", storage.NodeStorage{State: storage.NodeStorageOff, VG: "expanse", VGSize: 100 << 30, VGFree: 100 << 30})
+	_, body := postForm(t, c, srv.URL+"/nodes/n1/storage", csrf, url.Values{"percent": {"99"}})
+	if !strings.Contains(body, "Use 1 to") {
+		t.Fatal("the bad percent is not explained")
+	}
+	if strings.Contains(body, `sse-swap="node-storage"`) {
+		t.Error("the storage card with an error is still a live region")
+	}
+	if !strings.Contains(body, `sse-swap="node"`) {
+		t.Error("the rest of the node page is no longer live")
+	}
 }

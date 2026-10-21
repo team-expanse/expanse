@@ -1,6 +1,9 @@
 {{define "content"}}
 <div hx-ext="sse" sse-connect="/nodes/{{.Node.ID}}/events">
   <div id="node-fragment" sse-swap="node" hx-swap="innerHTML">{{template "node-fragment" .}}</div>
+  {{/* Not live while it shows a refused submit, so the message stays. */}}
+  <div id="node-storage"{{if not .Storage.Error}} sse-swap="node-storage" hx-swap="innerHTML"{{end}}>{{template "node-storage" .}}</div>
+  <div id="node-local" sse-swap="node-local" hx-swap="innerHTML">{{template "node-local" .}}</div>
 </div>
 {{end}}
 
@@ -22,7 +25,9 @@
   <div class="kv-card"><div class="kv-label">API</div><div class="kv-value"><code>{{.Node.APIAddr}}</code></div><div class="kv-sub">gRPC, mTLS</div></div>
   <div class="kv-card"><div class="kv-label">Self-reported</div><div class="kv-value">{{if .Node.Degraded}}<span class="text-warn">degraded</span>{{else}}ok{{end}}</div><div class="kv-sub">{{if .Node.Lifecycle}}lifecycle: {{.Node.Lifecycle}}{{else}}lifecycle: healthy{{end}}</div></div>
 </section>
+{{end}}
 
+{{define "node-storage"}}
 {{with .Storage}}
 <section class="card" id="storage">
   <div class="card-head"><h2><svg class="icon"><use href="#i-disk"/></svg>Storage</h2>{{template "pill" .Pill}}</div>
@@ -63,7 +68,9 @@
   {{end}}
 </section>
 {{end}}
+{{end}}
 
+{{define "node-local"}}
 {{if not .Node.Serving}}
 <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeName}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{nodename .Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
 {{else}}

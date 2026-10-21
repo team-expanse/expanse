@@ -73,10 +73,21 @@ func fanInWatches(ctx context.Context, st store.Store, prefixes ...store.Key) (<
 	return out, nil
 }
 
-// streamFragments serves one fragment as SSE: rendered now, after each burst
-// of changes and on every tick (0 for none), and sent only when it differs.
-// render returns "" to skip a transient failure; watch before calling it.
+// sseEvent is one named fragment of a live page.
+type sseEvent struct{ Event, Data string }
+
+// streamFragments serves one fragment as SSE; see streamEvents.
 func streamFragments(w http.ResponseWriter, r *http.Request, event string, changes <-chan struct{}, tick time.Duration, render func(context.Context) (string, error)) {
+	streamEvents(w, r, changes, tick, func(ctx context.Context) ([]sseEvent, error) {
+		frag, err := render(ctx)
+		return []sseEvent{{event, frag}}, err
+	})
+}
+
+// streamEvents serves a page's fragments as SSE: rendered now, after each burst
+// of changes and on every tick (0 for none), each sent only when it differs.
+// An empty Data skips a transient failure; watch before calling it.
+func streamEvents(w http.ResponseWriter, r *http.Request, changes <-chan struct{}, tick time.Duration, render func(context.Context) ([]sseEvent, error)) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -88,15 +99,20 @@ func streamFragments(w http.ResponseWriter, r *http.Request, event string, chang
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush() // confirm the stream is live before the first event
 
-	var last string
+	last := map[string]string{}
 	send := func() error {
-		frag, err := render(ctx)
-		if err != nil || frag == "" || frag == last {
-			return err // an identical swap would only redraw the page
-		}
-		last = frag
-		if err := writeSSE(w, event, frag); err != nil {
+		events, err := render(ctx)
+		if err != nil {
 			return err
+		}
+		for _, e := range events {
+			if e.Data == "" || e.Data == last[e.Event] {
+				continue // an identical swap would only redraw the page
+			}
+			last[e.Event] = e.Data
+			if err := writeSSE(w, e.Event, e.Data); err != nil {
+				return err
+			}
 		}
 		flusher.Flush()
 		return nil

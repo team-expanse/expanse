@@ -193,14 +193,23 @@ func (s *Server) handleNodeDetailEvents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	pg := page{CSRFToken: sessionFromContext(r.Context()).CSRFToken}
-	streamFragments(w, r, "node", changes, healthTick, func(ctx context.Context) (string, error) {
+	streamEvents(w, r, changes, healthTick, func(ctx context.Context) ([]sseEvent, error) {
 		data, found, err := s.loadNodeDetail(ctx, id)
 		if err != nil || !found {
-			return "", nil //nolint:nilerr // transient, or the node left; the next change retries
+			return nil, nil //nolint:nilerr // transient, or the node left; the next change retries
 		}
 		data.Page = pg
 		data.Page.NodeName = s.nodeName(ctx)
-		return s.fragment("node-fragment", data)
+		var events []sseEvent
+		// Separate regions, so a tick's redraw leaves the storage form alone.
+		for _, reg := range [][2]string{{"node", "node-fragment"}, {"node-storage", "node-storage"}, {"node-local", "node-local"}} {
+			frag, err := s.fragment(reg[1], data)
+			if err != nil {
+				return nil, err
+			}
+			events = append(events, sseEvent{reg[0], frag})
+		}
+		return events, nil
 	})
 }
 

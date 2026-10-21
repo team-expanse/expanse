@@ -12,7 +12,8 @@
 //     per-replica restart machinery itself is Phase 05 (T20). This is the
 //     documented emission point: no change to T09's pure Transition.
 //   - Watch maps store events to BlockEvents: Put with Prev==nil →
-//     EVENT_ADDED, Put with Prev → EVENT_MODIFIED, Delete → EVENT_DELETED.
+//     EVENT_ADDED, Put with Prev → EVENT_MODIFIED, Delete → EVENT_DELETED;
+//     any change to a status sub-key is EVENT_MODIFIED.
 //     Filtering by name is server-side; empty name watches the namespace.
 package service
 
@@ -145,6 +146,8 @@ func (s *Server) Watch(r *pb.WatchBlocksRequest, srv pb.BlockService_WatchServer
 		}
 		out := &pb.BlockEvent{Type: pb.EventType_EVENT_TYPE_UNSPECIFIED}
 		switch {
+		case ev.Entry.Key != store.Key(BlockPrefix+ns+"/"+name):
+			out.Type = pb.EventType_EVENT_MODIFIED // a status or probe sub-key, e.g. a retired replica's
 		case ev.Type == store.EventDelete:
 			out.Type = pb.EventType_EVENT_DELETED
 		case ev.Prev == nil:
@@ -159,9 +162,11 @@ func (s *Server) Watch(r *pb.WatchBlocksRequest, srv pb.BlockService_WatchServer
 		// and even a bare-key write's stored value lacks the live-
 		// observed overlay Get/List apply on read.
 		if out.Type != pb.EventType_EVENT_DELETED {
-			if b, err := s.get(ctx, ns, name); err == nil {
-				out.Block = b
+			b, err := s.get(ctx, ns, name)
+			if err != nil {
+				continue // e.g. a sub-key cleared after its block was deleted
 			}
+			out.Block = b
 		}
 		if err := srv.Send(out); err != nil {
 			return err
