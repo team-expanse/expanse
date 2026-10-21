@@ -7,7 +7,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -105,43 +104,17 @@ func (s *Server) handleNodesEvents(w http.ResponseWriter, r *http.Request) {
 	if s.clusterUnavailable(w, r) {
 		return
 	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	send := func() error {
-		nodes, rep, err := s.loadNodes(r.Context())
-		if err != nil {
-			return nil //nolint:nilerr // transient; the next write retries
-		}
-		var buf bytes.Buffer
-		if err := s.renderFragment(&buf, "nodes-fragment", nodesListData{Nodes: nodes, Report: rep}); err != nil {
-			return err
-		}
-		if err := writeSSE(w, "nodes", buf.String()); err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
-	}
 	changes, err := s.watchClusterPrefixes(r.Context())
 	if err != nil {
 		return
 	}
-	if err := send(); err != nil {
-		return
-	}
-	for range changes {
-		if err := send(); err != nil {
-			return
+	streamFragments(w, r, "nodes", changes, 0, func(ctx context.Context) (string, error) {
+		nodes, rep, err := s.loadNodes(ctx)
+		if err != nil {
+			return "", nil //nolint:nilerr // transient; the next write retries
 		}
-	}
+		return s.fragment("nodes-fragment", nodesListData{Nodes: nodes, Report: rep})
+	})
 }
 
 type nodeDetailData struct {

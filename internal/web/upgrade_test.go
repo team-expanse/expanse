@@ -131,3 +131,12 @@ func TestUpgradeCheckNowAndTurningTheCheckOff(t *testing.T) {
 		t.Errorf("check not turned on: %+v", l)
 	}
 }
+
+// The live stream re-renders the form; hx-preserve keeps what is being typed.
+func TestUpgradeVersionInputSurvivesLiveUpdates(t *testing.T) {
+	c, base, _, _ := newUpgradeTestServer(t)
+	_, body := get(t, c, base+"/upgrade")
+	if want := `id="upgrade-version" hx-preserve`; !strings.Contains(body, want) {
+		t.Errorf("version input missing %q", want)
+	}
+}

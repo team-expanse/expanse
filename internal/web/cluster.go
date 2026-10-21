@@ -6,7 +6,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -76,50 +75,19 @@ func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
 	if s.clusterUnavailable(w, r) {
 		return
 	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush() // confirm the stream is live before the first event
-
-	send := func() error {
-		rep, err := s.getClusterReport(r.Context())
-		if err != nil {
-			return nil //nolint:nilerr // transient read error; the next event retries
-		}
-		var buf bytes.Buffer
-		if err := s.renderFragment(&buf, "cluster-fragment", rep); err != nil {
-			return err
-		}
-		if err := writeSSE(w, "cluster", buf.String()); err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
-	}
-
-	// Start the watch BEFORE the initial snapshot, not after: a write
-	// landing between "read the snapshot" and "start watching from the
-	// current revision" would otherwise be silently missed until some
-	// later, unrelated write happened to wake delivery again. Watching
-	// first means the snapshot may occasionally be one write stale, but
-	// every write is then guaranteed a follow-up event, never dropped.
+	// Start the watch BEFORE the initial snapshot: a write landing between
+	// the two would otherwise wait for some later, unrelated write.
 	changes, err := s.watchClusterPrefixes(r.Context())
 	if err != nil {
 		return
 	}
-	if err := send(); err != nil {
-		return
-	}
-	for range changes {
-		if err := send(); err != nil {
-			return
+	streamFragments(w, r, "cluster", changes, 0, func(ctx context.Context) (string, error) {
+		rep, err := s.getClusterReport(ctx)
+		if err != nil {
+			return "", nil //nolint:nilerr // transient read error; the next event retries
 		}
-	}
+		return s.fragment("cluster-fragment", rep)
+	})
 }
 
 // watchClusterPrefixes fans in store events from every prefix

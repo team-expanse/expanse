@@ -46,7 +46,7 @@
     <input type="hidden" name="csrf_token" value="{{$csrf}}">
     <label class="field">
       <span class="field-label">Upgrade the cluster to</span>
-      <input class="input" type="text" name="version" value="{{.View.Offer}}" placeholder="1.12.0" autocomplete="off" required>
+      <input class="input" id="upgrade-version" hx-preserve type="text" name="version" value="{{.View.Offer}}" placeholder="1.12.0" autocomplete="off" required>
       <span class="field-hint">Each node in turn downloads the release, checks its signature, builds and switches. The next node starts once the cluster is healthy again.</span>
     </label>
     <div class="form-actions"><button class="btn btn-primary" type="submit">Upgrade cluster</button></div>

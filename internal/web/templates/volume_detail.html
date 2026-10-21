@@ -49,7 +49,10 @@
 {{end}}
 
 {{define "volume-fragment"}}
-{{if not .Volume}}
+{{if .Reload}}<span hidden data-reload-page></span>{{end}}
+{{if .Gone}}
+<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>This volume was deleted.</strong><p><a href="/volumes">Back to volumes</a></p></div></div>
+{{else if not .Volume}}
 <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Creating…</strong><p>The request is queued; the leader's controller assigns placement shortly and this page updates on its own.</p></div></div>
 {{else}}
 <section class="kv-cards">

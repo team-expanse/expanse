@@ -67,6 +67,10 @@
 </dialog>
 {{end}}
 
+{{define "block-deleted"}}
+<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>This block was deleted.</strong><p><a href="/blocks">Back to blocks</a></p></div></div>
+{{end}}
+
 {{define "block-fragment"}}
 <section class="kv-cards">
   <div class="kv-card"><div class="kv-label">Phase</div><div class="kv-value">{{template "pill" (phase .Status.GetPhase)}}</div><div class="kv-sub">{{with .Status.GetMessage}}{{.}}{{else}}observed generation {{.Status.GetObservedGeneration}}{{end}}</div></div>

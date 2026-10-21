@@ -20,7 +20,7 @@
   <div class="table-wrap" hx-ext="sse" sse-connect="/events/stream{{if .Kind}}?type={{.Kind}}{{end}}">
     <table class="table table-events">
       <thead><tr><th>Time</th><th>Type</th><th>Key</th><th>Op</th></tr></thead>
-      <tbody id="event-rows" sse-swap="entry" hx-swap="afterbegin">
+      <tbody id="event-rows" sse-swap="entry" hx-swap="afterbegin" data-live-limit="500">
         {{range .Events}}{{template "event-row" .}}{{end}}
       </tbody>
     </table>

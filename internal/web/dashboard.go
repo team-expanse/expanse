@@ -5,7 +5,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"sort"
@@ -122,73 +121,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // write (coalesced, since a reconcile tick is a burst) and every few
 // seconds for the check-driven alerts that have no store footprint.
 func (s *Server) handleDashboardEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	ctx := r.Context()
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	send := func() error {
-		var buf bytes.Buffer
-		if err := s.renderFragment(&buf, "dashboard-fragment", s.loadDashboard(ctx)); err != nil {
-			return err
-		}
-		if err := writeSSE(w, "dashboard", buf.String()); err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
-	}
-
-	changes, err := fanInWatches(ctx, s.store, store.Key("/"))
+	changes, err := fanInWatches(r.Context(), s.store, store.Key("/"))
 	if err != nil {
 		return
 	}
-	if err := send(); err != nil {
-		return
-	}
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case _, ok := <-changes:
-			if !ok {
-				changes = nil
-				continue
-			}
-			coalesce(ctx, changes, 250*time.Millisecond)
-			if err := send(); err != nil {
-				return
-			}
-		case <-ticker.C:
-			if err := send(); err != nil {
-				return
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// coalesce drains further change signals for a short window so a burst
-// of writes produces one re-render, not one per write.
-func coalesce(ctx context.Context, changes <-chan struct{}, window time.Duration) {
-	deadline := time.After(window)
-	for {
-		select {
-		case _, ok := <-changes:
-			if !ok {
-				return
-			}
-		case <-deadline:
-			return
-		case <-ctx.Done():
-			return
-		}
-	}
+	streamFragments(w, r, "dashboard", changes, 5*time.Second, func(ctx context.Context) (string, error) {
+		return s.fragment("dashboard-fragment", s.loadDashboard(ctx))
+	})
 }

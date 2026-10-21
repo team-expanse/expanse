@@ -2,9 +2,11 @@ package web
 
 import (
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/expanse/expanse/internal/store/boltstore"
 	pb "github.com/expanse/expanse/proto"
 )
 
@@ -26,5 +28,46 @@ func TestBlockLogsStreamEscapesHTML(t *testing.T) {
 	}
 	if want := "&lt;div hx-post=&#34;/blocks/default/x/delete&#34; hx-trigger=&#34;load&#34;&gt;a &amp; b&lt;/div&gt;"; !strings.Contains(body, want) {
 		t.Errorf("body = %q, want the escaped line %q", body, want)
+	}
+}
+
+type deletedBlocks struct{ previewBlocks }
+
+func (deletedBlocks) Watch(_ *pb.WatchBlocksRequest, s pb.BlockService_WatchServer) error {
+	b := &pb.Block{Metadata: &pb.Metadata{Namespace: "default", Name: "x"}, Spec: &pb.BlockSpec{Type: "util/echo"}}
+	for _, ev := range []*pb.BlockEvent{
+		{Type: pb.EventType_EVENT_MODIFIED, Block: b},
+		{Type: pb.EventType_EVENT_MODIFIED, Block: b}, // a probe heartbeat: nothing shown changed
+		{Type: pb.EventType_EVENT_DELETED},
+	} {
+		if err := s.Send(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestBlockEventsSkipRepeatsAndShowDeletion(t *testing.T) {
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	s, err := New("n1", st, deletedBlocks{}, nil, nil, clusterSecretForTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/blocks/default/x/events", nil)
+	req.SetPathValue("ns", "default")
+	req.SetPathValue("name", "x")
+	rec := httptest.NewRecorder()
+	s.handleBlockEvents(rec, req)
+
+	body := rec.Body.String()
+	if n := strings.Count(body, "event: block"); n != 2 {
+		t.Errorf("sent %d block events, want 2 (the block, then its deletion): %q", n, body)
+	}
+	if !strings.Contains(body, "This block was deleted") {
+		t.Errorf("deletion not shown: %q", body)
 	}
 }

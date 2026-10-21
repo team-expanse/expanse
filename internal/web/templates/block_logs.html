@@ -19,7 +19,7 @@
 </div>
 <section class="card card-flush">
   <div hx-ext="sse" sse-connect="/blocks/{{.Namespace}}/{{.Name}}/logs/stream?replica={{.Replica}}">
-    <pre id="log-lines" class="log-view" sse-swap="line" hx-swap="beforeend" data-autoscroll tabindex="0"></pre>
+    <pre id="log-lines" class="log-view" sse-swap="line" hx-swap="beforeend" data-autoscroll data-clear-on-open data-live-limit="2000" tabindex="0"></pre>
   </div>
 </section>
 {{end}}

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"strings"
@@ -80,39 +79,14 @@ func (s *Server) handleUpgradeEvents(w http.ResponseWriter, r *http.Request) {
 	if s.clusterUnavailable(w, r) {
 		return
 	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
 	changes, err := fanInWatches(r.Context(), s.store, store.Key("/upgrade/"))
 	if err != nil {
 		return
 	}
 	csrf := sessionFromContext(r.Context()).CSRFToken
-	send := func() error {
-		var buf bytes.Buffer
-		if err := s.renderFragment(&buf, "upgrade-fragment", upgradeFragment{View: s.loadUpgrade(r.Context()), CSRF: csrf}); err != nil {
-			return err
-		}
-		if err := writeSSE(w, "upgrade", buf.String()); err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
-	}
-	if err := send(); err != nil {
-		return
-	}
-	for range changes {
-		if err := send(); err != nil {
-			return
-		}
-	}
+	streamFragments(w, r, "upgrade", changes, 0, func(ctx context.Context) (string, error) {
+		return s.fragment("upgrade-fragment", upgradeFragment{View: s.loadUpgrade(ctx), CSRF: csrf})
+	})
 }
 
 func (s *Server) handleUpgradeStart(w http.ResponseWriter, r *http.Request) {

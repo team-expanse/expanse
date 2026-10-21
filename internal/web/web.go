@@ -160,6 +160,13 @@ func (s *Server) renderFragment(buf *bytes.Buffer, name string, data any) error 
 	return s.tmpl.execute(buf, name, data)
 }
 
+// fragment renders a named fragment to a string, for streamFragments.
+func (s *Server) fragment(name string, data any) (string, error) {
+	var buf bytes.Buffer
+	err := s.renderFragment(&buf, name, data)
+	return buf.String(), err
+}
+
 type loginData struct {
 	Error      bool
 	SSOEnabled bool

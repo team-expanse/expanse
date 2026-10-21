@@ -7,7 +7,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -220,6 +219,8 @@ type volumeDetailData struct {
 	// a stale render, while it has not appeared yet), rendered as a
 	// "creating" placeholder rather than a 404.
 	Volume *volumeView
+	Gone   bool // deleted while the page was open
+	Reload bool // created while the page was open, which lacks its actions
 }
 
 func (s *Server) handleVolumeDetail(w http.ResponseWriter, r *http.Request) {
@@ -247,58 +248,28 @@ func (s *Server) handleVolumeDetail(w http.ResponseWriter, r *http.Request) {
 // fragment, covering both its own spec/status/snapshot changes and its
 // pending-create request resolving into a real volume.
 func (s *Server) handleVolumeEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+	name := r.PathValue("name")
+	// Watch before the initial snapshot: a write landing between a
+	// snapshot read and the watch's starting revision would be missed.
+	changes, err := fanInWatches(r.Context(), s.store, store.Key(storage.VolumePrefix))
+	if err != nil {
 		return
 	}
-	name := r.PathValue("name")
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush() // confirm the stream is live before the first event
-
-	send := func() error {
+	var wasPending bool
+	streamFragments(w, r, "volume", changes, 0, func(ctx context.Context) (string, error) {
 		data := volumeDetailData{Name: name}
-		v, err := s.findVolumeByName(r.Context(), name)
+		v, err := s.findVolumeByName(ctx, name)
 		switch {
 		case err == nil:
-			data.Volume = v
+			data.Volume, data.Reload = v, wasPending
 		case errors.KindOf(err) == errors.KindNotFound:
-			// still pending, or gone; render the placeholder either way
+			wasPending = s.volumePending(ctx, name)
+			data.Gone = !wasPending
 		default:
-			return nil // transient read error; the next event retries
+			return "", nil // transient read error; the next event retries
 		}
-		var buf bytes.Buffer
-		if err := s.renderFragment(&buf, "volume-fragment", data); err != nil {
-			return err
-		}
-		if err := writeSSE(w, "volume", buf.String()); err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
-	}
-
-	// Watch before the initial snapshot (B1's fix, applied here from the
-	// start): a write landing between a snapshot read and the watch's
-	// starting revision would otherwise be delivered by neither.
-	cur, err := s.store.Revision(r.Context())
-	if err != nil {
-		return
-	}
-	changes, err := s.store.Watch(r.Context(), store.Key(storage.VolumePrefix), cur)
-	if err != nil {
-		return
-	}
-	if err := send(); err != nil {
-		return
-	}
-	for range changes {
-		if err := send(); err != nil {
-			return
-		}
-	}
+		return s.fragment("volume-fragment", data)
+	})
 }
 
 func (s *Server) handleVolumeResize(w http.ResponseWriter, r *http.Request) {

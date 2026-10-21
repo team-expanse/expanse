@@ -9,7 +9,6 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"net/http"
 	"sort"
@@ -185,71 +184,21 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 	if s.clusterUnavailable(w, r) {
 		return
 	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	ctx := r.Context()
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush() // confirm the stream is live before the first event
-
-	var last string
-	send := func() error {
-		data, err := s.loadHealthOverview(ctx)
-		if err != nil {
-			return nil //nolint:nilerr // transient read error; the next tick/event retries
-		}
-		var buf bytes.Buffer
-		if err := s.renderFragment(&buf, "health-fragment", data); err != nil {
-			return err
-		}
-		if buf.String() == last {
-			return nil // an identical swap would only redraw the page
-		}
-		last = buf.String()
-		if err := writeSSE(w, "health", last); err != nil {
-			return err
-		}
-		flusher.Flush()
-		return nil
-	}
-
 	// Watch before the initial snapshot (B1's fix, applied from the
 	// start): a write landing between a snapshot read and the watch's
 	// starting revision would otherwise be delivered by neither.
-	changes, err := fanInWatches(ctx, s.store,
+	changes, err := fanInWatches(r.Context(), s.store,
 		store.Key("/node/"+s.NodeID+"/"), store.Key(storage.VolumePrefix),
 		store.Key(join.NodesKeyPrefix), store.Key("/cluster/"),
 	)
 	if err != nil {
 		return
 	}
-	if err := send(); err != nil {
-		return
-	}
-
-	ticker := time.NewTicker(healthTick)
-	defer ticker.Stop()
-	for {
-		select {
-		case _, ok := <-changes:
-			if !ok {
-				changes = nil
-				continue
-			}
-			coalesce(ctx, changes, 250*time.Millisecond)
-			if err := send(); err != nil {
-				return
-			}
-		case <-ticker.C:
-			if err := send(); err != nil {
-				return
-			}
-		case <-ctx.Done():
-			return
+	streamFragments(w, r, "health", changes, healthTick, func(ctx context.Context) (string, error) {
+		data, err := s.loadHealthOverview(ctx)
+		if err != nil {
+			return "", nil //nolint:nilerr // transient read error; the next tick/event retries
 		}
-	}
+		return s.fragment("health-fragment", data)
+	})
 }

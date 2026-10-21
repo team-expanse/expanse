@@ -218,12 +218,17 @@ func (s *Server) handleBlockEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush() // confirm the stream is live before the first event, which may be a while
 
-	send := func(b *pb.Block) error {
+	var last string
+	send := func(fragment string, data any) error {
 		var buf bytes.Buffer
-		if err := s.renderFragment(&buf, "block-fragment", b); err != nil {
+		if err := s.renderFragment(&buf, fragment, data); err != nil {
 			return err
 		}
-		if err := writeSSE(w, "block", buf.String()); err != nil {
+		if buf.String() == last {
+			return nil // e.g. a probe heartbeat that changes nothing shown
+		}
+		last = buf.String()
+		if err := writeSSE(w, "block", last); err != nil {
 			return err
 		}
 		flusher.Flush()
@@ -233,16 +238,19 @@ func (s *Server) handleBlockEvents(w http.ResponseWriter, r *http.Request) {
 	// Snapshot first so a client connecting after the terminal state
 	// (e.g. already RUNNING) still sees it without waiting on a write.
 	if b, err := s.getBlock(r.Context(), r); err == nil {
-		if err := send(b); err != nil {
+		if err := send("block-fragment", b); err != nil {
 			return
 		}
 	}
 
 	stream := &blockEventStream{ctx: r.Context(), send: func(ev *pb.BlockEvent) error {
+		if ev.GetType() == pb.EventType_EVENT_DELETED {
+			return send("block-deleted", nil)
+		}
 		if ev.GetBlock() == nil {
 			return nil
 		}
-		return send(ev.GetBlock())
+		return send("block-fragment", ev.GetBlock())
 	}}
 	_ = s.blocks.Watch(&pb.WatchBlocksRequest{Namespace: ns, Name: name}, stream)
 }

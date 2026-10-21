@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -68,4 +70,77 @@ func fanInWatches(ctx context.Context, st store.Store, prefixes ...store.Key) (<
 		close(out)
 	}()
 	return out, nil
+}
+
+// streamFragments serves one fragment as SSE: rendered now, after each burst
+// of changes and on every tick (0 for none), and sent only when it differs.
+// render returns "" to skip a transient failure; watch before calling it.
+func streamFragments(w http.ResponseWriter, r *http.Request, event string, changes <-chan struct{}, tick time.Duration, render func(context.Context) (string, error)) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush() // confirm the stream is live before the first event
+
+	var last string
+	send := func() error {
+		frag, err := render(ctx)
+		if err != nil || frag == "" || frag == last {
+			return err // an identical swap would only redraw the page
+		}
+		last = frag
+		if err := writeSSE(w, event, frag); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+	if err := send(); err != nil {
+		return
+	}
+
+	var ticks <-chan time.Time
+	if tick > 0 {
+		ticker := time.NewTicker(tick)
+		defer ticker.Stop()
+		ticks = ticker.C
+	}
+	for {
+		select {
+		case _, ok := <-changes:
+			if !ok {
+				return // the watch ended; EventSource reconnects
+			}
+			coalesce(ctx, changes, 250*time.Millisecond)
+		case <-ticks:
+		case <-ctx.Done():
+			return
+		}
+		if err := send(); err != nil {
+			return
+		}
+	}
+}
+
+// coalesce drains further change signals for a short window so a burst
+// of writes produces one re-render, not one per write.
+func coalesce(ctx context.Context, changes <-chan struct{}, window time.Duration) {
+	deadline := time.After(window)
+	for {
+		select {
+		case _, ok := <-changes:
+			if !ok {
+				return
+			}
+		case <-deadline:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
 }

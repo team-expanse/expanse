@@ -1,6 +1,7 @@
 // Behaviour the shell needs beyond htmx: the theme toggle, the phone
 // nav drawer, toasts (from HX-Trigger headers and request errors),
-// <dialog>-based confirms, auto-submitting filters and log autoscroll.
+// <dialog>-based confirms, auto-submitting filters, log autoscroll and
+// bounded live lists.
 // No inline script anywhere (CSP script-src 'self').
 (function () {
   "use strict";
@@ -98,7 +99,11 @@
       el.title = state === "open" ? "Updates arrive over a live connection" : "Live connection lost; reconnecting";
     });
   }
-  document.body.addEventListener("htmx:sseOpen", function () { setLive("open"); });
+  document.body.addEventListener("htmx:sseOpen", function (ev) {
+    setLive("open");
+    // The server replays the log tail on every (re)connect.
+    ev.target.querySelectorAll("[data-clear-on-open]").forEach(function (el) { el.replaceChildren(); });
+  });
   document.body.addEventListener("htmx:sseError", function () { setLive("error"); });
   document.body.addEventListener("htmx:sseClose", function () { setLive("closed"); });
 
@@ -138,6 +143,15 @@
   document.body.addEventListener("htmx:sseMessage", function (ev) {
     var pre = ev.target.closest && ev.target.closest("[data-autoscroll]");
     if (pre && pre.scrollHeight - pre.scrollTop - pre.clientHeight < 80) pre.scrollTop = pre.scrollHeight;
+    // Keep live lists bounded, dropping the oldest end of the swap.
+    var list = ev.target.closest && ev.target.closest("[data-live-limit]");
+    if (list) {
+      var limit = parseInt(list.getAttribute("data-live-limit"), 10);
+      var newestFirst = list.getAttribute("hx-swap") === "afterbegin";
+      while (list.childNodes.length > limit) list.removeChild(newestFirst ? list.lastChild : list.firstChild);
+    }
+    // A swap that brings page-level actions the first render lacked.
+    if (ev.target.querySelector && ev.target.querySelector("[data-reload-page]")) window.location.reload();
     var hide = document.querySelector("[data-hide-on-rows]");
     if (hide) hide.hidden = true;
   });

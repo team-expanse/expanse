@@ -354,4 +354,13 @@ func TestVolumeEventsSSEStreamsLiveUpdate(t *testing.T) {
 	}
 
 	drain("Healthy", 10*time.Second)
+	// The page loaded without the volume's actions; it must reload to get them.
+	drain("data-reload-page", 10*time.Second)
+
+	for _, k := range []store.Key{storage.StatusKey("vol-live1"), storage.SpecKey("vol-live1")} {
+		if err := st.Delete(context.Background(), k, 0); err != nil {
+			t.Fatalf("Delete %s: %v", k, err)
+		}
+	}
+	drain("This volume was deleted", 10*time.Second)
 }
