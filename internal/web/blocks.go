@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -341,7 +342,8 @@ func (s *Server) handleBlockLogsStream(w http.ResponseWriter, r *http.Request) {
 		// the line's text plus one empty trailing line) with "\n", so
 		// the reconstructed event carries its own line break — needed
 		// since the client appends (hx-swap="beforeend"), not replaces.
-		if err := writeSSE(w, "line", l.GetLine()+"\n"); err != nil {
+		// Escaped: htmx swaps the event in as HTML, and the line is the workload's.
+		if err := writeSSE(w, "line", html.EscapeString(l.GetLine())+"\n"); err != nil {
 			return err
 		}
 		flusher.Flush()
