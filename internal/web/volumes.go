@@ -188,9 +188,21 @@ func (s *Server) handleVolumeCreate(w http.ResponseWriter, r *http.Request) {
 		fail("name", "A name is required.")
 		return
 	}
+	if err := storage.ValidVolumeName(name); err != nil {
+		fail("name", "Name: "+errMessage(err)+".")
+		return
+	}
+	if _, err := s.findVolumeByName(r.Context(), name); err == nil || s.volumePending(r.Context(), name) {
+		fail("name", "A volume named "+name+" already exists.")
+		return
+	}
 	size, err := quantity.ParseBytes(sizeStr)
 	if err != nil {
 		fail("size", "Size: "+errText(err))
+		return
+	}
+	if size.N <= 0 {
+		fail("size", "Size must be larger than zero.")
 		return
 	}
 	var repl int64

@@ -120,3 +120,24 @@ func TestGenerationRollbackNeedsCSRFAndCreatesANewGeneration(t *testing.T) {
 		t.Errorf("rollback to a later generation status = %d, want 400", resp.StatusCode)
 	}
 }
+
+// The list has no live stream, so a rollback from it reloads the page to show
+// the new generation and the moved "Current" tag.
+func TestGenerationRollbackFromTheListReloadsIt(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, csrf := loggedInClient(t, srv, pw)
+	importGeneration(t, st, "two", map[string]string{"/networks/x": "1"})
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/generations/1/rollback", nil)
+	req.Header.Set(csrfHeader, csrf)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Current-URL", srv.URL+"/generations")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("HX-Refresh") != "true" {
+		t.Errorf("rollback from the list does not reload it (status %d)", resp.StatusCode)
+	}
+}

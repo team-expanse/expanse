@@ -130,9 +130,40 @@
     if (form) form.requestSubmit();
     dlg.returnValue = "";
   }, true);
-  // Click on the backdrop closes the dialog.
+  // Click on the backdrop closes the dialog. The dialog's own padding is
+  // also the dialog element, so only a click outside its box counts.
   document.addEventListener("click", function (ev) {
-    if (ev.target instanceof HTMLDialogElement && ev.target.open) ev.target.close("cancel");
+    var dlg = ev.target;
+    if (!(dlg instanceof HTMLDialogElement) || !dlg.open) return;
+    var box = dlg.getBoundingClientRect();
+    var inside = ev.clientX >= box.left && ev.clientX <= box.right && ev.clientY >= box.top && ev.clientY <= box.bottom;
+    if (!inside) dlg.close("cancel");
+  });
+
+  // ---- one submit at a time --------------------------------------------
+  // A second click while the first request runs would report a false
+  // "already exists" or act twice.
+  function isHtmxForm(form) {
+    return form.hasAttribute("hx-post") || form.hasAttribute("hx-put") || form.hasAttribute("hx-delete");
+  }
+  document.addEventListener("submit", function (ev) {
+    var form = ev.target;
+    if (!(form instanceof HTMLFormElement) || isHtmxForm(form) || form.method !== "post") return;
+    if (form.dataset.submitting) { ev.preventDefault(); return; }
+    // Set after this event, so a handler that cancels the submit leaves the form usable.
+    setTimeout(function () { if (!ev.defaultPrevented) form.dataset.submitting = "1"; }, 0);
+  });
+  window.addEventListener("pageshow", function () {
+    document.querySelectorAll("form[data-submitting]").forEach(function (f) { delete f.dataset.submitting; });
+  });
+  function setBusy(form, busy) {
+    form.querySelectorAll("button[type=submit], button:not([type])").forEach(function (b) { b.disabled = busy; });
+  }
+  document.body.addEventListener("htmx:beforeRequest", function (ev) {
+    if (ev.target instanceof HTMLFormElement) setBusy(ev.target, true);
+  });
+  document.body.addEventListener("htmx:afterRequest", function (ev) {
+    if (ev.target instanceof HTMLFormElement) setBusy(ev.target, false);
   });
 
   // ---- small conveniences ----------------------------------------------

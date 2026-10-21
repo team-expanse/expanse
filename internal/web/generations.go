@@ -143,5 +143,5 @@ func (s *Server) handleGenerationRollback(w http.ResponseWriter, r *http.Request
 		http.Error(w, errText(err), rpcStatus(err))
 		return
 	}
-	s.done(w, r, "success", "Rolled back to generation "+r.PathValue("n")+" as generation "+strconv.FormatUint(resp.GetNewGeneration(), 10), "/generations")
+	s.doneRefresh(w, r, "success", "Rolled back to generation "+r.PathValue("n")+" as generation "+strconv.FormatUint(resp.GetNewGeneration(), 10), "/generations")
 }

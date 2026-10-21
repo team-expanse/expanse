@@ -97,3 +97,23 @@ func TestBlocksListErrorIsAStyledPage(t *testing.T) {
 		t.Errorf("blocks list error is not the styled page: %q", body)
 	}
 }
+
+// Admission rejects scaling a singleton or daemonset, so the page offers it only where it works.
+func TestBlockDetailOffersScaleOnlyWhenItApplies(t *testing.T) {
+	tmpl, err := loadTemplates(templateFS, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for kind, want := range map[pb.StrategyKind]bool{
+		pb.StrategyKind_SINGLETON: false, pb.StrategyKind_DAEMONSET: false, pb.StrategyKind_ACTIVE_ACTIVE: true,
+	} {
+		b := &pb.Block{Metadata: &pb.Metadata{Namespace: "default", Name: "x"}, Spec: &pb.BlockSpec{Type: "util/echo", Strategy: &pb.Strategy{Kind: kind}}}
+		var buf strings.Builder
+		if err := tmpl.execute(&buf, "block_detail.html", blockDetailData{Block: b}); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(buf.String(), "<h2>Scale</h2>"); got != want {
+			t.Errorf("%v: Scale card shown = %v, want %v", kind, got, want)
+		}
+	}
+}

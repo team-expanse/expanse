@@ -12,7 +12,7 @@
       {{if and .Error (not .Field)}}<div class="field-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg>{{.Error}}</div>{{end}}
       <label class="field">
         <span class="field-label">Name</span>
-        <input class="input" type="text" name="name" value="{{.Name}}" placeholder="data" autocomplete="off" required{{if eq .Field "name"}} aria-invalid="true" autofocus{{end}}>
+        <input class="input" type="text" name="name" value="{{.Name}}" placeholder="data" pattern="[a-z0-9][a-z0-9-]{0,62}" title="Lowercase letters, digits and dashes" autocomplete="off" required{{if eq .Field "name"}} aria-invalid="true" autofocus{{end}}>
         {{if eq .Field "name"}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">Unique across the cluster; used in mount paths.</span>{{end}}
       </label>
       <div class="field-row">

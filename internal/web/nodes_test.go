@@ -13,6 +13,7 @@ import (
 	"github.com/expanse/expanse/internal/agent/health"
 	"github.com/expanse/expanse/internal/agent/inventory"
 	"github.com/expanse/expanse/internal/cluster/join"
+	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 )
 
@@ -155,6 +156,10 @@ func TestNodeListsShowPublishedHostnames(t *testing.T) {
 	}
 	if _, body := getPage(t, client, srv, "/nodes/n2"); !strings.Contains(body, `<h1 class="page-title">rack1-b `) {
 		t.Errorf("node page not titled by hostname")
+	}
+	putTestVolume(t, st, storage.Spec{ID: "vol-h", Name: "hv", SizeBytes: 1 << 30, Class: "default", Replication: 1}, storage.Status{State: storage.StateHealthy, Primary: "n2"})
+	if _, body := getPage(t, client, srv, "/health"); !strings.Contains(body, `<a href="/nodes/n2">rack1-b</a>`) {
+		t.Errorf("health page's volume primary not named by hostname")
 	}
 }
 

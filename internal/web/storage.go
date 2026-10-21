@@ -71,7 +71,7 @@ func (s *Server) handleNodeStorageEnable(w http.ResponseWriter, r *http.Request)
 		fail(sentence(errText(err)))
 		return
 	}
-	s.done(w, r, "success", "Turning storage on for "+data.Node.ID+". It is ready within a few seconds.", "/nodes/"+data.Node.ID+"#storage")
+	s.done(w, r, "success", "Turning storage on for "+s.names.name(data.Node.ID)+". It is ready within a few seconds.", "/nodes/"+data.Node.ID+"#storage")
 }
 
 // anyNodeStorage says some node holds volumes, or that no node reports (agents before 1.11).

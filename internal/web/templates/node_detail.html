@@ -33,9 +33,9 @@
   </dl>
   {{if eq $r.Source "config"}}<p class="field-hint">Set in this node's NixOS configuration (<code>expanse.agent.storageVG</code>).</p>{{end}}
   {{else if eq $r.State "reboot"}}
-  <div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p><strong>Reboot {{.Node}} to finish.</strong> The running kernel has an older DRBD loaded; storage starts after the reboot.</p></div></div>
+  <div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p><strong>Reboot {{nodename .Node}} to finish.</strong> The running kernel has an older DRBD loaded; storage starts after the reboot.</p></div></div>
   {{else if .Pending}}
-  <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><p>Turning on: {{.Node}} is building its thin pool from {{.Percent}}% of the free space.</p></div></div>
+  <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><p>Turning on: {{nodename .Node}} is building its thin pool from {{.Percent}}% of the free space.</p></div></div>
   {{else}}
   {{if eq $r.State "failed"}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{$r.Message}}</p></div></div>
   {{else if $r.Message}}<p class="muted">{{$r.Message}}. Storage needs the data volume group the installer creates.</p>{{end}}

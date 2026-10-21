@@ -31,6 +31,15 @@ func ValidSnapshotName(name string) error {
 	return nil
 }
 
+// ValidVolumeName accepts what is safe inside a store key and a URL, as snapshot names.
+func ValidVolumeName(name string) error {
+	if !snapshotName.MatchString(name) {
+		return experrors.New(experrors.KindInvalid, "storage.ValidVolumeName",
+			"volume names are 1-63 lowercase letters, digits and dashes, not starting with a dash")
+	}
+	return nil
+}
+
 func snapshotPrefix(volID string) string { return VolumePrefix + volID + "/snapshots/" }
 
 // SnapshotKey is the store key of one snapshot record.

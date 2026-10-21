@@ -164,6 +164,7 @@ type deployFormData struct {
 	CPU, Memory  string
 	Storage      []storageInput
 	Ports        []*pb.Port
+	PortValues   map[string]string // address ports as typed, kept on a rejected form
 	Fields       []schemaform.Field
 	Errors       []string
 	Manifest     string
@@ -393,6 +394,10 @@ func (s *Server) renderRejected(w http.ResponseWriter, r *http.Request, data dep
 	data.Replicas, data.CPU, data.Memory = form.Get("replicas"), form.Get("cpu"), form.Get("memory")
 	for i := range data.Storage {
 		data.Storage[i].Size = form.Get("storage/" + data.Storage[i].Name + "/size")
+	}
+	data.PortValues = map[string]string{}
+	for _, p := range data.Ports {
+		data.PortValues[p.GetName()] = form.Get("port/" + p.GetName())
 	}
 	status := http.StatusBadRequest
 	if len(e.config) == 0 && len(e.general) == 0 && e.name == "" {

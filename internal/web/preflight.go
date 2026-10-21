@@ -65,7 +65,7 @@ func (s *Server) preflight(ctx context.Context, b *pb.Block) *preflightView {
 	for _, r := range plan {
 		pr := preflightReplica{Label: replicaLabel(r.Replica, len(plan)), Node: r.Node, Hint: preflightHints[r.Code]}
 		for _, node := range sortedKeys(r.Rejected) {
-			pr.Problems = append(pr.Problems, problem(node, r.Rejected[node]))
+			pr.Problems = append(pr.Problems, problem(s.names.name(node), r.Rejected[node]))
 		}
 		v.Replicas = append(v.Replicas, pr)
 	}

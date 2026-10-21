@@ -343,6 +343,9 @@ func TestDeployFormSetsTheAddressPort(t *testing.T) {
 	if !strings.Contains(body, "Port http must be a number from 1 to 65535") {
 		t.Errorf("out-of-range address port accepted:\n%s", alerts(body))
 	}
+	if !strings.Contains(body, `name="port/http" value="70000"`) {
+		t.Error("the rejected address port was replaced instead of kept for correcting")
+	}
 
 	resp, body := postForm(t, c, srv.URL+"/deploy/web/nginx", csrf, url.Values{
 		"name": {"site"}, "cfg/serverName": {"www.example.org"}, "cfg/port": {"8080"}, "port/http": {"8081"},

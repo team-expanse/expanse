@@ -368,3 +368,29 @@ func TestVolumeEventsSSEStreamsLiveUpdate(t *testing.T) {
 	}
 	drain("This volume was deleted", 10*time.Second)
 }
+
+// Names go into store keys and URLs; sizes must be real; names must be free.
+func TestVolumeCreateRejectsBadNamesSizesAndDuplicates(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, csrf := loggedInClient(t, srv, pw)
+	putTestVolume(t, st, storage.Spec{ID: "vol-1", Name: "taken", SizeBytes: 1 << 30, Class: "default", Replication: 1}, storage.Status{State: storage.StateHealthy})
+
+	cases := map[string]url.Values{
+		"a slash":       {"name": {"a/b"}, "size": {"1Gi"}},
+		"upper case":    {"name": {"Data"}, "size": {"1Gi"}},
+		"a space":       {"name": {"my vol"}, "size": {"1Gi"}},
+		"zero size":     {"name": {"ok"}, "size": {"0"}},
+		"existing name": {"name": {"taken"}, "size": {"1Gi"}},
+	}
+	for what, form := range cases {
+		form.Set("class", "default")
+		resp := postVolumeForm(t, client, csrf, srv.URL+"/volumes", form)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", what, resp.StatusCode)
+		}
+		if _, err := st.Get(context.Background(), storage.PendingCreateKey(form.Get("name"))); err == nil && what != "existing name" {
+			t.Errorf("%s: a create request was written", what)
+		}
+	}
+}

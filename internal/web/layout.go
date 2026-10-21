@@ -128,6 +128,7 @@ func templateFuncs(names *nodeNames) template.FuncMap {
 		"agentState":      agentPill,
 		"role":            roleLabel,
 		"isLeader":        isLeader,
+		"scalable":        showReplicas,
 		"leaderID":        leaderID,
 		"upgradeFragment": func(v upgradeView, csrf string) upgradeFragment { return upgradeFragment{View: v, CSRF: csrf} },
 		"bytes":           humanBytesAny,
@@ -322,6 +323,18 @@ func (s *Server) done(w http.ResponseWriter, r *http.Request, kind, text, redire
 	}
 	w.Header().Set("HX-Trigger", toastTrigger(kind, text))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// doneRefresh is done for a page with no live stream: htmx reloads it, so the
+// change shows, and the toast arrives as a flash on the fresh page.
+func (s *Server) doneRefresh(w http.ResponseWriter, r *http.Request, kind, text, redirect string) {
+	if !isHTMX(r) || !strings.HasSuffix(r.Header.Get("HX-Current-URL"), redirect) {
+		s.done(w, r, kind, text, redirect)
+		return
+	}
+	setFlash(w, kind, text)
+	w.Header().Set("HX-Refresh", "true")
+	w.WriteHeader(http.StatusOK)
 }
 
 // toastTrigger encodes a toast for the HX-Trigger header; app.js

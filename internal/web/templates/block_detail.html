@@ -46,6 +46,7 @@
 </section>
 {{end}}
 
+{{if scalable .Block.Spec}}
 <section class="card">
   <div class="card-head"><h2>Scale</h2></div>
   <form class="form-inline" hx-post="/blocks/{{$ns}}/{{$name}}/scale" hx-target="#block-fragment" hx-swap="innerHTML">
@@ -53,6 +54,7 @@
     <button class="btn btn-primary" type="submit">Apply</button>
   </form>
 </section>
+{{end}}
 
 <form id="delete-form" hx-post="/blocks/{{$ns}}/{{$name}}/delete" hx-swap="none"></form>
 <dialog id="confirm-delete" class="dialog" data-submit="#delete-form">
