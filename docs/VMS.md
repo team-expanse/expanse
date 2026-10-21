@@ -136,6 +136,22 @@ manager's update. Set `cloudInit.guestAgent: skip` to leave it out; the page the
 answered, and the router's lease list is the way to find the address. A VM deployed before this
 change installs nothing new, as cloud-init runs once; install the package in the guest by hand.
 
+### Running a command in the guest
+
+The same agent runs commands in the guest as root, with no network or SSH key. As root, on the node
+that runs the VM (its block page names the node):
+
+```sh
+expanse ctl vm exec vm1 -- systemctl status docker
+expanse ctl vm exec -n apps vm1 -- docker exec pando-pando-1 pando admin setup-token
+echo hello | expanse ctl vm exec -i vm1 -- tee /root/note
+```
+
+The output prints once the command exits, and its exit code becomes `vm exec`'s. Ctrl-C stops
+waiting but leaves the command running in the guest. The agent's socket is
+`/run/expblk-<ns>-<name>-0-qga.sock`, which only root can open; a VM started by an older Expanse
+has it in the unit's private `/tmp` instead and needs a restart first.
+
 ### First-boot setup
 
 `cloudInit.setup` installs packages, then runs shell commands as root, on the first boot only (a

@@ -16,6 +16,8 @@ History before 1.0.0 is not recorded here.
 - A VM's block page shows the guest's address and an `ssh` line to log in with. Each VM gets a QEMU
   guest agent port, the cloud-init seed installs `qemu-guest-agent` (`cloudInit.guestAgent: skip`
   leaves it out), and the node passes the addresses the agent reports to the page.
+- `expanse ctl vm exec <block> -- <command>` runs a command in a VM's guest as root through its QEMU
+  guest agent, from the node that runs the VM, and exits with the command's exit code.
 
 ## 1.12.3 - 2026-10-20
 

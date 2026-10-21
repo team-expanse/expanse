@@ -1,4 +1,4 @@
-// Package qga asks a VM's QEMU guest agent, over its virtio-serial socket, for the guest's addresses.
+// Package qga talks to a VM's QEMU guest agent over its virtio-serial socket.
 package qga
 
 import (
@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+// SocketPath is the guest agent's socket for a VM replica, in /run so root on the node can reach it.
+func SocketPath(instance string) string {
+	return "/run/expblk-" + instance + "-qga.sock"
+}
+
 // QEMUArgs give the guest a virtio-serial port named for the guest agent, served on sock.
 func QEMUArgs(sock string) []string {
 	return []string{
@@ -29,10 +34,19 @@ const timeout = 5 * time.Second
 
 // Addresses are the guest's global addresses on the interface with hardware address mac, IPv4 first.
 func Addresses(ctx context.Context, sock, mac string) ([]string, error) {
+	var ifaces []iface
+	if err := request(ctx, sock, "guest-network-get-interfaces", nil, &ifaces); err != nil {
+		return nil, err
+	}
+	return pick(ifaces, mac), nil
+}
+
+// request runs one command on its own connection, so the agent is never held between commands.
+func request(ctx context.Context, sock, cmd string, args, out any) error {
 	var d net.Dialer
 	c, err := d.DialContext(ctx, "unix", sock)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer c.Close()
 	deadline := time.Now().Add(timeout)
@@ -42,13 +56,9 @@ func Addresses(ctx context.Context, sock, mac string) ([]string, error) {
 	_ = c.SetDeadline(deadline)
 	r := bufio.NewReader(c)
 	if err := sync(c, r, rand.Int64N(1<<31)); err != nil {
-		return nil, fmt.Errorf("guest agent sync: %w", err)
+		return fmt.Errorf("guest agent sync: %w", err)
 	}
-	var ifaces []iface
-	if err := call(c, r, "guest-network-get-interfaces", &ifaces); err != nil {
-		return nil, err
-	}
-	return pick(ifaces, mac), nil
+	return call(c, r, cmd, args, out)
 }
 
 // sync flushes the agent's parser and skips replies left from earlier clients.
@@ -71,8 +81,15 @@ func sync(w io.Writer, r *bufio.Reader, id int64) error {
 	}
 }
 
-func call(w io.Writer, r io.Reader, cmd string, out any) error {
-	if _, err := fmt.Fprintf(w, "{\"execute\":%q}\n", cmd); err != nil {
+func call(w io.Writer, r io.Reader, cmd string, args, out any) error {
+	req, err := json.Marshal(struct {
+		Execute   string `json:"execute"`
+		Arguments any    `json:"arguments,omitempty"`
+	}{cmd, args})
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(append(req, '\n')); err != nil {
 		return err
 	}
 	var reply struct {

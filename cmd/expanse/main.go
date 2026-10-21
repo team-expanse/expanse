@@ -62,6 +62,10 @@ func main() {
 
 	rc := newRootCmd(ctx)
 	if err := rc.cmd.ExecuteContext(ctx); err != nil {
+		var code exitCode
+		if errors.As(err, &code) {
+			os.Exit(int(code))
+		}
 		logging.Default().Error("fatal", "err", err)
 		if errors.Is(err, agent.ErrRemoved) {
 			os.Exit(agent.ExitRemoved)

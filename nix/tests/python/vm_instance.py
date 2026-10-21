@@ -129,6 +129,16 @@ with subtest("the guest agent's address reaches the node's status record, which 
     wait_for(lambda: f"(addresses: {GUEST_IP})" in record(), f"{NAME}'s status record to carry {GUEST_IP}", timeout=180)
     print(record())
 
+with subtest("expanse ctl vm exec runs a command in the guest, on the VM's own node only"):
+    SW = "/run/current-system/sw/bin"
+    out = host.succeed(f"expanse ctl vm exec {NAME} -- {SW}/head -c 9 /dev/vda")
+    assert out == "CANARY-OK", f"vm exec read {out!r} from the guest's disk"
+    rc, _ = host.execute(f"expanse ctl vm exec {NAME} -- {SW}/sh -c 'exit 5'")
+    assert rc == 5, f"vm exec exited {rc}, want the guest command's 5"
+    other = next(m for n, m in ALL.items() if n != host_name)
+    rc, out = other.execute(f"expanse ctl vm exec {NAME} -- {SW}/true 2>&1")
+    assert rc != 0 and "the node that runs default/vm1" in out, f"vm exec off the VM's node: {rc} {out!r}"
+
 STUCK = "vm2"
 WAITING = "not ready: guest started, waiting for multi-user.target"
 with subtest("a guest that starts but never reaches multi-user.target is never RUNNING"):

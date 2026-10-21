@@ -1335,8 +1335,9 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 	// not guaranteed to unlink a stale path first).
 	qmpSock := "/tmp/expblk-" + instance + "-qmp.sock"
 	_ = os.Remove(qmpSock)
-	qgaSock := "/tmp/expblk-" + instance + "-qga.sock"
+	qgaSock := qga.SocketPath(instance)
 	_ = os.Remove(qgaSock)
+	defer os.Remove(qgaSock)
 
 	qemuArgv := []string{
 		"-enable-kvm", "-nodefaults", "-display", "none", "-no-reboot",
