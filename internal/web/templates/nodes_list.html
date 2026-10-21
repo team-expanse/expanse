@@ -6,13 +6,9 @@
   </div>
   <div class="page-actions">{{template "live"}}</div>
 </div>
-{{if .Error}}
-<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Node list unavailable</strong><p>{{.Error}}</p></div></div>
-{{else}}
 <div hx-ext="sse" sse-connect="/nodes/events">
-  <div id="nodes-fragment" sse-swap="nodes" hx-swap="innerHTML">{{template "nodes-fragment" .}}</div>
+  <div id="nodes-fragment" sse-swap="nodes" hx-swap="innerHTML">{{if .Error}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Node list unavailable</strong><p>{{.Error}}</p></div></div>{{else}}{{template "nodes-fragment" .}}{{end}}</div>
 </div>
-{{end}}
 {{end}}
 
 {{define "nodes-fragment"}}

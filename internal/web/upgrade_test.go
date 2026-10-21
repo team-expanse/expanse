@@ -140,3 +140,17 @@ func TestUpgradeVersionInputSurvivesLiveUpdates(t *testing.T) {
 		t.Errorf("version input missing %q", want)
 	}
 }
+
+// Two failed reads both reach the page, rather than the second hiding the first.
+func TestUpgradePageShowsEveryLoadError(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	for _, k := range []string{rollout.LatestKey, rollout.PlanKey} {
+		if _, err := st.Put(context.Background(), store.Key(k), []byte("{not json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, body := get(t, c, base+"/upgrade")
+	if !strings.Contains(body, "The release check record is unreadable") || !strings.Contains(body, "corrupt record /upgrade/plan") {
+		t.Errorf("upgrade page does not show both errors")
+	}
+}

@@ -96,12 +96,12 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUICADownload(w http.ResponseWriter, r *http.Request) {
 	e, err := s.store.Get(store.WithStale(r.Context()), store.Key(control.UICAKey))
 	if err != nil {
-		http.Error(w, "the UI CA has not been created on this cluster", http.StatusNotFound)
+		s.renderError(w, r, http.StatusNotFound, "The UI CA has not been created on this cluster.")
 		return
 	}
 	var rec control.CAEntry
 	if json.Unmarshal(e.Value, &rec) != nil || len(rec.CertPEM) == 0 {
-		http.Error(w, "corrupt UI CA record", http.StatusInternalServerError)
+		s.renderError(w, r, http.StatusInternalServerError, "The UI CA record is corrupt.")
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-pem-file")

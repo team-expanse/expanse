@@ -185,6 +185,10 @@ func TestVolumeDetailShowsReplicaTableAndSnapshots(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
+	// The row's time is its last state change, which is written only on a change.
+	if strings.Contains(text, "Last seen") || !strings.Contains(text, "<th>State since</th>") {
+		t.Errorf("replica time column should read State since")
+	}
 	for _, want := range []string{"n1", "n2", "Resyncing", "42%", "before-upgrade", "Degraded"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("detail page missing %q: %s", want, text)

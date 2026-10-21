@@ -6,13 +6,9 @@
   </div>
   <div class="page-actions">{{template "live"}}</div>
 </div>
-{{if .Error}}
-<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Health status unavailable</strong><p>{{.Error}}</p></div></div>
-{{else}}
 <div hx-ext="sse" sse-connect="/health/events">
-  <div id="health-fragment" sse-swap="health" hx-swap="innerHTML">{{template "health-fragment" .}}</div>
+  <div id="health-fragment" sse-swap="health" hx-swap="innerHTML">{{if .Error}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Health status unavailable</strong><p>{{.Error}}</p></div></div>{{else}}{{template "health-fragment" .}}{{end}}</div>
 </div>
-{{end}}
 {{end}}
 
 {{define "health-fragment"}}

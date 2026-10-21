@@ -105,3 +105,30 @@ func TestLiveListsAreBoundedAndLogsClearOnReconnect(t *testing.T) {
 		}
 	}
 }
+
+// A failed first load still opens the stream, so the page recovers on its own.
+func TestErrorPagesStillStreamAndRecover(t *testing.T) {
+	tmpl, err := loadTemplates(templateFS, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		page, connect, container string
+		data                     any
+	}{
+		{"cluster_overview.html", `sse-connect="/cluster/events"`, `id="cluster-fragment"`, clusterOverviewData{Error: "boom"}},
+		{"nodes_list.html", `sse-connect="/nodes/events"`, `id="nodes-fragment"`, nodesListData{Error: "boom"}},
+		{"health_overview.html", `sse-connect="/health/events"`, `id="health-fragment"`, healthOverviewData{Error: "boom"}},
+	}
+	for _, tc := range cases {
+		var buf strings.Builder
+		if err := tmpl.execute(&buf, tc.page, tc.data); err != nil {
+			t.Fatalf("%s: %v", tc.page, err)
+		}
+		body := buf.String()
+		i, j := strings.Index(body, tc.container), strings.Index(body, "boom")
+		if !strings.Contains(body, tc.connect) || i < 0 || j < i {
+			t.Errorf("%s: the error must sit inside the live %s so an update replaces it", tc.page, tc.container)
+		}
+	}
+}

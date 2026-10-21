@@ -134,7 +134,7 @@ type volumesListData struct {
 func (s *Server) handleVolumesList(w http.ResponseWriter, r *http.Request) {
 	ids, err := storage.ListVolumeIDs(r.Context(), s.store)
 	if err != nil {
-		http.Error(w, errText(err), http.StatusInternalServerError)
+		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
 	}
 	var views []*volumeView

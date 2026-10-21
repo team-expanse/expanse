@@ -12,7 +12,7 @@
 {{end}}
 
 {{define "upgrade-fragment"}}
-{{with .View.Error}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{.}}</p></div></div>{{end}}
+{{range .View.Errors}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{.}}</p></div></div>{{end}}
 {{$csrf := .CSRF}}
 <section class="card">
   <div class="card-head"><h2>Release</h2></div>

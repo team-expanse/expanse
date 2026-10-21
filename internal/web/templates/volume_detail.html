@@ -65,7 +65,7 @@
   <div class="card-head"><h2>Replicas</h2></div>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Node</th><th>Role</th><th>Health</th><th>Sync</th><th>Out of sync</th><th>Last seen</th></tr></thead>
+      <thead><tr><th>Node</th><th>Role</th><th>Health</th><th>Sync</th><th>Out of sync</th><th>State since</th></tr></thead>
       <tbody>
         {{range .Volume.Placement}}
         <tr>
@@ -74,7 +74,7 @@
           <td>{{if .Healthy}}<span class="pill pill-ok"><span class="dot"></span>Healthy</span>{{else}}<span class="pill pill-crit"><span class="dot"></span>Unhealthy</span>{{end}}</td>
           <td>{{if .SyncPercent}}<span class="sync"><progress class="meter meter-sm" max="100" value="{{printf "%.0f" .SyncPercent}}"></progress> {{printf "%.0f" .SyncPercent}}%</span>{{else if .Verifying}}<span class="muted">verifying</span>{{else}}<span class="muted">in sync</span>{{end}}</td>
           <td>{{if .OutOfSyncKiB}}<span class="text-warn">{{kib .OutOfSyncKiB}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
-          <td class="muted" title="{{stamp .LastSeen}}">{{ago .LastSeen}}</td>
+          <td class="muted" title="Last state change: {{stamp .LastSeen}}">{{ago .LastSeen}}</td>
         </tr>
         {{else}}
         <tr><td colspan="6">{{template "empty" "No replicas placed yet."}}</td></tr>

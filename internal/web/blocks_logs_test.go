@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -69,5 +71,29 @@ func TestBlockEventsSkipRepeatsAndShowDeletion(t *testing.T) {
 	}
 	if !strings.Contains(body, "This block was deleted") {
 		t.Errorf("deletion not shown: %q", body)
+	}
+}
+
+type failingBlocks struct{ previewBlocks }
+
+func (failingBlocks) List(context.Context, *pb.ListBlocksRequest) (*pb.ListBlocksResponse, error) {
+	return nil, fmt.Errorf("store unavailable")
+}
+
+// A full-page load that fails renders the styled error page, not bare text.
+func TestBlocksListErrorIsAStyledPage(t *testing.T) {
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	s, err := New("n1", st, failingBlocks{}, nil, nil, clusterSecretForTest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.handleBlocksList(rec, httptest.NewRequest("GET", "/blocks", nil))
+	if body := rec.Body.String(); !strings.Contains(body, "Served by node") || !strings.Contains(body, "store unavailable") {
+		t.Errorf("blocks list error is not the styled page: %q", body)
 	}
 }

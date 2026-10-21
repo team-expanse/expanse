@@ -77,7 +77,7 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.blocks.List(r.Context(), &pb.ListBlocksRequest{})
 	if err != nil {
-		http.Error(w, errText(err), httpStatus(err))
+		s.renderError(w, r, httpStatus(err), errText(err))
 		return
 	}
 	s.render(w, http.StatusOK, "blocks_list.html", blocksListData{

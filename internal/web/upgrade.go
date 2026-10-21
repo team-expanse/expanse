@@ -33,9 +33,9 @@ type upgradeView struct {
 	Latest  rollout.Latest
 	Plan    *rollout.Plan
 	Nodes   []upgradeNode
-	Offer   string // the version the start form proposes
-	Error   string
-	Running bool // a rollout is running or paused, so no new one can start
+	Offer   string   // the version the start form proposes
+	Errors  []string // every read that failed, so none hides another
+	Running bool     // a rollout is running or paused, so no new one can start
 }
 
 type upgradeData struct {
@@ -48,16 +48,21 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 	var v upgradeView
 	var err error
 	if v.Latest, err = rollout.LoadLatest(ctx, s.store); err != nil {
-		v.Error = errText(err)
+		v.Errors = append(v.Errors, "The release check record is unreadable: "+errText(err))
 	}
 	if v.Plan, err = rollout.LoadPlan(ctx, s.store); err != nil {
-		v.Error = errText(err)
+		v.Errors = append(v.Errors, errText(err))
 	}
-	reports, _ := rollout.ListReports(ctx, s.store)
+	reports, err := rollout.ListReports(ctx, s.store)
+	if err != nil {
+		v.Errors = append(v.Errors, "Node versions are unavailable: "+errText(err))
+	}
 	if rep, err := s.getClusterReport(ctx); err == nil {
 		for _, n := range rep.Nodes {
 			v.Nodes = append(v.Nodes, upgradeNode{ID: n.ID, Report: reports[n.ID], Current: v.Plan != nil && v.Plan.Current == n.ID})
 		}
+	} else {
+		v.Errors = append(v.Errors, "The node list is unavailable: "+errText(err))
 	}
 	v.Running = v.Plan != nil && (v.Plan.State == rollout.Running || v.Plan.State == rollout.Paused || v.Plan.State == rollout.Halted)
 	v.Offer = v.Latest.Version
