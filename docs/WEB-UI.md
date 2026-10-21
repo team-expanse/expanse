@@ -89,74 +89,88 @@ response sets.
 
 ## 5. What's there
 
-Every page renders inside one shared shell: a sidebar (active item highlighted), a header with
-the cluster name and a quorum/health indicator, breadcrumbs, the signed-in user menu (sign out),
-a light/dark toggle (follows the system by default; the choice is kept in the browser) and a
-footer naming the node that served the page and the Expanse version. Status values are shown as
+Every page renders inside one shared shell: a rail of six sections (Overview, Cluster, Nodes,
+Workloads, Changes, Upgrades; on a phone, a bottom bar with the first four and a More menu), a
+header with the cluster name and a quorum/health indicator, breadcrumbs, the signed-in user menu
+(Settings, sign out), a light/dark toggle (follows the system by default; the choice is kept in
+the browser) and a footer naming the node that served the page and the Expanse version. A section
+that merges several pages shows them as tabs on its top-level pages. Status values are shown as
 labelled pills (Running, Degraded, Under-replicated, Unreachable…), never raw enum constants.
 Actions confirm through a dialog and report their result as a toast. Pages marked *live* update
 over Server-Sent Events, never by polling.
 
-- **Dashboard** (`/`, live) — nodes up/total, quorum and leader, blocks by phase, volumes by
-  state, firing alerts and the current generation as summary tiles; a "needs attention" list of
-  every alert, unreachable node, degraded/failed volume and unhealthy block; recent store events;
-  and the node table.
-- **Cluster** (`/cluster`, live) — cluster ID, leader, quorum, generation and the Raft member
-  table.
-- **Nodes** (`/nodes`, live; `/nodes/<id>`) — every member with its role, membership state
-  (Online / Unreachable / Failed / Cordoned / Degraded), the health its agent last reported
-  through its 10s heartbeat, addresses and join time. The detail page adds hardware inventory
-  (system, CPU, memory, disks, NICs, GPUs), health checks, reconciler status and managed
-  resources — **for the node serving the page only**: agents do not publish inventory or check
-  results cluster-wide, so another node's page says so and links to that node's own UI. Every
-  node's page has a **Storage** card (from the node's own report): its data VG's free space and an
-  **Enable storage** button that builds the thin pool and starts the volume stack, with no rebuild
-  or reboot (STORAGE.md §2). The deploy form warns while no node has storage on.
-- **Health & alerts** (`/health`, live) — firing critical alerts (the same rules as
-  `deploy/prometheus/expanse-alerts.rules.yml`), quorum, node checks, resource health and volume
-  health.
-- **Blocks** (`/blocks`, `/deploy`, `/blocks/new`, `/blocks/<ns>/<name>` live,
-  `/blocks/<ns>/<name>/logs` live) — list with phase counts; a detail page with replica placement,
-  pending-placement reasons and conditions, scale, delete (confirmed), and a live log tail per
-  replica. **Deploy block** opens `/deploy`, every catalog type with what it needs (a type no
-  node can run, such as `vm/instance` without `kvm`, is greyed out). Picking one opens a form
-  built from the type's schema and `template.yaml`, filled in with working defaults: name,
-  replicas, CPU and memory, each volume's size, then the type's own settings. Replicas and volume
-  copies are capped at the cluster's node count; changing a port setting moves the block's
-  forwarding and health check with it. Errors appear on the field they concern. A Pre-flight
-  section names the node each replica would run on now, or each node's reason for refusing it
-  (not enough memory, CPU or disk, a missing capability, one replica per node), and warns when
-  another block listens on the same port. **Check** re-runs admission and the pre-flight with
-  the form's values without deploying. A setting that points at another block, such as
-  grafana's Prometheus URL or redis's replica source, lists the addresses of existing blocks
-  of that type, and a required one is filled in when only one block fits. "Show as YAML"
-  gives the same block as a manifest for `expanse ctl block apply -f`, and `/blocks/new` still
-  takes a pasted manifest. **Edit** on a block's page opens the same form with its current
-  settings (`/blocks/<ns>/<name>/edit`). Password fields are never filled in. On Deploy, a
-  required one left empty is generated, and the page after Deploy shows it once. On Edit, one
-  left empty keeps its current value. They are stored sealed, apart from the block
-  (SECURITY.md §4). A `vm/instance` form starts from the Debian 13 cloud image (or Ubuntu
-  24.04 LTS, or a custom URL) and takes SSH keys, where `gh:<user>` imports a GitHub user's keys;
-  the VM's page shows its MAC address to find it in the DHCP leases (VMS.md §3).
-- **Volumes** (`/volumes`, `/volumes/new`, `/volumes/<name>` live) — list with state counts,
-  create (field-level validation), a detail page with the replica table (role, health, resync
-  progress, out-of-sync bytes, last seen), snapshots, snapshot/resize (grow-only) forms and
-  delete (confirmed). Creation is asynchronous — the page reads "Creating…" until the controller
-  places it, then flips to the full view without a reload.
-- **Generations** (`/generations`, `/generations/<n>`, `/generations/diff?a=<n>&b=<m>`) — the
-  desired-state history newest first with the current one marked, a detail page listing the
-  snapshot's keys, a diff of any two generations (added / removed / changed keys), and rollback
-  behind a confirm dialog (append-only, like `expanse ctl generation rollback`).
-- **Events** (`/events`, live) — store writes as they happen, recorded in memory since the
-  serving node started, filterable by type (block, volume, node, cluster, resource, lease, auth,
-  other). Session keys are redacted; values are never shown.
+- **Overview** — three tabs:
+  - **Now** (`/`, live) — nodes up/total, quorum and leader, blocks by phase, volumes by state,
+    firing alerts and the current generation as summary tiles; a "needs attention" list of every
+    alert, unreachable node, degraded/failed volume and unhealthy block; recent store events;
+    and the node table.
+  - **Checks** (`/health`, live) — firing critical alerts (the same rules as
+    `deploy/prometheus/expanse-alerts.rules.yml`), quorum, node checks, resource health and
+    volume health.
+  - **Activity** (`/events`, live) — store writes as they happen, recorded in memory since the
+    serving node started, filterable by type (block, volume, node, cluster, resource, lease,
+    auth, other). Session keys are redacted; values are never shown.
+- **Cluster** — two tabs:
+  - **Overview** (`/cluster`, live) — cluster ID, leader, quorum, generation and the Raft member
+    table, a warning while quorum holds with members down, and links to Upgrade and Roll back.
+  - **Settings** (`/cluster/settings`) — the LAN address range blocks and the UI get their VIPs
+    from (`docs/NETWORKING.md`), the OIDC configuration as stored (issuer, client ID, redirect
+    URL, allow-list — never the secret), and the UI CA: where `ui-ca.pem` lives on disk and a
+    download of the certificate (`/cluster/ui-ca.pem`). Until a range is set, the deploy form
+    and each block's Address card say the block is reachable inside the cluster only.
+- **Nodes** (`/nodes`, live) — every member with its role, membership state (Online /
+  Unreachable / Failed / Cordoned / Degraded), the health its agent last reported through its
+  10s heartbeat, API address and join time. A node's page (`/nodes/<id>`, live) has three tabs.
+  **Overview** has the node's **Storage** card (from the node's own report: its data VG's free
+  space and an **Enable storage** button that builds the thin pool and starts the volume stack,
+  with no rebuild or reboot, STORAGE.md §2), the block replicas placed on it, and its system and
+  reconciler status. **Hardware** (`?tab=hardware`) has CPU, memory, disks, NICs and GPUs;
+  **Checks** (`?tab=checks`) has health checks and managed resources. Inventory, checks and
+  reconciler status are shown **for the node serving the page only**: agents do not publish them
+  cluster-wide, so another node's page says so and links to that node's own UI. The deploy form
+  warns while no node has storage on.
+- **Workloads** — two tabs:
+  - **Blocks** (`/blocks`, live) — list with phase counts. Each block's page has three tabs:
+    **Overview** (`/blocks/<ns>/<name>`, live: replica placement, pending-placement reasons,
+    conditions, address, scale), **Logs** (`/blocks/<ns>/<name>/logs`, live tail per replica)
+    and **Settings** (`/blocks/<ns>/<name>/edit`: the deploy form with the block's current
+    settings, and delete behind a confirm dialog). **Deploy block** is three marked steps. Step
+    1, `/deploy`, lists every catalog type grouped by category (databases and storage, web and
+    network, apps, monitoring, utilities and tests) with what it needs; a type no node can run,
+    such as `vm/instance` without `kvm`, is greyed out. Step 2 is a form built from the type's
+    schema and `template.yaml`, filled in with working defaults: name, replicas, CPU and memory,
+    each volume's size, then the type's own settings. Replicas and volume copies are capped at
+    the cluster's node count; changing a port setting moves the block's forwarding and health
+    check with it. Errors appear on the field they concern. A Pre-flight section names the node
+    each replica would run on now, or each node's reason for refusing it (not enough memory, CPU
+    or disk, a missing capability, one replica per node), and warns when another block listens
+    on the same port. **Check** re-runs admission and the pre-flight with the form's values
+    without deploying. A setting that points at another block, such as grafana's Prometheus URL
+    or redis's replica source, lists the addresses of existing blocks of that type, and a
+    required one is filled in when only one block fits. "Show as YAML" gives the same block as
+    a manifest for `expanse ctl block apply -f`, and `/blocks/new` still takes a pasted
+    manifest. Password fields are never filled in. On Deploy, a required one left empty is
+    generated, and step 3 shows it once. On Settings, one left empty keeps its current value.
+    They are stored sealed, apart from the block (SECURITY.md §4). A `vm/instance` form starts
+    from the Debian 13 cloud image (or Ubuntu 24.04 LTS, or a custom URL) and takes SSH keys,
+    where `gh:<user>` imports a GitHub user's keys; the VM's page shows its MAC address to find
+    it in the DHCP leases (VMS.md §3).
+  - **Volumes** (`/volumes`, `/volumes/new`, `/volumes/<name>` live) — list with state counts,
+    create (field-level validation), a detail page with the replica table (role, health, resync
+    progress, out-of-sync bytes, last seen), snapshots, snapshot/resize (grow-only) forms and
+    delete (confirmed). Creation is asynchronous — the page reads "Creating…" until the
+    controller places it, then flips to the full view without a reload.
+- **Changes** (`/generations` live, `/generations/<n>`, `/generations/diff?a=<n>&b=<m>`) — the
+  desired-state history (generations) newest first with the current one marked. A generation's
+  page shows what it added, removed and changed since its parent, and lists its keys; any two
+  generations can be compared, and rollback sits behind a confirm dialog (append-only, like
+  `expanse ctl generation rollback`).
+- **Upgrades** (`/upgrade`, live) — the newest release and the daily check, each node's version,
+  and the rollout: one node at a time, listed in order as done, upgrading (or halted, with the
+  reason and Retry) or waiting, with Pause and Cancel. While a rollout runs the start form stays
+  visible but disabled, with the reason beside it.
 - **Settings** (`/settings`, account menu) — change the admin password (requires the current
   one; the `expanse ctl admin reset-password` path in §3 remains the recovery route).
-- **Cluster › Settings** (`/cluster/settings`) — the LAN address range blocks and the UI get their
-  VIPs from (`docs/NETWORKING.md`), the OIDC configuration as stored (issuer, client ID, redirect
-  URL, allow-list — never the secret), and the UI CA: where `ui-ca.pem` lives on disk and a
-  download of the certificate (`/cluster/ui-ca.pem`). Until a range is set, the deploy form and
-  each block's Address card say the block is reachable inside the cluster only.
 
 All of the above are thin `html/template` + HTMX layers directly over control-plane operations the
 CLI already exercises (`internal/blocks`, `internal/storage`, the in-process `NodeService`) — the
