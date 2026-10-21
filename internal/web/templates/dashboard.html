@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="page-head">
   <div>
-    <h1 class="page-title">Dashboard</h1>
+    <h1 class="page-title">Overview</h1>
     <p class="page-sub">{{if .Standalone}}This agent is not a cluster member; only the block and volume views apply.{{else}}Cluster <strong>{{.Page.Cluster.Name}}</strong> at a glance.{{end}}</p>
   </div>
   <div class="page-actions">{{if not .Standalone}}{{template "live"}}{{end}}</div>

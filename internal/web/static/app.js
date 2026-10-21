@@ -1,5 +1,5 @@
-// Behaviour the shell needs beyond htmx: the theme toggle, the phone
-// nav drawer, toasts (from HX-Trigger headers and request errors),
+// Behaviour the shell needs beyond htmx: the theme toggle, closing pop-up
+// menus, toasts (from HX-Trigger headers and request errors),
 // <dialog>-based confirms, auto-submitting filters, log autoscroll and
 // bounded live lists.
 // No inline script anywhere (CSP script-src 'self').
@@ -21,20 +21,18 @@
     if (btn) setTheme(currentTheme() === "dark" ? "light" : "dark");
   });
 
-  // ---- phone nav drawer ------------------------------------------------
-  function setNav(open) {
-    document.body.classList.toggle("nav-open", open);
-    var scrim = document.querySelector(".scrim");
-    if (scrim) scrim.hidden = !open;
-    var btn = document.querySelector("[data-nav-toggle]");
-    if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  // ---- pop-up menus (account, phone "More") ----------------------------
+  // An open <details> menu closes on a click outside it or on Escape.
+  function closeMenus(except) {
+    document.querySelectorAll("details.menu[open], details.more[open]").forEach(function (d) {
+      if (d !== except) d.open = false;
+    });
   }
   document.addEventListener("click", function (ev) {
-    if (ev.target.closest("[data-nav-toggle]")) setNav(!document.body.classList.contains("nav-open"));
-    else if (ev.target.closest("[data-nav-close]")) setNav(false);
+    closeMenus(ev.target.closest("details.menu, details.more"));
   });
   document.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape") setNav(false);
+    if (ev.key === "Escape") closeMenus(null);
   });
 
   // ---- toasts ----------------------------------------------------------

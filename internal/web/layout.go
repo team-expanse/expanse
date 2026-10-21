@@ -47,7 +47,7 @@ type clusterChrome struct {
 // embed it as their Page field.
 type page struct {
 	Title     string
-	Active    string // sidebar key: dashboard, cluster, nodes, blocks, volumes, generations, events, health, settings
+	Active    string // page key: a navItem or navTab Key, or settings
 	Crumbs    []crumb
 	NodeID    string
 	NodeName  string // the serving node's hostname, for display
@@ -143,7 +143,8 @@ func templateFuncs(names *nodeNames) template.FuncMap {
 		"add":             func(a, b int) int { return a + b },
 		"sub64":           func(a, b int64) int64 { return a - b },
 		"pct":             func(a, b int64) int { return int(pctOf(a, b)) },
-		"nav":             navGroups,
+		"nav":             navItems,
+		"navTabs":         navTabs,
 		"short":           short,
 	}
 }
@@ -385,34 +386,54 @@ func secureHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// navItem is one sidebar destination; navGroups is the sidebar, in
-// display order, exposed to the layout as the "nav" template func.
+// navItem is one rail section; Tabs are the pages it merges, keyed like
+// page.Active. navItems is the rail in order, the "nav" template func.
 type navItem struct {
 	Key, Label, Href, Icon string
+	Tabs                   []navTab
 }
 
-type navGroup struct {
-	Label string
-	Items []navItem
+type navTab struct {
+	Key, Label, Href string
 }
 
-func navGroups() []navGroup {
-	return []navGroup{
-		{Label: "Overview", Items: []navItem{
-			{Key: "dashboard", Label: "Dashboard", Href: "/", Icon: "i-dashboard"},
-			{Key: "cluster", Label: "Cluster", Href: "/cluster", Icon: "i-cluster"},
-			{Key: "nodes", Label: "Nodes", Href: "/nodes", Icon: "i-nodes"},
-			{Key: "health", Label: "Health & alerts", Href: "/health", Icon: "i-health"},
-		}},
-		{Label: "Workloads", Items: []navItem{
-			{Key: "blocks", Label: "Blocks", Href: "/blocks", Icon: "i-blocks"},
-			{Key: "volumes", Label: "Volumes", Href: "/volumes", Icon: "i-volumes"},
-		}},
-		{Label: "Operations", Items: []navItem{
-			{Key: "generations", Label: "Generations", Href: "/generations", Icon: "i-generations"},
-			{Key: "upgrade", Label: "Upgrades", Href: "/upgrade", Icon: "i-download"},
-			{Key: "events", Label: "Events", Href: "/events", Icon: "i-events"},
-			{Key: "settings", Label: "Settings", Href: "/settings", Icon: "i-settings"},
-		}},
+// Has reports whether the page keyed active belongs to this section.
+func (n navItem) Has(active string) bool {
+	if n.Key == active {
+		return true
 	}
+	for _, t := range n.Tabs {
+		if t.Key == active {
+			return true
+		}
+	}
+	return false
+}
+
+func navItems() []navItem {
+	return []navItem{
+		{Key: "dashboard", Label: "Overview", Href: "/", Icon: "i-dashboard", Tabs: []navTab{
+			{Key: "dashboard", Label: "Now", Href: "/"},
+			{Key: "health", Label: "Checks", Href: "/health"},
+			{Key: "events", Label: "Activity", Href: "/events"},
+		}},
+		{Key: "cluster", Label: "Cluster", Href: "/cluster", Icon: "i-cluster"},
+		{Key: "nodes", Label: "Nodes", Href: "/nodes", Icon: "i-nodes"},
+		{Key: "blocks", Label: "Workloads", Href: "/blocks", Icon: "i-blocks", Tabs: []navTab{
+			{Key: "blocks", Label: "Blocks", Href: "/blocks"},
+			{Key: "volumes", Label: "Volumes", Href: "/volumes"},
+		}},
+		{Key: "generations", Label: "Changes", Href: "/generations", Icon: "i-generations"},
+		{Key: "upgrade", Label: "Upgrades", Href: "/upgrade", Icon: "i-download"},
+	}
+}
+
+// navTabs is the tab strip for the section holding active, if it has one.
+func navTabs(active string) []navTab {
+	for _, n := range navItems() {
+		if n.Has(active) {
+			return n.Tabs
+		}
+	}
+	return nil
 }

@@ -113,7 +113,7 @@ func (s *Server) currentAlerts(ctx context.Context, vols []*volumeView, rep *con
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	d := s.loadDashboard(r.Context())
-	d.Page = s.newPage(w, r, "Dashboard", "dashboard")
+	d.Page = s.newPage(w, r, "Overview", "dashboard")
 	s.render(w, http.StatusOK, "dashboard.html", d)
 }
 

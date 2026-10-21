@@ -17,20 +17,13 @@
 {{template "icons"}}
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app">
-  <div class="scrim" data-nav-close hidden></div>
   <aside class="app-sidebar" id="sidebar">
     <div class="brand">
       <a href="/" class="brand-link"><svg class="icon brand-mark"><use href="#i-logo"/></svg><span>Expanse</span></a>
-      <button class="icon-btn sidebar-close" type="button" data-nav-close aria-label="Close menu"><svg class="icon"><use href="#i-x"/></svg></button>
     </div>
     <nav class="nav" aria-label="Main">
       {{range nav}}
-      <div class="nav-group">
-        <div class="nav-group-label">{{.Label}}</div>
-        {{range .Items}}
-        <a class="nav-item" href="{{.Href}}"{{if eq .Key $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{.Icon}}"/></svg><span>{{.Label}}</span></a>
-        {{end}}
-      </div>
+      <a class="nav-item" href="{{.Href}}"{{if .Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{.Icon}}"/></svg><span>{{.Label}}</span></a>
       {{end}}
     </nav>
     <div class="sidebar-foot">
@@ -40,7 +33,6 @@
 
   <div class="app-body">
     <header class="app-header">
-      <button class="icon-btn menu-btn" type="button" data-nav-toggle aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button>
       <div class="cluster-id">
         <span class="cluster-name">{{.Page.Cluster.Name}}</span>
         {{template "pill" .Page.Cluster.Pill}}
@@ -61,10 +53,11 @@
     <main id="main" class="app-main">
       <nav class="crumbs" aria-label="Breadcrumb">
         <ol>
-          <li><a href="/">Dashboard</a></li>
+          <li><a href="/">Overview</a></li>
           {{range .Page.Crumbs}}<li>{{if .Href}}<a href="{{.Href}}">{{.Label}}</a>{{else}}<span aria-current="page">{{.Label}}</span>{{end}}</li>{{end}}
         </ol>
       </nav>
+      {{with navTabs .Page.Active}}<nav class="tabs" aria-label="Section">{{range .}}<a href="{{.Href}}"{{if eq .Key $.Page.Active}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>{{end}}
       {{template "content" .}}
     </main>
 
@@ -75,6 +68,16 @@
     </footer>
   </div>
 </div>
+<nav class="bottombar" aria-label="Main">
+  {{range $i, $n := nav}}{{if lt $i 4}}<a href="{{$n.Href}}"{{if $n.Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{$n.Icon}}"/></svg><span>{{$n.Label}}</span></a>{{end}}{{end}}
+  <details class="more">
+    <summary><svg class="icon"><use href="#i-menu"/></svg><span>More</span></summary>
+    <div class="more-panel">
+      {{range $i, $n := nav}}{{if ge $i 4}}<a href="{{$n.Href}}"{{if $n.Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{$n.Icon}}"/></svg>{{$n.Label}}</a>{{end}}{{end}}
+      <a href="/settings"{{if eq .Page.Active "settings"}} aria-current="page"{{end}}><svg class="icon"><use href="#i-settings"/></svg>Settings</a>
+    </div>
+  </details>
+</nav>
 <div class="toasts" id="toasts" aria-live="polite">
   {{if .Page.Flash}}<div class="toast toast-{{.Page.Flash.Kind}}" role="status"><span>{{.Page.Flash.Text}}</span><button class="toast-close" type="button" aria-label="Dismiss">×</button></div>{{end}}
 </div>

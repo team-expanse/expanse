@@ -22,9 +22,9 @@ func getPage(t *testing.T, client *http.Client, srv *httptest.Server, path strin
 	return resp, string(body)
 }
 
-// navLinks is every sidebar destination; every authenticated page must
-// render all of them, since the shell is shared, not copied per page.
-var navLinks = []string{`href="/"`, `href="/cluster"`, `href="/nodes"`, `href="/blocks"`, `href="/volumes"`, `href="/generations"`, `href="/events"`, `href="/health"`, `href="/settings"`}
+// navLinks is every rail section plus Settings in the account menu; every
+// authenticated page renders them, since the shell is shared.
+var navLinks = []string{`href="/"`, `href="/cluster"`, `href="/nodes"`, `href="/blocks"`, `href="/generations"`, `href="/upgrade"`, `href="/settings"`}
 
 func assertShell(t *testing.T, path, body string) {
 	t.Helper()
@@ -82,6 +82,55 @@ func TestActiveNavItemIsMarked(t *testing.T) {
 	}
 	if strings.Contains(body, `href="/cluster" aria-current="page"`) {
 		t.Error("/cluster nav item wrongly marked current on /volumes")
+	}
+	if !strings.Contains(body, `class="nav-item" href="/blocks" aria-current="page"`) {
+		t.Error("Workloads section not marked current on /volumes")
+	}
+}
+
+func TestSectionTabsReachTheMergedPages(t *testing.T) {
+	srv, pw, _ := newHealthTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+	cases := []struct {
+		path, section string
+		tabs          []string
+	}{
+		{"/health", "/", []string{`href="/"`, `href="/health" aria-current="page"`, `href="/events"`}},
+		{"/events", "/", []string{`href="/health"`, `href="/events" aria-current="page"`}},
+		{"/volumes", "/blocks", []string{`href="/blocks"`, `href="/volumes" aria-current="page"`}},
+	}
+	for _, c := range cases {
+		_, body := getPage(t, client, srv, c.path)
+		if !strings.Contains(body, `class="nav-item" href="`+c.section+`" aria-current="page"`) {
+			t.Errorf("%s: section %s not current", c.path, c.section)
+		}
+		i := strings.Index(body, `class="tabs"`)
+		if i < 0 {
+			t.Errorf("%s: no section tabs", c.path)
+			continue
+		}
+		tabs := body[i:]
+		for _, want := range c.tabs {
+			if !strings.Contains(tabs, want) {
+				t.Errorf("%s: tabs missing %s", c.path, want)
+			}
+		}
+	}
+}
+
+func TestPhoneBarKeepsEverySection(t *testing.T) {
+	srv, pw, _ := newHealthTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+	_, body := getPage(t, client, srv, "/nodes")
+	i := strings.Index(body, `class="bottombar"`)
+	if i < 0 {
+		t.Fatal("no phone bottom bar")
+	}
+	bar := body[i:]
+	for _, want := range []string{`href="/"`, `href="/cluster"`, `href="/nodes" aria-current="page"`, `href="/blocks"`, `href="/generations"`, `href="/upgrade"`, `href="/settings"`} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("bottom bar missing %s", want)
+		}
 	}
 }
 
