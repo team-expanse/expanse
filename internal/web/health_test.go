@@ -291,3 +291,36 @@ func TestHealthEventsSkipsUnchangedFragment(t *testing.T) {
 		t.Errorf("sent %d health events over many ticks with nothing changed, want 1", n)
 	}
 }
+
+// Before a cluster forms the node ID is a UUID, so the chrome names the host.
+func TestPagesNameTheServingNodeByHostname(t *testing.T) {
+	cases := []struct {
+		name string
+		inv  *inventory.Inventory
+		want string
+	}{
+		{"hostname", &inventory.Inventory{Hostname: "rack1-a"}, "rack1-a"},
+		{"no inventory yet", nil, "n1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, pw, _ := newHealthTestServerWithInventory(t, tc.inv)
+			client, _ := loggedInClient(t, srv, pw)
+			resp, err := client.Get(srv.URL + "/health")
+			if err != nil {
+				t.Fatalf("GET /health: %v", err)
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			for _, want := range []string{
+				"Node <strong>" + tc.want + "</strong>",
+				"Served by node <strong>" + tc.want + "</strong>",
+				`<h2>Node checks</h2><span class="muted">` + tc.want + "</span>",
+			} {
+				if !strings.Contains(string(body), want) {
+					t.Errorf("body missing %q", want)
+				}
+			}
+		})
+	}
+}

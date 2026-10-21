@@ -5,6 +5,7 @@
 package web
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/version"
+	pb "github.com/expanse/expanse/proto"
 )
 
 // crumb is one breadcrumb; the last one has no Href.
@@ -47,6 +49,7 @@ type page struct {
 	Active    string // sidebar key: dashboard, cluster, nodes, blocks, volumes, generations, events, health, settings
 	Crumbs    []crumb
 	NodeID    string
+	NodeName  string // the serving node's hostname, for display
 	CSRFToken string
 	User      string
 	Version   string
@@ -206,11 +209,21 @@ func (s *Server) newPage(w http.ResponseWriter, r *http.Request, title, active s
 	sess := sessionFromContext(r.Context())
 	return page{
 		Title: title, Active: active, Crumbs: crumbs,
-		NodeID: s.NodeID, CSRFToken: sess.CSRFToken, User: sess.UserID,
+		NodeID: s.NodeID, NodeName: s.nodeName(r.Context()), CSRFToken: sess.CSRFToken, User: sess.UserID,
 		Version: version.Get().Version,
 		Cluster: s.clusterChrome(r),
 		Flash:   takeFlash(w, r),
 	}
+}
+
+// nodeName is the serving node's hostname, or its ID until inventory has one.
+func (s *Server) nodeName(ctx context.Context) string {
+	if s.cluster != nil {
+		if inv, err := s.cluster.GetInventory(ctx, &pb.GetInventoryRequest{}); err == nil && inv.GetHostname() != "" {
+			return inv.GetHostname()
+		}
+	}
+	return s.NodeID
 }
 
 // clusterChrome summarises quorum for the header from the same report

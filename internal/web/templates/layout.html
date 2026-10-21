@@ -34,7 +34,7 @@
       {{end}}
     </nav>
     <div class="sidebar-foot">
-      <div class="sidebar-node"><svg class="icon"><use href="#i-nodes"/></svg><span>Node <strong>{{.Page.NodeID}}</strong></span></div>
+      <div class="sidebar-node"><svg class="icon"><use href="#i-nodes"/></svg><span>Node <strong>{{.Page.NodeName}}</strong></span></div>
     </div>
   </aside>
 
@@ -69,7 +69,7 @@
     </main>
 
     <footer class="app-footer">
-      <span>Served by node <strong>{{.Page.NodeID}}</strong></span>
+      <span>Served by node <strong>{{.Page.NodeName}}</strong></span>
       <span class="sep">·</span>
       <span>Expanse {{.Page.Version}}</span>
     </footer>

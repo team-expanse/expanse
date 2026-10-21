@@ -57,7 +57,7 @@
 {{end}}
 
 {{if not .Node.Serving}}
-<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeID}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{.Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
+<div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeName}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{.Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
 {{else}}
 
 <div class="grid-2">
