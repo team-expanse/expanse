@@ -128,3 +128,11 @@ func TestLogReplicasSkipStoppedPlacements(t *testing.T) {
 		t.Errorf("logReplicas = %v, want [0 1]", got)
 	}
 }
+
+// A probe with no timestamp has no time, rather than the Unix epoch.
+func TestReplicaRowWithoutAProbeTime(t *testing.T) {
+	p := &pb.PlacementStatus{ReplicaIndex: 0, Health: &pb.ReplicaHealth{Readiness: &pb.ProbeResult{Ok: true, Detail: "ok"}}}
+	if at := replicaRow(p).At; !at.IsZero() {
+		t.Errorf("At = %v, want zero", at)
+	}
+}

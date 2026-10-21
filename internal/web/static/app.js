@@ -188,7 +188,7 @@
     if (list) {
       var limit = parseInt(list.getAttribute("data-live-limit"), 10);
       var newestFirst = list.getAttribute("hx-swap") === "afterbegin";
-      while (list.childNodes.length > limit) list.removeChild(newestFirst ? list.lastChild : list.firstChild);
+      while (list.children.length > limit) list.removeChild(newestFirst ? list.lastElementChild : list.firstElementChild);
     }
     // A swap that brings page-level actions the first render lacked.
     if (ev.target.querySelector && ev.target.querySelector("[data-reload-page]")) window.location.reload();

@@ -34,13 +34,21 @@ func replicaRow(p *pb.PlacementStatus) replicaView {
 	case p.GetMessage() != "":
 		v.Last = p.GetMessage()
 	case l != nil && !l.GetOk():
-		v.Last, v.At = l.GetDetail(), time.Unix(0, l.GetAtUnixNs())
+		v.Last, v.At = l.GetDetail(), probeTime(l)
 	case r != nil:
-		v.Last, v.At = r.GetDetail(), time.Unix(0, r.GetAtUnixNs())
+		v.Last, v.At = r.GetDetail(), probeTime(r)
 	case l != nil:
-		v.Last, v.At = l.GetDetail(), time.Unix(0, l.GetAtUnixNs())
+		v.Last, v.At = l.GetDetail(), probeTime(l)
 	}
 	return v
+}
+
+// probeTime is when the probe ran, zero when it never recorded a time.
+func probeTime(p *pb.ProbeResult) time.Time {
+	if p.GetAtUnixNs() == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, p.GetAtUnixNs())
 }
 
 // livePlacements counts the placements still serving a replica.

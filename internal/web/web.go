@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/expanse/expanse/internal/store"
@@ -400,8 +401,37 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			}
 		}
 		ctx := context.WithValue(r.Context(), sessionCtxKey{}, sess)
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			var cancel context.CancelFunc
+			ctx, cancel = s.whileSignedIn(ctx, sess)
+			defer cancel()
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// whileSignedIn ends ctx when the session is signed out or expires, so a
+// live stream never outlives it.
+func (s *Server) whileSignedIn(ctx context.Context, sess *auth.Session) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithDeadline(ctx, time.Unix(sess.ExpiresAt, 0))
+	key := store.Key(auth.SessionKeyPrefix + sess.ID)
+	rev, err := s.store.Revision(store.WithStale(ctx))
+	if err != nil {
+		return ctx, cancel
+	}
+	ch, err := s.store.Watch(ctx, key, rev)
+	if err != nil {
+		return ctx, cancel
+	}
+	go func() {
+		defer cancel()
+		for ev := range ch {
+			if ev.Type == store.EventDelete {
+				return
+			}
+		}
+	}()
+	return ctx, cancel
 }
 
 func isMutating(method string) bool {

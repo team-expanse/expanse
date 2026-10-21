@@ -349,3 +349,33 @@ func TestLoginRefusesBeyondTheConcurrencyCap(t *testing.T) {
 		t.Errorf("status %d with every slot busy, want 429", resp.StatusCode)
 	}
 }
+
+// Signing out in another tab ends the live streams this session holds open.
+func TestLogoutEndsOpenStreams(t *testing.T) {
+	srv, pw := newTestServer(t)
+	client, csrf := loggedInClient(t, srv, pw)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/events/stream", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status %d", resp.StatusCode)
+	}
+	ended := make(chan struct{})
+	go func() { _, _ = io.Copy(io.Discard, resp.Body); close(ended) }()
+
+	out, _ := http.NewRequest(http.MethodPost, srv.URL+"/logout", nil)
+	out.Header.Set(csrfHeader, csrf)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if r, err := client.Do(out); err == nil {
+		r.Body.Close()
+	}
+	select {
+	case <-ended:
+	case <-time.After(3 * time.Second):
+		t.Error("the stream stayed open after logout")
+	}
+}
