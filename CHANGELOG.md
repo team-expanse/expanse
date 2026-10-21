@@ -6,7 +6,7 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
-## Unreleased
+## 1.13.0 - 2026-10-20
 
 ### Added
 
@@ -18,6 +18,8 @@ History before 1.0.0 is not recorded here.
   leaves it out), and the node passes the addresses the agent reports to the page.
 - `expanse ctl vm exec <block> -- <command>` runs a command in a VM's guest as root through its QEMU
   guest agent, from the node that runs the VM, and exits with the command's exit code.
+- A VM that was running before the upgrade gets the guest agent port, its address on the page and
+  `vm exec` after its next restart, since upgrades leave running blocks alone.
 
 ## 1.12.3 - 2026-10-20
 
