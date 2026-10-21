@@ -222,6 +222,7 @@ type Agent struct {
 	invSnapshot  *inventory.Inventory
 	invCollector *inventory.Collector
 	healthR      *health.Runner
+	lastHealth   atomic.Pointer[health.Report] // the latest run, served to readers
 
 	// §4.6 network policy: cached compiled-ruleset key so unchanged
 	// passes skip kernel traffic entirely.
@@ -562,9 +563,19 @@ func (a *Agent) Inventory() *inventory.Inventory {
 	return a.invSnapshot
 }
 
-// Health implements api.Agent.
+// Health implements api.Agent with the latest run, so a read never writes the
+// store-check key; it runs the checks only until the health loop has.
 func (a *Agent) Health(ctx context.Context) *health.Report {
-	return a.healthR.RunAll(ctx)
+	if rep := a.lastHealth.Load(); rep != nil {
+		return rep
+	}
+	return a.runHealth(ctx)
+}
+
+func (a *Agent) runHealth(ctx context.Context) *health.Report {
+	rep := a.healthR.RunAll(ctx)
+	a.lastHealth.Store(rep)
+	return rep
 }
 
 // Shutdown implements api.Agent.
@@ -826,7 +837,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// commits), which is exactly what makes the leader mark us
 	// unreachable via §4.8.
 	go a.loop(ctx, 10*time.Second, "health", func() {
-		rep := a.healthR.RunAll(ctx)
+		rep := a.runHealth(ctx)
 		rs, ok := a.store.(*raftstore.Store)
 		a.status.Store(statusFromHealth(rep.Overall))
 		key := store.Key(fmt.Sprintf("/nodes/%s/status", a.cfg.NodeID))

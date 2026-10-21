@@ -23,6 +23,9 @@ import (
 	pb "github.com/expanse/expanse/proto"
 )
 
+// healthTick re-reads node checks, which have no store key to watch.
+var healthTick = 3 * time.Second
+
 func (s *Server) registerHealthRoutes() {
 	s.routes.Handle("GET /health", s.requireAuth(http.HandlerFunc(s.handleHealthOverview)))
 	s.routes.Handle("GET /health/events", s.requireAuth(http.HandlerFunc(s.handleHealthEvents)))
@@ -193,6 +196,7 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush() // confirm the stream is live before the first event
 
+	var last string
 	send := func() error {
 		data, err := s.loadHealthOverview(ctx)
 		if err != nil {
@@ -202,7 +206,11 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 		if err := s.renderFragment(&buf, "health-fragment", data); err != nil {
 			return err
 		}
-		if err := writeSSE(w, "health", buf.String()); err != nil {
+		if buf.String() == last {
+			return nil // an identical swap would only redraw the page
+		}
+		last = buf.String()
+		if err := writeSSE(w, "health", last); err != nil {
 			return err
 		}
 		flusher.Flush()
@@ -223,7 +231,7 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(healthTick)
 	defer ticker.Stop()
 	for {
 		select {
@@ -232,6 +240,7 @@ func (s *Server) handleHealthEvents(w http.ResponseWriter, r *http.Request) {
 				changes = nil
 				continue
 			}
+			coalesce(ctx, changes, 250*time.Millisecond)
 			if err := send(); err != nil {
 				return
 			}

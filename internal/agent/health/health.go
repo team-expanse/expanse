@@ -488,22 +488,17 @@ type Runner struct {
 	Checks []Check
 }
 
-// RunAll runs checks concurrently and returns the aggregate report.
+// RunAll runs checks concurrently and returns the aggregate report, its
+// checks in registration order so every run lists them the same way.
 func (r *Runner) RunAll(ctx context.Context) *Report {
-	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		results []Result
-	)
-	for _, c := range r.Checks {
+	var wg sync.WaitGroup
+	results := make([]Result, len(r.Checks))
+	for i, c := range r.Checks {
 		wg.Add(1)
-		go func(c Check) {
+		go func(i int, c Check) {
 			defer wg.Done()
-			res := c.Run(ctx)
-			mu.Lock()
-			results = append(results, res)
-			mu.Unlock()
-		}(c)
+			results[i] = c.Run(ctx)
+		}(i, c)
 	}
 	wg.Wait()
 	return &Report{Overall: Overall(results), Checks: results, At: time.Now()}

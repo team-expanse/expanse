@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,5 +231,33 @@ func TestSchedulable(t *testing.T) {
 		if got := Schedulable(c.results); got != c.want {
 			t.Errorf("%s: Schedulable = %t, want %t", c.name, got, c.want)
 		}
+	}
+}
+
+type sleepCheck struct {
+	name  string
+	delay time.Duration
+}
+
+func (c sleepCheck) Name() string { return c.name }
+func (c sleepCheck) Run(context.Context) Result {
+	time.Sleep(c.delay)
+	return Result{Name: c.name, Status: Healthy}
+}
+
+// The web UI lists checks in report order, so it must not follow finish order.
+func TestRunnerKeepsRegistrationOrder(t *testing.T) {
+	r := &Runner{Checks: []Check{
+		sleepCheck{"slow", 30 * time.Millisecond},
+		sleepCheck{"medium", 15 * time.Millisecond},
+		sleepCheck{"fast", 0},
+	}}
+	rep := r.RunAll(context.Background())
+	var got []string
+	for _, c := range rep.Checks {
+		got = append(got, c.Name)
+	}
+	if strings.Join(got, ",") != "slow,medium,fast" {
+		t.Errorf("order = %v, want registration order", got)
 	}
 }

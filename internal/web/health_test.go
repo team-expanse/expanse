@@ -269,3 +269,25 @@ func TestBuildAlertsHealthyClusterFiresNone(t *testing.T) {
 		t.Errorf("healthy snapshot fired alerts: %+v", alerts)
 	}
 }
+
+// An unchanged page must not be re-sent on every tick: each swap redraws it.
+func TestHealthEventsSkipsUnchangedFragment(t *testing.T) {
+	old := healthTick
+	healthTick = 20 * time.Millisecond
+	t.Cleanup(func() { healthTick = old })
+
+	srv, pw, _ := newHealthTestServer(t, health.Result{Name: "store", Status: health.Healthy})
+	client, _ := loggedInClient(t, srv, pw)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/health/events", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /health/events: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body) // ends at the context deadline
+	if n := strings.Count(string(body), "event: health"); n != 1 {
+		t.Errorf("sent %d health events over many ticks with nothing changed, want 1", n)
+	}
+}
