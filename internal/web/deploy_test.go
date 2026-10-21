@@ -363,3 +363,30 @@ func TestDeployFormSetsTheAddressPort(t *testing.T) {
 		t.Error("the edit form doesn't show the address port")
 	}
 }
+
+func TestBlockPagesShareOverviewLogsSettingsTabs(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "")
+	c, csrf := loggedInClient(t, srv, pw)
+	deployNginx(t, c, srv.URL, csrf)
+	tabs := []string{`href="/blocks/default/site"`, `href="/blocks/default/site/logs"`, `href="/blocks/default/site/edit"`}
+	for path, current := range map[string]int{"/blocks/default/site": 0, "/blocks/default/site/logs": 1, "/blocks/default/site/edit": 2} {
+		_, body := get(t, c, srv.URL+path)
+		for i, want := range tabs {
+			if i == current {
+				want = strings.TrimSuffix(want, `"`) + `" aria-current="page"`
+			}
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: tabs lack %s", path, want)
+			}
+		}
+	}
+	_, detail := get(t, c, srv.URL+"/blocks/default/site")
+	_, settings := get(t, c, srv.URL+"/blocks/default/site/edit")
+	if strings.Contains(detail, `aria-label="Section"`) {
+		t.Error("a block page repeats the Workloads section tabs above its own")
+	}
+	if strings.Contains(detail, "/delete") || !strings.Contains(settings, `hx-post="/blocks/default/site/delete"`) {
+		t.Error("Delete belongs on the Settings tab, not the overview")
+	}
+}

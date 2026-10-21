@@ -1,10 +1,11 @@
 {{define "content"}}
 <div class="page-head">
   <div>
-    <h1 class="page-title">{{if .Edit}}Edit <code>{{.Name}}</code> ({{.Type.Name}}){{else}}Deploy <code>{{.Type.Name}}</code>{{end}}</h1>
+    <h1 class="page-title">{{if .Edit}}<span>{{.Editing}}</span> <span class="muted">settings</span>{{else}}Deploy <code>{{.Type.Name}}</code>{{end}}</h1>
     {{with .Type.Description}}<p class="page-sub">{{.}}</p>{{end}}
   </div>
 </div>
+{{if .Edit}}{{template "block-tabs" (blockTabs .Editing "settings")}}{{end}}
 <div class="grid-form">
   <section class="card">
     <form method="post" action="{{.Action}}" class="form" novalidate>
@@ -86,6 +87,24 @@
     {{end}}
   </aside>
 </div>
+{{if .Edit}}
+<section class="card card-danger">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-trash"/></svg>Delete this block</h2></div>
+  <p>Every replica is stopped and removed. Volumes the block used are not deleted.</p>
+  <div class="form-actions"><button class="btn btn-danger" type="button" data-confirm="confirm-delete"><svg class="icon"><use href="#i-trash"/></svg>Delete {{.Editing}}</button></div>
+</section>
+<form id="delete-form" hx-post="/blocks/{{.Editing}}/delete" hx-swap="none"></form>
+<dialog id="confirm-delete" class="dialog" data-submit="#delete-form">
+  <form method="dialog">
+    <h2>Delete {{.Editing}}?</h2>
+    <p>Every replica is stopped and removed. Volumes the block used are not deleted.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" value="cancel">Cancel</button>
+      <button class="btn btn-danger" value="confirm">Delete block</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
 {{end}}
 
 {{define "cfgfield"}}

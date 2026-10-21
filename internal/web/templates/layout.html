@@ -57,7 +57,7 @@
           {{range .Page.Crumbs}}<li>{{if .Href}}<a href="{{.Href}}">{{.Label}}</a>{{else}}<span aria-current="page">{{.Label}}</span>{{end}}</li>{{end}}
         </ol>
       </nav>
-      {{with navTabs .Page.Active}}<nav class="tabs" aria-label="Section">{{range .}}<a href="{{.Href}}"{{if eq .Key $.Page.Active}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>{{end}}
+      {{if le (len .Page.Crumbs) 1}}{{with navTabs .Page.Active}}<nav class="tabs" aria-label="Section">{{range .}}<a href="{{.Href}}"{{if eq .Key $.Page.Active}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>{{end}}{{end}}
       {{template "content" .}}
     </main>
 

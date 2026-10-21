@@ -1,8 +1,15 @@
 {{define "content"}}
-<div hx-ext="sse" sse-connect="/nodes/{{.Node.ID}}/events">
+<div hx-ext="sse" sse-connect="/nodes/{{.Node.ID}}/events{{with .Tab}}?tab={{.}}{{end}}">
   <div id="node-fragment" sse-swap="node" hx-swap="innerHTML">{{template "node-fragment" .}}</div>
+  <nav class="tabs" aria-label="Node sections">
+    <a href="/nodes/{{.Node.ID}}"{{if eq .Tab ""}} aria-current="page"{{end}}>Overview</a>
+    <a href="/nodes/{{.Node.ID}}?tab=hardware"{{if eq .Tab "hardware"}} aria-current="page"{{end}}>Hardware</a>
+    <a href="/nodes/{{.Node.ID}}?tab=checks"{{if eq .Tab "checks"}} aria-current="page"{{end}}>Checks</a>
+  </nav>
+  {{if eq .Tab ""}}
   {{/* Not live while it shows a refused submit, so the message stays. */}}
   <div id="node-storage"{{if not .Storage.Error}} sse-swap="node-storage" hx-swap="innerHTML"{{end}}>{{template "node-storage" .}}</div>
+  {{end}}
   <div id="node-local" sse-swap="node-local" hx-swap="innerHTML">{{template "node-local" .}}</div>
 </div>
 {{end}}
@@ -71,10 +78,34 @@
 {{end}}
 
 {{define "node-local"}}
+{{if eq .Tab ""}}{{template "node-replicas" .}}{{end}}
 {{if not .Node.Serving}}
 <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>Detailed inventory is shown for the serving node only.</strong><p>Inventory, health checks and reconciler status are read from the agent answering this page ({{.Page.NodeName}}); nodes do not publish them cluster-wide. {{if .Node.UIURL}}Open this page on <a href="{{.Node.UIURL}}">{{nodename .Node.ID}} directly</a> to see its details.{{end}}</p></div></div>
-{{else}}
+{{else if eq .Tab "hardware"}}{{template "node-hardware" .}}
+{{else if eq .Tab "checks"}}{{template "node-checks" .}}
+{{else}}{{template "node-system" .}}
+{{end}}
+{{end}}
 
+{{define "node-replicas"}}
+<section class="card">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-blocks"/></svg>Replicas on this node</h2><span class="muted">{{len .Replicas}}</span></div>
+  {{if .Replicas}}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Block</th><th>Replica</th><th>Phase</th><th>Readiness</th></tr></thead>
+      <tbody>
+        {{range .Replicas}}<tr><td><a class="host" href="/blocks/{{.Block}}">{{.Block}}</a></td><td>#{{.Index}}</td><td>{{template "pill" .Phase}}</td><td>{{template "pill" .Ready}}</td></tr>{{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  {{template "empty" (or .ReplicasError "No block replicas run on this node.")}}
+  {{end}}
+</section>
+{{end}}
+
+{{define "node-system"}}
 <div class="grid-2">
   <section class="card">
     <div class="card-head"><h2>System</h2></div>
@@ -108,7 +139,9 @@
     {{end}}
   </section>
 </div>
+{{end}}
 
+{{define "node-hardware"}}
 {{if .Inventory}}
 <div class="grid-2">
   <section class="card">
@@ -179,8 +212,12 @@
   </div>
 </section>
 {{end}}
+{{else}}
+{{template "empty" .InventoryError}}
+{{end}}
 {{end}}
 
+{{define "node-checks"}}
 <div class="grid-2">
   <section class="card">
     <div class="card-head"><h2>Health checks</h2></div>
@@ -213,5 +250,4 @@
     {{end}}
   </section>
 </div>
-{{end}}
 {{end}}

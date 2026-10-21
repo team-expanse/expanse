@@ -1,0 +1,6 @@
+{{/* block-tabs: the Overview / Logs / Settings strip every block page shares. */}}
+{{define "block-tabs"}}<nav class="tabs" aria-label="Block sections">
+  <a href="/blocks/{{.Key}}"{{if eq .Current "overview"}} aria-current="page"{{end}}>Overview</a>
+  <a href="/blocks/{{.Key}}/logs"{{if eq .Current "logs"}} aria-current="page"{{end}}><svg class="icon"><use href="#i-logs"/></svg>Logs</a>
+  <a href="/blocks/{{.Key}}/edit"{{if eq .Current "settings"}} aria-current="page"{{end}}><svg class="icon"><use href="#i-settings"/></svg>Settings</a>
+</nav>{{end}}

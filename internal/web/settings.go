@@ -53,7 +53,7 @@ func (s *Server) settingsData(w http.ResponseWriter, r *http.Request) settingsDa
 }
 
 func (s *Server) clusterSettingsData(w http.ResponseWriter, r *http.Request) clusterSettingsData {
-	d := clusterSettingsData{Page: s.newPage(w, r, "Cluster settings", "cluster-settings", crumb{Label: "Cluster", Href: "/cluster"}, crumb{Label: "Settings"})}
+	d := clusterSettingsData{Page: s.newPage(w, r, "Cluster settings", "cluster-settings", crumb{Label: "Cluster settings"})}
 	if cfg, err := oidc.LoadConfig(r.Context(), s.store); err == nil {
 		d.OIDC = cfg
 	}

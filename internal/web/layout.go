@@ -132,6 +132,7 @@ func templateFuncs(names *nodeNames) template.FuncMap {
 		"scalable":        showReplicas,
 		"leaderID":        leaderID,
 		"downMembers":     downMembers,
+		"blockTabs":       func(key, current string) blockTabsView { return blockTabsView{key, current} },
 		"upgradeFragment": func(v upgradeView, csrf string) upgradeFragment { return upgradeFragment{View: v, CSRF: csrf} },
 		"bytes":           humanBytesAny,
 		"mib":             func(n int64) string { return humanBytesAny(n << 20) },
@@ -432,7 +433,8 @@ func navItems() []navItem {
 	}
 }
 
-// navTabs is the tab strip for the section holding active, if it has one.
+// navTabs is the tab strip for the section holding active, if it has one;
+// the layout shows it on a section's top-level pages, not on detail pages.
 func navTabs(active string) []navTab {
 	for _, n := range navItems() {
 		if n.Has(active) {

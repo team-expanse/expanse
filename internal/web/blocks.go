@@ -26,6 +26,9 @@ import (
 // requireAuth (X3). Go 1.22 ServeMux path patterns route by method and
 // segment count, so "/blocks/new" (1 segment) never matches
 // "/blocks/{ns}/{name}" (2 segments).
+// blockTabsView feeds the "block-tabs" strip: the block's "ns/name" and the current tab.
+type blockTabsView struct{ Key, Current string }
+
 func (s *Server) registerBlockRoutes() {
 	s.routes.Handle("GET /blocks", s.requireAuth(http.HandlerFunc(s.handleBlocksList)))
 	s.routes.Handle("GET /blocks/events", s.requireAuth(http.HandlerFunc(s.handleBlocksEvents)))

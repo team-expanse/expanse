@@ -254,7 +254,7 @@ strong { font-weight: 600; }
 .crumbs li + li::before { content: "/"; margin-right: 0.5rem; color: var(--fg-faint); }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 1.4rem; overflow-x: auto; }
 .tabs a {
-  display: inline-flex; align-items: center; min-height: var(--tap); padding: 0 0.95rem;
+  display: inline-flex; align-items: center; gap: 0.45rem; min-height: var(--tap); padding: 0 0.95rem;
   color: var(--fg-muted); font-weight: 600; font-size: 0.93rem; white-space: nowrap;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
@@ -284,6 +284,7 @@ strong { font-weight: 600; }
 }
 .card-flush { padding: 0; overflow: hidden; }
 .card-muted { background: var(--bg-sunken); box-shadow: none; }
+.card-danger { border-color: color-mix(in srgb, var(--crit) 45%, transparent); }
 .card-crit { border-color: var(--crit); box-shadow: 0 0 0 1px color-mix(in srgb, var(--crit) 40%, transparent), 0 0 32px color-mix(in srgb, var(--crit) calc(var(--glow) * 40%), transparent); }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
 .card-head h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--fg-muted); display: flex; align-items: center; gap: 0.5rem; }

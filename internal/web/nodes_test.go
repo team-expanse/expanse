@@ -16,6 +16,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
+	pb "github.com/expanse/expanse/proto"
 )
 
 // putTestNode writes the record and status a joined node would have.
@@ -61,9 +62,13 @@ func TestNodeDetailForServingNodeShowsInventoryChecksAndReconciler(t *testing.T)
 	}, health.Result{Name: "disk-space", Status: health.Healthy, Message: "/ 41% used"})
 	client, _ := loggedInClient(t, srv, pw)
 
-	resp, body := getPage(t, client, srv, "/nodes/n1")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	var body string
+	for _, tab := range []string{"", "?tab=hardware", "?tab=checks"} {
+		resp, b := getPage(t, client, srv, "/nodes/n1"+tab)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200: %s", tab, resp.StatusCode, b)
+		}
+		body += b
 	}
 	for _, want := range []string{"rack1-a", "NixOS", "AMD EPYC 7302P", "16 cores", "/dev/nvme0n1", "Samsung PM9A3", "eno1", "aa:bb:cc:dd:ee:01", "NVIDIA", "disk-space", "/ 41% used", "Reconciler", "Idle"} {
 		if !strings.Contains(body, want) {
@@ -181,5 +186,45 @@ func TestLeaderCardsNameTheLeaderNode(t *testing.T) {
 		if _, body := getPage(t, client, srv, path); !strings.Contains(body, want) {
 			t.Errorf("%s missing %q", path, want)
 		}
+	}
+}
+
+func TestNodeDetailTabsSplitTheSections(t *testing.T) {
+	srv, pw, _ := newHealthTestServerWithInventory(t, &inventory.Inventory{
+		NodeID: "n1", CPU: inventory.CPUInfo{Model: "AMD EPYC 7302P", Cores: 16, Threads: 32},
+	}, health.Result{Name: "disk-space", Status: health.Healthy, Message: "/ 41% used"})
+	client, _ := loggedInClient(t, srv, pw)
+	cases := []struct{ query, current, live, has, lacks string }{
+		{"", `href="/nodes/n1" aria-current="page"`, `sse-connect="/nodes/n1/events"`, "Reconciler", "AMD EPYC"},
+		{"?tab=hardware", `href="/nodes/n1?tab=hardware" aria-current="page"`, `sse-connect="/nodes/n1/events?tab=hardware"`, "AMD EPYC", "disk-space"},
+		{"?tab=checks", `href="/nodes/n1?tab=checks" aria-current="page"`, `sse-connect="/nodes/n1/events?tab=checks"`, "disk-space", "Reconciler"},
+	}
+	for _, c := range cases {
+		_, body := getPage(t, client, srv, "/nodes/n1"+c.query)
+		for _, want := range []string{c.current, c.live, c.has} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%q lacks %s", c.query, want)
+			}
+		}
+		if strings.Contains(body, c.lacks) {
+			t.Errorf("%q shows %s from another tab", c.query, c.lacks)
+		}
+	}
+}
+
+func TestNodeReplicasListsLivePlacementsOnTheNode(t *testing.T) {
+	blocks := []*pb.Block{
+		{Metadata: &pb.Metadata{Namespace: "default", Name: "web"}, Status: &pb.BlockStatus{Placements: []*pb.PlacementStatus{
+			{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_RUNNING},
+			{ReplicaIndex: 1, NodeId: "n2", Phase: pb.Phase_RUNNING},
+			{ReplicaIndex: -1, NodeId: "n1", FormerIndex: 2, Phase: pb.Phase_LOST},
+		}}},
+		{Metadata: &pb.Metadata{Namespace: "media", Name: "jellyfin"}, Status: &pb.BlockStatus{Placements: []*pb.PlacementStatus{
+			{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_FAILED},
+		}}},
+	}
+	got := nodeReplicas(blocks, "n1")
+	if len(got) != 2 || got[0].Block != "default/web" || got[0].Index != 0 || got[1].Block != "media/jellyfin" || got[1].Phase.Label != "Failed" {
+		t.Errorf("nodeReplicas = %+v", got)
 	}
 }

@@ -132,6 +132,44 @@ type nodeDetailData struct {
 	StatusPill     pill
 	Resources      []resourceView
 	Storage        nodeStorageView
+	// Tab is the section shown: "" (overview), "hardware" or "checks".
+	Tab           string
+	Replicas      []nodeReplicaView
+	ReplicasError string
+}
+
+// nodeReplicaView is one block replica running on the node.
+type nodeReplicaView struct {
+	Block string // namespace/name
+	Index int32
+	Phase pill
+	Ready pill
+}
+
+// nodeReplicas lists the live placements on node id, in block order.
+func nodeReplicas(blocks []*pb.Block, id string) []nodeReplicaView {
+	var out []nodeReplicaView
+	for _, b := range blocks {
+		for _, p := range b.GetStatus().GetPlacements() {
+			if p.GetNodeId() != id || p.GetReplicaIndex() < 0 {
+				continue
+			}
+			out = append(out, nodeReplicaView{
+				Block: b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName(),
+				Index: p.GetReplicaIndex(), Phase: phasePill(p.GetPhase()), Ready: replicaRow(p).Ready,
+			})
+		}
+	}
+	return out
+}
+
+// nodeTab is the ?tab= section, defaulting to the overview.
+func nodeTab(r *http.Request) string {
+	switch t := r.URL.Query().Get("tab"); t {
+	case "hardware", "checks":
+		return t
+	}
+	return ""
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +195,7 @@ func (s *Server) nodeDetail(w http.ResponseWriter, r *http.Request) (nodeDetailD
 	}
 	name := s.names.name(id)
 	data.Page = s.newPage(w, r, name, "nodes", crumb{Label: "Nodes", Href: "/nodes"}, crumb{Label: name})
+	data.Tab = nodeTab(r)
 	return data, true
 }
 
@@ -177,7 +216,21 @@ func (s *Server) loadNodeDetail(ctx context.Context, id string) (data nodeDetail
 		s.loadLocalNodeDetail(ctx, &data)
 	}
 	data.Storage = s.nodeStorageView(ctx, id)
+	s.loadNodeReplicas(ctx, &data)
 	return data, true, nil
+}
+
+func (s *Server) loadNodeReplicas(ctx context.Context, data *nodeDetailData) {
+	if s.blocks == nil {
+		data.ReplicasError = "Blocks are not served on this node."
+		return
+	}
+	resp, err := s.blocks.List(store.WithStale(ctx), &pb.ListBlocksRequest{})
+	if err != nil {
+		data.ReplicasError = "Block placements are unavailable: " + errText(err)
+		return
+	}
+	data.Replicas = nodeReplicas(resp.GetBlocks(), data.Node.ID)
 }
 
 // handleNodeDetailEvents streams the node page. Store writes cover its
@@ -192,13 +245,13 @@ func (s *Server) handleNodeDetailEvents(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	pg := page{CSRFToken: sessionFromContext(r.Context()).CSRFToken}
+	pg, tab := page{CSRFToken: sessionFromContext(r.Context()).CSRFToken}, nodeTab(r)
 	streamEvents(w, r, changes, healthTick, func(ctx context.Context) ([]sseEvent, error) {
 		data, found, err := s.loadNodeDetail(ctx, id)
 		if err != nil || !found {
 			return nil, nil //nolint:nilerr // transient, or the node left; the next change retries
 		}
-		data.Page = pg
+		data.Page, data.Tab = pg, tab
 		data.Page.NodeName = s.nodeName(ctx)
 		var events []sseEvent
 		// Separate regions, so a tick's redraw leaves the storage form alone.
