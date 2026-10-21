@@ -1,10 +1,17 @@
 {{define "content"}}
+<div hx-ext="sse" sse-connect="/nodes/{{.Node.ID}}/events">
+  <div id="node-fragment" sse-swap="node" hx-swap="innerHTML">{{template "node-fragment" .}}</div>
+</div>
+{{end}}
+
+{{define "node-fragment"}}
 <div class="page-head">
   <div>
     <h1 class="page-title">{{nodename .Node.ID}} {{template "pill" .Node.State}}{{if .Node.Leader}} <span class="tag tag-leader">Leader</span>{{end}}</h1>
     <p class="page-sub">{{role .Node.Role}} · joined {{ago .Node.JoinedAt}}{{if .Node.Serving}} · this node is serving you{{end}}</p>
   </div>
   <div class="page-actions">
+    {{template "live"}}
     {{if and (not .Node.Serving) .Node.UIURL}}<a class="btn btn-ghost" href="{{.Node.UIURL}}"><svg class="icon"><use href="#i-external"/></svg>Open on {{nodename .Node.ID}}</a>{{end}}
   </div>
 </div>
@@ -46,7 +53,7 @@
     {{template "csrf" $.Page}}
     <label class="field">
       <span class="field-label">Pool size, % of the free space</span>
-      <input class="input" type="number" name="percent" value="{{.Percent}}" min="1" max="95"{{if .Error}} aria-invalid="true" autofocus{{end}}>
+      <input class="input" id="storage-percent" hx-preserve type="number" name="percent" value="{{.Percent}}" min="1" max="95"{{if .Error}} aria-invalid="true" autofocus{{end}}>
       {{if .Error}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">The rest stays free as headroom. The pool cannot shrink later.</span>{{end}}
     </label>
     <div class="form-actions"><button class="btn btn-primary" type="submit">Enable storage</button></div>

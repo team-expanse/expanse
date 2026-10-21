@@ -17,6 +17,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/config"
+	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -25,6 +26,7 @@ func (s *Server) registerNodeRoutes() {
 	s.routes.Handle("GET /nodes", s.requireAuth(http.HandlerFunc(s.handleNodesList)))
 	s.routes.Handle("GET /nodes/events", s.requireAuth(http.HandlerFunc(s.handleNodesEvents)))
 	s.routes.Handle("GET /nodes/{id}", s.requireAuth(http.HandlerFunc(s.handleNodeDetail)))
+	s.routes.Handle("GET /nodes/{id}/events", s.requireAuth(http.HandlerFunc(s.handleNodeDetailEvents)))
 	s.routes.Handle("POST /nodes/{id}/storage", s.requireAuth(http.HandlerFunc(s.handleNodeStorageEnable)))
 }
 
@@ -144,28 +146,62 @@ func (s *Server) nodeDetail(w http.ResponseWriter, r *http.Request) (nodeDetailD
 		return nodeDetailData{}, false
 	}
 	id := r.PathValue("id")
-	nodes, _, err := s.loadNodes(r.Context())
-	if err != nil {
+	data, found, err := s.loadNodeDetail(r.Context(), id)
+	switch {
+	case err != nil:
 		s.renderError(w, r, http.StatusServiceUnavailable, errText(err))
+		return nodeDetailData{}, false
+	case !found:
+		s.renderError(w, r, http.StatusNotFound, "There is no node named "+id+" in this cluster.")
 		return nodeDetailData{}, false
 	}
 	name := s.names.name(id)
-	data := nodeDetailData{Page: s.newPage(w, r, name, "nodes", crumb{Label: "Nodes", Href: "/nodes"}, crumb{Label: name})}
-	found := false
+	data.Page = s.newPage(w, r, name, "nodes", crumb{Label: "Nodes", Href: "/nodes"}, crumb{Label: name})
+	return data, true
+}
+
+func (s *Server) loadNodeDetail(ctx context.Context, id string) (data nodeDetailData, found bool, err error) {
+	nodes, _, err := s.loadNodes(ctx)
+	if err != nil {
+		return data, false, err
+	}
 	for _, n := range nodes {
 		if n.ID == id {
 			data.Node, found = n, true
 		}
 	}
 	if !found {
-		s.renderError(w, r, http.StatusNotFound, "There is no node named "+id+" in this cluster.")
-		return nodeDetailData{}, false
+		return data, false, nil
 	}
 	if data.Node.Serving {
-		s.loadLocalNodeDetail(r.Context(), &data)
+		s.loadLocalNodeDetail(ctx, &data)
 	}
-	data.Storage = s.nodeStorageView(r.Context(), id)
-	return data, true
+	data.Storage = s.nodeStorageView(ctx, id)
+	return data, true, nil
+}
+
+// handleNodeDetailEvents streams the node page. Store writes cover its
+// record and storage; the tick covers the agent's local inventory and checks.
+func (s *Server) handleNodeDetailEvents(w http.ResponseWriter, r *http.Request) {
+	if s.clusterUnavailable(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	changes, err := fanInWatches(r.Context(), s.store, store.Key(join.NodesKeyPrefix), store.Key("/cluster/"), store.Key(storage.NodeStoragePrefix), store.Key("/node/"+id+"/"))
+	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	pg := page{CSRFToken: sessionFromContext(r.Context()).CSRFToken}
+	streamFragments(w, r, "node", changes, healthTick, func(ctx context.Context) (string, error) {
+		data, found, err := s.loadNodeDetail(ctx, id)
+		if err != nil || !found {
+			return "", nil //nolint:nilerr // transient, or the node left; the next change retries
+		}
+		data.Page = pg
+		data.Page.NodeName = s.nodeName(ctx)
+		return s.fragment("node-fragment", data)
+	})
 }
 
 // loadLocalNodeDetail fills the sections only the in-process

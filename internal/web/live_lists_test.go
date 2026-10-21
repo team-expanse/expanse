@@ -34,3 +34,20 @@ func TestVolumesListUpdatesLive(t *testing.T) {
 	putTestVolume(t, st, storage.Spec{ID: "vol-1", Name: "data", SizeBytes: 1 << 30, Class: "default", Replication: 1}, storage.Status{State: storage.StateHealthy})
 	sse.expect(`href="/volumes/data"`, 2*time.Second)
 }
+
+// Storage turning on while the node page is open shows without a reload.
+func TestNodeDetailUpdatesLive(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	c, _ := loggedInClient(t, srv, pw)
+	reportStorage(t, st, "n1", storage.NodeStorage{State: storage.NodeStorageOff, VG: "expanse", VGSize: 100 << 30, VGFree: 100 << 30})
+	if _, body := get(t, c, srv.URL+"/nodes/n1"); !strings.Contains(body, `sse-connect="/nodes/n1/events"`) {
+		t.Error("the node page is not a live region")
+	}
+	sse := openSSE(t, c, srv.URL+"/nodes/n1/events")
+	sse.expect("Enable storage", 2*time.Second)
+	if strings.Contains(sse.got(), `name="csrf_token" value=""`) {
+		t.Error("the live storage form has no CSRF token")
+	}
+	reportStorage(t, st, "n1", storage.NodeStorage{State: storage.NodeStorageReboot, Source: storage.SourceUI, VG: "expanse", Pool: "pool"})
+	sse.expect("Reboot n1", 2*time.Second)
+}

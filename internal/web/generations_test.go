@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/store"
@@ -122,12 +123,16 @@ func TestGenerationRollbackNeedsCSRFAndCreatesANewGeneration(t *testing.T) {
 	}
 }
 
-// The list has no live stream, so a rollback from it reloads the page to show
-// the new generation and the moved "Current" tag.
-func TestGenerationRollbackFromTheListReloadsIt(t *testing.T) {
+// The list is live, so a rollback from it is a toast and the new generation streams in.
+func TestGenerationsListUpdatesLive(t *testing.T) {
 	srv, pw, st := newClusterTestServer(t)
 	client, csrf := loggedInClient(t, srv, pw)
 	importGeneration(t, st, "two", map[string]string{"/networks/x": "1"})
+	if _, body := getPage(t, client, srv, "/generations"); !strings.Contains(body, `sse-connect="/generations/events"`) {
+		t.Error("the generations list is not a live region")
+	}
+	sse := openSSE(t, client, srv.URL+"/generations/events")
+	sse.expect(`href="/generations/2"`, 2*time.Second)
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/generations/1/rollback", nil)
 	req.Header.Set(csrfHeader, csrf)
@@ -138,9 +143,10 @@ func TestGenerationRollbackFromTheListReloadsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.Header.Get("HX-Refresh") != "true" {
-		t.Errorf("rollback from the list does not reload it (status %d)", resp.StatusCode)
+	if resp.Header.Get("HX-Refresh") != "" || resp.Header.Get("HX-Trigger") == "" {
+		t.Errorf("rollback from the list: refresh %q, toast %q", resp.Header.Get("HX-Refresh"), resp.Header.Get("HX-Trigger"))
 	}
+	sse.expect(`href="/generations/3"`, 2*time.Second)
 }
 
 // When the cluster can't say which generation is live, nothing offers a rollback.

@@ -4,7 +4,15 @@
     <h1 class="page-title">Generations</h1>
     <p class="page-sub">Every committed desired-state snapshot. Rolling back appends a new generation; history is never rewritten.</p>
   </div>
+  <div class="page-actions">{{template "live"}}</div>
 </div>
+
+<div hx-ext="sse" sse-connect="/generations/events">
+  <div id="generations-fragment" sse-swap="generations" hx-swap="innerHTML">{{template "generations-fragment" .}}</div>
+</div>
+{{end}}
+
+{{define "generations-fragment"}}
 {{if .Error}}
 <div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Generation history unavailable</strong><p>{{.Error}}</p></div></div>
 {{end}}

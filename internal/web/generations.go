@@ -4,10 +4,13 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
+	"github.com/expanse/expanse/internal/cluster/generation"
 	"github.com/expanse/expanse/internal/errors"
+	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -15,6 +18,7 @@ import (
 
 func (s *Server) registerGenerationRoutes() {
 	s.routes.Handle("GET /generations", s.requireAuth(http.HandlerFunc(s.handleGenerationsList)))
+	s.routes.Handle("GET /generations/events", s.requireAuth(http.HandlerFunc(s.handleGenerationsEvents)))
 	s.routes.Handle("GET /generations/diff", s.requireAuth(http.HandlerFunc(s.handleGenerationsDiff)))
 	s.routes.Handle("GET /generations/{n}", s.requireAuth(http.HandlerFunc(s.handleGenerationDetail)))
 	s.routes.Handle("POST /generations/{n}/rollback", s.requireAuth(http.HandlerFunc(s.handleGenerationRollback)))
@@ -52,8 +56,14 @@ func (s *Server) handleGenerationsList(w http.ResponseWriter, r *http.Request) {
 	if s.clusterUnavailable(w, r) {
 		return
 	}
-	data := generationsListData{Page: s.newPage(w, r, "Generations", "generations", crumb{Label: "Generations"})}
-	resp, err := s.cluster.ListGenerations(r.Context(), &pb.ListGenerationsRequest{})
+	data := s.loadGenerations(r.Context())
+	data.Page = s.newPage(w, r, "Generations", "generations", crumb{Label: "Generations"})
+	s.render(w, http.StatusOK, "generations_list.html", data)
+}
+
+func (s *Server) loadGenerations(ctx context.Context) generationsListData {
+	var data generationsListData
+	resp, err := s.cluster.ListGenerations(ctx, &pb.ListGenerationsRequest{})
 	if err != nil {
 		data.Error = errText(err)
 	}
@@ -61,10 +71,25 @@ func (s *Server) handleGenerationsList(w http.ResponseWriter, r *http.Request) {
 	for i := len(gens) - 1; i >= 0; i-- {
 		data.Generations = append(data.Generations, gens[i])
 	}
-	if rep, err := s.getClusterReport(r.Context()); err == nil {
+	if rep, err := s.getClusterReport(ctx); err == nil {
 		data.Current = uint64(rep.Generation)
 	}
-	s.render(w, http.StatusOK, "generations_list.html", data)
+	return data
+}
+
+// handleGenerationsEvents streams the list as generations are committed.
+func (s *Server) handleGenerationsEvents(w http.ResponseWriter, r *http.Request) {
+	if s.clusterUnavailable(w, r) {
+		return
+	}
+	changes, err := fanInWatches(r.Context(), s.store, store.Key(generation.GensPrefix), store.Key("/cluster/"))
+	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	streamFragments(w, r, "generations", changes, 0, func(ctx context.Context) (string, error) {
+		return s.fragment("generations-fragment", s.loadGenerations(ctx))
+	})
 }
 
 type generationDetailData struct {
@@ -143,5 +168,5 @@ func (s *Server) handleGenerationRollback(w http.ResponseWriter, r *http.Request
 		http.Error(w, errText(err), rpcStatus(err))
 		return
 	}
-	s.doneRefresh(w, r, "success", "Rolled back to generation "+r.PathValue("n")+" as generation "+strconv.FormatUint(resp.GetNewGeneration(), 10), "/generations")
+	s.done(w, r, "success", "Rolled back to generation "+r.PathValue("n")+" as generation "+strconv.FormatUint(resp.GetNewGeneration(), 10), "/generations")
 }
