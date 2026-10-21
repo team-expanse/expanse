@@ -15,20 +15,39 @@ import (
 	"github.com/expanse/expanse/internal/web/auth"
 )
 
-func TestSettingsPageShowsPasswordFormOIDCStatusAndCA(t *testing.T) {
-	srv, pw, st := newClusterTestServer(t)
+func TestAccountSettingsHoldOnlyThePassword(t *testing.T) {
+	srv, pw, _ := newClusterTestServer(t)
 	client, _ := loggedInClient(t, srv, pw)
-
-	resp, body := getPage(t, client, srv, "/settings")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	for _, want := range []string{"Change password", `name="current"`, `name="password"`, `name="confirm"`, "Not configured", "expanse ctl oidc configure", control.UICAFile} {
+	_, body := getPage(t, client, srv, "/settings")
+	for _, want := range []string{"Change password", `name="current"`, `name="password"`, `name="confirm"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings missing %q", want)
 		}
 	}
-	if strings.Contains(body, `href="/settings/ui-ca.pem"`) {
+	for _, gone := range []string{`name="externalVIPPool"`, "Single sign-on", control.UICAFile} {
+		if strings.Contains(body, gone) {
+			t.Errorf("account settings still hold cluster-wide %q", gone)
+		}
+	}
+}
+
+func TestClusterSettingsShowOIDCStatusAndCA(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+
+	resp, body := getPage(t, client, srv, "/cluster/settings")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.Contains(body, `class="nav-item" href="/cluster" aria-current="page"`) || !strings.Contains(body, `href="/cluster/settings" aria-current="page"`) {
+		t.Error("cluster settings not shown as the Cluster section's Settings tab")
+	}
+	for _, want := range []string{"Not configured", "expanse ctl oidc configure", control.UICAFile} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings missing %q", want)
+		}
+	}
+	if strings.Contains(body, `href="/cluster/ui-ca.pem"`) {
 		t.Error("download link offered before the CA exists in the store")
 	}
 
@@ -37,8 +56,8 @@ func TestSettingsPageShowsPasswordFormOIDCStatusAndCA(t *testing.T) {
 	if _, err := st.Put(context.Background(), store.Key(control.UICAKey), rec); err != nil {
 		t.Fatal(err)
 	}
-	_, body = getPage(t, client, srv, "/settings")
-	for _, want := range []string{"https://idp.example", "alice@example.com", "test-client", `href="/settings/ui-ca.pem"`} {
+	_, body = getPage(t, client, srv, "/cluster/settings")
+	for _, want := range []string{"https://idp.example", "alice@example.com", "test-client", `href="/cluster/ui-ca.pem"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings after config missing %q", want)
 		}
@@ -52,7 +71,7 @@ func TestUICADownloadServesOnlyTheCertificate(t *testing.T) {
 	srv, pw, st := newClusterTestServer(t)
 	client, _ := loggedInClient(t, srv, pw)
 
-	resp, _ := getPage(t, client, srv, "/settings/ui-ca.pem")
+	resp, _ := getPage(t, client, srv, "/cluster/ui-ca.pem")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status before CA exists = %d, want 404", resp.StatusCode)
 	}
@@ -61,7 +80,7 @@ func TestUICADownloadServesOnlyTheCertificate(t *testing.T) {
 	if _, err := st.Put(context.Background(), store.Key(control.UICAKey), rec); err != nil {
 		t.Fatal(err)
 	}
-	resp, body := getPage(t, client, srv, "/settings/ui-ca.pem")
+	resp, body := getPage(t, client, srv, "/cluster/ui-ca.pem")
 	if resp.StatusCode != http.StatusOK || body != pem {
 		t.Errorf("download = %d %q, want 200 and the PEM", resp.StatusCode, body)
 	}
@@ -73,7 +92,7 @@ func TestUICADownloadServesOnlyTheCertificate(t *testing.T) {
 	}
 
 	anon := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	r, err := anon.Get(srv.URL + "/settings/ui-ca.pem")
+	r, err := anon.Get(srv.URL + "/cluster/ui-ca.pem")
 	if err != nil {
 		t.Fatal(err)
 	}

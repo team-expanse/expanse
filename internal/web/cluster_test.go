@@ -178,3 +178,22 @@ func TestClusterEventsSSEStreamsLiveUpdate(t *testing.T) {
 
 	drain("n2", 10*time.Second)
 }
+
+func TestClusterOverviewLinksUpgradeAndRollback(t *testing.T) {
+	srv, pw, _ := newClusterTestServer(t)
+	client, _ := loggedInClient(t, srv, pw)
+	_, body := getPage(t, client, srv, "/cluster")
+	for _, want := range []string{`href="/upgrade"`, `href="/generations"`, `href="/cluster/settings"`} {
+		if !strings.Contains(body[strings.Index(body, `id="main"`):], want) {
+			t.Errorf("cluster page lacks %s", want)
+		}
+	}
+}
+
+func TestDownMembersListsSilentNodes(t *testing.T) {
+	rep := &control.Report{Nodes: []control.NodeStatus{{ID: "a"}, {ID: "b", Lifecycle: "unreachable"}, {ID: "c", Lifecycle: "failed"}}}
+	got := downMembers(rep)
+	if len(got) != 2 || got[0].ID != "b" || got[1].ID != "c" {
+		t.Errorf("downMembers = %+v, want b and c", got)
+	}
+}

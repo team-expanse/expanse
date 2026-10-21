@@ -2,9 +2,9 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">Cluster</h1>
-    <p class="page-sub">Raft membership, quorum and the current generation.</p>
+    <p class="page-sub">Identity, Raft membership and quorum, and the generation every node converges on. Shared settings are under <a href="/cluster/settings">Settings</a>.</p>
   </div>
-  <div class="page-actions">{{template "live"}}</div>
+  <div class="page-actions">{{template "live"}}<a class="btn btn-ghost" href="/generations"><svg class="icon"><use href="#i-rollback"/></svg>Roll back</a><a class="btn" href="/upgrade"><svg class="icon"><use href="#i-download"/></svg>Upgrade</a></div>
 </div>
 <div hx-ext="sse" sse-connect="/cluster/events">
   <div id="cluster-fragment" sse-swap="cluster" hx-swap="innerHTML">{{if .Error}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Cluster status unavailable</strong><p>{{.Error}}</p></div></div>{{else}}{{template "cluster-fragment" .Report}}{{end}}</div>
@@ -14,7 +14,9 @@
 {{define "cluster-fragment"}}
 {{if .Degraded}}
 <div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Degraded: no quorum</strong><p>This node cannot reach a Raft majority and is serving stale reads only. Writes fail until quorum returns.</p></div></div>
-{{end}}
+{{else}}{{with downMembers .}}
+<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><strong>Quorum holds with {{len .}} member{{if ne (len .) 1}}s{{end}} down.</strong><p>Writes still succeed, but the cluster tolerates fewer further failures. Open {{range $i, $n := .}}{{if $i}}, {{end}}<a href="/nodes/{{$n.ID}}">{{nodename $n.ID}}</a>{{end}}.</p></div></div>
+{{end}}{{end}}
 <section class="kv-cards">
   <div class="kv-card"><div class="kv-label">Cluster</div><div class="kv-value">{{.Name}}</div><div class="kv-sub"><code>{{.ClusterID}}</code></div></div>
   <div class="kv-card"><div class="kv-label">Leader</div><div class="kv-value">{{$leader := leaderID .}}{{if $leader}}<a href="/nodes/{{$leader}}"><strong>{{nodename $leader}}</strong></a>{{else if .Leader}}<code>{{.Leader}}</code>{{else}}<span class="text-crit">none</span>{{end}}</div><div class="kv-sub">{{if .Leader}}raft {{.Leader}}{{else}}raft address{{end}}</div></div>
@@ -22,14 +24,14 @@
   <div class="kv-card"><div class="kv-label">Generation</div><div class="kv-value"><a href="/generations">{{.Generation}}</a></div><div class="kv-sub">{{if .Version}}version {{.Version}}{{else}}desired state{{end}}</div></div>
 </section>
 <section class="card">
-  <div class="card-head"><h2>Members</h2><span class="muted">{{len .Nodes}} node{{if ne (len .Nodes) 1}}s{{end}}</span></div>
+  <div class="card-head"><h2>Members and Raft</h2><span class="muted">{{len .Nodes}} node{{if ne (len .Nodes) 1}}s{{end}}</span></div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Node</th><th>Role</th><th>State</th><th>Raft address</th><th>API address</th><th>Self-reported</th></tr></thead>
       <tbody>
         {{range .Nodes}}
         <tr>
-          <td><a href="/nodes/{{.ID}}"><strong>{{nodename .ID}}</strong></a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
+          <td><a class="host" href="/nodes/{{.ID}}">{{nodename .ID}}</a>{{if isLeader .}} <span class="tag tag-leader">Leader</span>{{end}}</td>
           <td>{{role .Role}}</td>
           <td>{{template "pill" (nodeState .)}}</td>
           <td><code>{{.RaftAddr}}</code></td>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +138,11 @@ func TestNodeUIURLFallsBackToTheRaftHost(t *testing.T) {
 	}
 }
 
+// hostLink matches a link to node id whose text is name, styled or not.
+func hostLink(id, name string) *regexp.Regexp {
+	return regexp.MustCompile(`href="/nodes/` + id + `"[^>]*>(<strong>)?` + regexp.QuoteMeta(name) + `<`)
+}
+
 // Node IDs may be UUIDs: pages name nodes by their published hostname, linking by ID.
 func TestNodeListsShowPublishedHostnames(t *testing.T) {
 	srv, pw, st := newClusterTestServer(t)
@@ -148,9 +154,9 @@ func TestNodeListsShowPublishedHostnames(t *testing.T) {
 	}
 	for _, path := range []string{"/", "/cluster", "/nodes"} {
 		_, body := getPage(t, client, srv, path)
-		for _, want := range []string{`href="/nodes/n2"><strong>rack1-b</strong>`, `href="/nodes/n3"><strong>n3</strong>`} {
-			if !strings.Contains(body, want) {
-				t.Errorf("%s missing %q", path, want)
+		for _, want := range []*regexp.Regexp{hostLink("n2", "rack1-b"), hostLink("n3", "n3")} {
+			if !want.MatchString(body) {
+				t.Errorf("%s missing %s", path, want)
 			}
 		}
 	}

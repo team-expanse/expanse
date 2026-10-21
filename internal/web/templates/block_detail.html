@@ -105,7 +105,7 @@
   <ul class="type-list">
     {{range .Block.Spec.Network.GetPorts}}{{if eq .Expose.String "EXPOSE_VIP"}}<li><code>{{$.Address}}:{{.Port}}</code> <span class="muted">{{.Name}}</span></li>{{end}}{{end}}
   </ul>
-  {{if .ClusterOnly}}<p class="field-hint">Reachable from inside the cluster only. <a href="/settings#network">Set a LAN address range</a> to reach it from your network.</p>{{end}}
+  {{if .ClusterOnly}}<p class="field-hint">Reachable from inside the cluster only. <a href="/cluster/settings#network">Set a LAN address range</a> to reach it from your network.</p>{{end}}
   {{else}}<p class="muted">Not assigned yet. It appears within a few seconds.</p>{{end}}
 </section>
 {{end}}

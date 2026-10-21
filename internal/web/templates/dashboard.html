@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">Overview</h1>
-    <p class="page-sub">{{if .Standalone}}This agent is not a cluster member; only the block and volume views apply.{{else}}Cluster <strong>{{.Page.Cluster.Name}}</strong> at a glance.{{end}}</p>
+    <p class="page-sub">{{if .Standalone}}This agent is not a cluster member; only the block and volume views apply.{{else}}Cluster <a href="/cluster"><strong>{{.Page.Cluster.Name}}</strong></a> at a glance: what needs you, what changed, and every node.{{end}}</p>
   </div>
   <div class="page-actions">{{if not .Standalone}}{{template "live"}}{{end}}</div>
 </div>
@@ -58,7 +58,7 @@
 </section>
 
 <div class="grid-2">
-  <section class="card">
+  <section class="card{{if .Alerts}} card-crit{{end}}">
     <div class="card-head"><h2>Needs attention</h2></div>
     {{if or .Alerts .NodesDown .Degraded .Unhealthy}}
     <ul class="attention">
@@ -81,7 +81,7 @@
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>Recent events</h2><a class="btn btn-ghost btn-sm" href="/events">All events</a></div>
+    <div class="card-head"><h2>Recent events</h2><a class="btn btn-ghost btn-sm" href="/events">Activity</a></div>
     {{if .Events}}
     <ul class="event-list">
       {{range .Events}}

@@ -57,7 +57,7 @@ only take over after the old one's lease has expired, and a partitioned
 holder stops serving when its own renewal fails.
 
 **The LAN pool.** Each node takes the pool from the cluster setting at
-`/settings/network` (Settings → LAN addresses in the web UI), falling
+`/cluster/network` (Cluster › Settings → LAN addresses in the web UI), falling
 back to its own `expanse.agent.externalVIPPool` while that is unset.
 With neither, VIPs come from `10.43.0.0/16` and are reachable inside
 the cluster only. The UI checks a new range before saving it: every

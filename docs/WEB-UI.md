@@ -150,13 +150,13 @@ over Server-Sent Events, never by polling.
 - **Events** (`/events`, live) — store writes as they happen, recorded in memory since the
   serving node started, filterable by type (block, volume, node, cluster, resource, lease, auth,
   other). Session keys are redacted; values are never shown.
-- **Settings** (`/settings`) — change the admin password (requires the current one; the
-  `expanse ctl admin reset-password` path in §3 remains the recovery route), the OIDC
-  configuration as stored (issuer, client ID, redirect URL, allow-list — never the secret), and
-  the UI CA: where `ui-ca.pem` lives on disk and a download of the certificate
-  (`/settings/ui-ca.pem`), and the LAN address range blocks and the UI get their VIPs from
-  (`docs/NETWORKING.md`). Until one is set, the deploy form and each block's Address card say
-  the block is reachable inside the cluster only.
+- **Settings** (`/settings`, account menu) — change the admin password (requires the current
+  one; the `expanse ctl admin reset-password` path in §3 remains the recovery route).
+- **Cluster › Settings** (`/cluster/settings`) — the LAN address range blocks and the UI get their
+  VIPs from (`docs/NETWORKING.md`), the OIDC configuration as stored (issuer, client ID, redirect
+  URL, allow-list — never the secret), and the UI CA: where `ui-ca.pem` lives on disk and a
+  download of the certificate (`/cluster/ui-ca.pem`). Until a range is set, the deploy form and
+  each block's Address card say the block is reachable inside the cluster only.
 
 All of the above are thin `html/template` + HTMX layers directly over control-plane operations the
 CLI already exercises (`internal/blocks`, `internal/storage`, the in-process `NodeService`) — the

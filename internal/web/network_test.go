@@ -27,26 +27,26 @@ func TestNetworkSettingSavesAndShows(t *testing.T) {
 	seedNodeAt(t, st, "n1", "192.168.1.10")
 	c, csrf := loggedInClient(t, srv, pw)
 
-	_, body := get(t, c, srv.URL+"/settings")
+	_, body := get(t, c, srv.URL+"/cluster/settings")
 	for _, want := range []string{`id="network"`, `name="externalVIPPool"`, "inside the cluster only"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings missing %q", want)
 		}
 	}
 
-	resp, body := postForm(t, c, srv.URL+"/settings/network", csrf, url.Values{"externalVIPPool": {" 192.168.1.100-192.168.1.120 "}})
+	resp, body := postForm(t, c, srv.URL+"/cluster/network", csrf, url.Values{"externalVIPPool": {" 192.168.1.100-192.168.1.120 "}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("save: status %d:\n%s", resp.StatusCode, alerts(body))
 	}
 	if s, _ := vip.LoadSettings(context.Background(), st); s.ExternalPool != "192.168.1.100-192.168.1.120" {
 		t.Errorf("stored %+v", s)
 	}
-	_, body = get(t, c, srv.URL+"/settings")
+	_, body = get(t, c, srv.URL+"/cluster/settings")
 	if !strings.Contains(body, `value="192.168.1.100-192.168.1.120"`) || strings.Contains(body, "inside the cluster only") {
 		t.Error("settings page does not show the saved range")
 	}
 
-	resp, body = postForm(t, c, srv.URL+"/settings/network", csrf, url.Values{"externalVIPPool": {"10.0.0.5-10.0.0.9"}})
+	resp, body = postForm(t, c, srv.URL+"/cluster/network", csrf, url.Values{"externalVIPPool": {"10.0.0.5-10.0.0.9"}})
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "No node is on 10.0.0.0/24") {
 		t.Errorf("a range off the nodes' subnet: status %d, body lacks the reason", resp.StatusCode)
 	}
@@ -57,7 +57,7 @@ func TestNetworkSettingSavesAndShows(t *testing.T) {
 		t.Errorf("a rejected range was stored: %+v", s)
 	}
 
-	if resp, _ := postForm(t, c, srv.URL+"/settings/network", csrf, url.Values{"externalVIPPool": {""}}); resp.StatusCode != http.StatusSeeOther {
+	if resp, _ := postForm(t, c, srv.URL+"/cluster/network", csrf, url.Values{"externalVIPPool": {""}}); resp.StatusCode != http.StatusSeeOther {
 		t.Errorf("clear: status %d", resp.StatusCode)
 	}
 	if s, _ := vip.LoadSettings(context.Background(), st); s.ExternalPool != "" {
@@ -69,7 +69,7 @@ func TestNetworkSettingSavesAndShows(t *testing.T) {
 func TestNetworkSettingShowsTheNodeFallback(t *testing.T) {
 	srv, pw, _ := newTestServerWith(t, func(s *Server) { s.VIPPoolFallback = "192.168.1.50-192.168.1.60" })
 	c, _ := loggedInClient(t, srv, pw)
-	_, body := get(t, c, srv.URL+"/settings")
+	_, body := get(t, c, srv.URL+"/cluster/settings")
 	if !strings.Contains(body, "192.168.1.50-192.168.1.60") || strings.Contains(body, "inside the cluster only") {
 		t.Error("settings page does not show the node's configured range")
 	}
@@ -80,7 +80,7 @@ func TestDeployFormSaysWhenBlocksAreClusterOnly(t *testing.T) {
 	seedNodeAt(t, st, "n1", "192.168.1.10")
 	c, _ := loggedInClient(t, srv, pw)
 	_, body := get(t, c, srv.URL+"/deploy/web/nginx")
-	if !strings.Contains(body, "inside the cluster only") || !strings.Contains(body, `href="/settings#network"`) {
+	if !strings.Contains(body, "inside the cluster only") || !strings.Contains(body, `href="/cluster/settings#network"`) {
 		t.Error("deploy form does not warn that no LAN range is set")
 	}
 	if err := vip.SaveSettings(context.Background(), st, vip.Settings{ExternalPool: "192.168.1.100"}); err != nil {

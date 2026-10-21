@@ -1,7 +1,7 @@
 """ui-lan-range (Phase 14 H): the LAN address range set, changed and cleared from Settings.
 
 The node's Nix config sets no range, so a block deployed from the form starts with a
-cluster-internal address. Saving a range in Settings moves the block (and the UI) onto the LAN,
+cluster-internal address. Saving a range in Cluster settings moves the block (and the UI) onto the LAN,
 where n9 reaches them; changing the range moves them again; clearing it takes them off the LAN.
 Runs after cluster-common.py, block-common.py, vol_cluster.py, single_node_common.py and
 ui_forms_common.py.
@@ -51,11 +51,11 @@ with subtest("without a range, a deployed block is cluster-internal and the UI s
     assert "Cluster only" in page and vip_of("default/site", "internal") in page, "detail lacks the address"
 
 with subtest("a range off the nodes' subnet is refused"):
-    status, _, body = post("/settings/network", {"externalVIPPool": "10.9.0.5-10.9.0.9"})
+    status, _, body = post("/cluster/network", {"externalVIPPool": "10.9.0.5-10.9.0.9"})
     assert status == "400" and "No node is on 10.9.0.0/24" in body, f"{status}\n{body[-2000:]}"
 
 with subtest("saving a range moves the block and the UI onto the LAN"):
-    status, loc, body = post("/settings/network", {"externalVIPPool": "192.168.1.100-192.168.1.105"})
+    status, loc, body = post("/cluster/network", {"externalVIPPool": "192.168.1.100-192.168.1.105"})
     assert status == "303", f"save: {status}\n{body[-2000:]}"
     wait_for(lambda: on_lan("192.168.1.100", "192.168.1.105"), "the block and UI on 192.168.1.100-105", 90)
     page = n1.succeed(f"{CURL} https://n1:8443/blocks/default/site")
@@ -63,14 +63,14 @@ with subtest("saving a range moves the block and the UI onto the LAN"):
 
 with subtest("changing the range moves them again and frees the old addresses"):
     old = vip_of("default/site", "external")
-    status, _, body = post("/settings/network", {"externalVIPPool": "192.168.1.150-192.168.1.155"})
+    status, _, body = post("/cluster/network", {"externalVIPPool": "192.168.1.150-192.168.1.155"})
     assert status == "303", f"change: {status}\n{body[-2000:]}"
     wait_for(lambda: on_lan("192.168.1.150", "192.168.1.155"), "the block and UI on 192.168.1.150-155", 90)
     wait_for(lambda: reaches(f"http://{old}/") == "000", f"the old address {old} to stop answering", 30)
 
 with subtest("clearing the range takes the block off the LAN"):
     lan = vip_of("default/site", "external")
-    status, _, body = post("/settings/network", {"externalVIPPool": ""})
+    status, _, body = post("/cluster/network", {"externalVIPPool": ""})
     assert status == "303", f"clear: {status}\n{body[-2000:]}"
     wait_for(lambda: vip_of("default/site", "internal").startswith("10.43.") and not vip_of("default/site", "external"),
              "the block back on an internal address", 60)

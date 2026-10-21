@@ -336,6 +336,8 @@ a.stat:hover { text-decoration: none; border-color: var(--border-strong); backgr
 .table tbody tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover td { background: var(--bg-hover); }
 .table td > .empty { padding: 1.5rem 0; }
+.host { font-family: var(--mono); font-weight: 700; }
+.table code { border: 0; }
 .table-events td { padding-top: 0.4rem; padding-bottom: 0.4rem; }
 
 /* ---------- pills, tags, callouts ---------- */

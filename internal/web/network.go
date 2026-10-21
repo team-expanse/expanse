@@ -18,7 +18,7 @@ import (
 )
 
 func (s *Server) registerNetworkRoutes() {
-	s.routes.Handle("POST /settings/network", s.requireAuth(http.HandlerFunc(s.handleNetworkSave)))
+	s.routes.Handle("POST /cluster/network", s.requireAuth(http.HandlerFunc(s.handleNetworkSave)))
 }
 
 // networkView is the Settings → Network card.
@@ -77,9 +77,9 @@ func (s *Server) handleNetworkSave(w http.ResponseWriter, r *http.Request) {
 	}
 	pool := strings.TrimSpace(r.PostForm.Get("externalVIPPool"))
 	fail := func(msg string) {
-		d := s.settingsData(w, r)
+		d := s.clusterSettingsData(w, r)
 		d.Network.Input, d.Network.Error = pool, msg
-		s.render(w, http.StatusBadRequest, "settings.html", d)
+		s.render(w, http.StatusBadRequest, "cluster_settings.html", d)
 	}
 	if pool != "" {
 		if err := vip.CheckPool(pool, s.nodeAddrs(r.Context())); err != nil {
@@ -95,7 +95,7 @@ func (s *Server) handleNetworkSave(w http.ResponseWriter, r *http.Request) {
 	if pool == "" {
 		msg = "LAN address range cleared."
 	}
-	s.done(w, r, "success", msg, "/settings#network")
+	s.done(w, r, "success", msg, "/cluster/settings#network")
 }
 
 // sentence capitalizes an error message for display.

@@ -131,6 +131,7 @@ func templateFuncs(names *nodeNames) template.FuncMap {
 		"isLeader":        isLeader,
 		"scalable":        showReplicas,
 		"leaderID":        leaderID,
+		"downMembers":     downMembers,
 		"upgradeFragment": func(v upgradeView, csrf string) upgradeFragment { return upgradeFragment{View: v, CSRF: csrf} },
 		"bytes":           humanBytesAny,
 		"mib":             func(n int64) string { return humanBytesAny(n << 20) },
@@ -417,7 +418,10 @@ func navItems() []navItem {
 			{Key: "health", Label: "Checks", Href: "/health"},
 			{Key: "events", Label: "Activity", Href: "/events"},
 		}},
-		{Key: "cluster", Label: "Cluster", Href: "/cluster", Icon: "i-cluster"},
+		{Key: "cluster", Label: "Cluster", Href: "/cluster", Icon: "i-cluster", Tabs: []navTab{
+			{Key: "cluster", Label: "Overview", Href: "/cluster"},
+			{Key: "cluster-settings", Label: "Settings", Href: "/cluster/settings"},
+		}},
 		{Key: "nodes", Label: "Nodes", Href: "/nodes", Icon: "i-nodes"},
 		{Key: "blocks", Label: "Workloads", Href: "/blocks", Icon: "i-blocks", Tabs: []navTab{
 			{Key: "blocks", Label: "Blocks", Href: "/blocks"},

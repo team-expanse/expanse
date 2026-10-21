@@ -297,7 +297,7 @@ func TestPlainPostFormsCarryTheCSRFField(t *testing.T) {
 	srv, pw := newTestServer(t)
 	client, csrf := loggedInClient(t, srv, pw)
 	want := `name="` + csrfField + `" value="` + csrf + `"`
-	for _, path := range []string{"/blocks/new", "/settings"} {
+	for _, path := range []string{"/blocks/new", "/settings", "/cluster/settings"} {
 		resp, err := client.Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)

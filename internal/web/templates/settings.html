@@ -2,10 +2,10 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">Settings</h1>
-    <p class="page-sub">Access to this interface and the addresses blocks use. Cluster-wide: every node serves the same store.</p>
+    <p class="page-sub">Your account on this interface. Cluster-wide settings live under <a href="/cluster/settings">Cluster › Settings</a>.</p>
   </div>
 </div>
-<div class="grid-2">
+<div class="grid-form">
   <section class="card">
     <div class="card-head"><h2><svg class="icon"><use href="#i-key"/></svg>Change password</h2></div>
     {{if .SSOUser}}
@@ -36,57 +36,5 @@
     </form>
   </section>
 
-  <div class="stack">
-    <section class="card">
-      <div class="card-head"><h2><svg class="icon"><use href="#i-shield"/></svg>Single sign-on</h2>{{if .OIDC}}<span class="pill pill-ok"><span class="dot"></span>Configured</span>{{else}}<span class="pill pill-neutral"><span class="dot"></span>Not configured</span>{{end}}</div>
-      {{if .OIDC}}
-      <dl class="dl">
-        <dt>Issuer</dt><dd><code class="wrap">{{.OIDC.Issuer}}</code></dd>
-        <dt>Client ID</dt><dd><code>{{.OIDC.ClientID}}</code></dd>
-        <dt>Client secret</dt><dd><span class="muted">sealed to the cluster secret; never shown</span></dd>
-        <dt>Redirect URL</dt><dd><code class="wrap">{{.OIDC.RedirectURL}}</code></dd>
-        <dt>Allowed emails</dt><dd>{{range .OIDC.AllowedEmails}}<span class="tag">{{.}}</span> {{end}}</dd>
-        <dt>Configured</dt><dd>{{stamp (nanos .OIDC.CreatedAt)}}</dd>
-      </dl>
-      <p class="field-hint">Change it with <code>expanse ctl oidc configure</code>; the login page offers SSO while this is set.</p>
-      {{else}}
-      <p>Password login only. To add an OpenID Connect provider (Dex, Keycloak, Okta, Google Workspace), run <code>expanse ctl oidc configure</code> on a node with the issuer, client ID/secret, this cluster's callback URL and an allow-list of emails.</p>
-      {{end}}
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h2><svg class="icon"><use href="#i-lock"/></svg>UI certificate authority</h2></div>
-      <p>Browsers trust this interface once the cluster's UI CA is imported. It is written on every node at:</p>
-      <p><code class="wrap">{{.CAPath}}</code></p>
-      {{if .CAAvailable}}
-      <div class="form-actions">
-        <a class="btn btn-primary" href="/settings/ui-ca.pem" download="ui-ca.pem"><svg class="icon"><use href="#i-download"/></svg>Download ui-ca.pem</a>
-      </div>
-      <p class="field-hint">The certificate only; the CA's private key stays sealed in the store. Import it as a trusted authority for websites.</p>
-      {{else}}
-      <p class="field-hint">The CA has not been created on this cluster yet; it appears once a cluster node serves the UI over TLS.</p>
-      {{end}}
-    </section>
-  </div>
 </div>
-<section class="card" id="network">
-  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>LAN addresses</h2>{{if .Network.InUse}}<span class="pill pill-ok"><span class="dot"></span>Set</span>{{else}}<span class="pill pill-neutral"><span class="dot"></span>Not set</span>{{end}}</div>
-  <p>Each block that serves on the network gets its own address from this range, and so does this interface. Use free addresses on the nodes' network, outside your router's DHCP range.</p>
-  {{if not .Network.InUse}}
-  <div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>No range is set, so blocks are reachable from inside the cluster only.</p></div></div>
-  {{else if not .Network.Setting}}
-  <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><p>In use: <code>{{.Network.Fallback}}</code>, from this node's configuration. Saving a range here replaces it on every node.</p></div></div>
-  {{end}}
-  <form method="post" action="/settings/network" class="form" novalidate>
-    {{template "csrf" .Page}}
-    <label class="field">
-      <span class="field-label">Address range</span>
-      <input class="input" type="text" name="externalVIPPool" value="{{.Network.Input}}" placeholder="192.168.1.200-192.168.1.220" spellcheck="false"{{if .Network.Error}} aria-invalid="true" autofocus{{end}}>
-      {{if .Network.Error}}<span class="field-error">{{.Network.Error}}</span>{{else}}<span class="field-hint">A range (<code>first-last</code>) or single addresses, separated by commas. Add <code>/16</code> if your network is wider than a /24. Changing it gives every block a new address.</span>{{end}}
-    </label>
-    <div class="form-actions">
-      <button class="btn btn-primary" type="submit">Save</button>
-    </div>
-  </form>
-</section>
 {{end}}

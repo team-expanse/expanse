@@ -50,7 +50,7 @@ func assertShell(t *testing.T, path, body string) {
 func TestEveryClusterPageRendersTheSharedShell(t *testing.T) {
 	srv, pw, _ := newHealthTestServer(t)
 	client, _ := loggedInClient(t, srv, pw)
-	for _, path := range []string{"/", "/cluster", "/nodes", "/nodes/n1", "/volumes", "/volumes/new", "/generations", "/events", "/health", "/settings"} {
+	for _, path := range []string{"/", "/cluster", "/nodes", "/nodes/n1", "/volumes", "/volumes/new", "/generations", "/events", "/health", "/settings", "/cluster/settings"} {
 		resp, body := getPage(t, client, srv, path)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET %s status = %d, want 200: %s", path, resp.StatusCode, body)

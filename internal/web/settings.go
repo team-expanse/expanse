@@ -1,7 +1,7 @@
-// Settings: the admin password (the browser-side counterpart of
-// `expanse ctl admin reset-password`, gated on the current password),
-// the OIDC relying-party configuration as stored (never its secret),
-// and the UI CA certificate operators import into a browser.
+// Settings: the account's admin password (the browser-side counterpart
+// of `expanse ctl admin reset-password`), and Cluster › Settings: the
+// OIDC configuration as stored (never its secret), the UI CA
+// certificate operators import into a browser, and the LAN range.
 package web
 
 import (
@@ -24,25 +24,36 @@ const minPasswordLen = 12
 func (s *Server) registerSettingsRoutes() {
 	s.routes.Handle("GET /settings", s.requireAuth(http.HandlerFunc(s.handleSettings)))
 	s.routes.Handle("POST /settings/password", s.requireAuth(http.HandlerFunc(s.handlePasswordChange)))
-	s.routes.Handle("GET /settings/ui-ca.pem", s.requireAuth(http.HandlerFunc(s.handleUICADownload)))
+	s.routes.Handle("GET /cluster/settings", s.requireAuth(http.HandlerFunc(s.handleClusterSettings)))
+	s.routes.Handle("GET /cluster/ui-ca.pem", s.requireAuth(http.HandlerFunc(s.handleUICADownload)))
 }
 
 type settingsData struct {
 	Page page
 	// Password form state: which field the error belongs to, if any.
-	Error string
-	Field string
-	OIDC  *oidc.Config
+	Error   string
+	Field   string
+	SSOUser bool
+}
+
+type clusterSettingsData struct {
+	Page page
+	OIDC *oidc.Config
 	// CAPath is where the certificate is written on each node's disk;
 	// CAAvailable says the store holds it, so the download link works.
 	CAPath      string
 	CAAvailable bool
-	SSOUser     bool
 	Network     networkView
 }
 
 func (s *Server) settingsData(w http.ResponseWriter, r *http.Request) settingsData {
 	d := settingsData{Page: s.newPage(w, r, "Settings", "settings", crumb{Label: "Settings"})}
+	d.SSOUser = d.Page.User != auth.AdminUsername
+	return d
+}
+
+func (s *Server) clusterSettingsData(w http.ResponseWriter, r *http.Request) clusterSettingsData {
+	d := clusterSettingsData{Page: s.newPage(w, r, "Cluster settings", "cluster-settings", crumb{Label: "Cluster", Href: "/cluster"}, crumb{Label: "Settings"})}
 	if cfg, err := oidc.LoadConfig(r.Context(), s.store); err == nil {
 		d.OIDC = cfg
 	}
@@ -52,13 +63,16 @@ func (s *Server) settingsData(w http.ResponseWriter, r *http.Request) settingsDa
 	}
 	_, err := s.store.Get(store.WithStale(r.Context()), store.Key(control.UICAKey))
 	d.CAAvailable = err == nil
-	d.SSOUser = d.Page.User != auth.AdminUsername
 	d.Network = s.networkView(r.Context())
 	return d
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "settings.html", s.settingsData(w, r))
+}
+
+func (s *Server) handleClusterSettings(w http.ResponseWriter, r *http.Request) {
+	s.render(w, http.StatusOK, "cluster_settings.html", s.clusterSettingsData(w, r))
 }
 
 // handlePasswordChange re-verifies the current password before writing

@@ -47,6 +47,17 @@ func (s *Server) getClusterReport(ctx context.Context) (*control.Report, error) 
 	return &rep, nil
 }
 
+// downMembers are the nodes the leader's failure detector judges silent.
+func downMembers(rep *control.Report) []control.NodeStatus {
+	var out []control.NodeStatus
+	for _, n := range rep.Nodes {
+		if n.Lifecycle != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 type clusterOverviewData struct {
 	Page   page
 	Report *control.Report
