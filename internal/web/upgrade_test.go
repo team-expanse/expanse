@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/upgrade"
 	"github.com/expanse/expanse/internal/upgrade/rollout"
@@ -169,4 +170,14 @@ func TestUpgradeFormsKeepThePageOnARefusal(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, `class="error-page"`) || !strings.Contains(body, "not a release version") {
 		t.Errorf("refusal: status %d, styled %v", resp.StatusCode, strings.Contains(body, "error-page"))
 	}
+}
+
+// The node rows come from the cluster report, so a join reaches the page too.
+func TestUpgradeStreamShowsAJoinedNode(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	c, _ := loggedInClient(t, srv, pw)
+	sse := openSSE(t, c, srv.URL+"/upgrade/events")
+	sse.expect("event: upgrade", 5*time.Second)
+	putTestNode(t, st, join.NodeRecord{ID: "joiner", RaftAddr: "127.0.0.1:1", APIAddr: "127.0.0.1:2", Role: "voter"}, "")
+	sse.expect("joiner", 5*time.Second)
 }

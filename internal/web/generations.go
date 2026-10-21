@@ -77,7 +77,8 @@ func (s *Server) loadGenerations(ctx context.Context) generationsListData {
 	return data
 }
 
-// handleGenerationsEvents streams the list as generations are committed.
+// handleGenerationsEvents streams the list as generations are committed, and
+// on a tick so an unreadable cluster status recovers.
 func (s *Server) handleGenerationsEvents(w http.ResponseWriter, r *http.Request) {
 	if s.clusterUnavailable(w, r) {
 		return
@@ -87,7 +88,7 @@ func (s *Server) handleGenerationsEvents(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	streamFragments(w, r, "generations", changes, 0, func(ctx context.Context) (string, error) {
+	streamFragments(w, r, "generations", changes, healthTick, func(ctx context.Context) (string, error) {
 		return s.fragment("generations-fragment", s.loadGenerations(ctx))
 	})
 }

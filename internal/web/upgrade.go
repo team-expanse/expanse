@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/upgrade"
 	"github.com/expanse/expanse/internal/upgrade/rollout"
@@ -79,18 +80,19 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleUpgradeEvents re-renders the page body on every write under /upgrade/.
+// handleUpgradeEvents re-renders the page body on every write under /upgrade/
+// or to the node list, and on a tick so a failed cluster read recovers.
 func (s *Server) handleUpgradeEvents(w http.ResponseWriter, r *http.Request) {
 	if s.clusterUnavailable(w, r) {
 		return
 	}
-	changes, err := fanInWatches(r.Context(), s.store, store.Key("/upgrade/"))
+	changes, err := fanInWatches(r.Context(), s.store, store.Key("/upgrade/"), store.Key(join.NodesKeyPrefix), store.Key("/cluster/"))
 	if err != nil {
 		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	csrf := sessionFromContext(r.Context()).CSRFToken
-	streamFragments(w, r, "upgrade", changes, 0, func(ctx context.Context) (string, error) {
+	streamFragments(w, r, "upgrade", changes, healthTick, func(ctx context.Context) (string, error) {
 		return s.fragment("upgrade-fragment", upgradeFragment{View: s.loadUpgrade(ctx), CSRF: csrf})
 	})
 }
