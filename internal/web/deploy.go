@@ -179,6 +179,7 @@ type deployFormData struct {
 func (s *Server) renderForm(w http.ResponseWriter, r *http.Request, status int, data deployFormData) {
 	markSecrets(data.Fields, data.Stored, data.Edit)
 	offerRefs(data.Fields, s.refChoices(r.Context(), data.Type.GetSchemaJson(), data.Editing))
+	w.Header().Set("Cache-Control", "no-store") // the form can hold what was typed
 	s.render(w, status, "deploy_form.html", data)
 }
 
@@ -616,7 +617,7 @@ func (s *Server) deployData(w http.ResponseWriter, r *http.Request, bt *pb.Block
 	for _, st := range spec.GetStorage() {
 		d.Storage = append(d.Storage, storageInput{Name: st.GetName(), Size: st.GetSize(), Replication: st.GetReplication()})
 	}
-	d.Manifest = manifestYAML(b, fields)
+	d.Manifest = manifestYAML(b, bt.GetSchemaJson())
 	d.ClusterOnly = hasVIP(b) && s.lanPool(r.Context()) == ""
 	d.NoStorage = len(spec.GetStorage()) > 0 && !s.anyNodeStorage(r.Context())
 	d.Stored = storedSecrets(b)
@@ -624,7 +625,7 @@ func (s *Server) deployData(w http.ResponseWriter, r *http.Request, bt *pb.Block
 }
 
 // manifestYAML renders b as the YAML `expanse ctl block apply -f` takes, with secrets hidden.
-func manifestYAML(b *pb.Block, fields []schemaform.Field) string {
+func manifestYAML(b *pb.Block, schema []byte) string {
 	raw, err := protojson.MarshalOptions{UseProtoNames: false}.Marshal(&pb.Block{Metadata: b.GetMetadata(), Spec: b.GetSpec()})
 	if err != nil {
 		return ""
@@ -634,15 +635,32 @@ func manifestYAML(b *pb.Block, fields []schemaform.Field) string {
 		return ""
 	}
 	if cfg, ok := doc["spec"].(map[string]any)["config"].(map[string]any); ok {
-		for _, f := range fields {
-			if _, set := cfg[strings.TrimPrefix(f.Path, "/")]; set && f.Kind == schemaform.Secret {
-				cfg[strings.TrimPrefix(f.Path, "/")] = "<hidden>"
-			}
+		fields, err := schemaform.Build(schema, cfgPrefix, nil)
+		if err != nil {
+			return "" // never risk showing a secret the schema could not mark
 		}
+		hideSecrets(cfg, fields)
 	}
 	out, err := yaml.Marshal(map[string]any{"apiVersion": "expanse.io/v1", "kind": "Block", "metadata": doc["metadata"], "spec": doc["spec"]})
 	if err != nil {
 		return ""
 	}
 	return string(out)
+}
+
+// hideSecrets replaces every set writeOnly value in cfg, at any depth, with a mask.
+func hideSecrets(cfg map[string]any, fields []schemaform.Field) {
+	for _, f := range fields {
+		key := f.Path[strings.LastIndex(f.Path, "/")+1:]
+		switch {
+		case f.Kind == schemaform.Group:
+			if sub, ok := cfg[key].(map[string]any); ok {
+				hideSecrets(sub, f.Fields)
+			}
+		case f.Kind == schemaform.Secret:
+			if _, set := cfg[key]; set {
+				cfg[key] = "<hidden>"
+			}
+		}
+	}
 }

@@ -147,10 +147,13 @@ func TestDeployFormShowsEveryErrorOnItsField(t *testing.T) {
 	c, csrf := loggedInClient(t, srv, pw)
 
 	resp, body := postForm(t, c, srv.URL+"/deploy/db/postgres", csrf, url.Values{
-		"name": {"Bad_Name"}, "replicas": {"1"}, "cfg/port": {"eighty"},
+		"name": {"Bad_Name"}, "replicas": {"1"}, "cfg/port": {"eighty"}, "cfg/superuserPassword": {"typed-secret-9"},
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400", resp.StatusCode)
+	}
+	if strings.Contains(body, "typed-secret-9") || resp.Header.Get("Cache-Control") != "no-store" {
+		t.Error("the rejected form echoes a typed secret or may be cached")
 	}
 	for _, field := range []string{"name", "cfg/port"} {
 		if !strings.Contains(body, `name="`+field+`"`) || !invalid(body, field) {
