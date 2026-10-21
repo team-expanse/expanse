@@ -29,5 +29,5 @@
 </section>
 {{end}}
 
-{{define "event-row"}}<tr><td class="muted nowrap" title="{{stamp .At}}">{{.At.Format "15:04:05"}}</td><td><span class="tag tag-{{.Kind}}">{{.Kind}}</span></td><td><code class="wrap">{{.Key}}</code></td><td class="muted">{{.Verb}}</td></tr>
+{{define "event-row"}}<tr><td class="muted nowrap" title="{{stamp .At}}">{{.At.Format "15:04:05"}}</td><td><span class="tag tag-{{.Kind}}">{{.Kind}}</span></td><td><code class="wrap" title="{{.Key}}">{{nodekey .Key}}</code></td><td class="muted">{{.Verb}}</td></tr>
 {{end}}

@@ -332,7 +332,7 @@ func (s *Server) handleVolumeSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, existing := range v.Snapshots {
 		if existing.Name == snapName {
-			http.Error(w, "a snapshot named "+snapName+" already exists, held by "+existing.Node, http.StatusConflict)
+			http.Error(w, "a snapshot named "+snapName+" already exists, held by "+s.names.name(existing.Node), http.StatusConflict)
 			return
 		}
 	}

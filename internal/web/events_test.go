@@ -153,3 +153,23 @@ func TestEventLogSkipsReplicaProbeHeartbeats(t *testing.T) {
 		t.Errorf("recorded %d events, want only the probe result: %+v", len(got), got)
 	}
 }
+
+// Event keys under a node show its hostname in place of the node ID.
+func TestEventKeysNameNodesByHostname(t *testing.T) {
+	_, _, st := newTestServerStore(t)
+	id := "3f2a9c1e-0000-4000-8000-000000000001"
+	if _, err := st.Put(context.Background(), store.Key("/nodes/"+id+"/hostname"), []byte("rack1-a")); err != nil {
+		t.Fatal(err)
+	}
+	n := &nodeNames{st: st}
+	for key, want := range map[string]string{
+		"/nodes/" + id + "/status":            "/nodes/rack1-a/status",
+		"/node/" + id + "/status/resources/x": "/node/rack1-a/status/resources/x",
+		"/nodes/" + id:                        "/nodes/rack1-a",
+		"/blocks/default/web":                 "/blocks/default/web",
+	} {
+		if got := n.inKey(key); got != want {
+			t.Errorf("inKey(%q) = %q, want %q", key, got, want)
+		}
+	}
+}

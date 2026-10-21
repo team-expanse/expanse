@@ -57,8 +57,12 @@ func (s *Server) handleNodeStorageEnable(w http.ResponseWriter, r *http.Request)
 		data.Storage.Percent, data.Storage.Error = percent, msg
 		s.render(w, http.StatusBadRequest, "node_detail.html", data)
 	}
+	if data.Storage.Pending {
+		s.done(w, r, "info", "Storage is already turning on for "+s.names.name(data.Node.ID)+".", "/nodes/"+data.Node.ID+"#storage")
+		return
+	}
 	if !data.Storage.CanEnable() {
-		fail("This node has no free volume group to build storage in.")
+		fail(cannotEnable(data.Storage.Report))
 		return
 	}
 	n, err := strconv.Atoi(percent)
@@ -72,6 +76,19 @@ func (s *Server) handleNodeStorageEnable(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.done(w, r, "success", "Turning storage on for "+s.names.name(data.Node.ID)+". It is ready within a few seconds.", "/nodes/"+data.Node.ID+"#storage")
+}
+
+// cannotEnable says why a node's storage can't be turned on now.
+func cannotEnable(r *storage.NodeStorage) string {
+	switch {
+	case r == nil:
+		return "This node has not reported its storage yet."
+	case r.State == storage.NodeStorageReady:
+		return "Storage is already on."
+	case r.State == storage.NodeStorageReboot:
+		return "Storage is already set up and waits for a reboot."
+	}
+	return "This node has no free volume group to build storage in."
 }
 
 // anyNodeStorage says some node holds volumes, or that no node reports (agents before 1.11).

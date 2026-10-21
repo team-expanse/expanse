@@ -263,10 +263,17 @@ func TestVolumeSnapshotQueuesOpAndRefusesDuplicateName(t *testing.T) {
 	if err := storage.PutSnapshot(context.Background(), st, "vol-dddd", storage.SnapshotRecord{Name: "nightly", Node: "n1", CreatedAt: time.Now()}); err != nil {
 		t.Fatalf("PutSnapshot: %v", err)
 	}
+	if _, err := st.Put(context.Background(), store.Key("/nodes/n1/hostname"), []byte("rack1-a")); err != nil {
+		t.Fatal(err)
+	}
 	resp = postVolumeForm(t, client, csrf, srv.URL+"/volumes/snapme/snapshot", url.Values{"name": {"nightly"}})
+	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate snapshot status = %d, want 409", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "held by rack1-a") {
+		t.Errorf("the refusal does not name the node by hostname: %s", body)
 	}
 }
 

@@ -117,3 +117,22 @@ func TestDeployFormSaysWhenNoNodeHasStorage(t *testing.T) {
 		t.Error("warns although n1 has storage")
 	}
 }
+
+// A refused enable says why on the page, and a repeat of a queued request is not an error.
+func TestNodeStorageEnableExplainsARefusal(t *testing.T) {
+	srv, pw, st := newClusterTestServer(t)
+	c, csrf := loggedInClient(t, srv, pw)
+	reportStorage(t, st, "n1", storage.NodeStorage{State: storage.NodeStorageOff, VG: "expanse", Message: "no volume group"})
+	if _, body := postForm(t, c, srv.URL+"/nodes/n1/storage", csrf, url.Values{"percent": {"95"}}); !strings.Contains(body, "no free volume group") {
+		t.Error("the refusal is not shown on the page")
+	}
+	reportStorage(t, st, "n1", storage.NodeStorage{State: storage.NodeStorageReady, VG: "expanse", Pool: "pool", VGFree: 1 << 30})
+	if _, body := postForm(t, c, srv.URL+"/nodes/n1/storage", csrf, url.Values{"percent": {"95"}}); !strings.Contains(body, "Storage is already on") {
+		t.Error("enabling storage that is on does not say so")
+	}
+	reportStorage(t, st, "n1", storage.NodeStorage{State: storage.NodeStorageOff, VG: "expanse", VGSize: 100 << 30, VGFree: 100 << 30})
+	postForm(t, c, srv.URL+"/nodes/n1/storage", csrf, url.Values{"percent": {"80"}})
+	if resp, _ := postForm(t, c, srv.URL+"/nodes/n1/storage", csrf, url.Values{"percent": {"80"}}); resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("a repeated submit: status %d, want 303 back to the node", resp.StatusCode)
+	}
+}

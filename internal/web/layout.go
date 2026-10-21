@@ -118,6 +118,7 @@ func (t *templates) execute(w io.Writer, name string, data any) error {
 func templateFuncs(names *nodeNames) template.FuncMap {
 	return template.FuncMap{
 		"nodename":        names.name,
+		"nodekey":         names.inKey,
 		"phase":           phasePill,
 		"replica":         replicaRow,
 		"live":            livePlacements,
@@ -165,6 +166,20 @@ func (n *nodeNames) name(id string) string {
 		}
 	}
 	return id
+}
+
+// inKey replaces the node ID in a /nodes/<id>/… or /node/<id>/… key with its hostname.
+func (n *nodeNames) inKey(key string) string {
+	for _, prefix := range []string{"/nodes/", "/node/"} {
+		if rest, ok := strings.CutPrefix(key, prefix); ok {
+			id, _, _ := strings.Cut(rest, "/")
+			if name := n.name(id); name != id {
+				return prefix + name + strings.TrimPrefix(rest, id)
+			}
+			return key
+		}
+	}
+	return key
 }
 
 // humanBytesAny renders a measured byte count rounded to one decimal in binary units ("894.3 GiB").
