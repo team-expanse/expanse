@@ -31,6 +31,7 @@ func (s *Server) registerBlockRoutes() {
 	s.routes.Handle("POST /blocks", s.requireAuth(http.HandlerFunc(s.handleBlockCreate)))
 	s.routes.Handle("GET /blocks/{ns}/{name}", s.requireAuth(http.HandlerFunc(s.handleBlockDetail)))
 	s.routes.Handle("GET /blocks/{ns}/{name}/events", s.requireAuth(http.HandlerFunc(s.handleBlockEvents)))
+	s.routes.Handle("GET /blocks/{ns}/{name}/network/events", s.requireAuth(http.HandlerFunc(s.handleBlockNetworkEvents)))
 	s.routes.Handle("POST /blocks/{ns}/{name}/scale", s.requireAuth(http.HandlerFunc(s.handleBlockScale)))
 	s.routes.Handle("POST /blocks/{ns}/{name}/delete", s.requireAuth(http.HandlerFunc(s.handleBlockDelete)))
 	s.routes.Handle("GET /blocks/{ns}/{name}/logs", s.requireAuth(http.HandlerFunc(s.handleBlockLogs)))
@@ -162,13 +163,31 @@ func (s *Server) renderBlockNewError(w http.ResponseWriter, r *http.Request, man
 }
 
 type blockDetailData struct {
-	Page    page
+	Page  page
+	Block *pb.Block
+	Net   blockNetwork
+}
+
+// blockNetwork is the block's address and guest cards, rendered live.
+type blockNetwork struct {
 	Block   *pb.Block
 	HasVIP  bool
 	Address string // the block's own address, "" until the agent assigns it
 	// ClusterOnly marks an address from the cluster-internal range, unreachable from the LAN.
 	ClusterOnly bool
 	Guest       *vmGuest // set for vm/instance
+}
+
+func (s *Server) loadBlockNetwork(ctx context.Context, b *pb.Block) blockNetwork {
+	n := blockNetwork{Block: b, HasVIP: hasVIP(b)}
+	full := b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
+	if p, scope, ok := vip.Lookup(store.WithStale(ctx), s.store, full); n.HasVIP && ok {
+		n.Address, n.ClusterOnly = p.Addr().String(), scope == vip.ScopeInternal
+	}
+	if n.Guest = guestInfo(b, s.typeSchema(ctx, b.GetSpec().GetType())); n.Guest != nil {
+		s.guestStatus(ctx, n.Guest, b)
+	}
+	return n
 }
 
 func (s *Server) getBlock(ctx context.Context, r *http.Request) (*pb.Block, error) {
@@ -186,15 +205,9 @@ func (s *Server) handleBlockDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	full := b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
 	d := blockDetailData{
-		Page:   s.newPage(w, r, full, "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full}),
-		Block:  b,
-		HasVIP: hasVIP(b),
-	}
-	if p, scope, ok := vip.Lookup(store.WithStale(r.Context()), s.store, full); d.HasVIP && ok {
-		d.Address, d.ClusterOnly = p.Addr().String(), scope == vip.ScopeInternal
-	}
-	if d.Guest = guestInfo(b, s.typeSchema(r.Context(), b.GetSpec().GetType())); d.Guest != nil {
-		s.guestStatus(r.Context(), d.Guest, b)
+		Page:  s.newPage(w, r, full, "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full}),
+		Block: b,
+		Net:   s.loadBlockNetwork(r.Context(), b),
 	}
 	s.render(w, http.StatusOK, "block_detail.html", d)
 }
@@ -253,6 +266,26 @@ func (s *Server) handleBlockEvents(w http.ResponseWriter, r *http.Request) {
 		return send("block-fragment", ev.GetBlock())
 	}}
 	_ = s.blocks.Watch(&pb.WatchBlocksRequest{Namespace: ns, Name: name}, stream)
+}
+
+// handleBlockNetworkEvents streams the address and guest cards, which
+// change with the address pool and the replica's recorded status.
+func (s *Server) handleBlockNetworkEvents(w http.ResponseWriter, r *http.Request) {
+	if s.blocksUnavailable(w, r) {
+		return
+	}
+	changes, err := fanInWatches(r.Context(), s.store, store.Key(vip.PoolPrefix), store.Key("/node/"), store.Key("/blocks/"))
+	if err != nil {
+		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	streamFragments(w, r, "network", changes, 0, func(ctx context.Context) (string, error) {
+		b, err := s.getBlock(store.WithStale(ctx), r)
+		if err != nil {
+			return "", nil //nolint:nilerr // deleted or unreadable; the block stream says so
+		}
+		return s.fragment("block-network", s.loadBlockNetwork(ctx, b))
+	})
 }
 
 func (s *Server) handleBlockScale(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/store"
@@ -112,4 +113,21 @@ func TestBlockDetailShowsItsAddress(t *testing.T) {
 	if _, body := get(t, c, srv.URL+"/blocks/default/site"); !strings.Contains(body, "192.168.1.100") || strings.Contains(body, "inside the cluster only") {
 		t.Error("block detail lacks its LAN address")
 	}
+}
+
+// An address assigned while the page is open appears without a reload.
+func TestBlockAddressUpdatesLive(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "")
+	c, csrf := loggedInClient(t, srv, pw)
+	deployNginx(t, c, srv.URL, csrf)
+	if _, body := get(t, c, srv.URL+"/blocks/default/site"); !strings.Contains(body, `sse-connect="/blocks/default/site/network/events"`) {
+		t.Error("the address card is not in a live region")
+	}
+	sse := openSSE(t, c, srv.URL+"/blocks/default/site/network/events")
+	sse.expect("Not assigned yet", 2*time.Second)
+	if _, _, err := vip.Assign(context.Background(), st, "default/site", nil); err != nil {
+		t.Fatal(err)
+	}
+	sse.expect("10.43.0.1", 2*time.Second)
 }

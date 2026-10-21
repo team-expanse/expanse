@@ -17,34 +17,9 @@
   <div id="block-fragment" sse-swap="block" hx-swap="innerHTML">{{template "block-fragment" .Block}}</div>
 </div>
 
-{{if .HasVIP}}
-<section class="card" id="address">
-  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>Address</h2>{{if .Address}}{{if .ClusterOnly}}<span class="pill pill-neutral"><span class="dot"></span>Cluster only</span>{{else}}<span class="pill pill-ok"><span class="dot"></span>LAN</span>{{end}}{{end}}</div>
-  {{if .Address}}
-  <ul class="type-list">
-    {{range .Block.Spec.Network.GetPorts}}{{if eq .Expose.String "EXPOSE_VIP"}}<li><code>{{$.Address}}:{{.Port}}</code> <span class="muted">{{.Name}}</span></li>{{end}}{{end}}
-  </ul>
-  {{if .ClusterOnly}}<p class="field-hint">Reachable from inside the cluster only. <a href="/settings#network">Set a LAN address range</a> to reach it from your network.</p>{{end}}
-  {{else}}<p class="muted">Not assigned yet. It appears within a few seconds.</p>{{end}}
-</section>
-{{end}}
-
-{{with .Guest}}
-<section class="card" id="guest">
-  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>Guest network</h2></div>
-  <dl class="dl">
-    <dt>MAC address</dt><dd><code>{{.MAC}}</code></dd>
-    <dt>Hostname</dt><dd><code>{{.Hostname}}</code></dd>
-    {{if .Status}}<dt>Guest</dt><dd>{{.Status}}</dd>{{end}}
-    <dt>Address</dt><dd>{{range $i, $a := .Addresses}}{{if $i}}, {{end}}<code>{{$a}}</code>{{else}}<span class="muted">No guest agent has answered yet</span>{{end}}</dd>
-  </dl>
-  {{if .Addresses}}
-  <p class="field-hint">The VM joins your LAN directly{{if .Login}}; log in with <code>ssh {{.Login}}@{{index .Addresses 0}}</code>{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
-  {{else}}
-  <p class="field-hint">The VM joins your LAN directly and gets its address from your DHCP server. The address shows here once the guest's QEMU guest agent (the <code>qemu-guest-agent</code> package) answers; until then, look up this MAC address in your router's lease list{{if .Login}}, then log in with <code>ssh {{.Login}}@&lt;address&gt;</code>, or <code>ssh {{.Login}}@{{.Hostname}}</code> where your network resolves DHCP hostnames{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
-  {{end}}
-</section>
-{{end}}
+<div hx-ext="sse" sse-connect="/blocks/{{$ns}}/{{$name}}/network/events">
+  <div id="block-network" sse-swap="network" hx-swap="innerHTML">{{template "block-network" .Net}}</div>
+</div>
 
 {{if scalable .Block.Spec}}
 <section class="card">
@@ -118,6 +93,37 @@
       </tbody>
     </table>
   </div>
+</section>
+{{end}}
+{{end}}
+
+{{define "block-network"}}
+{{if .HasVIP}}
+<section class="card" id="address">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>Address</h2>{{if .Address}}{{if .ClusterOnly}}<span class="pill pill-neutral"><span class="dot"></span>Cluster only</span>{{else}}<span class="pill pill-ok"><span class="dot"></span>LAN</span>{{end}}{{end}}</div>
+  {{if .Address}}
+  <ul class="type-list">
+    {{range .Block.Spec.Network.GetPorts}}{{if eq .Expose.String "EXPOSE_VIP"}}<li><code>{{$.Address}}:{{.Port}}</code> <span class="muted">{{.Name}}</span></li>{{end}}{{end}}
+  </ul>
+  {{if .ClusterOnly}}<p class="field-hint">Reachable from inside the cluster only. <a href="/settings#network">Set a LAN address range</a> to reach it from your network.</p>{{end}}
+  {{else}}<p class="muted">Not assigned yet. It appears within a few seconds.</p>{{end}}
+</section>
+{{end}}
+
+{{with .Guest}}
+<section class="card" id="guest">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-nic"/></svg>Guest network</h2></div>
+  <dl class="dl">
+    <dt>MAC address</dt><dd><code>{{.MAC}}</code></dd>
+    <dt>Hostname</dt><dd><code>{{.Hostname}}</code></dd>
+    {{if .Status}}<dt>Guest</dt><dd>{{.Status}}</dd>{{end}}
+    <dt>Address</dt><dd>{{range $i, $a := .Addresses}}{{if $i}}, {{end}}<code>{{$a}}</code>{{else}}<span class="muted">No guest agent has answered yet</span>{{end}}</dd>
+  </dl>
+  {{if .Addresses}}
+  <p class="field-hint">The VM joins your LAN directly{{if .Login}}; log in with <code>ssh {{.Login}}@{{index .Addresses 0}}</code>{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
+  {{else}}
+  <p class="field-hint">The VM joins your LAN directly and gets its address from your DHCP server. The address shows here once the guest's QEMU guest agent (the <code>qemu-guest-agent</code> package) answers; until then, look up this MAC address in your router's lease list{{if .Login}}, then log in with <code>ssh {{.Login}}@&lt;address&gt;</code>, or <code>ssh {{.Login}}@{{.Hostname}}</code> where your network resolves DHCP hostnames{{end}}. The node it runs on cannot reach it, by how macvtap works; connect from another machine.</p>
+  {{end}}
 </section>
 {{end}}
 {{end}}
