@@ -107,12 +107,13 @@ func TestStreamEventsSendsEachRegionOnlyWhenItChanges(t *testing.T) {
 }
 
 // Live lists must stay bounded, and the log tail, which the server replays on
-// each reconnect, must clear first; app.js acts on these attributes.
+// each reconnect, must clear first; app.js acts on these attributes, and
+// holds a swap while the user has a dialog open or a field focused.
 func TestLiveListsAreBoundedAndLogsClearOnReconnect(t *testing.T) {
 	cases := map[string][]string{
 		"templates/block_logs.html": {`id="log-lines"`, "data-clear-on-open", `data-live-limit="2000"`},
 		"templates/events.html":     {`id="event-rows"`, `data-live-limit="500"`},
-		"static/app.js":             {"data-clear-on-open", "data-live-limit"},
+		"static/app.js":             {"data-clear-on-open", "data-live-limit", "htmx:sseBeforeMessage"},
 	}
 	for path, wants := range cases {
 		fsys := templateFS

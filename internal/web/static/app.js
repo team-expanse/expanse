@@ -116,6 +116,30 @@
   });
   document.body.addEventListener("htmx:sseClose", function () { setLive("closed"); });
 
+  // ---- live swaps wait for the user -------------------------------------
+  // A swap would close an open confirm or reset a field being edited, so
+  // keep the newest update for that region until the user is done.
+  var held = new Map();
+  function busy(region) {
+    var el = document.activeElement;
+    return region.querySelector("dialog[open]") ||
+      (el && el !== document.body && region.contains(el) && el.matches("input, select, textarea"));
+  }
+  document.body.addEventListener("htmx:sseBeforeMessage", function (ev) {
+    if (!busy(ev.target)) return;
+    ev.preventDefault();
+    held.set(ev.target, ev.detail.data);
+  });
+  function release() {
+    held.forEach(function (data, region) {
+      if (busy(region)) return;
+      held.delete(region);
+      if (document.body.contains(region)) htmx.swap(region, data, { swapStyle: "innerHTML" });
+    });
+  }
+  document.addEventListener("close", function () { setTimeout(release, 0); }, true);
+  document.addEventListener("focusout", function () { setTimeout(release, 0); });
+
   // ---- confirm dialogs -------------------------------------------------
   document.addEventListener("click", function (ev) {
     var btn = ev.target.closest("[data-confirm]");
