@@ -20,13 +20,30 @@ type ExecNix struct {
 
 // BuildSystem implements Nix.
 func (e *ExecNix) BuildSystem(ctx context.Context, file, substituter string, logs io.Writer) (string, error) {
-	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, "nix-build", buildArgs(file, substituter, e.PublicKey)...)
-	cmd.Stdout, cmd.Stderr = &out, logs
-	if err := cmd.Run(); err != nil {
+	runs := 0
+	path, err := retryKilled(ctx, func() (string, string, error) {
+		if runs++; runs > 1 {
+			fmt.Fprintln(logs, "expanse: a signal killed the build; building once more")
+		}
+		var out, stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, "nix-build", buildArgs(file, substituter, e.PublicKey)...)
+		cmd.Stdout, cmd.Stderr = &out, io.MultiWriter(logs, &stderr)
+		err := cmd.Run()
+		return strings.TrimSpace(out.String()), stderr.String(), err
+	})
+	if err != nil {
 		return "", fmt.Errorf("nix-build %s: %w", file, err)
 	}
-	return strings.TrimSpace(out.String()), nil
+	return path, nil
+}
+
+// retryKilled runs a build once more when a signal killed its builder; seen rarely in VM tests, cause unknown.
+func retryKilled(ctx context.Context, build func() (path, stderr string, err error)) (string, error) {
+	path, stderr, err := build()
+	if err != nil && ctx.Err() == nil && strings.Contains(stderr, "failed due to signal") {
+		path, _, err = build()
+	}
+	return path, err
 }
 
 func buildArgs(file, substituter, key string) []string {

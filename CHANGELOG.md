@@ -21,6 +21,8 @@ History before 1.0.0 is not recorded here.
 - The DRBD kernel module moves from 9.2.16 to 9.2.18, which builds against Linux 6.18.57 with a
   small patch for that kernel's partial backport of `sockaddr_unsized`. 9.2.19 and 9.2.20 are
   skipped: their new equal-UUID reconcile can leave a replica stuck after a resync is requested.
+- An upgrade's system build runs once more when a signal kills its builder, which VM tests have
+  seen happen rarely; a second failure still stops the rollout.
 
 ### Fixed
 
