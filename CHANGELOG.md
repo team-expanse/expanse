@@ -8,10 +8,13 @@ History before 1.0.0 is not recorded here.
 
 ## Unreleased
 
-### Security
+### Added
 
-- nixpkgs moves to 2026-10-20 (02c087f) for upstream security fixes: Linux 6.18.57, systemd 262,
-  OpenSSH 10.6p1, OpenSSL 3.5.9, QEMU 11.1.2, Go 1.26.9 and Chromium 155.0.8059.84.
+- A node's Hardware tab shows its management controller (iDRAC, iLO and the like): the address,
+  with a link to its web interface, how it was assigned, and its MAC. The agent reads it through
+  the local IPMI device, so no BMC credentials are needed; nodes without one show nothing.
+  `expanse ctl node inspect` prints it too.
+- ipmitool is installed on every node.
 
 ### Changed
 
@@ -23,6 +26,11 @@ History before 1.0.0 is not recorded here.
 
 - Test VMs and the installer ISO no longer fail to register their Nix store at boot under Nix
   2.34.9, which needs a home directory before `/etc/passwd` has root.
+
+### Security
+
+- nixpkgs moves to 2026-10-20 (02c087f) for upstream security fixes: Linux 6.18.57, systemd 262,
+  OpenSSH 10.6p1, OpenSSL 3.5.9, QEMU 11.1.2, Go 1.26.9 and Chromium 155.0.8059.84.
 
 ## 1.15.0 - 2026-10-22
 

@@ -267,6 +267,7 @@ message Inventory {
   string virtualization = 9;
   TPMInfo tpm = 10;
   repeated string capabilities = 11;
+  BMCInfo bmc = 12;
 }
 
 message OSInfo {
@@ -319,6 +320,12 @@ message GPUInfo {
 message TPMInfo {
   bool present = 1;
   string version = 2;
+}
+
+message BMCInfo {
+  string ip = 1;
+  string mac = 2;
+  string source = 3;
 }
 
 message ListResourcesRequest {

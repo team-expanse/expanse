@@ -204,6 +204,9 @@ func inventoryToProto(inv *inventory.Inventory) *pb.Inventory {
 	if inv.TPM != nil {
 		p.Tpm = &pb.TPMInfo{Present: inv.TPM.Present, Version: inv.TPM.Version}
 	}
+	if inv.BMC != nil {
+		p.Bmc = &pb.BMCInfo{Ip: inv.BMC.IP, Mac: inv.BMC.MAC, Source: inv.BMC.Source}
+	}
 	p.Capabilities = append(p.Capabilities, inv.Capabilities...)
 	p.Os = &pb.OSInfo{
 		Name:              inv.OS.Name,

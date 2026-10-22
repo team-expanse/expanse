@@ -88,6 +88,7 @@ func (previewCluster) GetInventory(context.Context, *pb.GetInventoryRequest) (*p
 		},
 		Gpus:         []*pb.GPUInfo{{Vendor: "NVIDIA", Model: "A2", Vram: 16384, Driver: "nvidia 570.86", PciId: "0000:41:00.0"}},
 		Tpm:          &pb.TPMInfo{Present: true, Version: "2.0"},
+		Bmc:          &pb.BMCInfo{Ip: "10.0.40.17", Mac: "d0:94:66:1a:2b:3c", Source: "DHCP Address"},
 		Capabilities: []string{"storage", "gpu", "kvm"},
 	}, nil
 }

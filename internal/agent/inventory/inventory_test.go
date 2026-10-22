@@ -25,7 +25,7 @@ func writeFile(t *testing.T, path, content string) {
 func newFixture(t *testing.T) fixture {
 	t.Helper()
 	root := t.TempDir()
-	return fixture{root: Roots{Proc: filepath.Join(root, "proc"), Sys: filepath.Join(root, "sys")}}
+	return fixture{root: Roots{Proc: filepath.Join(root, "proc"), Sys: filepath.Join(root, "sys"), Dev: filepath.Join(root, "dev")}}
 }
 
 func TestCollectCPUAndMemory(t *testing.T) {

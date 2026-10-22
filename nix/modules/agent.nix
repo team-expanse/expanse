@@ -145,7 +145,8 @@ in
     boot.extraModulePackages = [ config.boot.kernelPackages.drbd ];
     # vhost_vsock: vm/instance guests report their boot to expanse-block-run over vsock.
     # dm_thin_pool: listed so a switch that adds storage loads it, not only the next boot's initrd.
-    boot.kernelModules = [ "drbd" "dm_thin_pool" "vhost_vsock" ];
+    # ipmi_devintf: /dev/ipmi0, for the BMC address in the node inventory (ipmi_si loads by modalias).
+    boot.kernelModules = [ "drbd" "dm_thin_pool" "vhost_vsock" "ipmi_devintf" ];
     services.drbd = {
       enable = lib.mkDefault true;
       config = lib.mkDefault ''
@@ -366,7 +367,7 @@ in
       # Builds go through nix-daemon: building in-process needs CAP_SETUID for the nixbld users,
       # which expansed lacks on a real node (node-stock-blocks test).
       environment.NIX_REMOTE = "daemon";
-      path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils postgresql_18 ]
+      path = with pkgs; [ lvm2 drbd util-linux e2fsprogs diffutils coreutils postgresql_18 ipmitool ]
         ++ lib.optional config.services.chrony.enable config.services.chrony.package;
       serviceConfig = {
         Type = "notify";

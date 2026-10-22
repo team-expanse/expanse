@@ -58,6 +58,7 @@
       pciutils
       usbutils
       lm_sensors
+      ipmitool
       iproute2
       nftables
       wireguard-tools

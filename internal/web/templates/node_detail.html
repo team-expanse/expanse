@@ -225,6 +225,17 @@
   </section>
 </div>
 
+{{with .Inventory.Bmc}}
+<section class="card">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-shield"/></svg>Management controller</h2>{{if .Ip}}<a class="btn btn-ghost" href="https://{{.Ip}}/" target="_blank" rel="noopener"><svg class="icon"><use href="#i-external"/></svg>Open</a>{{end}}</div>
+  <dl class="dl">
+    <dt>Address</dt><dd>{{if .Ip}}<code>{{.Ip}}</code>{{else}}Not configured{{end}}</dd>
+    {{if .Source}}<dt>Assigned by</dt><dd>{{.Source}}</dd>{{end}}
+    {{if .Mac}}<dt>MAC</dt><dd><code>{{.Mac}}</code></dd>{{end}}
+  </dl>
+</section>
+{{end}}
+
 <section class="card">
   <div class="card-head"><h2><svg class="icon"><use href="#i-disk"/></svg>Disks</h2><span class="muted">{{len .Inventory.Disks}}</span></div>
   <div class="table-wrap">

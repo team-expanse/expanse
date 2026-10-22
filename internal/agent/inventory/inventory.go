@@ -16,6 +16,7 @@ import (
 type Roots struct {
 	Proc string // default /proc
 	Sys  string // default /sys
+	Dev  string // default /dev
 }
 
 func (r Roots) proc() string {
@@ -32,6 +33,13 @@ func (r Roots) sys() string {
 	return r.Sys
 }
 
+func (r Roots) dev() string {
+	if r.Dev == "" {
+		return "/dev"
+	}
+	return r.Dev
+}
+
 // Inventory is the collected node inventory (serialized to JSON for the
 // API; field names are the stable contract).
 type Inventory struct {
@@ -45,6 +53,7 @@ type Inventory struct {
 	GPUs           []GPUInfo  `json:"gpus"`
 	Virtualization string     `json:"virtualization"`
 	TPM            *TPMInfo   `json:"tpm,omitempty"`
+	BMC            *BMCInfo   `json:"bmc,omitempty"`
 	Capabilities   []string   `json:"capabilities"`
 }
 
@@ -101,6 +110,8 @@ type TPMInfo struct {
 // Collector gathers inventory.
 type Collector struct {
 	Roots Roots
+	// LanPrint runs `ipmitool lan print`; nil runs the real one.
+	LanPrint func() (string, error)
 }
 
 // New creates a collector with default roots.
@@ -121,6 +132,7 @@ func (c *Collector) Collect(nodeID string) (*Inventory, error) {
 		GPUs:           c.gpus(r),
 		Virtualization: c.virtualization(r),
 		TPM:            c.tpm(r),
+		BMC:            c.bmc(r),
 	}
 	inv.Capabilities = capabilities(inv)
 	return inv, nil

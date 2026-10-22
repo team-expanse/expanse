@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -678,6 +679,9 @@ func ctlNodeInspect(cmd *cobra.Command, opts *ctlOpts) error {
 			}
 			for _, g := range inv.Gpus {
 				fmt.Fprintf(w, "gpu:      %s %s (%s)\n", g.Vendor, g.Model, g.PciId)
+			}
+			if b := inv.Bmc; b != nil {
+				fmt.Fprintf(w, "bmc:      %s %s (%s)\n", cmp.Or(b.Ip, "no address"), b.Mac, b.Source)
 			}
 		}
 		return emit(opts, table, inv)

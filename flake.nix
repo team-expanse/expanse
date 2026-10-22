@@ -248,6 +248,7 @@
           ui-lan-range = mkTest "ui-lan-range" ./nix/tests/ui-lan-range.nix;
           ui-storage-enable = mkTest "ui-storage-enable" ./nix/tests/ui-storage-enable.nix;
           ui-generations = mkTest "ui-generations" ./nix/tests/ui-generations.nix;
+          node-bmc = mkTest "node-bmc" ./nix/tests/node-bmc.nix;
           ui-secrets = mkTest "ui-secrets" ./nix/tests/ui-secrets.nix;
           ui-vm-cloud-image = mkTest "ui-vm-cloud-image" ./nix/tests/ui-vm-cloud-image.nix;
           ui-cluster = mkTest "ui-cluster" ./nix/tests/ui-cluster.nix;

@@ -228,3 +228,24 @@ func TestNodeReplicasListsLivePlacementsOnTheNode(t *testing.T) {
 		t.Errorf("nodeReplicas = %+v", got)
 	}
 }
+
+func TestNodeHardwareLinksTheBMC(t *testing.T) {
+	srv, pw, _ := newHealthTestServerWithInventory(t, &inventory.Inventory{
+		NodeID: "n1", BMC: &inventory.BMCInfo{IP: "10.0.40.17", MAC: "d0:94:66:1a:2b:3c", Source: "DHCP Address"},
+	})
+	client, _ := loggedInClient(t, srv, pw)
+	_, body := getPage(t, client, srv, "/nodes/n1?tab=hardware")
+	for _, want := range []string{"Management controller", `href="https://10.0.40.17/"`, "d0:94:66:1a:2b:3c", "DHCP Address"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("hardware tab missing %q", want)
+		}
+	}
+}
+
+func TestNodeHardwareWithoutABMCSaysNothingOfIt(t *testing.T) {
+	srv, pw, _ := newHealthTestServerWithInventory(t, &inventory.Inventory{NodeID: "n1"})
+	client, _ := loggedInClient(t, srv, pw)
+	if _, body := getPage(t, client, srv, "/nodes/n1?tab=hardware"); strings.Contains(body, "Management controller") {
+		t.Error("hardware tab shows a BMC card for a node without one")
+	}
+}

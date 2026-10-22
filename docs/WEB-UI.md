@@ -125,7 +125,8 @@ over Server-Sent Events, never by polling.
   **Overview** has the node's **Storage** card (from the node's own report: its data VG's free
   space and an **Enable storage** button that builds the thin pool and starts the volume stack,
   with no rebuild or reboot, STORAGE.md §2), the block replicas placed on it, and its system and
-  reconciler status. **Hardware** (`?tab=hardware`) has CPU, memory, disks, NICs and GPUs;
+  reconciler status. **Hardware** (`?tab=hardware`) has CPU, memory, disks, NICs and GPUs,
+  and the management controller (iDRAC, iLO, ...) with a link to its address when the node has one;
   **Checks** (`?tab=checks`) has health checks and managed resources. **Generations**
   (`?tab=generations`) lists the node's NixOS system generations, newest first, with the release
   each runs: a **release build** is exactly the system an upgrade built for that release, and
