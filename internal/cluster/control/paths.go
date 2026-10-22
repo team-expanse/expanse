@@ -190,15 +190,31 @@ func saveClusterID(dataDir, id string) error {
 func LocalIP() string { return localIP() }
 
 func localIP() string {
-	addrs, err := net.InterfaceAddrs()
+	addrs, _ := net.InterfaceAddrs()
+	return pickIP(defaultRouteSource(), addrs)
+}
+
+// defaultRouteSource is the address the kernel sends from on the default route, nil without one.
+// A UDP "dial" only picks the route; nothing is sent.
+func defaultRouteSource() net.IP {
+	c, err := net.Dial("udp4", "192.0.2.1:9")
 	if err != nil {
-		return "127.0.0.1"
+		return nil
+	}
+	defer c.Close()
+	return c.LocalAddr().(*net.UDPAddr).IP
+}
+
+// pickIP prefers the default route's source, else the first interface IPv4; never a link-local
+// one (a BMC's USB NIC, 169.254/16), which other nodes cannot reach.
+func pickIP(route net.IP, addrs []net.Addr) string {
+	usable := func(ip net.IP) bool { return ip.To4() != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() }
+	if usable(route) {
+		return route.To4().String()
 	}
 	for _, a := range addrs {
-		if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() {
-			if v4 := ipn.IP.To4(); v4 != nil {
-				return v4.String()
-			}
+		if ipn, ok := a.(*net.IPNet); ok && usable(ipn.IP) {
+			return ipn.IP.To4().String()
 		}
 	}
 	return "127.0.0.1"

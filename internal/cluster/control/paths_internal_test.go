@@ -173,3 +173,20 @@ func TestUnsealKeyWrongSecret(t *testing.T) {
 		t.Error("UnsealKey accepted a wrong secret")
 	}
 }
+
+func TestPickIPPrefersTheDefaultRouteSource(t *testing.T) {
+	addrs := []net.Addr{
+		&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
+		&net.IPNet{IP: net.ParseIP("169.254.0.2"), Mask: net.CIDRMask(24, 32)}, // a BMC's USB NIC
+		&net.IPNet{IP: net.ParseIP("192.168.10.154"), Mask: net.CIDRMask(24, 32)},
+	}
+	if got := pickIP(net.ParseIP("192.168.10.154"), addrs); got != "192.168.10.154" {
+		t.Errorf("with a default route: %s", got)
+	}
+	if got := pickIP(nil, addrs); got != "192.168.10.154" {
+		t.Errorf("without a default route, a link-local address won: %s", got)
+	}
+	if got := pickIP(net.ParseIP("169.254.0.2"), addrs[:2]); got != "127.0.0.1" {
+		t.Errorf("only link-local: %s", got)
+	}
+}
