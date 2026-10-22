@@ -17,6 +17,7 @@ import (
 	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/config"
+	"github.com/expanse/expanse/internal/osgen"
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
@@ -243,7 +244,7 @@ func (s *Server) handleNodeDetailEvents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := r.PathValue("id")
-	changes, err := fanInWatches(r.Context(), s.store, store.Key(join.NodesKeyPrefix), store.Key("/cluster/"), store.Key(storage.NodeStoragePrefix), store.Key("/node/"+id+"/"))
+	changes, err := fanInWatches(r.Context(), s.store, store.Key(join.NodesKeyPrefix), store.Key("/cluster/"), store.Key(storage.NodeStoragePrefix), store.Key(osgen.Prefix), store.Key("/node/"+id+"/"))
 	if err != nil {
 		http.Error(w, "live updates unavailable", http.StatusServiceUnavailable)
 		return

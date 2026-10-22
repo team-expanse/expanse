@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/expanse/expanse/internal/osgen"
 	"github.com/expanse/expanse/internal/store"
 )
 
@@ -191,7 +192,7 @@ func classifyEventKey(key string) (kind, shown string) {
 		return "block", key
 	case strings.HasPrefix(key, "/volumes/"):
 		return "volume", key
-	case strings.HasPrefix(key, "/nodes/"):
+	case strings.HasPrefix(key, "/nodes/"), strings.HasPrefix(key, osgen.Prefix):
 		return "node", key
 	case strings.HasPrefix(key, "/cluster/"), strings.HasPrefix(key, "/generations/"):
 		return "cluster", key

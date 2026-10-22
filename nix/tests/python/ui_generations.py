@@ -16,7 +16,7 @@ def page(path):
 
 
 def report():
-    out = kv(n1, "get /nodes/n1/os-generations")[1]
+    out = kv(n1, "get /os-generations/n1")[1]
     try:
         return json.loads(out)
     except ValueError:
@@ -46,6 +46,7 @@ with subtest("the node publishes its generations with their releases"):
     wait_for(lambda: numbers() == [4, 3, 2, 1], "the four generations reported, newest first", 60)
     gens = {g["n"]: g for g in report()["generations"]}
     assert gens[4].get("exact") and gens[4].get("current"), f"generation 4: {gens[4]}"
+    assert re.search(r"quorum:\s+1/1", status(n1)), "the generations report reads as an extra node"
     assert gens[1]["release"] == version and not gens[1].get("exact") and gens[1].get("recorded"), f"generation 1: {gens[1]}"
 
 with subtest("the node page shows each generation's release and the running one"):

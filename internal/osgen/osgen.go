@@ -53,11 +53,15 @@ type CleanRequest struct {
 // DefaultKeep is the cleanup form's starting value.
 const DefaultKeep = 3
 
+// Prefix holds every node's Report and cleanup request. Not under /nodes/: anything JSON there
+// reads as a node record.
+const Prefix = "/os-generations/"
+
 // ReportKey is where a node publishes its Report.
-func ReportKey(node string) store.Key { return store.Key("/nodes/" + node + "/os-generations") }
+func ReportKey(node string) store.Key { return store.Key(Prefix + node) }
 
 // RequestKey is where the web UI asks a node to clean up.
-func RequestKey(node string) store.Key { return store.Key("/nodes/" + node + "/os-generations-clean") }
+func RequestKey(node string) store.Key { return store.Key(Prefix + node + "/clean") }
 
 // ToRemove lists the generations a cleanup keeping the newest keep (at least 1) deletes, newest
 // first; the running and booted generations always stay.

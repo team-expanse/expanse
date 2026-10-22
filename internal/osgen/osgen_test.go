@@ -4,7 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/expanse/expanse/internal/cluster/join"
 )
 
 func TestToRemoveKeepsTheNewestAndNeverTheRunningOrBooted(t *testing.T) {
@@ -77,6 +80,15 @@ func TestDriftNamesARunningSystemNoReleaseBuilt(t *testing.T) {
 	} {
 		if got := Drift(c.gens); got != c.want {
 			t.Errorf("Drift(%+v) = %q, want %q", c.gens, got, c.want)
+		}
+	}
+}
+
+// Everything under /nodes/ that parses as JSON is read as a node record (control.Status, join, nodelc).
+func TestKeysStayOutOfTheNodeRecords(t *testing.T) {
+	for _, k := range []string{string(ReportKey("n1")), string(RequestKey("n1"))} {
+		if strings.HasPrefix(k, join.NodesKeyPrefix) {
+			t.Errorf("%s is under %s, where it would read as a phantom node", k, join.NodesKeyPrefix)
 		}
 	}
 }
