@@ -5,6 +5,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,10 +88,10 @@ func rank(h Health) int {
 
 // ---- disk-space ----
 
-// DiskSpaceCheck checks each real mount's usage.
+// DiskSpaceCheck checks each real filesystem's usage.
 // Degraded > 80% used; Unhealthy > 90% used.
 type DiskSpaceCheck struct {
-	Mounts []string // explicit mounts; default: auto-detect real mounts
+	Mounts []string // explicit mounts; default: one mount per detected filesystem
 }
 
 func (c *DiskSpaceCheck) Name() string { return "disk-space" }
@@ -102,19 +103,22 @@ func (c *DiskSpaceCheck) Run(ctx context.Context) Result {
 		mounts = detectMounts()
 	}
 	res := Result{Name: c.Name(), Status: Healthy, Details: map[string]string{}, Took: 0}
+	used := map[string]float64{}
+	var failed []string
 	for _, m := range mounts {
 		var st unix.Statfs_t
 		if err := unix.Statfs(m, &st); err != nil {
 			res.Status = Worst(res.Status, Unknown)
 			res.Details[m] = "statfs failed: " + err.Error()
+			failed = append(failed, m+": "+res.Details[m])
 			continue
 		}
 		total := uint64(st.Bsize) * uint64(st.Blocks)
-		used := total - uint64(st.Bsize)*uint64(st.Bavail)
 		pct := 0.0
 		if total > 0 {
-			pct = float64(used) / float64(total) * 100
+			pct = float64(total-uint64(st.Bsize)*uint64(st.Bavail)) / float64(total) * 100
 		}
+		used[m] = pct
 		res.Details[m] = fmt.Sprintf("%.1f%% used", pct)
 		switch {
 		case pct > 90:
@@ -124,8 +128,27 @@ func (c *DiskSpaceCheck) Run(ctx context.Context) Result {
 		}
 	}
 	res.Took = time.Since(start)
-	res.Message = strings.Join(mapValuesSorted(res.Details), "; ")
+	res.Message = strings.Join(append(failed, diskMessage(used)), "; ")
 	return res
+}
+
+// diskMessage lists each mount's usage, the fullest first.
+func diskMessage(used map[string]float64) string {
+	mounts := make([]string, 0, len(used))
+	for m := range used {
+		mounts = append(mounts, m)
+	}
+	sort.Slice(mounts, func(i, j int) bool {
+		if used[mounts[i]] != used[mounts[j]] {
+			return used[mounts[i]] > used[mounts[j]]
+		}
+		return mounts[i] < mounts[j]
+	})
+	parts := make([]string, len(mounts))
+	for i, m := range mounts {
+		parts[i] = fmt.Sprintf("%s %.1f%% used", m, used[m])
+	}
+	return strings.Join(parts, ", ")
 }
 
 func detectMounts() []string {
@@ -133,49 +156,40 @@ func detectMounts() []string {
 	if err != nil {
 		return []string{"/"}
 	}
-	var mounts []string
-	seen := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		mount, fstype := fields[1], fields[2]
-		if fstype == "proc" || fstype == "sysfs" || fstype == "devtmpfs" ||
-			fstype == "tmpfs" || fstype == "devpts" || fstype == "securityfs" ||
-			fstype == "cgroup" || fstype == "cgroup2" || fstype == "efivarfs" ||
-			fstype == "bpf" || fstype == "debugfs" || fstype == "tracefs" ||
-			fstype == "configfs" || fstype == "fusectl" || fstype == "mqueue" ||
-			fstype == "hugetlbfs" || fstype == "ramfs" || fstype == "overlay" {
-			continue
-		}
-		if seen[mount] {
-			continue
-		}
-		seen[mount] = true
-		mounts = append(mounts, mount)
+	if mounts := filesystems(string(data)); len(mounts) > 0 {
+		return mounts
 	}
-	if len(mounts) == 0 {
-		return []string{"/"}
-	}
-	return mounts
+	return []string{"/"}
 }
 
-func mapValuesSorted(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	// insertion-sort (small maps)
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
-			keys[j], keys[j-1] = keys[j-1], keys[j]
+// notDisk are filesystem types with no disk space to run out of, or none that can grow (images).
+var notDisk = map[string]bool{
+	"proc": true, "sysfs": true, "devtmpfs": true, "tmpfs": true, "devpts": true, "securityfs": true,
+	"cgroup": true, "cgroup2": true, "efivarfs": true, "bpf": true, "debugfs": true, "tracefs": true,
+	"configfs": true, "fusectl": true, "mqueue": true, "hugetlbfs": true, "ramfs": true, "overlay": true,
+	"pstore": true, "autofs": true, "binfmt_misc": true, "nsfs": true, "rpc_pipefs": true,
+	"squashfs": true, "iso9660": true,
+}
+
+// filesystems picks one mount per filesystem from /proc/mounts, its shortest mount point, sorted:
+// bind mounts and btrfs subvolumes share their device's space.
+func filesystems(procMounts string) []string {
+	best := map[string]string{}
+	for _, line := range strings.Split(procMounts, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || notDisk[fields[2]] {
+			continue
+		}
+		dev, mount := fields[0]+" "+fields[2], fields[1]
+		if cur, ok := best[dev]; !ok || len(mount) < len(cur) || (len(mount) == len(cur) && mount < cur) {
+			best[dev] = mount
 		}
 	}
-	out := make([]string, len(keys))
-	for i, k := range keys {
-		out[i] = k + ": " + m[k]
+	out := make([]string, 0, len(best))
+	for _, m := range best {
+		out = append(out, m)
 	}
+	sort.Strings(out)
 	return out
 }
 

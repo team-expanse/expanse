@@ -38,6 +38,13 @@ History before 1.0.0 is not recorded here.
 - nixpkgs moves to 2026-10-20 (02c087f) for upstream security fixes: Linux 6.18.57, systemd 262,
   OpenSSH 10.6p1, OpenSSL 3.5.9, QEMU 11.1.2, Go 1.26.9 and Chromium 155.0.8059.84.
 
+### Fixed
+
+- The disk-space check lists each disk once, under its shortest mount point and fullest first,
+  instead of every bind mount and btrfs subvolume of it; pstore and read-only images are left out.
+- A new node advertises its default route's source address for raft and the API, never a
+  link-local one: a Dell server's iDRAC USB NIC (169.254.0.2) came first and was picked.
+
 ## 1.15.0 - 2026-10-22
 
 ### Added

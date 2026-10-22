@@ -261,3 +261,27 @@ func TestRunnerKeepsRegistrationOrder(t *testing.T) {
 		t.Errorf("order = %v, want registration order", got)
 	}
 }
+
+func TestFilesystemsListsEachDiskOnceByItsShortestMount(t *testing.T) {
+	mounts := `/dev/nvme0n1p2 /persist ext4 rw 0 0
+/dev/nvme0n1p2 / ext4 rw 0 0
+/dev/nvme0n1p2 /nix ext4 rw 0 0
+/dev/nvme0n1p2 /etc/machine-id ext4 rw 0 0
+/dev/nvme0n1p1 /boot vfat rw 0 0
+pstore /sys/fs/pstore pstore rw 0 0
+/dev/loop0 /iso squashfs ro 0 0
+tmpfs /run tmpfs rw 0 0
+/dev/sdb1 /var/lib/nixtest ext4 rw 0 0
+`
+	got := strings.Join(filesystems(mounts), " ")
+	if want := "/ /boot /var/lib/nixtest"; got != want {
+		t.Fatalf("filesystems = %q, want %q", got, want)
+	}
+}
+
+func TestDiskSpaceMessageListsTheFullestFirst(t *testing.T) {
+	got := diskMessage(map[string]float64{"/boot": 6.14, "/": 53.6, "/var/lib/nixtest": 27.5})
+	if want := "/ 53.6% used, /var/lib/nixtest 27.5% used, /boot 6.1% used"; got != want {
+		t.Fatalf("message = %q, want %q", got, want)
+	}
+}
