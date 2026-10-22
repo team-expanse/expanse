@@ -190,6 +190,8 @@ type clusterCtl struct {
 	dataDir string
 	role    string                   // §4.9: "voter" | "witness" (from the node record)
 	fwd     *raftstore.GRPCForwarder // node↔node write/read forwarding
+	// advertise is the raft address this node runs with; advertiseLoop brings membership to it.
+	advertise string
 }
 
 type Agent struct {
@@ -306,6 +308,12 @@ func New(cfg Config) (*Agent, error) {
 			}
 			raftAdv = net.JoinHostPort(advHost, port)
 		}
+		if cfg.RaftAdvertiseAddr == "" {
+			if fixed := control.RepairAdvertise(raftAdv); fixed != raftAdv {
+				logger.Warn("advertise address repaired: it was link-local", "from", raftAdv, "to", fixed)
+				raftAdv = fixed
+			}
+		}
 		// Persist the addresses this boot actually settled on —
 		// regardless of whether they came from flags, the file, or the
 		// LocalIP guess above. mesh.go's lanIP() depends on this file to
@@ -331,7 +339,7 @@ func New(cfg Config) (*Agent, error) {
 			return nil, fmt.Errorf("open cluster store: %w", err)
 		}
 		st = rs
-		ctl = &clusterCtl{store: rs, ca: clusterCA, secret: secret, id: clusterID, dataDir: cfg.DataDir}
+		ctl = &clusterCtl{store: rs, ca: clusterCA, secret: secret, id: clusterID, dataDir: cfg.DataDir, advertise: raftAdv}
 		// Node↔node forwarding (§4.1/G3.8): the internal mTLS endpoint
 		// on :7443 hosts the leader-side ForwardServer; this node's
 		// forwarder dials it when it needs the leader to apply/linearize.
@@ -766,6 +774,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.ctl != nil {
 		go a.upgradeLoop(ctx)
 		go a.generationsLoop(ctx)
+		go a.advertiseLoop(ctx)
 	}
 	if a.volctl != nil {
 		go a.volctl.Run(ctx)

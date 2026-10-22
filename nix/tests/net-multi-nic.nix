@@ -1,5 +1,6 @@
 # Phase 13 B1: a node with four NICs, as on the R630, where only eno3 reaches a DHCP server.
-# eno1 has a link but no server; eno2 and eno4 have no carrier. The scenario is python/net_multi_nic.py.
+# eno1 has a link but no server; eno2 and eno4 have no carrier; bmc stands in for the iDRAC's USB NIC
+# on 169.254.0.2. The scenario is python/net_multi_nic.py.
 { self }:
 { pkgs, lib, ... }:
 let
@@ -53,7 +54,11 @@ in
     virtualisation.interfaces = lib.genAttrs [ "eno1" "eno2" "eno3" "eno4" ] (n: {
       vlan = lib.toInt (lib.removePrefix "eno" n);
       assignIP = false;
-    });
+    }) // {
+      bmc = { vlan = 5; assignIP = false; };
+    };
+    # Sorts, and so enumerates, before the eno NICs, as idrac did on the R630 that advertised it.
+    networking.interfaces.bmc.ipv4.addresses = [{ address = "169.254.0.2"; prefixLength = 24; }];
     virtualisation.qemu.networkingOptions = lib.mkForce [ ];
     boot.kernelModules = [ "kvm" ];
     virtualisation.memorySize = 4608;

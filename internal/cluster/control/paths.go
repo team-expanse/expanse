@@ -220,6 +220,21 @@ func pickIP(route net.IP, addrs []net.Addr) string {
 	return "127.0.0.1"
 }
 
+// RepairAdvertise swaps a link-local advertise host, which releases before 1.16 could pick from
+// a BMC's USB NIC, for LocalIP, keeping the port.
+func RepairAdvertise(adv string) string { return repairAdvertise(adv, LocalIP()) }
+
+func repairAdvertise(adv, local string) string {
+	host, port, err := net.SplitHostPort(adv)
+	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLinkLocalUnicast() {
+		return adv
+	}
+	if ip := net.ParseIP(local); ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return adv
+	}
+	return net.JoinHostPort(local, port)
+}
+
 // RaftAddrFile records this node's raft bind/advertise addresses
 // (host:port each, advertise optional) so later CLI invocations rebind
 // on the same ports (multi-node clusters on one host).

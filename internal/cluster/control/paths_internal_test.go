@@ -190,3 +190,17 @@ func TestPickIPPrefersTheDefaultRouteSource(t *testing.T) {
 		t.Errorf("only link-local: %s", got)
 	}
 }
+
+func TestRepairAdvertiseReplacesOnlyALinkLocalHost(t *testing.T) {
+	for _, c := range []struct{ adv, local, want string }{
+		{"169.254.0.2:7444", "192.168.10.154", "192.168.10.154:7444"},
+		{"192.168.10.154:7444", "10.0.0.5", "192.168.10.154:7444"}, // a chosen address stays
+		{"169.254.0.2:7444", "127.0.0.1", "169.254.0.2:7444"},      // nothing better to move to
+		{"169.254.0.2:7444", "169.254.9.9", "169.254.0.2:7444"},
+		{"not-an-address", "192.168.10.154", "not-an-address"},
+	} {
+		if got := repairAdvertise(c.adv, c.local); got != c.want {
+			t.Errorf("repairAdvertise(%q, %q) = %q, want %q", c.adv, c.local, got, c.want)
+		}
+	}
+}

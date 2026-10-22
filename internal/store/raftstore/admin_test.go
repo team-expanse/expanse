@@ -367,3 +367,24 @@ func TestARemovedServerStillKnowsItsPeers(t *testing.T) {
 		t.Errorf("PeerAddrs = %v, %v; want the two servers it was removed from", got, err)
 	}
 }
+
+// A lone leader moves its own entry by re-adding itself, as the agent's advertise repair does.
+func TestALeaderReAddingItselfMovesItsAddress(t *testing.T) {
+	c := NewTestCluster(t, 1)
+	s := c.Nodes[0]
+	if got, err := s.SelfAddress(); err != nil || got != c.raftAddr(0) {
+		t.Fatalf("SelfAddress = %q, %v; want %q", got, err, c.raftAddr(0))
+	}
+	if err := s.AddVoter(c.nodeID(0), "192.0.2.7:7444"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.SelfAddress(); got != "192.0.2.7:7444" {
+		t.Fatalf("SelfAddress after the move = %q", got)
+	}
+	if !s.IsLeader() {
+		t.Fatal("the node lost leadership")
+	}
+	if _, err := s.Put(context.Background(), "/moved", []byte("yes")); err != nil {
+		t.Fatalf("write after the move: %v", err)
+	}
+}

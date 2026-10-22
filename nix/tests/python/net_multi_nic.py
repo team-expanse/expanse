@@ -1,8 +1,9 @@
 """net-multi-nic (Phase 13 B1): with four NICs and DHCP on eno3 alone, everything lands on eno3.
 
 eno1 has carrier but no DHCP server (dhcpcd keeps soliciting and assigns nothing); eno2 and eno4
-have no carrier. The cluster is formed with every address left to auto-detection, as an installed
-node does. Asserts the default route, the raft advertise address, the web UI's VIP and a VM
+have no carrier; bmc holds the link-local 169.254.0.2 of a Dell iDRAC's USB NIC. The advertise
+guess must pass over bmc, and a cluster formed on its address (as releases before 1.16 could)
+moves to eno3's. Asserts the default route, the raft advertise address, the web UI's VIP and a VM
 block's macvtap all sit on eno3, and that the router reaches the VIP and the guest.
 
 Runs after cluster-common.py, block-common.py, vol_cluster.py and single_node_common.py.
@@ -10,6 +11,7 @@ Expects KERNEL, INITRD and CMDLINE (net-multi-nic.nix) spliced in ahead of this 
 """
 
 HOST_IP = "192.168.3.10"
+BMC_IP = "169.254.0.2"
 VIP = "192.168.3.200"
 GUEST_MAC = "52:54:00:aa:00:01"
 GUEST_IP = "192.168.3.20"
@@ -46,6 +48,12 @@ spec:
 """
 
 
+def node_record():
+    rc, out = n1.execute("expanse ctl kv --socket /run/expanse/agent.sock get /nodes/n1 2>/dev/null")
+    found = re.search(r"\{.*\}", out, re.S)
+    return json.loads(found.group(0)) if rc == 0 and found else {}
+
+
 def addrs(dev):
     return n1.succeed(f"ip -4 -o addr show dev {dev}")
 
@@ -53,7 +61,8 @@ def addrs(dev):
 router.start()
 router.wait_for_unit("dnsmasq.service")
 n1.start()
-for netdev in ("vlan2", "vlan4"):
+# QEMU numbers netdevs by NIC order, not VLAN: bmc is vlan1, so eno2 and eno4 are vlan3 and vlan5.
+for netdev in ("vlan3", "vlan5"):
     n1.send_monitor_command(f"set_link {netdev} off")
 n1.wait_for_unit("multi-user.target")
 
@@ -67,14 +76,26 @@ with subtest("the default route is on eno3 alone"):
     routes = n1.succeed("ip -4 route show default").strip().splitlines()
     assert routes and all("dev eno3" in r for r in routes), f"default routes: {routes}"
 
-with subtest("a cluster formed with auto-detected addresses advertises eno3's"):
+with subtest("the advertise guess passes over the BMC's link-local address"):
+    assert f"inet {BMC_IP}/" in addrs("bmc"), addrs("bmc")
+    usage = n1.succeed("expanse cluster init --help")
+    assert f'"{HOST_IP}:7444"' in usage, f"init would advertise another address:\n{usage}"
+
+with subtest("a cluster formed on the BMC's address moves to eno3's"):
     n1.succeed("systemctl stop expansed.service")
-    n1.succeed("expanse cluster init --data-dir /persist/expanse --name multinic --node-id n1 --expect 1")
+    n1.succeed("expanse cluster init --data-dir /persist/expanse --name multinic --node-id n1 --expect 1 "
+               f"--advertise-addr {BMC_IP}:7444")
     n1.succeed("systemctl start expansed.service")
     wait_agent_ready(n1)
     wait_one_node_quorum()
     raft_addr = n1.succeed("cat /persist/expanse/raft-addr")
     assert f"{HOST_IP}:7444" in raft_addr, f"raft advertises {raft_addr!r}, want {HOST_IP}:7444"
+    wait_for(lambda: node_record().get("raft_addr") == f"{HOST_IP}:7444", "the node record's repair", 60)
+    n1.succeed(f"journalctl -u expansed | grep -F 'advertise address repaired' | grep -F {HOST_IP}")
+    n1.succeed("systemctl restart expansed.service")
+    wait_agent_ready(n1)
+    wait_one_node_quorum()
+    assert BMC_IP not in n1.succeed("expanse cluster status"), "status still shows the BMC's address"
 
 with subtest("the web UI's VIP is on eno3 and the router reaches it"):
     wait_for(lambda: VIP in addrs("eno3"), "the UI VIP on eno3", timeout=60)

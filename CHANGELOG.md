@@ -44,6 +44,8 @@ History before 1.0.0 is not recorded here.
   instead of every bind mount and btrfs subvolume of it; pstore and read-only images are left out.
 - A new node advertises its default route's source address for raft and the API, never a
   link-local one: a Dell server's iDRAC USB NIC (169.254.0.2) came first and was picked.
+  A node already advertising a link-local address moves to its default route's address on
+  start, and once it leads, updates its raft membership entry and node record to match.
 
 ## 1.15.0 - 2026-10-22
 
