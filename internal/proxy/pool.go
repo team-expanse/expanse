@@ -232,7 +232,7 @@ func (p *Pool) Run(ctx context.Context) error {
 	err := <-errCh
 	cancel() // one loop ending must stop every other one too, not leak them
 	for i := 1; i < len(watches); i++ {
-		<-errCh
+		<-errCh //nolint:errcheck // drain only; the first error is returned
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()

@@ -397,7 +397,7 @@ func runS3(ctx context.Context, instance string, args []string) error {
 	case err := <-booted:
 		if err != nil && ctx.Err() == nil {
 			_ = cmd.Process.Kill()
-			<-exited
+			<-exited //nolint:errcheck // reap only; the bootstrap error is returned
 			return fmt.Errorf("storage/s3: %w", err)
 		}
 	}
