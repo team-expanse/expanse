@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/expanse/expanse/internal/agent/nix"
+	"github.com/expanse/expanse/internal/osgen"
 	"github.com/expanse/expanse/internal/upgrade"
 )
 
@@ -68,11 +70,12 @@ func newUpgradeApplyCmd() *cobra.Command {
 				return fmt.Errorf("this build has no release key to verify releases with")
 			}
 			u := &upgrade.Upgrader{
-				Source:       &upgrade.Source{BaseURL: baseURL, PublicKey: key, CacheDir: cacheDir},
-				Tree:         &upgrade.Tree{Dir: nixosDir},
-				Nix:          &upgrade.ExecNix{PublicKey: key, Driver: nix.New()},
-				StatusPath:   status,
-				BootedSystem: "/run/booted-system",
+				Source:         &upgrade.Source{BaseURL: baseURL, PublicKey: key, CacheDir: cacheDir},
+				Tree:           &upgrade.Tree{Dir: nixosDir},
+				Nix:            &upgrade.ExecNix{PublicKey: key, Driver: nix.New()},
+				StatusPath:     status,
+				BootedSystem:   "/run/booted-system",
+				ReleaseSystems: filepath.Join(filepath.Dir(status), filepath.Base(osgen.DefaultReleaseSystemsPath)),
 			}
 			return u.Apply(cmd.Context(), args[0], cmd.ErrOrStderr())
 		},

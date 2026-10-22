@@ -28,6 +28,7 @@ func (s *Server) registerNodeRoutes() {
 	s.routes.Handle("GET /nodes/{id}", s.requireAuth(http.HandlerFunc(s.handleNodeDetail)))
 	s.routes.Handle("GET /nodes/{id}/events", s.requireAuth(http.HandlerFunc(s.handleNodeDetailEvents)))
 	s.routes.Handle("POST /nodes/{id}/storage", s.requireAuth(http.HandlerFunc(s.handleNodeStorageEnable)))
+	s.routes.Handle("POST /nodes/{id}/generations", s.requireAuth(http.HandlerFunc(s.handleNodeGenerationsClean)))
 }
 
 // nodeView is one node as the list and detail pages show it.
@@ -132,7 +133,8 @@ type nodeDetailData struct {
 	StatusPill     pill
 	Resources      []resourceView
 	Storage        nodeStorageView
-	// Tab is the section shown: "" (overview), "hardware" or "checks".
+	Generations    nodeGenerationsView
+	// Tab is the section shown: "" (overview), "hardware", "checks" or "generations".
 	Tab           string
 	Replicas      []nodeReplicaView
 	ReplicasError string
@@ -166,7 +168,7 @@ func nodeReplicas(blocks []*pb.Block, id string) []nodeReplicaView {
 // nodeTab is the ?tab= section, defaulting to the overview.
 func nodeTab(r *http.Request) string {
 	switch t := r.URL.Query().Get("tab"); t {
-	case "hardware", "checks":
+	case "hardware", "checks", "generations":
 		return t
 	}
 	return ""
@@ -216,6 +218,7 @@ func (s *Server) loadNodeDetail(ctx context.Context, id string) (data nodeDetail
 		s.loadLocalNodeDetail(ctx, &data)
 	}
 	data.Storage = s.nodeStorageView(ctx, id)
+	data.Generations = s.nodeGenerationsView(ctx, id)
 	s.loadNodeReplicas(ctx, &data)
 	return data, true, nil
 }
@@ -255,7 +258,7 @@ func (s *Server) handleNodeDetailEvents(w http.ResponseWriter, r *http.Request) 
 		data.Page.NodeName = s.nodeName(ctx)
 		var events []sseEvent
 		// Separate regions, so a tick's redraw leaves the storage form alone.
-		for _, reg := range [][2]string{{"node", "node-fragment"}, {"node-storage", "node-storage"}, {"node-local", "node-local"}} {
+		for _, reg := range [][2]string{{"node", "node-fragment"}, {"node-storage", "node-storage"}, {"node-local", "node-local"}, {"node-generations", "node-generations"}} {
 			frag, err := s.fragment(reg[1], data)
 			if err != nil {
 				return nil, err

@@ -6,6 +6,22 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- A node's page has a Generations tab: its NixOS system generations, newest first, each with the
+  Expanse release it runs. A generation that is exactly the system an upgrade built for its release
+  is a release build; one that runs the release but was rebuilt since shows as modified, and the
+  node header flags a running system that has drifted. Clean up keeps the newest N (3 by default)
+  plus the running and booted generations, rewrites the boot menu without the rest and frees their
+  space.
+
+### Fixed
+
+- Overview and Activity no longer fill with lease renewals and the reconciler's per-tick status
+  rewrites on an idle cluster; a new lease holder or a status that changes still shows.
+
 ## 1.14.0 - 2026-10-22
 
 ### Changed

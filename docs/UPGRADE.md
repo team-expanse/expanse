@@ -14,7 +14,9 @@
    ships a binary cache for the node's system is used as a substituter, trusted only with that
    key. The source replaces `/etc/nixos/expanse` (the previous one is kept as `expanse.prev`), the
    system is built from it with the nixpkgs the release pins, set as the boot default and
-   switched to. A build that fails puts the previous source back. Downloads go to
+   switched to. The node records that system as the release's own in
+   `/persist/expanse/release-systems.json`, which the node page's Generations tab compares each
+   generation with to show drift. A build that fails puts the previous source back. Downloads go to
    `/var/cache/expanse/upgrade/<version>/` and are removed once the node runs the release.
 3. Blocks and VMs keep running through the switch, and the agent's restart leaves their volumes
    Primary. A VM picks up the new release when you restart it.

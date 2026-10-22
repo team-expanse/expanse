@@ -7,8 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/expanse/expanse/internal/osgen"
 )
 
 // State is where a node's upgrade stands.
@@ -57,6 +58,8 @@ type Upgrader struct {
 	StatusPath string
 	// BootedSystem is /run/booted-system, compared with the new system for RebootNeeded.
 	BootedSystem string
+	// ReleaseSystems records each built system's release (osgen); "" records nothing.
+	ReleaseSystems string
 }
 
 // Apply moves this node to version. A failed build puts the previous source back.
@@ -113,6 +116,11 @@ func (u *Upgrader) run(ctx context.Context, st *Status, logs io.Writer) error {
 	if err := u.Nix.SetProfile(ctx, st.System); err != nil {
 		return fmt.Errorf("set the system profile: %w", err)
 	}
+	if u.ReleaseSystems != "" {
+		if err := osgen.RecordReleaseSystem(u.ReleaseSystems, st.System, st.Version); err != nil {
+			fmt.Fprintf(logs, "recording the release's system: %v\n", err)
+		}
+	}
 	st.RebootNeeded = u.rebootNeeded(st.System)
 	if err := u.Nix.Switch(ctx, st.System); err != nil {
 		return fmt.Errorf("switch: %w", err)
@@ -147,13 +155,12 @@ func (u *Upgrader) save(st *Status) error {
 // runsRelease checks the built system's expanse is version: a configuration.nix that does not
 // import ./expanse builds whatever release it names instead.
 func runsRelease(system, version string) error {
-	bin, err := filepath.EvalSymlinks(filepath.Join(system, "sw", "bin", "expanse"))
-	if err != nil {
-		return fmt.Errorf("the built system has no expanse: %w", err)
+	got := osgen.ReleaseOf(system)
+	if got == "" {
+		return fmt.Errorf("the built system has no expanse")
 	}
-	_, pkg, _ := strings.Cut(filepath.Base(filepath.Dir(filepath.Dir(bin))), "-") // drop the store hash
-	if pkg != "expanse-"+version {
-		return fmt.Errorf("the built system runs %s, not expanse-%s: configuration.nix must import ./expanse", pkg, version)
+	if got != version {
+		return fmt.Errorf("the built system runs expanse-%s, not expanse-%s: configuration.nix must import ./expanse", got, version)
 	}
 	return nil
 }

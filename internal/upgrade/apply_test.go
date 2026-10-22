@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/expanse/expanse/internal/osgen"
 )
 
 type fakeNix struct {
@@ -55,7 +57,10 @@ func newApplyRig(t *testing.T) *applyRig {
 	nx := &fakeNix{built: fakeSystem(t, "1.12.0")}
 	return &applyRig{
 		nix: nx, nixos: nixos,
-		u: &Upgrader{Source: r.source(t), Tree: &Tree{Dir: nixos}, Nix: nx, StatusPath: filepath.Join(t.TempDir(), "upgrade.json")},
+		u: &Upgrader{
+			Source: r.source(t), Tree: &Tree{Dir: nixos}, Nix: nx, StatusPath: filepath.Join(t.TempDir(), "upgrade.json"),
+			ReleaseSystems: filepath.Join(t.TempDir(), "release-systems.json"),
+		},
 	}
 }
 
@@ -99,6 +104,17 @@ func TestApplyBuildsTheNewSourceThenSetsTheProfileAndSwitches(t *testing.T) {
 	}
 	if st.State != StateDone || st.Version != "1.12.0" || st.From != "1.11.3" || st.System != sys {
 		t.Errorf("status = %+v", st)
+	}
+}
+
+// The web UI tells a release's own system from one rebuilt by hand by this record.
+func TestApplyRecordsTheSystemItBuiltForTheRelease(t *testing.T) {
+	r := newApplyRig(t)
+	if err := r.u.Apply(context.Background(), "1.12.0", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := osgen.LoadReleaseSystems(r.u.ReleaseSystems); got[r.nix.built] != "1.12.0" {
+		t.Errorf("release systems = %v, want %s recorded as 1.12.0", got, r.nix.built)
 	}
 }
 

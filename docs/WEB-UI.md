@@ -120,12 +120,19 @@ over Server-Sent Events, never by polling.
     and each block's Address card say the block is reachable inside the cluster only.
 - **Nodes** (`/nodes`, live) — every member with its role, membership state (Online /
   Unreachable / Failed / Cordoned / Degraded), the health its agent last reported through its
-  10s heartbeat, API address and join time. A node's page (`/nodes/<id>`, live) has three tabs.
+  10s heartbeat, API address and join time. A node's page (`/nodes/<id>`, live) has four tabs;
+  its header shows the release the node runs, flagged when the running system has drifted.
   **Overview** has the node's **Storage** card (from the node's own report: its data VG's free
   space and an **Enable storage** button that builds the thin pool and starts the volume stack,
   with no rebuild or reboot, STORAGE.md §2), the block replicas placed on it, and its system and
   reconciler status. **Hardware** (`?tab=hardware`) has CPU, memory, disks, NICs and GPUs;
-  **Checks** (`?tab=checks`) has health checks and managed resources. Inventory, checks and
+  **Checks** (`?tab=checks`) has health checks and managed resources. **Generations**
+  (`?tab=generations`) lists the node's NixOS system generations, newest first, with the release
+  each runs: a **release build** is exactly the system an upgrade built for that release, and
+  **modified** runs the release but was rebuilt since (by hand, say). A generation built before
+  upgrades recorded this, or a node's first one from the installer, shows its version only. **Clean up** keeps the
+  newest N (3 by default) plus the running and booted generations, rewrites the boot menu without
+  the rest and collects the store. Every node publishes this, so it shows for any node. Inventory, checks and
   reconciler status are shown **for the node serving the page only**: agents do not publish them
   cluster-wide, so another node's page says so and links to that node's own UI. The deploy form
   warns while no node has storage on.

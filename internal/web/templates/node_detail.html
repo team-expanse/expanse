@@ -5,12 +5,18 @@
     <a href="/nodes/{{.Node.ID}}"{{if eq .Tab ""}} aria-current="page"{{end}}>Overview</a>
     <a href="/nodes/{{.Node.ID}}?tab=hardware"{{if eq .Tab "hardware"}} aria-current="page"{{end}}>Hardware</a>
     <a href="/nodes/{{.Node.ID}}?tab=checks"{{if eq .Tab "checks"}} aria-current="page"{{end}}>Checks</a>
+    <a href="/nodes/{{.Node.ID}}?tab=generations"{{if eq .Tab "generations"}} aria-current="page"{{end}}>Generations</a>
   </nav>
   {{if eq .Tab ""}}
   {{/* Not live while it shows a refused submit, so the message stays. */}}
   <div id="node-storage"{{if not .Storage.Error}} sse-swap="node-storage" hx-swap="innerHTML"{{end}}>{{template "node-storage" .}}</div>
   {{end}}
+  {{if eq .Tab "generations"}}
+  {{/* Not live while it shows a refused submit, so the message stays. */}}
+  <div id="node-generations"{{if not .Generations.Error}} sse-swap="node-generations" hx-swap="innerHTML"{{end}}>{{template "node-generations" .}}</div>
+  {{else}}
   <div id="node-local" sse-swap="node-local" hx-swap="innerHTML">{{template "node-local" .}}</div>
+  {{end}}
 </div>
 {{end}}
 
@@ -30,6 +36,7 @@
   <div class="kv-card"><div class="kv-label">Reported health</div><div class="kv-value">{{template "pill" .Node.Health}}</div><div class="kv-sub">{{if eq .Node.Health.Label "Stale"}}unreachable; last heartbeat not current{{else}}from its 10s heartbeat{{end}}</div></div>
   <div class="kv-card"><div class="kv-label">Raft</div><div class="kv-value"><code>{{.Node.RaftAddr}}</code></div><div class="kv-sub">{{.Node.NodeStatus.State}}</div></div>
   <div class="kv-card"><div class="kv-label">API</div><div class="kv-value"><code>{{.Node.APIAddr}}</code></div><div class="kv-sub">gRPC, mTLS</div></div>
+  <div class="kv-card"><div class="kv-label">Release</div><div class="kv-value">{{with .Generations.Running}}{{if .Modified}}<span class="text-warn">{{$.Generations.Drift}}</span>{{else}}{{.Release}}{{end}}{{else}}<span class="muted">—</span>{{end}}</div><div class="kv-sub">{{with .Generations.Running}}generation {{.Number}}{{if .Exact}} · release build{{else if .Modified}} · not the system its upgrade built{{end}}{{else}}not reported yet{{end}}</div></div>
   <div class="kv-card"><div class="kv-label">Self-reported</div><div class="kv-value">{{if .Node.Degraded}}<span class="text-warn">degraded</span>{{else}}ok{{end}}</div><div class="kv-sub">{{if .Node.Lifecycle}}lifecycle: {{.Node.Lifecycle}}{{else}}lifecycle: healthy{{end}}</div></div>
 </section>
 {{end}}
@@ -71,6 +78,59 @@
     <div class="form-actions"><button class="btn btn-primary" type="submit">Enable storage</button></div>
   </form>
   {{end}}
+  {{end}}
+  {{end}}
+</section>
+{{end}}
+{{end}}
+
+{{define "node-generations"}}
+{{with .Generations}}
+<section class="card" id="generations">
+  <div class="card-head"><h2><svg class="icon"><use href="#i-generations"/></svg>System generations</h2>{{with .Report}}<span class="muted">{{len .Generations}}</span>{{end}}</div>
+  {{if not .Report}}
+  <p class="muted">This node has not reported its system generations yet.</p>
+  {{else}}
+  <p>Each upgrade or <code>nixos-rebuild</code> adds a NixOS generation, and each one stays bootable until it is removed. A <em>release build</em> is exactly the system an upgrade built for that release; <em>modified</em> runs the release but was rebuilt since, for example by hand.</p>
+  {{with .Drift}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p><strong>{{nodename $.Node.ID}} runs {{.}}.</strong> Its running system is not the one its upgrade built. Upgrading again, or rolling back to the release build, brings it back in line.</p></div></div>{{end}}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Generation</th><th>Release</th><th>Built</th><th></th></tr></thead>
+      <tbody>
+        {{range .Report.Generations}}
+        <tr>
+          <td><strong>{{.Number}}</strong></td>
+          <td>{{if .Release}}{{.Release}}{{else}}<span class="muted">unknown</span>{{end}}{{if .Exact}} <span class="pill pill-ok"><span class="dot"></span>Release build</span>{{else if .Modified}} <span class="pill pill-warn"><span class="dot"></span>{{.Release}}, modified</span>{{end}}</td>
+          <td class="muted" title="{{stamp .Date}}">{{ago .Date}}</td>
+          <td class="text-right">{{if .Current}}<span class="tag tag-leader">Running</span>{{end}}{{if .Booted}} <span class="tag">Booted</span>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{with .Report.Clean}}<p class="field-hint">{{$.Generations.RemovedText}} {{ago .At}}.</p>{{end}}
+  {{if .Pending}}
+  <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><p>Cleaning up: {{nodename .Node}} is removing old generations and freeing their space.</p></div></div>
+  {{else}}
+  <form id="generations-form" method="post" action="/nodes/{{.Node}}/generations" class="form" novalidate>
+    {{template "csrf" $.Page}}
+    <label class="field">
+      <span class="field-label">Generations to keep</span>
+      <input class="input" type="number" name="keep" value="{{.Keep}}" min="1" max="100"{{if .Error}} aria-invalid="true" autofocus{{end}}>
+      {{if .Error}}<span class="field-error">{{.Error}}</span>{{else}}<span class="field-hint">The newest ones stay, and so do the running and booted generations. The rest leave the boot menu and their disk space is freed.</span>{{end}}
+    </label>
+    <div class="form-actions"><button class="btn btn-danger" type="button" data-confirm="confirm-generations"><svg class="icon"><use href="#i-trash"/></svg>Clean up</button></div>
+  </form>
+  <dialog id="confirm-generations" class="dialog" data-submit="#generations-form">
+    <form method="dialog">
+      <h2>Remove old generations on {{nodename .Node}}?</h2>
+      <p>Removed generations can no longer be booted or rolled back to. The running and booted generations always stay.</p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" value="cancel">Cancel</button>
+        <button class="btn btn-danger" value="confirm">Clean up</button>
+      </div>
+    </form>
+  </dialog>
   {{end}}
   {{end}}
 </section>

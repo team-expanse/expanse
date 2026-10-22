@@ -94,15 +94,19 @@ func (d *ExecDriver) cmd(ctx context.Context, name string, args ...string) *exec
 	return exec.CommandContext(ctx, name, args...)
 }
 
+// nixTool is name on PATH, else the running system's copy.
+func nixTool(name string) string {
+	if _, err := exec.LookPath(name); err != nil {
+		return "/run/current-system/sw/bin/" + name
+	}
+	return name
+}
+
 func (d *ExecDriver) nixCmd(ctx context.Context, args ...string) *exec.Cmd {
 	args = append([]string{
 		"--extra-experimental-features", "nix-command flakes",
 	}, args...)
-	nixBin := "nix"
-	if _, err := exec.LookPath(nixBin); err != nil {
-		nixBin = "/run/current-system/sw/bin/nix"
-	}
-	c := d.cmd(ctx, nixBin, args...)
+	c := d.cmd(ctx, nixTool("nix"), args...)
 	// The agent may run with a read-only HOME (impermanence); nix needs
 	// a writable cache dir. /tmp is always available.
 	c.Env = append(os.Environ(), "XDG_CACHE_HOME=/var/cache/expanse-nix")
@@ -299,14 +303,17 @@ func (d *ExecDriver) currentSystem() string {
 	return "/run/current-system"
 }
 
+func (d *ExecDriver) profiles() string {
+	if d.profilesPath == "" {
+		return "/nix/var/nix/profiles"
+	}
+	return d.profilesPath
+}
+
 // Generations implements Driver. Reads the profile links directly —
 // structured data, no human output parsing.
 func (d *ExecDriver) Generations(ctx context.Context) ([]Generation, error) {
-	profiles := d.profilesPath
-	if profiles == "" {
-		profiles = "/nix/var/nix/profiles"
-	}
-	matches, err := filepath.Glob(filepath.Join(profiles, "system-*-link"))
+	matches, err := filepath.Glob(filepath.Join(d.profiles(), "system-*-link"))
 	if err != nil {
 		return nil, err
 	}
@@ -372,6 +379,30 @@ func (d *ExecDriver) Rollback(ctx context.Context, n int) error {
 		}
 	}
 	return d.Switch(ctx, target.Path, SwitchDefault)
+}
+
+// DeleteGenerations removes system generations, rewrites the boot menu without them and frees the store.
+func (d *ExecDriver) DeleteGenerations(ctx context.Context, numbers []int) error {
+	if len(numbers) == 0 {
+		return nil
+	}
+	system := filepath.Join(d.profiles(), "system")
+	args := []string{"-p", system, "--delete-generations"}
+	for _, n := range numbers {
+		args = append(args, strconv.Itoa(n))
+	}
+	steps := []*exec.Cmd{
+		d.cmd(ctx, nixTool("nix-env"), args...),
+		d.cmd(ctx, filepath.Join(system, "bin", "switch-to-configuration"), "boot"),
+		d.cmd(ctx, nixTool("nix-store"), "--gc"),
+	}
+	for _, c := range steps {
+		if out, err := c.CombinedOutput(); err != nil {
+			return errors.Wrap(err, errors.KindUnavailable, "nix.DeleteGenerations",
+				fmt.Sprintf("%s failed: %v: %s", filepath.Base(c.Path), err, tail(out, 512)))
+		}
+	}
+	return nil
 }
 
 // GC implements Driver.

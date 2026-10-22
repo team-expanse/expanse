@@ -158,9 +158,11 @@ func TestEventLogSkipsReplicaProbeHeartbeats(t *testing.T) {
 func TestEventLogSkipsRefreshes(t *testing.T) {
 	l := newEventLog(8)
 	put := func(key, prev, val string) {
-		l.record(store.Event{Type: store.EventPut,
+		l.record(store.Event{
+			Type:  store.EventPut,
 			Prev:  &store.Entry{Key: store.Key(key), Value: []byte(prev)},
-			Entry: &store.Entry{Key: store.Key(key), Value: []byte(val)}})
+			Entry: &store.Entry{Key: store.Key(key), Value: []byte(val)},
+		})
 	}
 	put("/leases/vip:ui", `{"h":"n1","t":3,"e":100}`, `{"h":"n1","t":3,"e":200}`)
 	put("/node/n1/status/resources/block-replica:default/pg/0",

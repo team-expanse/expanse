@@ -200,3 +200,29 @@ func TestBuildFileBuildsAttrFromFile(t *testing.T) {
 		t.Fatalf("args %q lack %q", s, want)
 	}
 }
+
+// Deleting generations drops their profile links, rewrites the boot menu without them, then frees the store.
+func TestDeleteGenerationsThenRefreshesBootAndCollects(t *testing.T) {
+	d := New()
+	d.profilesPath = "/p"
+	var calls []string
+	d.runCmd = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		calls = append(calls, strings.Join(append([]string{filepath.Base(name)}, args...), " "))
+		return exec.CommandContext(ctx, "true")
+	}
+	if err := d.DeleteGenerations(context.Background(), []int{4, 2}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"nix-env -p /p/system --delete-generations 4 2",
+		"switch-to-configuration boot",
+		"nix-store --gc",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls =\n%s\nwant\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+	calls = nil
+	if err := d.DeleteGenerations(context.Background(), nil); err != nil || len(calls) != 0 {
+		t.Errorf("deleting nothing ran %v (err %v)", calls, err)
+	}
+}
