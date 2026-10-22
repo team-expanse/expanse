@@ -6,7 +6,23 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
-## Unreleased
+## 1.14.0 - 2026-10-22
+
+### Changed
+
+- The web UI has a new look and layout. A flat rail holds six sections: Overview, Cluster, Nodes,
+  Workloads, Changes and Upgrades. Related pages sit behind tabs (Overview: Now, Checks, Activity;
+  Workloads: Blocks, Volumes), and phones get a bottom bar with a More menu.
+- Cluster has its own Settings tab for what every node shares: the LAN address range, the UI CA
+  download and SSO status. The account menu's Settings keeps only the password. The UI CA is now at
+  /cluster/ui-ca.pem and the LAN range form posts to /cluster/network.
+- Node and block pages are tabbed. A node has Overview, Hardware and Checks; every block has
+  Overview, Logs and Settings, and Delete moves to Settings.
+- Deploying shows three marked steps (pick a type, configure and check, deployed), and the catalog
+  groups types by category.
+- Generations are now Changes: each generation's page shows what it added, removed and changed
+  since its parent. Upgrades lists a running rollout node by node and keeps the start form visible
+  but disabled while one runs.
 
 ### Security
 
