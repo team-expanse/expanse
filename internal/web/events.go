@@ -7,6 +7,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
@@ -114,15 +115,41 @@ func (l *eventLog) run(ctx context.Context, st store.Store) {
 }
 
 // record adds ev unless it is noise: a health probe, a replica probe's heartbeat, or a put that
-// rewrote the same value.
+// only refreshed its value.
 func (l *eventLog) record(ev store.Event) {
 	if ev.Entry != nil && (isNodeHealthProbe(string(ev.Entry.Key)) || isProbeHeartbeat(ev.Entry)) {
 		return
 	}
-	if ev.Type == store.EventPut && ev.Prev != nil && ev.Entry != nil && bytes.Equal(ev.Prev.Value, ev.Entry.Value) {
+	if ev.Type == store.EventPut && ev.Prev != nil && ev.Entry != nil && isRefresh(ev.Prev, ev.Entry) {
 		return
 	}
 	l.add(entryFor(ev))
+}
+
+// isRefresh reports a rewrite that changed nothing but a lease's expiry or a record's tick stamps.
+func isRefresh(prev, next *store.Entry) bool {
+	if bytes.Equal(prev.Value, next.Value) {
+		return true
+	}
+	if strings.HasPrefix(string(next.Key), "/leases/") {
+		var a, b struct {
+			Holder string `json:"h"`
+			Term   uint64 `json:"t"`
+		}
+		return json.Unmarshal(prev.Value, &a) == nil && json.Unmarshal(next.Value, &b) == nil && a == b
+	}
+	return withoutStamps(prev.Value) == withoutStamps(next.Value)
+}
+
+// withoutStamps drops a key=value record's updated= and ticks= fields, which change every tick.
+func withoutStamps(v []byte) string {
+	var kept []string
+	for _, f := range strings.Fields(string(v)) {
+		if !strings.HasPrefix(f, "updated=") && !strings.HasPrefix(f, "ticks=") {
+			kept = append(kept, f)
+		}
+	}
+	return strings.Join(kept, " ")
 }
 
 // isNodeHealthProbe matches the store check's own test writes (/nodes/<id>/health/...).

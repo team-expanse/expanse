@@ -154,6 +154,34 @@ func TestEventLogSkipsReplicaProbeHeartbeats(t *testing.T) {
 	}
 }
 
+// A lease renewal or a status record's per-tick rewrite is not an event; a change of holder or health is.
+func TestEventLogSkipsRefreshes(t *testing.T) {
+	l := newEventLog(8)
+	put := func(key, prev, val string) {
+		l.record(store.Event{Type: store.EventPut,
+			Prev:  &store.Entry{Key: store.Key(key), Value: []byte(prev)},
+			Entry: &store.Entry{Key: store.Key(key), Value: []byte(val)}})
+	}
+	put("/leases/vip:ui", `{"h":"n1","t":3,"e":100}`, `{"h":"n1","t":3,"e":200}`)
+	put("/node/n1/status/resources/block-replica:default/pg/0",
+		`health=healthy in_sync=true actions=0 error="" updated=100`,
+		`health=healthy in_sync=true actions=0 error="" updated=200`)
+	put("/nodes/n1/reconcile", "health=healthy ticks=4 changes=1 failures=0 updated=100",
+		"health=healthy ticks=5 changes=1 failures=0 updated=200")
+	if got := l.recent("", 8); len(got) != 0 {
+		t.Fatalf("refreshes recorded: %+v", got)
+	}
+	put("/leases/vip:ui", `{"h":"n1","t":3,"e":200}`, `{"h":"n2","t":4,"e":300}`)
+	put("/node/n1/status/resources/block-replica:default/pg/0",
+		`health=healthy in_sync=true actions=0 error="" updated=200`,
+		`health=unhealthy in_sync=false actions=1 error="exit 1" updated=300`)
+	put("/nodes/n1/reconcile", "health=healthy ticks=5 changes=1 failures=0 updated=200",
+		"health=healthy ticks=6 changes=2 failures=0 updated=300")
+	if got := l.recent("", 8); len(got) != 3 {
+		t.Errorf("recorded %d real changes, want 3: %+v", len(got), got)
+	}
+}
+
 // Event keys under a node show its hostname in place of the node ID.
 func TestEventKeysNameNodesByHostname(t *testing.T) {
 	_, _, st := newTestServerStore(t)
