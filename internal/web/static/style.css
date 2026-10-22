@@ -177,6 +177,7 @@ strong { font-weight: 600; }
   color: var(--sidebar-fg); font-weight: 500; font-size: 0.97rem;
 }
 .nav-item .icon { width: 1.2rem; height: 1.2rem; opacity: 0.8; }
+.nav-badge { margin-left: auto; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: var(--sidebar-accent); color: var(--sidebar-bg); }
 .nav-item:hover { background: var(--sidebar-hover); color: var(--sidebar-fg-strong); text-decoration: none; }
 .nav-item[aria-current="page"] { background: var(--sidebar-active); color: var(--sidebar-accent); }
 .nav-item[aria-current="page"] .icon { opacity: 1; }
@@ -552,6 +553,8 @@ fieldset:disabled .input { opacity: 0.6; }
   .bottombar a:hover { text-decoration: none; color: var(--sidebar-fg-strong); }
   .bottombar > a[aria-current="page"], .more:has([aria-current="page"]) summary { color: var(--sidebar-accent); }
   .more { position: relative; }
+  .more summary { position: relative; }
+  .nav-dot { position: absolute; top: 10px; left: calc(50% + 8px); width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--sidebar-accent); }
   .more-panel {
     position: absolute; right: 0.5rem; bottom: calc(100% + 0.5rem); min-width: 12rem;
     background: var(--sidebar-bg); border: 1px solid var(--sidebar-border); border-radius: var(--radius-sm);

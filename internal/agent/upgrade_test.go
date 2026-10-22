@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -87,7 +88,7 @@ func TestTheLeaderChecksForANewReleaseDailyOrWhenAsked(t *testing.T) {
 	r := newUpgradeRig(t, "n1", "1.11.3")
 	ctx := context.Background()
 	checks := 0
-	r.u.latest = func(context.Context) (string, error) { checks++; return "1.12.0", nil }
+	r.u.releases = func(context.Context) ([]string, error) { checks++; return []string{"1.12.0", "1.11.3"}, nil }
 	now := time.Now()
 	r.u.pass(ctx, r.st, now)
 	if checks != 0 {
@@ -100,7 +101,7 @@ func TestTheLeaderChecksForANewReleaseDailyOrWhenAsked(t *testing.T) {
 		t.Fatalf("checked %d times in an hour, want once", checks)
 	}
 	got, _ := rollout.LoadLatest(ctx, r.st)
-	if got.Version != "1.12.0" {
+	if got.Version != "1.12.0" || !slices.Equal(got.Releases, []string{"1.12.0", "1.11.3"}) {
 		t.Fatalf("latest = %+v", got)
 	}
 	got.Requested = true

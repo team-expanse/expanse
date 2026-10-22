@@ -20,6 +20,9 @@
   <p>{{if .Version}}The newest release is <strong>{{.Version}}</strong>.{{else}}No release found yet.{{end}}
   {{if not .Checked.IsZero}}<span class="muted">Checked {{.Checked.Format "2006-01-02 15:04"}}.</span>{{end}}
   {{with .Error}}<span class="text-warn">The last check failed: {{.}}</span>{{end}}</p>
+  {{end}}
+  {{with .View.Available}}<div class="callout callout-info"><svg class="icon"><use href="#i-download"/></svg><div><p><strong>Expanse {{.}} is available.</strong>{{$.View.Behind}} of {{len $.View.Nodes}} nodes run an older release.</p></div></div>{{end}}
+  {{with .View.Latest}}
   <div class="form-actions">
     <form method="post" action="/upgrade/check" hx-post="/upgrade/check" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><button class="btn" type="submit"{{if .Disabled}} disabled{{end}}>Check now</button></form>
     <form method="post" action="/upgrade/auto-check" hx-post="/upgrade/auto-check" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}">
@@ -51,7 +54,14 @@
     <input type="hidden" name="csrf_token" value="{{$csrf}}">
     <label class="field">
       <span class="field-label">Upgrade the cluster to</span>
+      {{with .View.Options}}{{$offer := $.View.Offer}}
+      {{/* Keyed to the check, so live updates keep a choice until the list changes. */}}
+      <select class="input" id="upgrade-version-{{$.View.Latest.Checked.Unix}}" hx-preserve name="version" required>
+        {{range .}}<option value="{{.Version}}"{{if eq .Version $offer}} selected{{end}}>{{.Version}}{{with .Note}} ({{.}}){{end}}</option>{{end}}
+      </select>
+      {{else}}
       <input class="input" id="upgrade-version" hx-preserve type="text" name="version" value="{{.View.Offer}}" placeholder="1.12.0" autocomplete="off" required>
+      {{end}}
       <span class="field-hint">Each node in turn downloads the release, checks its signature, builds and switches. The next node starts once the cluster is healthy again.</span>
     </label>
     <div class="form-actions"><button class="btn btn-primary" type="submit">Upgrade cluster</button></div>
@@ -74,7 +84,7 @@
         {{range .View.Nodes}}
         <tr>
           <td><a class="host" href="/nodes/{{.ID}}">{{nodename .ID}}</a>{{if .Current}} <span class="tag">upgrading</span>{{end}}</td>
-          <td>{{with .Report.Version}}{{.}}{{else}}<span class="muted">unknown</span>{{end}}</td>
+          <td>{{with .Report.Version}}{{.}}{{else}}<span class="muted">unknown</span>{{end}}{{if .Behind}} <span class="pill pill-info"><span class="dot"></span>Update available</span>{{end}}</td>
           <td>{{with .Report.Upgrade}}{{.Version}}: {{.State}}{{with .Error}} <span class="text-crit">{{.}}</span>{{end}}{{if .RebootNeeded}} <span class="text-warn">reboot to finish</span>{{end}}{{else}}<span class="muted">none</span>{{end}}</td>
         </tr>
         {{else}}

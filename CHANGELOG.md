@@ -15,6 +15,8 @@ History before 1.0.0 is not recorded here.
   the local IPMI device, so no BMC credentials are needed; nodes without one show nothing.
   `expanse ctl node inspect` prints it too.
 - ipmitool is installed on every node.
+- An available upgrade shows across the web UI: **New** on the Upgrades rail item, a link in the
+  footer, and **Update available** beside each node on an older release.
 
 ### Changed
 
@@ -23,6 +25,8 @@ History before 1.0.0 is not recorded here.
   skipped: their new equal-UUID reconcile can leave a replica stuck after a resync is requested.
 - An upgrade's system build runs once more when a signal kills its builder, which VM tests have
   seen happen rarely; a second failure still stops the rollout.
+- The Upgrades page picks the release from a list of the published releases instead of a text
+  box. The daily check records the list, from GitHub's releases API.
 
 ### Fixed
 

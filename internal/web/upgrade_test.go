@@ -33,10 +33,68 @@ func newUpgradeTestServer(t *testing.T) (*http.Client, string, string, store.Sto
 func TestUpgradePageShowsVersionsAndOffersTheNewestRelease(t *testing.T) {
 	c, base, _, _ := newUpgradeTestServer(t)
 	_, body := get(t, c, base+"/upgrade")
-	for _, want := range []string{"1.12.0", "1.11.3", `href="/nodes/n2"`, `name="version" value="1.12.0"`, `action="/upgrade/start"`, `action="/upgrade/check"`} {
+	for _, want := range []string{"1.12.0", "1.11.3", `href="/nodes/n2"`, `<option value="1.12.0" selected>1.12.0 (newest)</option>`, `action="/upgrade/start"`, `action="/upgrade/check"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("upgrade page missing %q", want)
 		}
+	}
+}
+
+func TestUpgradeOffersTheReleasesFromTheClustersOnward(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	l := rollout.Latest{Version: "1.12.0", Releases: []string{"1.12.0", "1.11.4", "1.11.3", "1.11.0"}, Checked: time.Now()}
+	if err := rollout.SaveLatest(context.Background(), st, l); err != nil {
+		t.Fatal(err)
+	}
+	_, body := get(t, c, base+"/upgrade")
+	for _, want := range []string{`<select class="input" id="upgrade-version-`, `<option value="1.12.0" selected>1.12.0 (newest)</option>`, `<option value="1.11.4">1.11.4</option>`, `<option value="1.11.3">1.11.3 (running)</option>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upgrade page missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`value="1.11.0"`, `type="text" name="version"`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("upgrade page has %q", unwanted)
+		}
+	}
+}
+
+func TestUpgradeAsksForAVersionBeforeAnyCheck(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	if err := rollout.SaveLatest(context.Background(), st, rollout.Latest{}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := get(t, c, base+"/upgrade")
+	if !strings.Contains(body, `type="text" name="version"`) || strings.Contains(body, "<select") {
+		t.Error("without a release list the page does not ask for a version")
+	}
+}
+
+func TestAnAvailableUpgradeShowsOnEveryPage(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	ctx := context.Background()
+	_, body := get(t, c, base+"/nodes")
+	for _, want := range []string{`class="nav-badge"`, `class="nav-dot"`, `href="/upgrade">1.12.0 available`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("nodes page missing %q", want)
+		}
+	}
+	_, body = get(t, c, base+"/upgrade")
+	if strings.Count(body, "Update available") != 3 || !strings.Contains(body, "Expanse 1.12.0 is available") {
+		t.Error("the upgrade page does not mark the nodes behind the newest release")
+	}
+
+	for _, n := range []string{"n1", "n2", "n3"} {
+		if err := rollout.SaveReport(ctx, st, n, rollout.Report{Version: "1.12.0", Updated: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rollout.SaveReport(ctx, st, "removed", rollout.Report{Version: "1.0.0", Updated: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	_, body = get(t, c, base+"/nodes")
+	if strings.Contains(body, "nav-badge") || strings.Contains(body, "1.12.0 available") {
+		t.Error("an up-to-date cluster shows an upgrade")
 	}
 }
 
@@ -152,12 +210,16 @@ func TestUpgradeCheckNowAndTurningTheCheckOff(t *testing.T) {
 	}
 }
 
-// The live stream re-renders the form; hx-preserve keeps what is being typed.
-func TestUpgradeVersionInputSurvivesLiveUpdates(t *testing.T) {
-	c, base, _, _ := newUpgradeTestServer(t)
+// The live stream re-renders the form; hx-preserve keeps the choice until a new check lists releases.
+func TestUpgradeVersionChoiceSurvivesLiveUpdates(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	checked := time.Unix(1700000000, 0)
+	if err := rollout.SaveLatest(context.Background(), st, rollout.Latest{Version: "1.12.0", Checked: checked}); err != nil {
+		t.Fatal(err)
+	}
 	_, body := get(t, c, base+"/upgrade")
-	if want := `id="upgrade-version" hx-preserve`; !strings.Contains(body, want) {
-		t.Errorf("version input missing %q", want)
+	if want := `id="upgrade-version-1700000000" hx-preserve`; !strings.Contains(body, want) {
+		t.Errorf("version choice missing %q", want)
 	}
 }
 

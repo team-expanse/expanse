@@ -28,16 +28,66 @@ type upgradeNode struct {
 	ID      string
 	Report  rollout.Report
 	Current bool
+	Behind  bool // runs a release older than the newest
+}
+
+// releaseOption is one entry of the start form's release drop-down.
+type releaseOption struct{ Version, Note string }
+
+// availableUpgrade is the newest release when a member runs an older one, else "".
+func availableUpgrade(l rollout.Latest, members []string, reports map[string]rollout.Report) string {
+	rels := l.Available()
+	if len(rels) == 0 {
+		return ""
+	}
+	for _, id := range members {
+		if v := reports[id].Version; v != "" && upgrade.Newer(rels[0], v) {
+			return rels[0]
+		}
+	}
+	return ""
+}
+
+// releaseOptions lists the releases a rollout can target: none older than the oldest member's.
+func releaseOptions(l rollout.Latest, members []string, reports map[string]rollout.Report) []releaseOption {
+	oldest, running := "", map[string]bool{}
+	for _, id := range members {
+		if v := reports[id].Version; v != "" {
+			running[v] = true
+			if oldest == "" || upgrade.Newer(oldest, v) {
+				oldest = v
+			}
+		}
+	}
+	var out []releaseOption
+	for i, v := range l.Available() {
+		if upgrade.Newer(oldest, v) {
+			break
+		}
+		var notes []string
+		if i == 0 {
+			notes = append(notes, "newest")
+		}
+		if running[v] {
+			notes = append(notes, "running")
+		}
+		out = append(out, releaseOption{Version: v, Note: strings.Join(notes, ", ")})
+	}
+	return out
 }
 
 type upgradeView struct {
 	Latest  rollout.Latest
 	Plan    *rollout.Plan
 	Nodes   []upgradeNode
-	Offer   string   // the version the start form proposes
-	Errors  []string // every read that failed, so none hides another
-	Running bool     // a rollout is running or paused, so no new one can start
-	Steps   []rolloutStep
+	Offer   string // the version the start form proposes
+	Options []releaseOption
+	// Available is the newest release while some node runs an older one.
+	Available string
+	Behind    int      // nodes on an older release than Available
+	Errors    []string // every read that failed, so none hides another
+	Running   bool     // a rollout is running or paused, so no new one can start
+	Steps     []rolloutStep
 }
 
 // rolloutStep is one node's place in the running rollout.
@@ -84,9 +134,10 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 	if err != nil {
 		v.Errors = append(v.Errors, "Node versions are unavailable: "+errText(err))
 	}
+	var members []string
 	if rep, err := s.getClusterReport(ctx); err == nil {
 		for _, n := range rep.Nodes {
-			v.Nodes = append(v.Nodes, upgradeNode{ID: n.ID, Report: reports[n.ID], Current: v.Plan != nil && v.Plan.Current == n.ID})
+			members = append(members, n.ID)
 		}
 	} else {
 		v.Errors = append(v.Errors, "The node list is unavailable: "+errText(err))
@@ -95,6 +146,16 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 	if v.Running {
 		v.Steps = rolloutSteps(v.Plan, reports)
 	}
+	v.Available = availableUpgrade(v.Latest, members, reports)
+	for _, id := range members {
+		n := upgradeNode{ID: id, Report: reports[id], Current: v.Plan != nil && v.Plan.Current == id}
+		n.Behind = v.Available != "" && n.Report.Version != "" && upgrade.Newer(v.Available, n.Report.Version)
+		if n.Behind {
+			v.Behind++
+		}
+		v.Nodes = append(v.Nodes, n)
+	}
+	v.Options = releaseOptions(v.Latest, members, reports)
 	v.Offer = v.Latest.Version
 	return v
 }

@@ -53,6 +53,10 @@ def app_host():
     return {"n1": n1, "n2": n2, "n3": n3}[replica_node(b, 0)]
 
 
+def page(path):
+    return n1.succeed(f"{CURL} https://n1:8443{path}")
+
+
 def dump_on_failure():
     print(plan())
     for m in [n1, n2, n3]:
@@ -73,9 +77,18 @@ try:
         leader = leader_of(status(n1))
         assert leader == "n1", f"leader is {leader}"
 
-    with subtest("Upgrade cluster on the Upgrades page starts a rollout"):
+    with subtest("the Upgrades page offers the published releases and flags the update"):
         n1.succeed(f"expanse ctl admin reset-password --password '{PASSWORD}'")
         csrf = ui_login()
+        latest = json.dumps({"version": TARGET, "releases": [TARGET, "1.0.0"], "disabled": True})
+        n1.succeed(f"expanse ctl kv --socket /run/expanse/agent.sock put /upgrade/latest {shlex.quote(latest)}")
+        body = page("/upgrade")
+        assert f'<option value="{TARGET}" selected>{TARGET} (newest)</option>' in body, body
+        assert 'value="1.0.0"' not in body, "offered a release older than the cluster's"
+        assert 'class="nav-badge"' in body and f">{TARGET} available<" in body, "no update indicator"
+        assert body.count("Update available") == 3, "not every node is marked behind"
+
+    with subtest("Upgrade cluster on the Upgrades page starts a rollout"):
         code, loc, body = post("/upgrade/start", {"version": TARGET})
         assert code == "303", f"start: {code}\n{body}"
 
@@ -93,6 +106,10 @@ try:
         assert host.succeed(f"systemctl show -P MainPID {APP_UNIT}").strip() == pid, "the block restarted"
         wait_phase(n1, "app", ["RUNNING"], 60)
         wait_quorum("3/2", 60)
+
+    with subtest("the update indicator clears once every node runs the release"):
+        csrf = ui_login()
+        assert "nav-badge" not in page("/"), "a cluster on the newest release still shows an update"
 except Exception:
     dump_on_failure()
     raise

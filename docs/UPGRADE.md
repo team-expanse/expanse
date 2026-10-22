@@ -2,8 +2,11 @@
 
 ## From the web UI
 
-**Operations → Upgrades** shows each node's version, the newest release and the rollout. Press
-**Upgrade cluster** to move every node to a release, one at a time:
+**Operations → Upgrades** shows each node's version, the newest release and the rollout. While
+a node runs an older release than the newest, the Upgrades rail item shows **New**, the footer
+links to the release, and the node's row says **Update available**. Choose a release from the
+list (the published releases, from the oldest one the cluster runs to the newest) and press
+**Upgrade cluster** to move every node to it, one at a time:
 
 1. The leader picks the next node only while the cluster is healthy: a leader, every node
    reachable and in quorum, and every volume Healthy (or UnderReplicated, on a cluster too small
@@ -30,7 +33,7 @@ node unreachable, the switch watchdog rolls it back and reboots it after 10 minu
 A node whose kernel changed shows **reboot to finish**. Reboot such nodes one at a time, waiting
 for the cluster to be healthy in between.
 
-The leader checks GitHub for a new release once a day; **Check now** checks at once, and the
+The leader checks GitHub's list of published releases once a day; **Check now** checks at once, and the
 check can be turned off on the same page. `expanse upgrade status` on a node shows its last
 upgrade, and `journalctl -u expanse-upgrade` its log. `expanse upgrade start <version>` upgrades
 one node by hand.

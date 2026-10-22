@@ -37,6 +37,7 @@ import (
 	"github.com/expanse/expanse/internal/storage"
 	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/boltstore"
+	"github.com/expanse/expanse/internal/upgrade/rollout"
 	"github.com/expanse/expanse/internal/web/auth"
 	"github.com/expanse/expanse/internal/web/oidc"
 	pb "github.com/expanse/expanse/proto"
@@ -410,6 +411,15 @@ func seedPreviewStore(t *testing.T, st store.Store) {
 	}
 	ca, _ := json.Marshal(control.CAEntry{CertPEM: []byte("-----BEGIN CERTIFICATE-----\nMIIBpreview\n-----END CERTIFICATE-----\n"), SealedKey: []byte("sealed")})
 	if _, err := st.Put(ctx, store.Key(control.UICAKey), ca); err != nil {
+		t.Fatal(err)
+	}
+	for id, v := range map[string]string{"n1": "1.14.0", "n2": "1.14.0", "n3": "1.13.0"} {
+		if err := rollout.SaveReport(ctx, st, id, rollout.Report{Version: v, Updated: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest := rollout.Latest{Version: "1.15.0", Releases: []string{"1.15.0", "1.14.2", "1.14.0", "1.13.0", "1.12.0"}, Checked: now.Add(-3 * time.Hour)}
+	if err := rollout.SaveLatest(ctx, st, latest); err != nil {
 		t.Fatal(err)
 	}
 }

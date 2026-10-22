@@ -93,7 +93,9 @@ Every page renders inside one shared shell: a rail of six sections (Overview, Cl
 Workloads, Changes, Upgrades; on a phone, a bottom bar with the first four and a More menu), a
 header with the cluster name and a quorum/health indicator, breadcrumbs, the signed-in user menu
 (Settings, sign out), a light/dark toggle (follows the system by default; the choice is kept in
-the browser) and a footer naming the node that served the page and the Expanse version. A section
+the browser) and a footer naming the node that served the page and the Expanse version, with a
+link to a newer release when some node runs an older one (the Upgrades rail item then shows
+**New**). A section
 that merges several pages shows them as tabs on its top-level pages. Status values are shown as
 labelled pills (Running, Degraded, Under-replicated, Unreachable…), never raw enum constants.
 Actions confirm through a dialog and report their result as a toast. Pages marked *live* update
@@ -173,7 +175,9 @@ over Server-Sent Events, never by polling.
   page shows what it added, removed and changed since its parent, and lists its keys; any two
   generations can be compared, and rollback sits behind a confirm dialog (append-only, like
   `expanse ctl generation rollback`).
-- **Upgrades** (`/upgrade`, live) — the newest release and the daily check, each node's version,
+- **Upgrades** (`/upgrade`, live) — the newest release and the daily check, each node's version
+  (marked **Update available** when older than the newest), a list of the published releases to
+  upgrade to (none older than the cluster's oldest node; a version box until a check has run),
   and the rollout: one node at a time, listed in order as done, upgrading (or halted, with the
   reason and Retry) or waiting, with Pause and Cancel. While a rollout runs the start form stays
   visible but disabled, with the reason beside it.

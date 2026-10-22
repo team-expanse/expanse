@@ -32,9 +32,9 @@ type nodeUpgrades struct {
 	start                     func(ctx context.Context, version string) error
 	isLeader                  func() bool
 	health                    func(ctx context.Context) rollout.Health
-	// latest returns the newest published release; nil turns the check off.
-	latest func(ctx context.Context) (string, error)
-	log    *slog.Logger
+	// releases lists the published releases, newest first; nil turns the check off.
+	releases func(ctx context.Context) ([]string, error)
+	log      *slog.Logger
 
 	last      *rollout.Report
 	lastSaved time.Time
@@ -83,18 +83,18 @@ func (u *nodeUpgrades) lead(ctx context.Context, st store.Store, plan rollout.Pl
 	u.logger().Info("rollout", "target", next.Target, "state", next.State, "current", next.Current, "reason", next.Reason)
 }
 
-// checkLatest records the newest release when a check is due.
+// checkLatest records the published releases when a check is due.
 func (u *nodeUpgrades) checkLatest(ctx context.Context, st store.Store, now time.Time) {
 	l, err := rollout.LoadLatest(ctx, st)
-	if err != nil || u.latest == nil || !l.Due(now) {
+	if err != nil || u.releases == nil || !l.Due(now) {
 		return
 	}
-	v, err := u.latest(ctx)
+	vs, err := u.releases(ctx)
 	l.Checked, l.Requested, l.Error = now, false, ""
 	if err != nil {
 		l.Error = err.Error()
 	} else {
-		l.Version = v
+		l.Version, l.Releases = vs[0], vs
 	}
 	if err := rollout.SaveLatest(ctx, st, l); err != nil {
 		u.logger().Warn("newest release not recorded", "err", err)
@@ -176,10 +176,10 @@ func (a *Agent) upgradeLoop(ctx context.Context) {
 		start:    a.startUpgrade,
 		isLeader: func() bool { return a.ctl.store.IsLeader() },
 		health:   a.rolloutHealth,
-		latest: func(ctx context.Context) (string, error) {
+		releases: func(ctx context.Context) ([]string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // the loop must not hang on GitHub
 			defer cancel()
-			return upgrade.FetchLatest(ctx, http.DefaultClient, upgrade.LatestURL)
+			return upgrade.FetchReleases(ctx, http.DefaultClient, upgrade.ReleasesURL)
 		},
 		log: a.logger,
 	}

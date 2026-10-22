@@ -22,8 +22,8 @@
       <a href="/" class="brand-link"><svg class="icon brand-mark"><use href="#i-logo"/></svg><span>Expanse</span></a>
     </div>
     <nav class="nav" aria-label="Main">
-      {{range nav}}
-      <a class="nav-item" href="{{.Href}}"{{if .Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{.Icon}}"/></svg><span>{{.Label}}</span></a>
+      {{range $n := nav}}
+      <a class="nav-item" href="{{$n.Href}}"{{if $n.Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{$n.Icon}}"/></svg><span>{{$n.Label}}</span>{{if and (eq $n.Key "upgrade") $.Page.Cluster.Upgrade}}<span class="nav-badge" title="Expanse {{$.Page.Cluster.Upgrade}} is available">New</span>{{end}}</a>
       {{end}}
     </nav>
     <div class="sidebar-foot">
@@ -65,15 +65,16 @@
       <span>Served by node <strong>{{.Page.NodeName}}</strong></span>
       <span class="sep">·</span>
       <span>Expanse {{.Page.Version}}</span>
+      {{with .Page.Cluster.Upgrade}}<span class="sep">·</span><a href="/upgrade">{{.}} available</a>{{end}}
     </footer>
   </div>
 </div>
 <nav class="bottombar" aria-label="Main">
   {{range $i, $n := nav}}{{if lt $i 4}}<a href="{{$n.Href}}"{{if $n.Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{$n.Icon}}"/></svg><span>{{$n.Label}}</span></a>{{end}}{{end}}
   <details class="more">
-    <summary><svg class="icon"><use href="#i-menu"/></svg><span>More</span></summary>
+    <summary><svg class="icon"><use href="#i-menu"/></svg><span>More</span>{{with .Page.Cluster.Upgrade}}<span class="nav-dot" title="Expanse {{.}} is available"></span>{{end}}</summary>
     <div class="more-panel">
-      {{range $i, $n := nav}}{{if ge $i 4}}<a href="{{$n.Href}}"{{if $n.Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{$n.Icon}}"/></svg>{{$n.Label}}</a>{{end}}{{end}}
+      {{range $i, $n := nav}}{{if ge $i 4}}<a href="{{$n.Href}}"{{if $n.Has $.Page.Active}} aria-current="page"{{end}}><svg class="icon"><use href="#{{$n.Icon}}"/></svg>{{$n.Label}}{{if and (eq $n.Key "upgrade") $.Page.Cluster.Upgrade}}<span class="nav-badge" title="Expanse {{$.Page.Cluster.Upgrade}} is available">New</span>{{end}}</a>{{end}}{{end}}
       <a href="/settings"{{if eq .Page.Active "settings"}} aria-current="page"{{end}}><svg class="icon"><use href="#i-settings"/></svg>Settings</a>
     </div>
   </details>

@@ -21,12 +21,21 @@ const (
 
 // Latest is the newest published release, checked daily by the leader unless Disabled.
 type Latest struct {
-	Version string    `json:"version,omitempty"`
-	Checked time.Time `json:"checked"`
-	Error   string    `json:"error,omitempty"`
+	Version  string    `json:"version,omitempty"`
+	Releases []string  `json:"releases,omitempty"` // the published releases, newest first
+	Checked  time.Time `json:"checked"`
+	Error    string    `json:"error,omitempty"`
 	// Requested asks the leader to check now ("Check now" in the UI).
 	Requested bool `json:"requested,omitempty"`
 	Disabled  bool `json:"disabled,omitempty"`
+}
+
+// Available lists the published releases, newest first; a record from before the list has only Version.
+func (l Latest) Available() []string {
+	if len(l.Releases) == 0 && l.Version != "" {
+		return []string{l.Version}
+	}
+	return l.Releases
 }
 
 // LatestInterval is how often the leader checks for a new release.

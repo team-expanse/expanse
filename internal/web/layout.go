@@ -17,9 +17,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/expanse/expanse/internal/cluster/control"
 	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/cluster/nodelc"
 	"github.com/expanse/expanse/internal/store"
+	"github.com/expanse/expanse/internal/upgrade/rollout"
 	"github.com/expanse/expanse/internal/version"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -41,6 +43,8 @@ type clusterChrome struct {
 	Name   string
 	Quorum string // "3/3", empty when unavailable
 	Pill   pill
+	// Upgrade is a newer release than some member runs, empty when none is known.
+	Upgrade string
 }
 
 // page is the chrome every authenticated page shares; page data structs
@@ -292,7 +296,25 @@ func (s *Server) clusterChrome(r *http.Request) clusterChrome {
 			}
 		}
 	}
+	c.Upgrade = s.chromeUpgrade(store.WithStale(r.Context()), rep.Nodes)
 	return c
+}
+
+// chromeUpgrade is the newest release when a member of nodes runs an older one.
+func (s *Server) chromeUpgrade(ctx context.Context, nodes []control.NodeStatus) string {
+	l, err := rollout.LoadLatest(ctx, s.store)
+	if err != nil {
+		return ""
+	}
+	reports, err := rollout.ListReports(ctx, s.store)
+	if err != nil {
+		return ""
+	}
+	members := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		members = append(members, n.ID)
+	}
+	return availableUpgrade(l, members, reports)
 }
 
 func setFlash(w http.ResponseWriter, kind, text string) {
