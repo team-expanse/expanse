@@ -18,6 +18,11 @@ History before 1.0.0 is not recorded here.
 - The DRBD kernel module moves from 9.2.16 to 9.2.20, the newest 9.2 release, which builds against
   Linux 6.18.57 with a small patch for that kernel's partial backport of `sockaddr_unsized`.
 
+### Fixed
+
+- Test VMs and the installer ISO no longer fail to register their Nix store at boot under Nix
+  2.34.9, which needs a home directory before `/etc/passwd` has root.
+
 ## 1.15.0 - 2026-10-22
 
 ### Added

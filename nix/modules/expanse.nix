@@ -10,6 +10,7 @@
     ./hardening.nix
     ./agent.nix
     ./console.nix
+    ./register-nix-paths.nix
   ];
 
   options = {
