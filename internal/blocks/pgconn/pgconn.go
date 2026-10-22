@@ -8,9 +8,12 @@ import (
 	"strings"
 )
 
-// PassfilePath is the replica's passfile, beside its socket directory on the block's volume.
-func PassfilePath(mountPath string) string {
-	return filepath.Join(mountPath, ".expanse-postgres", "pgpass")
+// RuntimeDir is the block units' RuntimeDirectory root: tmpfs, per replica, removed when it stops.
+const RuntimeDir = "/run/expanse-block"
+
+// PassfilePath is the replica's passfile, in its runtime directory so the password never reaches disk.
+func PassfilePath(instance string) string {
+	return filepath.Join(RuntimeDir, instance, "pgpass")
 }
 
 // PassfileLine is the pgpass entry for the replicator role, matching any host, port and database.
@@ -33,10 +36,11 @@ func Quote(v string) string {
 	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }
 
-// Scrub drops conninfo's password and names passfile when it names none; changed reports either.
+// Scrub drops conninfo's password and names passfile in place of any other; changed reports either.
 func Scrub(conninfo, passfile string) (out string, changed bool) {
 	var kept []string
 	hasPassfile := false
+	want := "passfile=" + Quote(passfile)
 	for _, tok := range tokens(conninfo) {
 		switch tok.key {
 		case "password":
@@ -44,11 +48,14 @@ func Scrub(conninfo, passfile string) (out string, changed bool) {
 			continue
 		case "passfile":
 			hasPassfile = true
+			if tok.raw != want {
+				tok.raw, changed = want, true
+			}
 		}
 		kept = append(kept, tok.raw)
 	}
 	if !hasPassfile {
-		kept = append(kept, "passfile="+Quote(passfile))
+		kept = append(kept, want)
 		changed = true
 	}
 	if !changed {

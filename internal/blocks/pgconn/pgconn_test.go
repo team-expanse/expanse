@@ -11,6 +11,12 @@ func TestPassfileLineEscapesColonsAndBackslashes(t *testing.T) {
 	}
 }
 
+func TestPassfilePathIsInTheReplicasRuntimeDirectory(t *testing.T) {
+	if got, want := PassfilePath("default-pg-0"), "/run/expanse-block/default-pg-0/pgpass"; got != want {
+		t.Errorf("PassfilePath = %q, want %q", got, want)
+	}
+}
+
 func TestReplicationNamesThePassfileNotThePassword(t *testing.T) {
 	got := Replication("192.168.1.9", 5432, "/mnt/my vol/.expanse-postgres/pgpass")
 	want := `host=192.168.1.9 port=5432 user=replicator passfile='/mnt/my vol/.expanse-postgres/pgpass' application_name=expanse`
@@ -34,6 +40,10 @@ func TestScrubSwapsThePasswordForThePassfile(t *testing.T) {
 	}
 	if got, changed := Scrub("host=10.0.0.3 user=replicator", pf); got != "host=10.0.0.3 user=replicator passfile="+pf || !changed {
 		t.Errorf("Scrub without a passfile = %q, %v; want it named", got, changed)
+	}
+	// 1.12.3 put the passfile on the volume; a start moves it to the runtime directory.
+	if got, changed := Scrub("host=10.0.0.3 passfile=/m/old/pgpass user=replicator", pf); got != "host=10.0.0.3 passfile="+pf+" user=replicator" || !changed {
+		t.Errorf("Scrub with an old passfile = %q, %v; want the new one named", got, changed)
 	}
 	clean := `host=10.0.0.3 port=5432 user=replicator passfile=` + pf
 	if got, changed := Scrub(clean, pf); got != clean || changed {

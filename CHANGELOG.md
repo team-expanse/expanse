@@ -6,6 +6,14 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Security
+
+- A db/postgres replica keeps its replication password's libpq passfile in a per-replica tmpfs
+  directory (/run/expanse-block/<replica>), not on its volume, and a start deletes the copy that
+  1.12.3 to 1.13.1 left there. The password no longer reaches disk in plain text.
+
 ## 1.13.1 - 2026-10-21
 
 ### Security

@@ -775,3 +775,19 @@ func TestScrubStandbyConninfo(t *testing.T) {
 		t.Errorf("a missing auto.conf is not an error: %v", err)
 	}
 }
+
+// 1.12.3 to 1.13.1 left a plain-text passfile on the volume; a start removes it.
+func TestRemoveVolumePassfile(t *testing.T) {
+	stateDir := t.TempDir()
+	old := filepath.Join(stateDir, "pgpass")
+	os.WriteFile(old, []byte("*:*:*:replicator:s3cret\n"), 0o600)
+	if err := removeVolumePassfile(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("the volume passfile is still there: %v", err)
+	}
+	if err := removeVolumePassfile(stateDir); err != nil {
+		t.Errorf("an already-removed passfile is not an error: %v", err)
+	}
+}

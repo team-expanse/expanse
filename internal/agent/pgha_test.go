@@ -339,7 +339,7 @@ func TestPgReconfigureCreatesSlotOnNewPrimaryThenRetargetsLocally(t *testing.T) 
 	if retargetCall.user != "postgres" || retargetCall.password != "" {
 		t.Errorf("retarget authenticated as %q/%q, want postgres over the local trust rule (no password)", retargetCall.user, retargetCall.password)
 	}
-	passfile := "passfile=/var/lib/expanse/volumes/vol-a/mnt/.expanse-postgres/pgpass"
+	passfile := "passfile=/run/expanse-block/default-pg-2/pgpass"
 	for _, want := range []string{"primary_conninfo", "192.168.1.9", wantSlot, "pg_reload_conf", passfile} {
 		if !strings.Contains(retargetCall.sql, want) {
 			t.Errorf("retarget SQL %q missing %q", retargetCall.sql, want)

@@ -369,7 +369,8 @@ func (a *Agent) pgReconfigure(inst pgha.Instance, newHost string) error {
 	}
 
 	sockDir := filepath.Join(inst.MountPath, ".expanse-postgres", "sock")
-	conninfo := pgconn.Replication(newHost, inst.Port, pgconn.PassfilePath(inst.MountPath))
+	passfile := pgconn.PassfilePath(systemd.Instance(ns, name, int(inst.Index)))
+	conninfo := pgconn.Replication(newHost, inst.Port, passfile)
 	retarget := fmt.Sprintf(
 		"ALTER SYSTEM SET primary_conninfo = %s; ALTER SYSTEM SET primary_slot_name = %s; SELECT pg_reload_conf();",
 		sqlQuote(conninfo), sqlQuote(slot))

@@ -237,6 +237,9 @@ in
         # Block secrets (passwords, tokens), unsealed by the agent into a root-only
         # tmpfs directory; expanse-block-run reads config_<field> back into the config.
         LoadCredential=config:/run/expanse/block-secrets/%i
+        # Per-replica tmpfs owned by the dynamic user, gone at stop; db/postgres keeps its passfile here.
+        RuntimeDirectory=expanse-block/%i
+        RuntimeDirectoryMode=0700
         # No SystemCallFilter: some binary-backed workloads (e.g.
         # node_exporter) use syscall families outside @system-service
         # and die with SIGSYS; the other sandbox options remain.

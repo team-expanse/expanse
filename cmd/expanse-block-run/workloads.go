@@ -978,8 +978,11 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 		return fmt.Errorf("db/postgres: %w", err)
 	}
 
-	passfile := pgconn.PassfilePath(mountPath)
+	passfile := pgconn.PassfilePath(instance)
 	if err := writePGPassfile(passfile, replPassword); err != nil {
+		return fmt.Errorf("db/postgres: %w", err)
+	}
+	if err := removeVolumePassfile(stateDir); err != nil {
 		return fmt.Errorf("db/postgres: %w", err)
 	}
 
@@ -1063,6 +1066,14 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// removeVolumePassfile deletes the plain-text passfile 1.12.3 to 1.13.1 kept on the volume.
+func removeVolumePassfile(stateDir string) error {
+	if err := os.Remove(filepath.Join(stateDir, "pgpass")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // scrubStandbyConninfo moves a standby's primary_conninfo from a password to the passfile.
