@@ -53,6 +53,8 @@ in
       networking.firewall.enable = false;
       environment.systemPackages = [ pkgs.curl pkgs.git pkgs.openssh ];
       programs.ssh.extraConfig = "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n";
+      # Its Include is a store file; ssh refuses it when the store isn't root-owned (svr1's nixtest store).
+      programs.ssh.systemd-ssh-proxy.enable = false;
       environment.etc.gitconfig.text = "[user]\n  name = client\n  email = client@git.test\n";
     };
   };

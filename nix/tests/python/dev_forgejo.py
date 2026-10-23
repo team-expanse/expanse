@@ -79,28 +79,7 @@ def git(cmd):
 
 
 def commit_and_push(msg, remote):
-    git(f"git commit -q --allow-empty -m {msg}")
-    status, out = client.execute(f"cd /root/src && git push -q {remote} trunk 2>&1")
-    if status != 0 and remote.startswith("ssh://"):
-        # DIAGNOSTIC (temporary): why does the SSH push fail silently through the VIP?
-        print("PUSH-DIAG push:", repr(out))
-        print("PUSH-DIAG ssh -vvv:", repr(client.execute(
-            f"cd /root/src && GIT_SSH_COMMAND='ssh -vvv' git push {remote} trunk 2>&1")[1]))
-        print("PUSH-DIAG nc:", client.execute(f"timeout 5 bash -c 'exec 3<>/dev/tcp/{VIP}/2222; head -c 200 <&3' 2>&1")[1])
-        for name, m in MACHINES.items():
-            for src, dst in [("", "127.0.0.1:12222"), ("", "192.168.1.1:12222"), (VIP, "192.168.1.1:12222"),
-                             ("", f"{VIP}:2222"), ("", f"{VIP}:80")]:
-                iface = f"--interface {src}" if src else ""
-                out = m.execute(f"timeout 4 curl -sS {iface} telnet://{dst} </dev/null 2>&1 | head -c 120")[1]
-                print(f"PUSH-DIAG {name} banner from={src or 'auto'} to={dst}: {out!r}")
-            print(f"PUSH-DIAG {name} node record:", m.execute(
-                "expanse ctl node list 2>&1 | head -5")[1])
-            print(f"PUSH-DIAG {name} lb journal:", m.execute(
-                "journalctl -u expanse --no-pager | grep -iE 'lb |l4|listener|eject|vip' | tail -15")[1])
-            print(f"PUSH-DIAG {name} addrs:", m.execute("ip -br addr")[1])
-            print(f"PUSH-DIAG {name} listen:", m.execute("ss -tlnp")[1])
-            print(f"PUSH-DIAG {name} nft:", m.execute("nft list ruleset")[1])
-    assert status == 0, f"push to {remote} failed: {out}"
+    git(f"git commit -q --allow-empty -m {msg} && git push -q {remote} trunk 2>&1")
 
 
 def ssh_remote():
