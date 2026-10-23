@@ -130,8 +130,9 @@ with subtest("login page now offers SSO"):
     assert "/login/oidc/start" in out, "SSO button missing after OIDC was configured"
 
 with subtest("a real end-to-end dex login for the allow-listed email succeeds"):
+    # The callback answers 200 with a page that moves on to / (SameSite=Strict, web.go).
     status = run_login(n1, ALLOWED_EMAIL, DEX_PASSWORD)
-    assert status == "303", f"OIDC callback returned {status}, want 303"
+    assert status == "200", f"OIDC callback returned {status}, want 200"
 
     out = n1.succeed(f"curl -sf -b {COOKIES} --resolve n1:8443:127.0.0.1 --cacert {CAFILE} https://n1:8443/")
     assert "n1" in out, f"the OIDC-issued session did not authorize a follow-up request: {out}"
