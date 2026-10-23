@@ -20,8 +20,8 @@ const (
 	// A majority quorum is only meaningful with three or more replicas: with
 	// two, losing either one would stop the survivor.
 	minQuorumReplicas = 3
-	// The resync floor under application I/O; DRBD 9.2.20's 250k default stalls a rebuild on a busy
-	// volume 7x, 4M resyncs in 22s keeping 79% of the writer (vol-resync-rate, ARCHITECTURE A51).
+	// The resync floor under application I/O; DRBD's 250k default stalls a rebuild on a busy
+	// volume, 4M finished one in 33s for a 3% writer cost (vol-resync-rate, ARCHITECTURE A51).
 	resyncMinRate = "4M"
 	// Resync zero blocks as discards so a new thin volume's peers stay unallocated;
 	// DRBD rounds this up to the backing device's granularity and skips devices that cannot.
