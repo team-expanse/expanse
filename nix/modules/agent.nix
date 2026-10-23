@@ -326,6 +326,8 @@ in
         # and publishes it as this unit's status text, which the agent reads back.
         RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
         NotifyAccess=main
+        # Block secrets, as in the ordinary template (restic's password, iSCSI CHAP).
+        LoadCredential=config:/run/expanse/block-secrets/%i
         TasksMax=512
         IOWeight=100
         Environment=PATH=/run/current-system/sw/bin

@@ -116,3 +116,27 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+// Both block unit templates must hand the replica its secrets: RunAsRoot types
+// (util/restic-backup, iscsi/target) have writeOnly fields too.
+func TestEveryBlockTemplateLoadsSecrets(t *testing.T) {
+	raw, err := os.ReadFile("../../../../nix/modules/agent.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	units := strings.Split(string(raw), "systemd.units.")
+	for _, name := range []string{`"expanse-block@.service"`, `"expanse-block-root@.service"`} {
+		found := false
+		for _, u := range units {
+			if strings.HasPrefix(u, name) {
+				found = true
+				if !strings.Contains(u, "LoadCredential=config:/run/expanse/block-secrets/%i\n") {
+					t.Errorf("%s has no LoadCredential for block secrets", name)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s not found in agent.nix", name)
+		}
+	}
+}
