@@ -79,7 +79,19 @@ def git(cmd):
 
 
 def commit_and_push(msg, remote):
-    git(f"git commit -q --allow-empty -m {msg} && git push -q {remote} trunk 2>&1")
+    git(f"git commit -q --allow-empty -m {msg}")
+    status, out = client.execute(f"cd /root/src && git push -q {remote} trunk 2>&1")
+    if status != 0 and remote.startswith("ssh://"):
+        # DIAGNOSTIC (temporary): why does the SSH push fail silently through the VIP?
+        print("PUSH-DIAG push:", out)
+        print("PUSH-DIAG ssh -vvv:", client.execute(
+            f"cd /root/src && GIT_SSH_COMMAND='ssh -vvv' git push {remote} trunk 2>&1")[1])
+        print("PUSH-DIAG nc:", client.execute(f"timeout 5 bash -c 'exec 3<>/dev/tcp/{VIP}/2222; head -c 200 <&3' 2>&1")[1])
+        for name, m in MACHINES.items():
+            print(f"PUSH-DIAG {name} addrs:", m.execute("ip -br addr")[1])
+            print(f"PUSH-DIAG {name} listen:", m.execute("ss -tlnp")[1])
+            print(f"PUSH-DIAG {name} nft:", m.execute("nft list ruleset")[1])
+    assert status == 0, f"push to {remote} failed: {out}"
 
 
 def ssh_remote():
