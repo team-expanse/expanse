@@ -6,7 +6,7 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
-## Unreleased
+## 1.16.0 - 2026-10-23
 
 ### Added
 
@@ -32,20 +32,17 @@ History before 1.0.0 is not recorded here.
 
 - Test VMs and the installer ISO no longer fail to register their Nix store at boot under Nix
   2.34.9, which needs a home directory before `/etc/passwd` has root.
-
-### Security
-
-- nixpkgs moves to 2026-10-20 (02c087f) for upstream security fixes: Linux 6.18.57, systemd 262,
-  OpenSSH 10.6p1, OpenSSL 3.5.9, QEMU 11.1.2, Go 1.26.9 and Chromium 155.0.8059.84.
-
-### Fixed
-
 - The disk-space check lists each disk once, under its shortest mount point and fullest first,
   instead of every bind mount and btrfs subvolume of it; pstore and read-only images are left out.
 - A new node advertises its default route's source address for raft and the API, never a
   link-local one: a Dell server's iDRAC USB NIC (169.254.0.2) came first and was picked.
   A node already advertising a link-local address moves to its default route's address on
   start, and once it leads, updates its raft membership entry and node record to match.
+
+### Security
+
+- nixpkgs moves to 2026-10-20 (02c087f) for upstream security fixes: Linux 6.18.57, systemd 262,
+  OpenSSH 10.6p1, OpenSSL 3.5.9, QEMU 11.1.2, Go 1.26.9 and Chromium 155.0.8059.84.
 
 ## 1.15.0 - 2026-10-22
 
