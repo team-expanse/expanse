@@ -6,6 +6,14 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- util/restic-backup replicas start again: blocks that run as root (util/restic-backup,
+  iscsi/target) never received their secrets, so restic stopped with "password is required" and
+  an iSCSI target's CHAP password was missing.
+
 ## 1.16.0 - 2026-10-23
 
 ### Added
