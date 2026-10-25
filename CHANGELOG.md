@@ -6,6 +6,15 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.16.2 - 2026-10-25
+
+### Fixed
+
+- A node that loses power soon after booting keeps its users. NixOS rewrites the user and group
+  ID maps in /var/lib/nixos on every boot without syncing them; a power cut before the filesystem
+  committed could leave them zeroed, and the next boot then created no users (sshd and chrony
+  failed). Expanse now syncs them right after they are written.
+
 ## 1.16.1 - 2026-10-23
 
 ### Fixed
