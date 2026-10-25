@@ -189,6 +189,7 @@
           impermanence = mkTest "impermanence" ./nix/tests/impermanence.nix;
           identity = mkTest "identity" ./nix/tests/identity.nix;
           boot-time = mkTest "boot-time" ./nix/tests/boot-time.nix;
+          persist-crash = mkTest "persist-crash" ./nix/tests/persist-crash.nix;
           agent-basic = mkTest "agent-basic" ./nix/tests/agent-basic.nix;
           agent-reconcile = mkTest "agent-reconcile" ./nix/tests/agent-reconcile.nix;
           # Phase 03 cluster VM tests (§6).
