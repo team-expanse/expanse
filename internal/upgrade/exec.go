@@ -37,7 +37,8 @@ func (e *ExecNix) BuildSystem(ctx context.Context, file, substituter string, log
 	return path, nil
 }
 
-// retryKilled runs a build once more when a signal killed its builder; seen rarely in VM tests, cause unknown.
+// retryKilled runs a build once more when a signal killed its builder: Nix kills a builder that
+// closes its output before exiting (NixOS/nix#2176).
 func retryKilled(ctx context.Context, build func() (path, stderr string, err error)) (string, error) {
 	path, stderr, err := build()
 	if err != nil && ctx.Err() == nil && strings.Contains(stderr, "failed due to signal") {

@@ -6,6 +6,7 @@ in {
     name = "nixos-system-upgraded";
     system = builtins.currentSystem;
     builder = "/bin/sh";
-    args = [ "-c" "exec ${upgraded}/sw/bin/ln -s ${upgraded} $out" ];
+    # sh keeps the log open until ln exits: ln closes its output first, and Nix kills on EOF (NixOS/nix#2176).
+    args = [ "-c" "${upgraded}/sw/bin/ln -s ${upgraded} $out; status=$?; exit $status" ];
   };
 }
