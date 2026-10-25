@@ -75,6 +75,13 @@ in
       '';
     };
 
+    # Activation rewrites the user maps on every boot without fsync; a power cut before the
+    # filesystem commits loses them or leaves zeros, and the next boot creates no users.
+    system.activationScripts.expanse-sync-user-maps = {
+      deps = [ "users" ];
+      text = "${pkgs.coreutils}/bin/sync --file-system /var/lib/nixos";
+    };
+
     # /etc/machine-id is persisted by its bind mount; the commit unit only handles a tmpfs one and fails here.
     systemd.suppressedSystemUnits = [ "systemd-machine-id-commit.service" ];
 
