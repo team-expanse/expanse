@@ -57,25 +57,6 @@ def page(path):
     return n1.succeed(f"{CURL} https://n1:8443{path}")
 
 
-TRACING = "/sys/kernel/tracing"
-KILL_EVENT = f"{TRACING}/events/signal/signal_generate"
-
-
-def arm_kill_trace(m):
-    """Record every SIGKILL with its sender and kernel stack (the upgrade build's unknown killer)."""
-    m.succeed(f"mountpoint -q {TRACING} || mount -t tracefs nodev {TRACING}",
-              f"echo 8192 > {TRACING}/buffer_size_kb",
-              f"echo 'sig == 9' > {KILL_EVENT}/filter",
-              f"echo 'stacktrace if sig == 9' > {KILL_EVENT}/trigger",
-              f"echo 1 > {KILL_EVENT}/enable")
-
-
-def print_kill_trace(m):
-    print(f"--- {m.name} SIGKILLs ---")
-    print(m.execute(f"cat {TRACING}/trace")[1])
-    print(m.execute("journalctl -u expanse-upgrade --no-pager | grep -B3 -A3 'signal' | tail -40")[1])
-
-
 def dump_on_failure():
     print(plan())
     for m in [n1, n2, n3]:
@@ -108,8 +89,6 @@ try:
         assert body.count("Update available") == 3, "not every node is marked behind"
 
     with subtest("Upgrade cluster on the Upgrades page starts a rollout"):
-        for m in [n1, n2, n3]:
-            arm_kill_trace(m)
         code, loc, body = post("/upgrade/start", {"version": TARGET})
         assert code == "303", f"start: {code}\n{body}"
 
@@ -122,6 +101,8 @@ try:
         sec = {n: (s["started"][:19], s["updated"][:19]) for n, s in st.items()}  # RFC 3339, to the second
         assert sec["n2"][1] <= sec["n3"][0] and sec["n3"][1] <= sec["n1"][0], \
             f"nodes overlapped or ran out of order (want n2, n3, n1): {sec}"
+        for m in [n1, n2, n3]:  # the build-once-more path hides NixOS/nix#2176; it must not be needed
+            m.fail("journalctl -u expanse-upgrade --no-pager | grep -F 'a signal killed the build'")
 
     with subtest("the block kept running on its node through the rollout"):
         assert host.succeed(f"systemctl show -P MainPID {APP_UNIT}").strip() == pid, "the block restarted"
@@ -134,8 +115,5 @@ try:
 except Exception:
     dump_on_failure()
     raise
-finally:
-    for m in [n1, n2, n3]:
-        print_kill_trace(m)
 
 print("UI-ROLLING-UPGRADE PASSED: the cluster rolled to the release node by node; the block kept running")
