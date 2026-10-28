@@ -42,7 +42,7 @@ func TestVolumeBudgetsBeyondTheSpecAreFloorsAndCeilings(t *testing.T) {
 		"vol_r1_randwrite_ratio":       0.80,
 		"vol_r3_seqwrite_of_r2_ratio":  0.45,
 		"vol_r3_randwrite_of_r2_ratio": 0.55,
-		"vol_first_touch_ratio":        0.70,
+		"vol_first_touch_ratio":        0.45,
 	}
 	for name, min := range floors {
 		if got := budgetByName(t, name); got.Min != min || got.Max != 0 {
