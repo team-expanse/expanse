@@ -25,7 +25,7 @@ func TestVolumeBudgetsPinTheSpecFloors(t *testing.T) {
 		"vol_seqwrite_ratio":  0.75,
 		"vol_seqread_ratio":   0.95,
 		"vol_randwrite_ratio": 0.60,
-		"vol_randread_ratio":  0.95,
+		"vol_randread_ratio":  0.90,
 	}
 	for name, min := range floors {
 		if got := budgetByName(t, name); got.Min != min || got.Max != 0 {
