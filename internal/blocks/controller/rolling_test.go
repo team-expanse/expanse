@@ -432,3 +432,33 @@ func TestRollingUpdateClearsAReplicasOldFailureMessage(t *testing.T) {
 		t.Errorf("replica 0 message after the roll = %q, want none", m)
 	}
 }
+
+// A drain's retired record at an old generation is not a replica to roll or scale down: a
+// later revision (a VM resumed after moving while suspended) keeps its one live placement.
+func TestARetiredPlacementNeverRollsOrScalesDownTheLiveOne(t *testing.T) {
+	ctx := context.Background()
+	b := blockFor("vm", 1)
+	c := New(newStore(t), func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodeViews(3), testCfg(), nil
+	})
+	h := &updateHarness{clk: newFakeClock()}
+	c.Update = h.hooks()
+	status := &pb.BlockStatus{Phase: pb.Phase_STARTING, Placements: []*pb.PlacementStatus{
+		{ReplicaIndex: -1, FormerIndex: 0, NodeId: "node-2", Phase: pb.Phase_TERMINATED, Generation: 5},
+		{ReplicaIndex: 0, NodeId: "node-1", Phase: pb.Phase_SCHEDULING, Generation: 7},
+	}}
+	if updateNeededLegacy(status, 7) {
+		t.Error("the retired record asks for a roll")
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := c.updatePass(ctx, b, status, 7, 1, nodeViews(3), testCfg()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p := placementAt(status, 0); p == nil || p.GetNodeId() != "node-1" {
+		t.Fatalf("the live placement is gone: %+v", status.GetPlacements())
+	}
+	if status.GetPhase() == pb.Phase_RUNNING {
+		t.Error("RUNNING before the live replica is up")
+	}
+}

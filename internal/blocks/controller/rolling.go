@@ -357,7 +357,7 @@ func pickRollReplica(h *UpdateHooks, ctx context.Context, b *pb.Block, old []*pb
 // already-draining ones.
 func oldGenPlacements(status *pb.BlockStatus, target int64) []*pb.PlacementStatus {
 	var out []*pb.PlacementStatus
-	for _, p := range status.GetPlacements() {
+	for _, p := range activePlacements(status) {
 		if p.GetGeneration() != target && p.GetPhase() != pb.Phase_DRAINING {
 			out = append(out, p)
 		}
@@ -365,10 +365,16 @@ func oldGenPlacements(status *pb.BlockStatus, target int64) []*pb.PlacementStatu
 	return out
 }
 
-// activePlacements returns every live placement (no TERMINATING filter
-// yet — placements are only removed by this engine).
+// activePlacements returns every live placement; retired records (index -1, kept by a drain
+// or a reschedule) are neither rolled nor scaled down.
 func activePlacements(status *pb.BlockStatus) []*pb.PlacementStatus {
-	return status.GetPlacements()
+	var out []*pb.PlacementStatus
+	for _, p := range status.GetPlacements() {
+		if p.GetReplicaIndex() >= 0 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func removePlacement(status *pb.BlockStatus, idx int32) {
@@ -403,7 +409,7 @@ func setCondition(st *pb.BlockStatus, typ string, val bool, msg string) {
 // placement with Generation 0 predates generation tracking and counts
 // as at-target (no surprise roll of blocks written before this card).
 func updateNeededLegacy(status *pb.BlockStatus, target int64) bool {
-	for _, p := range status.GetPlacements() {
+	for _, p := range activePlacements(status) {
 		g := p.GetGeneration()
 		if g != 0 && g != target {
 			return true
