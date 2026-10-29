@@ -15,9 +15,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
+	"github.com/expanse/expanse/internal/blocks/livespec"
 	"github.com/expanse/expanse/internal/blocks/vm/vmstate"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/errors"
@@ -37,6 +37,8 @@ type unitAPI interface {
 	Stop(ctx context.Context, unit string) error
 	// StatusText is the unit's sd_notify STATUS= text (empty when never sent).
 	StatusText(ctx context.Context, unit string) (string, error)
+	// Reload sends the unit's main process SIGHUP: re-read the spec and apply its live fields.
+	Reload(ctx context.Context, unit string) error
 }
 
 // reportsReadiness lists block types whose runtime publishes readiness as the unit's status text.
@@ -76,6 +78,8 @@ type Manager struct {
 	Unseal func(ctx context.Context, ns, name string) ([]byte, error)
 	// StateDir holds suspended VMs' saved state; empty = vmstate.DefaultDir.
 	StateDir string
+	// LiveDir holds the markers of runtimes that serve reloads; empty = livespec.DefaultDir.
+	LiveDir string
 }
 
 // DefaultSpecDir is the runtime directory expanse-block-run reads its
@@ -160,40 +164,57 @@ func (m *Manager) writeSpec(s Spec) error {
 	return nil
 }
 
-// specOnDiskMatches reports whether the spec file the running unit reads equals the desired spec.
-// Config JSON compares by content, so an agent build that encodes it differently is no drift.
-func (m *Manager) specOnDiskMatches(s Spec) bool {
+// specOnDisk reads the spec file the running unit started from (or last reloaded).
+func (m *Manager) specOnDisk(s Spec) (Spec, bool) {
 	path := filepath.Join(m.specDir(), Instance(s.Namespace, s.Name, s.Index)+".json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return Spec{}, false
 	}
 	var onDisk Spec
 	if err := json.Unmarshal(raw, &onDisk); err != nil {
-		return false
+		return Spec{}, false
 	}
-	a, errA := json.Marshal(canonicalConfig(onDisk))
-	b, errB := json.Marshal(canonicalConfig(s))
-	return errA == nil && errB == nil && string(a) == string(b)
+	return onDisk, true
 }
 
-// canonicalConfig returns s with its --config JSON re-encoded by encoding/json (sorted keys, no spacing).
-func canonicalConfig(s Spec) Spec {
-	i := slices.Index(s.Args, "--config")
-	if i < 0 || i+1 >= len(s.Args) {
-		return s
+// specOnDiskMatches reports whether the spec file the running unit reads equals the desired spec.
+// Config JSON compares by content, so an agent build that encodes it differently is no drift.
+func (m *Manager) specOnDiskMatches(s Spec) bool {
+	onDisk, ok := m.specOnDisk(s)
+	return ok && sameSpec(onDisk, s)
+}
+
+func sameSpec(a, b Spec) bool {
+	a.Args, b.Args = livespec.CanonicalArgs(a.Args), livespec.CanonicalArgs(b.Args)
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && string(ja) == string(jb)
+}
+
+// liveMarker is where the replica's runtime says it serves reloads.
+func (m *Manager) liveMarker(s Spec) string {
+	return livespec.MarkerPath(m.LiveDir, Instance(s.Namespace, s.Name, s.Index))
+}
+
+// reloadable reports whether the running unit can take s by a reload: its runtime serves them,
+// and s differs from the spec it runs only in its type's live fields.
+func (m *Manager) reloadable(s Spec, o reconcile.Observed) bool {
+	if s.Stopped || o.Details["active"] != "active" || o.Details["sub"] != "running" {
+		return false
 	}
-	var v any
-	if err := json.Unmarshal([]byte(s.Args[i+1]), &v); err != nil {
-		return s
+	if _, err := os.Stat(m.liveMarker(s)); err != nil {
+		return false
 	}
-	out, err := json.Marshal(v)
-	if err != nil {
-		return s
+	cur, ok := m.specOnDisk(s)
+	if !ok || cur.Stopped || !livespec.LiveOnly(s.Type, cur.Args, s.Args) {
+		return false
 	}
-	s.Args = slices.Clone(s.Args)
-	s.Args[i+1] = string(out)
-	return s
+	// A running VM read its state token at start; a new one only matters to its next start.
+	rest, next := cur, s
+	rest.Args, next.Args = nil, nil
+	rest.StateToken, next.StateToken = "", ""
+	return sameSpec(rest, next)
 }
 
 // removeSpec drops the per-replica spec JSON (resource deletion).
@@ -330,7 +351,16 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 			return nil
 		},
 	})
-	if !o.InSync && spec.Stopped {
+	if !o.InSync && m.reloadable(spec, o) {
+		acts = append(acts, reconcile.Action{
+			ResourceID:  res.id,
+			Kind:        "reload",
+			Description: "reload " + unit + " (live fields only)",
+			Fn: func(ctx context.Context) error {
+				return m.API.Reload(ctx, unit)
+			},
+		})
+	} else if !o.InSync && spec.Stopped {
 		acts = append(acts, reconcile.Action{
 			ResourceID:  res.id,
 			Kind:        "stop",
@@ -345,6 +375,10 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 			Kind:        "start",
 			Description: "start " + unit,
 			Fn: func(ctx context.Context) error {
+				// The new run writes its own marker once it serves reloads.
+				if err := os.Remove(m.liveMarker(spec)); err != nil && !os.IsNotExist(err) {
+					return errors.Wrap(err, errors.KindInternal, "systemd.Start", "reload marker")
+				}
 				return m.API.Start(ctx, unit)
 			},
 		})
@@ -371,6 +405,9 @@ func (m *Manager) Delete(ctx context.Context, r reconcile.Resource) error {
 	_ = m.API.Stop(ctx, UnitNameForSpec(res.spec))
 	if err := os.RemoveAll(m.secretDir(res.spec)); err != nil {
 		return errors.Wrap(err, errors.KindInternal, "systemd.Delete", "credentials")
+	}
+	if err := os.Remove(m.liveMarker(res.spec)); err != nil && !os.IsNotExist(err) {
+		return errors.Wrap(err, errors.KindInternal, "systemd.Delete", "reload marker")
 	}
 	if err := vmstate.Remove(m.stateDir(res.spec)); err != nil {
 		return errors.Wrap(err, errors.KindInternal, "systemd.Delete", "saved state")

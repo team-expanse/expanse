@@ -1437,6 +1437,7 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
 	go pollGuestAgent(watchCtx, instance, qgaSock, mac)
+	go serveReloads(watchCtx, instance, "vm/instance", args, resizeVM)
 	if watch != nil {
 		go watch.serve(watchCtx, instance, tracker)
 	} else if cfgStr(cfg, "guestReady") == "none" {

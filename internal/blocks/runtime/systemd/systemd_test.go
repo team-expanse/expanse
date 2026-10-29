@@ -296,9 +296,15 @@ func TestCachePersistence(t *testing.T) {
 
 // fakeUnitAPI records unit operations.
 type fakeUnitAPI struct {
-	states map[string][3]string
-	starts int
-	status map[string]string // unit -> StatusText
+	states  map[string][3]string
+	starts  int
+	reloads int
+	status  map[string]string // unit -> StatusText
+}
+
+func (f *fakeUnitAPI) Reload(ctx context.Context, unit string) error {
+	f.reloads++
+	return nil
 }
 
 func (f *fakeUnitAPI) StatusText(ctx context.Context, unit string) (string, error) {

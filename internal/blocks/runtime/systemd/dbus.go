@@ -5,6 +5,7 @@ package systemd
 
 import (
 	"context"
+	"syscall"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 
@@ -77,6 +78,14 @@ func (d *DBUSAPI) Start(ctx context.Context, unit string) error {
 	case <-ctx.Done():
 		return errors.New(errors.KindTimeout, "systemd.Start", unit+": timed out")
 	}
+}
+
+// Reload sends SIGHUP to the unit's main process only (a VM's qemu is its child).
+func (d *DBUSAPI) Reload(ctx context.Context, unit string) error {
+	if err := d.conn.KillUnitWithTarget(ctx, unit, dbus.Main, int32(syscall.SIGHUP)); err != nil {
+		return errors.Wrap(err, errors.KindUnavailable, "systemd.Reload", unit)
+	}
+	return nil
 }
 
 // Stop stops the unit and waits for the job.
