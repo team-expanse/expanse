@@ -83,6 +83,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "usage: expanse-block-run <instance>\n")
 		os.Exit(2)
 	}
+	if os.Args[1] == "--stop" && len(os.Args) == 3 {
+		stopReplica(os.Args[2])
+		return
+	}
 	instance := os.Args[1]
 
 	spec, err := loadSpec(instance)

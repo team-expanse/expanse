@@ -1276,8 +1276,8 @@ wal_log_hints = on
 // "exec upstream tooling, drive its lifecycle over its own control
 // socket" shape every other binary-backed workload here uses.
 //
-// A stop asks the guest to power off over QMP and kills qemu after
-// shutdownTimeout. qemu's exit closes its fd on the raw device, so DRBD
+// A stop first powers the guest off (stopReplica, the unit's ExecStop).
+// qemu's exit closes its fd on the raw device, so DRBD
 // can demote with no separate release step (unlike LIO's teardown).
 func runVM(ctx context.Context, instance, name string, args []string) error {
 	cfg, err := cfgMap(args)
@@ -1334,8 +1334,7 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 	if err != nil {
 		return err
 	}
-	shutdown, err := vmShutdownTimeout(cfg)
-	if err != nil {
+	if _, err := vmShutdownTimeout(cfg); err != nil {
 		return err
 	}
 
@@ -1402,8 +1401,6 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		return fmt.Errorf("vm/instance: %w", err)
 	}
 	cmd := exec.CommandContext(ctx, path, qemuArgv...)
-	cmd.Cancel = func() error { return powerdownVM(cmd.Process, qmpSock, shutdown) }
-	cmd.WaitDelay = shutdown // then exec kills qemu
 	cmd.ExtraFiles = extra
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1430,18 +1427,6 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		return nil //nolint:nilerr // deliberate stop
 	}
 	return err
-}
-
-// powerdownVM asks the guest to power off; with no time to wait or no monitor, it kills qemu.
-func powerdownVM(p *os.Process, sock string, wait time.Duration) error {
-	if wait > 0 {
-		err := qmp.Powerdown(sock)
-		if err == nil {
-			return nil
-		}
-		fmt.Fprintf(os.Stderr, "expanse-block-run: vm power-off request failed, killing qemu: %v\n", err)
-	}
-	return p.Kill()
 }
 
 // createMacvtap creates a bridge-mode macvtap child of uplink (D2,

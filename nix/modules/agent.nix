@@ -339,6 +339,8 @@ in
         # the identical "which physical NIC is the real one" question.
         Environment=EXPANSE_EXTERNAL_INTERFACE=${cfg.externalInterface}
         ExecStart=${pkgs.expanse}/bin/expanse-block-run %i
+        # Runs before systemd signals the cgroup: a VM's guest powers off first (qemu dies on SIGTERM).
+        ExecStop=${pkgs.expanse}/bin/expanse-block-run --stop %i
       '';
     };
 
