@@ -163,4 +163,23 @@ with subtest("a guest that starts but never reaches multi-user.target is never R
     assert text == WAITING, f"{STUCK} status moved on to {text!r}"
     assert phase != "RUNNING", f"{STUCK} is RUNNING although its guest never reached multi-user.target"
 
+
+with subtest("qemu runs a pinned machine type, with its monitor socket under /run"):
+    pid = host.succeed(f"systemctl show -P MainPID {unit_of(NAME)}").strip()
+    qemu = host.succeed(f"pgrep -P {pid} qemu").strip()
+    argv = host.succeed(f"tr '\\0' ' ' < /proc/{qemu}/cmdline")
+    assert "-machine pc-i440fx-11.1" in argv, f"qemu argv: {argv}"
+    host.succeed(f"test -S /run/expblk-default-{NAME}-0-qmp.sock")
+
+with subtest("a stop powers the guest off cleanly instead of killing qemu"):
+    cursor = host.succeed("journalctl --show-cursor -n0 | tail -1 | cut -d' ' -f3").strip()
+    t0 = time.monotonic()
+    host.succeed(f"systemctl restart {unit_of(NAME)}")
+    took = time.monotonic() - t0
+    log = host.succeed(f"journalctl --after-cursor='{cursor}' -u {unit_of(NAME)} --no-pager")
+    assert "reboot: Power down" in log, f"the guest did not power off:\n{log}"
+    assert "killing qemu" not in log, log
+    assert took < 60, f"the restart took {took:.0f}s, the guest's shutdown should be quick"
+    others[0].wait_until_succeeds(f"ping -c1 -W2 {GUEST_IP}", timeout=180)
+
 print("VM-INSTANCE DONE")

@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/pgconn"
 	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/blocks/vm/qga"
+	"github.com/expanse/expanse/internal/blocks/vm/qmp"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/quantity"
@@ -1274,12 +1276,9 @@ wal_log_hints = on
 // "exec upstream tooling, drive its lifecycle over its own control
 // socket" shape every other binary-backed workload here uses.
 //
-// A stop/demotion is a hard kill of the qemu-kvm child (ctx cancel ->
-// exec's default SIGKILL): live migration and graceful guest quiesce
-// are explicitly out of scope this phase (X5), and process death always
-// closes qemu's own fd on the raw device, so — unlike LIO's kernel-held
-// configfs backstore (lioTarget.teardown) — no separate release step is
-// needed for DRBD to demote cleanly afterward.
+// A stop asks the guest to power off over QMP and kills qemu after
+// shutdownTimeout. qemu's exit closes its fd on the raw device, so DRBD
+// can demote with no separate release step (unlike LIO's teardown).
 func runVM(ctx context.Context, instance, name string, args []string) error {
 	cfg, err := cfgMap(args)
 	if err != nil {
@@ -1331,6 +1330,14 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 	if err != nil {
 		return err
 	}
+	machineArgs, err := vmMachineArgs(cfg)
+	if err != nil {
+		return err
+	}
+	shutdown, err := vmShutdownTimeout(cfg)
+	if err != nil {
+		return err
+	}
 
 	tapName := macvtapIfaceName(instance)
 	tap, err := createMacvtap(uplink, tapName, mac)
@@ -1338,14 +1345,10 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		return fmt.Errorf("vm/instance: %w", err)
 	}
 
-	// Removed up front, matching createMacvtap's own idempotent "wipe
-	// and recreate before every start" convention: a restart on the same
-	// node (Restart=on-failure) finds its own prior socket file still on
-	// disk even though the process behind it is long gone (PrivateTmp
-	// keeps this unit's /tmp only for itself, but qemu's own bind() is
-	// not guaranteed to unlink a stale path first).
-	qmpSock := "/tmp/expblk-" + instance + "-qmp.sock"
+	// A restart on the same node finds its prior sockets still on disk; qemu's bind() won't replace them.
+	qmpSock := qmp.SocketPath(instance)
 	_ = os.Remove(qmpSock)
+	defer os.Remove(qmpSock)
 	qgaSock := qga.SocketPath(instance)
 	_ = os.Remove(qgaSock)
 	defer os.Remove(qgaSock)
@@ -1365,6 +1368,7 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		"-serial", "stdio",
 		"-qmp", "unix:" + qmpSock + ",server,nowait",
 	}
+	qemuArgv = append(qemuArgv, machineArgs...)
 	qemuArgv = append(qemuArgv, cpuArgs...)
 	qemuArgv = append(qemuArgv, qga.QEMUArgs(qgaSock)...)
 	if seed != "" {
@@ -1398,6 +1402,8 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		return fmt.Errorf("vm/instance: %w", err)
 	}
 	cmd := exec.CommandContext(ctx, path, qemuArgv...)
+	cmd.Cancel = func() error { return powerdownVM(cmd.Process, qmpSock, shutdown) }
+	cmd.WaitDelay = shutdown // then exec kills qemu
 	cmd.ExtraFiles = extra
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1424,6 +1430,18 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		return nil //nolint:nilerr // deliberate stop
 	}
 	return err
+}
+
+// powerdownVM asks the guest to power off; with no time to wait or no monitor, it kills qemu.
+func powerdownVM(p *os.Process, sock string, wait time.Duration) error {
+	if wait > 0 {
+		err := qmp.Powerdown(sock)
+		if err == nil {
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "expanse-block-run: vm power-off request failed, killing qemu: %v\n", err)
+	}
+	return p.Kill()
 }
 
 // createMacvtap creates a bridge-mode macvtap child of uplink (D2,
@@ -1560,6 +1578,36 @@ func vmCPUModelArgs(cfg map[string]any) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("vm/instance: cpuModel %q: want host or unset", model)
 	}
+}
+
+// defaultMachine is what qemu 11.1's "pc" alias names; an explicit version keeps saved VM state loadable.
+const defaultMachine = "pc-i440fx-11.1"
+
+var machineRe = regexp.MustCompile(`^pc-(i440fx|q35)-[0-9]+\.[0-9]+$`)
+
+// vmMachineArgs pins qemu's machine type, so a newer qemu presents the guest the same hardware.
+func vmMachineArgs(cfg map[string]any) ([]string, error) {
+	m := cfgStr(cfg, "machine")
+	if m == "" {
+		m = defaultMachine
+	}
+	if !machineRe.MatchString(m) {
+		return nil, fmt.Errorf("vm/instance: machine %q: want a versioned type such as %s", m, defaultMachine)
+	}
+	return []string{"-machine", m}, nil
+}
+
+// vmShutdownTimeout is how long a stop waits for the guest to power off before killing qemu.
+func vmShutdownTimeout(cfg map[string]any) (time.Duration, error) {
+	v, ok := cfg["shutdownTimeout"]
+	if !ok {
+		return time.Minute, nil
+	}
+	n, ok := v.(float64)
+	if !ok || n < 0 || n > 80 || n != float64(int(n)) {
+		return 0, fmt.Errorf("vm/instance: shutdownTimeout %v: want whole seconds from 0 to 80", v)
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 // vmCPUs resolves the guest's vCPU count from the --cpu arg

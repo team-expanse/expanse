@@ -223,6 +223,19 @@ with the same CPU, but on an older one it may see features disappear. Keep a clu
 same CPU generation if its VMs use `cpuModel: host`. `host` is the only value accepted; anything else
 is refused at apply time. `nix/tests/vm-instance-host-cpu.nix` checks both models.
 
+### Stopping a VM
+
+A stop (a restart, a spec change, a move to another node) first asks the guest to power off, as
+pressing its power button would, then waits up to `config.shutdownTimeout` seconds (0 to 80, default
+60) before turning the VM off hard. A guest that ignores ACPI power events is always turned off hard
+once the time runs out; set `shutdownTimeout: 0` for one to skip the wait.
+
+### Machine type
+
+qemu presents the guest a fixed set of virtual hardware, its machine type. `config.machine` pins it
+(default `pc-i440fx-11.1`), so a newer qemu shows an existing guest the same hardware, and a VM's
+saved state stays loadable. Only versioned `pc-i440fx-X.Y` and `pc-q35-X.Y` types are accepted.
+
 ## 4. Failover, from the guest's perspective
 
 When the node running the VM is hard-killed, the disk's own DRBD promotion (already proven,

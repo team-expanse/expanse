@@ -791,3 +791,37 @@ func TestRemoveVolumePassfile(t *testing.T) {
 		t.Errorf("an already-removed passfile is not an error: %v", err)
 	}
 }
+
+func TestVMMachineArgsPinTheMachineType(t *testing.T) {
+	for machine, want := range map[string]string{"": "pc-i440fx-11.1", "pc-q35-11.1": "pc-q35-11.1", "pc-i440fx-10.0": "pc-i440fx-10.0"} {
+		got, err := vmMachineArgs(map[string]any{"machine": machine})
+		if err != nil {
+			t.Fatalf("vmMachineArgs(%q): %v", machine, err)
+		}
+		if !slices.Equal(got, []string{"-machine", want}) {
+			t.Errorf("vmMachineArgs(%q) = %q, want -machine %s", machine, got, want)
+		}
+	}
+	for _, alias := range []string{"pc", "q35", "pc-q35-11.1,accel=tcg"} { // an alias moves with qemu
+		if _, err := vmMachineArgs(map[string]any{"machine": alias}); err == nil {
+			t.Errorf("vmMachineArgs(%q): want an error, got nil", alias)
+		}
+	}
+}
+
+func TestVMShutdownTimeoutDefaultsToAMinute(t *testing.T) {
+	if got, err := vmShutdownTimeout(map[string]any{}); err != nil || got != time.Minute {
+		t.Errorf("vmShutdownTimeout(unset) = %v, %v; want 1m", got, err)
+	}
+	for in, want := range map[float64]time.Duration{0: 0, 30: 30 * time.Second, 80: 80 * time.Second} {
+		got, err := vmShutdownTimeout(map[string]any{"shutdownTimeout": in})
+		if err != nil || got != want {
+			t.Errorf("vmShutdownTimeout(%v) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []float64{-1, 81, 2.5} { // over 80s, systemd's 90s stop timeout would kill the unit first
+		if _, err := vmShutdownTimeout(map[string]any{"shutdownTimeout": bad}); err == nil {
+			t.Errorf("vmShutdownTimeout(%v): want an error, got nil", bad)
+		}
+	}
+}

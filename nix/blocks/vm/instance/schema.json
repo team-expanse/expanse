@@ -141,12 +141,12 @@
     "mac": {
       "type": "string",
       "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$",
-      "description": "Explicit guest NIC MAC override. Left unset, a stable, locally-administered MAC is derived once from the block instance's own name (PHASE-06-TASKS.md D2/D4 pattern) \u2014 identical across every failover, never regenerated or tied to a node or its macvtap parent interface"
+      "description": "Explicit guest NIC MAC override. Left unset, a stable, locally-administered MAC is derived once from the block instance's own name (PHASE-06-TASKS.md D2/D4 pattern) — identical across every failover, never regenerated or tied to a node or its macvtap parent interface"
     },
     "bootKernel": {
       "type": "string",
       "minLength": 1,
-      "description": "Nix store path to a kernel for direct-kernel-boot, bypassing whatever bootloader (if any) the raw volume's own disk holds. PHASE-06-TASKS.md D4 leaves getting a first bootable guest OS onto an empty volume out of this phase's own scope (document, don't build); this is the escape hatch that lets a guest boot at all before that exists \u2014 bootInitrd/bootCmdline go with it. Left unset (the production default), the VMM boots from the attached disk the ordinary BIOS way, exactly like a physical machine"
+      "description": "Nix store path to a kernel for direct-kernel-boot, bypassing whatever bootloader (if any) the raw volume's own disk holds. PHASE-06-TASKS.md D4 leaves getting a first bootable guest OS onto an empty volume out of this phase's own scope (document, don't build); this is the escape hatch that lets a guest boot at all before that exists — bootInitrd/bootCmdline go with it. Left unset (the production default), the VMM boots from the attached disk the ordinary BIOS way, exactly like a physical machine"
     },
     "bootInitrd": {
       "type": "string",
@@ -163,6 +163,17 @@
         "host"
       ],
       "description": "CPU model the guest sees. host passes the node's CPU through, including vmx/svm, so the guest can run KVM itself (nested virtualization); the guest can then only restart on nodes with the same CPU features. Left unset, qemu's default model, with no virtualization extensions"
+    },
+    "machine": {
+      "type": "string",
+      "pattern": "^pc-(i440fx|q35)-[0-9]+\\.[0-9]+$",
+      "description": "The virtual hardware the guest sees, as a versioned qemu machine type. Left unset, pc-i440fx-11.1. It stays fixed when Expanse updates qemu, so a suspended VM can resume"
+    },
+    "shutdownTimeout": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 80,
+      "description": "Seconds a stop waits for the guest to power off after asking it to, before the VM is turned off hard. 0 turns it off at once. Left unset, 60"
     },
     "guestReady": {
       "type": "string",
