@@ -176,9 +176,9 @@ with subtest("a stop powers the guest off cleanly instead of killing qemu"):
     t0 = time.monotonic()
     host.succeed(f"systemctl restart {unit_of(NAME)}")
     took = time.monotonic() - t0
-    log = host.succeed(f"journalctl --after-cursor='{cursor}' -u {unit_of(NAME)} --no-pager")
-    assert "reboot: Power down" in log, f"the guest did not power off:\n{log}"
-    assert "killing qemu" not in log, log
+    journal = host.succeed(f"journalctl --after-cursor='{cursor}' -u {unit_of(NAME)} --no-pager")
+    assert "reboot: Power down" in journal, f"the guest did not power off:\n{journal}"
+    assert "killing qemu" not in journal, journal
     assert took < 60, f"the restart took {took:.0f}s, the guest's shutdown should be quick"
     others[0].wait_until_succeeds(f"ping -c1 -W2 {GUEST_IP}", timeout=180)
 
