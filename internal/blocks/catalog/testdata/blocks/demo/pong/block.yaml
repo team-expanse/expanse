@@ -4,3 +4,4 @@ description: synthetic pong block with enum-constrained config
 icon: pong
 capabilities: [net]
 suspendable: true
+resizable: true

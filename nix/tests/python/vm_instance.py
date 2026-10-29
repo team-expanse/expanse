@@ -182,7 +182,7 @@ with subtest("a stop powers the guest off cleanly instead of killing qemu"):
     assert took < 60, f"the restart took {took:.0f}s, the guest's shutdown should be quick"
     others[0].wait_until_succeeds(f"ping -c1 -W2 {GUEST_IP}", timeout=180)
 
-with subtest("a resize reaches the running VM as a reload, which restarts it on the new size for now"):
+with subtest("a shrink below the memory it booted with reaches the VM as a reload, which restarts it"):
     # The last subtest's restart is still booting; its guest agent answers once userspace is up.
     host.wait_until_succeeds(f"expanse ctl vm exec {NAME} -- {SW}/true", timeout=180)
     host.succeed(f"test -e /run/expanse/block-live/default-{NAME}-0")  # the runtime serves reloads
@@ -190,7 +190,7 @@ with subtest("a resize reaches the running VM as a reload, which restarts it on 
     deploy(n1, NAME, MANIFEST.replace("memory: 2Gi", "memory: 1Gi"))
 
     argv = f"tr '\\0' ' ' < /proc/$(pgrep -P $(systemctl show -P MainPID {unit_of(NAME)}) qemu)/cmdline"
-    host.wait_until_succeeds(f"systemctl is-active {unit_of(NAME)} && {argv} | grep -q -- '-m 1024 '", timeout=300)
+    host.wait_until_succeeds(f"systemctl is-active {unit_of(NAME)} && {argv} | grep -q -- '-m 1024M,maxmem=2048M '", timeout=300)
     journal = host.succeed(f"journalctl --after-cursor='{cursor}' -u {unit_of(NAME)} --no-pager")
     assert "restarting it on its new spec" in journal, f"no reload:\n{journal}"
     assert "reboot: Power down" in journal, f"the guest did not power off:\n{journal}"

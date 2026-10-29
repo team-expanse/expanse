@@ -545,6 +545,8 @@ message BlockType {
   bytes template_json = 8;
   // The type keeps its state when suspended (block.yaml suspendable).
   bool suspendable = 9;
+  // Running replicas take new requests live, up to their limits (block.yaml resizable).
+  bool resizable = 10;
 }
 
 message ListTypesRequest {}

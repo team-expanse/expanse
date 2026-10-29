@@ -693,6 +693,22 @@ func TestReplicaSpecCarriesResourceRequestsAsCPUMemArgs(t *testing.T) {
 	}
 }
 
+// A VM's limits are its hotplug ceiling; other types never get the flags, so their args don't change.
+func TestReplicaSpecCarriesAVMsLimitsAsItsCeiling(t *testing.T) {
+	res := &pb.Resources{
+		Requests: &pb.ResourcePair{Cpu: "2", Memory: "1Gi"},
+		Limits:   &pb.ResourcePair{Cpu: "4", Memory: "3Gi"},
+	}
+	for typ, want := range map[string]bool{"vm/instance": true, "app/caddy": false} {
+		blk := &pb.Block{Spec: &pb.BlockSpec{Type: typ, Resources: res}}
+		spec := buildReplicaSpec(blk, "default", "b1", 0, map[string]volumeRef{})
+		args := strings.Join(spec.Args, " ")
+		if got := strings.Contains(args, "--cpu-max 4") && strings.Contains(args, "--mem-max 3Gi"); got != want {
+			t.Errorf("%s: Args = %v, want the limits passed: %v", typ, spec.Args, want)
+		}
+	}
+}
+
 // TestReplicaSpecVMInstanceRunsAsRoot is the regression test for
 // PHASE-06-TASKS.md D2: vm/instance needs CAP_NET_ADMIN (its macvtap
 // network identity) and /dev/kvm access, neither a capability

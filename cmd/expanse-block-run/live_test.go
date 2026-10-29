@@ -98,12 +98,3 @@ func TestUnitFromCgroup(t *testing.T) {
 		t.Errorf("a slice read as a unit: %q", got)
 	}
 }
-
-func TestVMResizeNeedsHotplugForNow(t *testing.T) {
-	if err := resizeVM(vmArgs("1"), vmArgs("1")); err != nil {
-		t.Errorf("same size: %v", err)
-	}
-	if err := resizeVM(vmArgs("1"), vmArgs("2")); err == nil {
-		t.Error("a new size applied without hotplug")
-	}
-}

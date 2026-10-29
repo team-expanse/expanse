@@ -35,6 +35,20 @@
           <span class="field-hint"><code>Mi</code> or <code>Gi</code>.</span>
         </label>
       </div>
+      {{if .ShowLimits}}
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">CPU limit</span>
+          <input class="input" type="text" name="cpuLimit" value="{{.CPULimit}}" placeholder="twice the CPU">
+          <span class="field-hint">The most cores it can grow to while running.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Memory limit</span>
+          <input class="input" type="text" name="memoryLimit" value="{{.MemoryLimit}}" placeholder="twice the memory">
+          <span class="field-hint">The most memory it can grow to while running. Changing a limit restarts it.</span>
+        </label>
+      </div>
+      {{end}}
       {{if .NoStorage}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>No node has storage turned on, so this block cannot start. <a href="/nodes">Turn storage on</a> from a node's page first.</p></div></div>{{end}}
       {{range .Storage}}
       <label class="field">

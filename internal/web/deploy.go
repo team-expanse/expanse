@@ -207,6 +207,9 @@ type deployFormData struct {
 	Replicas     string
 	ShowReplicas bool
 	CPU, Memory  string
+	ShowLimits   bool // a resizable type: limits cap its live growth
+	CPULimit     string
+	MemoryLimit  string
 	Storage      []storageInput
 	Ports        []*pb.Port
 	PortValues   map[string]string // address ports as typed, kept on a rejected form
@@ -437,6 +440,7 @@ func (s *Server) renderRejected(w http.ResponseWriter, r *http.Request, data dep
 		data.Name = form.Get("name")
 	}
 	data.Replicas, data.CPU, data.Memory = form.Get("replicas"), form.Get("cpu"), form.Get("memory")
+	data.CPULimit, data.MemoryLimit = form.Get("cpuLimit"), form.Get("memoryLimit")
 	for i := range data.Storage {
 		data.Storage[i].Size = form.Get("storage/" + data.Storage[i].Name + "/size")
 	}
@@ -621,12 +625,33 @@ func applyCommon(b *pb.Block, form url.Values) []string {
 			spec.Resources.Requests.Memory = mem
 		}
 	}
+	applyLimits(spec, form)
 	for _, st := range spec.GetStorage() {
 		if v := strings.TrimSpace(form.Get("storage/" + st.GetName() + "/size")); v != "" {
 			st.Size = v
 		}
 	}
 	return append(errs, applyAddressPorts(spec, form)...)
+}
+
+// applyLimits sets the limits a resizable type's form offers; blank leaves the type's default.
+func applyLimits(spec *pb.BlockSpec, form url.Values) {
+	cpu, mem := strings.TrimSpace(form.Get("cpuLimit")), strings.TrimSpace(form.Get("memoryLimit"))
+	if cpu == "" && mem == "" {
+		return
+	}
+	if spec.Resources == nil {
+		spec.Resources = &pb.Resources{}
+	}
+	if spec.Resources.Limits == nil {
+		spec.Resources.Limits = &pb.ResourcePair{}
+	}
+	if cpu != "" {
+		spec.Resources.Limits.Cpu = cpu
+	}
+	if mem != "" {
+		spec.Resources.Limits.Memory = mem
+	}
 }
 
 // applyAddressPorts sets each address port (what clients connect to on the block's address) from the form.
@@ -660,6 +685,8 @@ func (s *Server) deployData(w http.ResponseWriter, r *http.Request, bt *pb.Block
 		Type: bt, Action: "/deploy/" + bt.GetName(), Cancel: "/deploy", Name: b.GetMetadata().GetName(),
 		ShowReplicas: showReplicas(spec), CPU: spec.GetResources().GetRequests().GetCpu(),
 		Memory: spec.GetResources().GetRequests().GetMemory(), Ports: spec.GetNetwork().GetPorts(), Fields: fields,
+		ShowLimits: bt.GetResizable(), CPULimit: spec.GetResources().GetLimits().GetCpu(),
+		MemoryLimit: spec.GetResources().GetLimits().GetMemory(),
 	}
 	if spec.Replicas != nil {
 		d.Replicas = strconv.Itoa(int(spec.GetReplicas()))

@@ -71,6 +71,15 @@ func TestSuspendableComesFromBlockYAML(t *testing.T) {
 	}
 }
 
+func TestResizableComesFromBlockYAML(t *testing.T) {
+	c := mustLoad(t)
+	pong, _ := c.GetType("demo/pong")
+	ping, _ := c.GetType("demo/ping")
+	if !pong.Resizable || ping.Resizable {
+		t.Errorf("Resizable: pong=%v ping=%v, want true false", pong.Resizable, ping.Resizable)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	c := mustLoad(t)
 	d := c.Defaults("demo/ping")

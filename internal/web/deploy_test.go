@@ -269,6 +269,32 @@ func TestEditFormShowsTheBlock(t *testing.T) {
 	}
 }
 
+func TestDeployFormSetsAResizableTypesLimits(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "kvm")
+	c, csrf := loggedInClient(t, srv, pw)
+
+	if _, body := get(t, c, srv.URL+"/deploy/vm/instance"); !strings.Contains(body, `name="cpuLimit"`) {
+		t.Error("the VM form has no CPU limit field")
+	}
+	if _, body := get(t, c, srv.URL+"/deploy/web/nginx"); strings.Contains(body, `name="cpuLimit"`) {
+		t.Error("a type that cannot resize live shows a limit field")
+	}
+	resp, body := postForm(t, c, srv.URL+"/deploy/vm/instance", csrf, url.Values{
+		"name": {"vm1"}, "cpu": {"2"}, "memory": {"2Gi"}, "cpuLimit": {"8"}, "memoryLimit": {"16Gi"},
+		"storage/disk/size": {"20Gi"},
+	})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+	if lim := getBlock(t, st, "default/vm1").GetSpec().GetResources().GetLimits(); lim.GetCpu() != "8" || lim.GetMemory() != "16Gi" {
+		t.Errorf("limits = %v, want 8 and 16Gi", lim)
+	}
+	if _, body := get(t, c, srv.URL+"/blocks/default/vm1/edit"); !strings.Contains(body, `name="memoryLimit" value="16Gi"`) {
+		t.Error("the edit form drops the memory limit")
+	}
+}
+
 func TestEditFormUpdatesTheBlock(t *testing.T) {
 	srv, pw, st := newTestServerStore(t)
 	seedNode(t, st, "n1", "")

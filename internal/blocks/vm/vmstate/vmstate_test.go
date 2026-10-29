@@ -81,3 +81,22 @@ func TestDirIsPerInstanceUnderTheBase(t *testing.T) {
 		t.Errorf("Dir = %q", got)
 	}
 }
+
+func TestTheShapeLivesAndDiesWithTheSave(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "default-vm1-0")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteShape(dir, []byte(`{"cpus":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(ShapePath(dir)); err != nil || string(raw) != `{"cpus":2}` {
+		t.Fatalf("shape = %q, %v", raw, err)
+	}
+	if err := Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ShapePath(dir)); !os.IsNotExist(err) {
+		t.Errorf("the shape outlived its save: %v", err)
+	}
+}

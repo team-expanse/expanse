@@ -46,6 +46,8 @@ type Type struct {
 	Defaults  map[string]any
 	// Suspendable types can be stopped with their state kept (BlockSpec.power).
 	Suspendable bool
+	// Resizable types take new requests while running, up to their limits.
+	Resizable bool
 	// Template holds the spec fields (no type or config) a working block of this type starts from.
 	Template map[string]any
 }
@@ -61,6 +63,7 @@ type blockYAML struct {
 	Icon         string   `yaml:"icon"`
 	Capabilities []string `yaml:"capabilities"`
 	Suspendable  bool     `yaml:"suspendable"`
+	Resizable    bool     `yaml:"resizable"`
 }
 
 // Catalog is the set of block types loaded from a blocks directory.
@@ -137,6 +140,7 @@ func loadType(dir, category, name string) (*Type, error) {
 		Icon:         meta.Icon,
 		Capabilities: meta.Capabilities,
 		Suspendable:  meta.Suspendable,
+		Resizable:    meta.Resizable,
 		Dir:          dir,
 		Schema:       schema,
 		SchemaJSON:   schemaRaw,

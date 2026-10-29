@@ -331,6 +331,15 @@ func buildReplicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]v
 			spec.Args = append(spec.Args, "--mem", req.GetMemory())
 		}
 	}
+	// A VM's limits are its hotplug ceiling: vCPU slots and maxmem.
+	if lim := blk.GetSpec().GetResources().GetLimits(); lim != nil && blk.GetSpec().GetType() == "vm/instance" {
+		if lim.GetCpu() != "" {
+			spec.Args = append(spec.Args, "--cpu-max", lim.GetCpu())
+		}
+		if lim.GetMemory() != "" {
+			spec.Args = append(spec.Args, "--mem-max", lim.GetMemory())
+		}
+	}
 	for _, st := range blk.GetSpec().GetStorage() {
 		v, ok := vols[blockStorageVolumeName(blk, ns, name, st, idx)]
 		if !ok || st.GetMountPath() == "" {

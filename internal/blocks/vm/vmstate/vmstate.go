@@ -25,6 +25,17 @@ func StatePath(dir string) string { return filepath.Join(dir, "state") }
 // TempPath is where qemu writes a save before Commit.
 func TempPath(dir string) string { return filepath.Join(dir, "state.tmp") }
 
+// ShapePath records the vCPU and memory layout the saved guest ran in, which a resume must match.
+func ShapePath(dir string) string { return filepath.Join(dir, "shape") }
+
+// WriteShape stores the layout, synced, ahead of Commit.
+func WriteShape(dir string, raw []byte) error {
+	if err := os.WriteFile(ShapePath(dir), raw, 0o600); err != nil {
+		return err
+	}
+	return syncFile(ShapePath(dir))
+}
+
 func tokenPath(dir string) string { return filepath.Join(dir, "token") }
 
 // Token names the committed save in dir, "" when there is none.

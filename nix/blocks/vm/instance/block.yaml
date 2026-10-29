@@ -4,3 +4,4 @@ description: A general-purpose VM instance — qemu-kvm exec'd directly (no libv
 icon: vm
 capabilities: [kvm]
 suspendable: true
+resizable: true

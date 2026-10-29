@@ -1303,8 +1303,6 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 	defer cleanup()
 
 	mac := vm.MAC(cfg, instance)
-	cpus := vmCPUs(args)
-	memMiB := vmMemMiB(args)
 
 	// EXPANSE_EXTERNAL_INTERFACE: the NIC the VIP holder announces on; empty = the default
 	// route's device (net-multi-nic.nix). nixosTest nodes set it, as their default is slirp eth0.
@@ -1341,6 +1339,14 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 
 	stateDir := vmstate.Dir("", instance)
 	resume := resumeOrDiscard(stateDir, stateToken)
+	shape := bootShape(args)
+	if resume { // the saved RAM loads only into the layout it ran in
+		if shape, err = readShape(vmstate.ShapePath(stateDir)); err != nil {
+			fmt.Printf("expanse-block-run: vm %s boots fresh, as its save has no usable layout: %v\n", instance, err)
+			_ = vmstate.Remove(stateDir)
+			resume, shape = false, bootShape(args)
+		}
+	}
 
 	tapName := macvtapIfaceName(instance)
 	tap, err := createMacvtap(uplink, tapName, mac)
@@ -1360,7 +1366,6 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 		"-enable-kvm", "-nodefaults", "-display", "none", "-no-reboot",
 		// Debian's cloud image resets right after GRUB on a machine without a video card.
 		"-vga", "std",
-		"-m", strconv.Itoa(memMiB), "-smp", strconv.Itoa(cpus),
 		"-drive", "file=" + dev + ",if=virtio,format=raw",
 		// fd=3: the first (and only) entry in cmd.ExtraFiles below --
 		// qemu itself never needs CAP_NET_ADMIN or any netlink access of
@@ -1372,6 +1377,7 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 		"-qmp", "unix:" + qmpSock + ",server,nowait",
 	}
 	qemuArgv = append(qemuArgv, machineArgs...)
+	qemuArgv = append(qemuArgv, shape.qemuArgs(vmCPUType(cfg))...)
 	qemuArgv = append(qemuArgv, cpuArgs...)
 	qemuArgv = append(qemuArgv, qga.QEMUArgs(qgaSock)...)
 	if seed != "" {
@@ -1420,7 +1426,11 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 	// qemu has its own inherited copy of the fd (via fork/exec) as soon
 	// as Start returns; closing our own copy here does not affect it.
 	_ = tap.Close()
-	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d memMiB=%d)\n", instance, dev, mac, cpus, memMiB)
+	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d/%d memMiB=%d/%d)\n",
+		instance, dev, mac, shape.CPUs, shape.MaxCPUs, shape.MemMiB, shape.MaxMemMiB)
+	resizer := newVMResizer(instance, shape, qmpSock, qgaSock)
+	defer os.Remove(shapePath(instance))
+	resizer.save(shape)
 	tracker := vmready.NewTracker()
 	if resume {
 		err := qmp.Load(qmpSock, vmstate.StatePath(stateDir), saveTimeout)
@@ -1433,11 +1443,15 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 		}
 		fmt.Printf("expanse-block-run: vm %s resumed from its saved state\n", instance)
 		tracker = vmready.ResumedTracker()
+		if err := resizer.apply(nil, args); err != nil {
+			fmt.Printf("expanse-block-run: vm %s: %v; restarting it on its new spec\n", instance, err)
+			_ = restartOwnUnit(instance)
+		}
 	}
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
 	go pollGuestAgent(watchCtx, instance, qgaSock, mac)
-	go serveReloads(watchCtx, instance, "vm/instance", args, resizeVM)
+	go serveReloads(watchCtx, instance, "vm/instance", args, resizer.apply)
 	if watch != nil {
 		go watch.serve(watchCtx, instance, tracker)
 	} else if cfgStr(cfg, "guestReady") == "none" {

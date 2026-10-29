@@ -30,6 +30,17 @@ func nextReply(replies map[string]string, cmd string) string {
 // It sends an event before each later reply, as QEMU may, and records the commands it got.
 func fakeQEMU(t *testing.T, replies map[string]string) (string, <-chan []string) {
 	t.Helper()
+	return serveFake(t, replies, false)
+}
+
+// fakeQEMUArgs is fakeQEMU recording each command with its arguments, as "cmd {json}".
+func fakeQEMUArgs(t *testing.T, replies map[string]string) (string, <-chan []string) {
+	t.Helper()
+	return serveFake(t, replies, true)
+}
+
+func serveFake(t *testing.T, replies map[string]string, withArgs bool) (string, <-chan []string) {
+	t.Helper()
 	sock := filepath.Join(t.TempDir(), "qmp.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
@@ -48,11 +59,18 @@ func fakeQEMU(t *testing.T, replies map[string]string) (string, <-chan []string)
 		fmt.Fprintln(c, banner)
 		dec := json.NewDecoder(c) // QMP commands need no newline between them
 		for {
-			var cmd struct{ Execute string }
+			var cmd struct {
+				Execute   string
+				Arguments json.RawMessage
+			}
 			if err := dec.Decode(&cmd); err != nil {
 				return
 			}
-			cmds = append(cmds, cmd.Execute)
+			if withArgs && cmd.Arguments != nil {
+				cmds = append(cmds, cmd.Execute+" "+string(cmd.Arguments))
+			} else {
+				cmds = append(cmds, cmd.Execute)
+			}
 			if cmd.Execute != "qmp_capabilities" { // QEMU sends no events before the handshake
 				fmt.Fprintln(c, `{"event":"RTC_CHANGE","data":{"offset":0},"timestamp":{"seconds":1,"microseconds":0}}`)
 			}

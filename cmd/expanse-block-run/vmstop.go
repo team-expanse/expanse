@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -56,6 +57,9 @@ func suspendVM(instance, token string) error {
 		return err
 	}
 	_ = os.Remove(vmstate.TempPath(dir))
+	if err := keepShape(instance, dir); err != nil {
+		return err
+	}
 	if err := qmp.Save(sock, vmstate.TempPath(dir), saveTimeout); err != nil {
 		_ = vmstate.Remove(dir)
 		return err
@@ -68,6 +72,19 @@ func suspendVM(instance, token string) error {
 	fmt.Printf("expanse-block-run: vm %s suspended (%s)\n", instance, token)
 	qmp.Quit(sock)
 	return nil
+}
+
+// keepShape copies the running layout beside the save; a VM from before hotplug has none to resume into.
+func keepShape(instance, dir string) error {
+	s, err := readShape(shapePath(instance))
+	if err != nil {
+		return fmt.Errorf("its layout is unknown, so a save could not be resumed: %w", err)
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return vmstate.WriteShape(dir, raw)
 }
 
 // resumeOrDiscard reports whether dir holds the save token names; any other save is deleted,

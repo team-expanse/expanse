@@ -113,11 +113,3 @@ func unitFromCgroup(cgroup string) string {
 	}
 	return unit
 }
-
-// resizeVM applies a new vCPU count and memory size to the running guest.
-func resizeVM(cur, next []string) error {
-	if vmCPUs(cur) == vmCPUs(next) && vmMemMiB(cur) == vmMemMiB(next) {
-		return nil
-	}
-	return errors.New("a new CPU or memory size needs a restart until hotplug lands")
-}

@@ -66,7 +66,9 @@ expanse ctl block apply -f vm1.yaml
 
 ### Sizing
 
-`requests.cpu` becomes qemu's `-smp` (rounded up to whole vCPUs) and `requests.memory` its `-m`.
+`requests.cpu` is the guest's vCPU count (rounded up to whole vCPUs) and `requests.memory` its
+memory. `limits.cpu` and `limits.memory` are the most it can grow to while running (see below);
+each defaults to twice the request.
 The scheduler places the block against what each node's agent publishes at
 `/nodes/<id>/capacity`: hardware threads, total memory and the data volume group's size, with the
 block's storage sizes counted against the volume group. CPU is overcommitted 2× by default; memory
@@ -80,8 +82,8 @@ some memory before placing a guest that takes most of it:
 expanse ctl kv put /config/scheduler '{"reservedMemory": "64Gi"}'
 ```
 
-Leave `limits.memory` unset on a VM: qemu needs memory beyond the guest's `-m`, and a limit equal
-to the request gets the guest OOM-killed under load.
+A VM's limits cap only how far it can grow live; they are not a cgroup cap on qemu. The scheduler
+reserves the requests, so a live grow can take a node past what was placed on it.
 
 ## 3. Guest OS installation and boot
 
@@ -244,12 +246,31 @@ sent before the phase reads `SUSPENDED` boots the guest fresh instead.
 
 A suspended VM resumes from its save only on the node that wrote it. If it moves while suspended
 (the node is drained or lost), it boots fresh on the new node, and the old node deletes its save, so
-a guest never wakes up with memory that no longer matches its disk. A save that won't load, for
-example after its config changed the VM's memory size, also ends in a fresh boot.
+a guest never wakes up with memory that no longer matches its disk. A resumed guest keeps the size
+it was saved at, then moves to the block's current requests as a live resize would. A save that
+won't load, for example after its config changed the machine type, ends in a fresh boot.
 
 The save is about as large as the memory the guest was using, so leave room on the node's `/persist`
 for it. Writing it may take a few minutes for a large guest; if it fails, the guest is powered off as
 in a stop instead. Only `vm/instance` can be suspended (its `block.yaml` says `suspendable: true`).
+
+### Resizing a running VM
+
+A redeploy that changes only `requests.cpu` or `requests.memory` resizes the running guest with no
+reboot: qemu hot-adds or removes vCPUs, and grows or shrinks a virtio-mem device that holds the
+guest's memory beyond what it booted with. Expanse brings added vCPUs and memory online through the
+guest agent when the guest doesn't do so itself.
+
+- Growth stops at the limits. A larger request than the limit, or a change to a limit, restarts the
+  VM on the new size.
+- Memory never shrinks below what the guest booted with; asking for less restarts it.
+- The guest must take part: Linux 5.8 or newer with the `virtio_mem` driver, and
+  `memhp_default_state=online_movable` on its kernel command line so memory it was given can be
+  taken back. A guest that hasn't finished a resize within a minute (one that can't free the memory
+  or vCPUs, or has no driver) is restarted on the new size instead.
+
+Only `vm/instance` resizes live (its `block.yaml` says `resizable: true`); the deploy form shows the
+limit fields for it.
 
 ### Machine type
 

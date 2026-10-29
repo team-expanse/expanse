@@ -16,7 +16,7 @@
 # (X1's "disk on a replicated raw volume"), which a real systemd service
 # inside the guest writes a marker to, mirroring the D1 probe's own
 # canary pattern.
-# vm-suspend-resume.nix reuses this cluster and guest with its own script and a larger root disk.
+# vm-suspend-resume.nix and vm-live-resize.nix reuse this cluster and guest with its own script and a larger root disk.
 { self, name ? "vm-instance", script ? ./python/vm_instance.py, diskSize ? null }:
 { pkgs, lib, ... }:
 let
@@ -43,7 +43,9 @@ let
       netboot.squashfsCompression = "gzip -Xcompression-level 1";
       documentation.enable = lib.mkForce false;
       # rd.: the initrd's journal reaches the console log, so a failed boot shows why.
-      boot.kernelParams = [ "console=ttyS0" "panic=-1" "rd.systemd.journald.forward_to_console=1" ];
+      # memhp: hot-added memory goes online movable, so a shrink can take it back (vm-live-resize).
+      boot.kernelParams = [ "console=ttyS0" "panic=-1" "rd.systemd.journald.forward_to_console=1" "memhp_default_state=online_movable" ];
+      boot.kernelModules = [ "virtio_mem" ];
       # A single virtio-net device, named predictably: this config is
       # built standalone (not through nixosTest's own node wrapper,
       # which sets this for n1/n2/n3 themselves), so it must set its own

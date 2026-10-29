@@ -270,6 +270,7 @@ func toBlockType(t *catalog.Type) *pb.BlockType {
 		Capabilities: t.Capabilities,
 		SchemaJson:   t.SchemaJSON,
 		Suspendable:  t.Suspendable,
+		Resizable:    t.Resizable,
 	}
 	if t.Defaults != nil {
 		bt.DefaultsJson, _ = json.Marshal(t.Defaults)
