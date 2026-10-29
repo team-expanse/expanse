@@ -183,6 +183,8 @@ with subtest("a stop powers the guest off cleanly instead of killing qemu"):
     others[0].wait_until_succeeds(f"ping -c1 -W2 {GUEST_IP}", timeout=180)
 
 with subtest("a resize reaches the running VM as a reload, which restarts it on the new size for now"):
+    # The last subtest's restart is still booting; its guest agent answers once userspace is up.
+    host.wait_until_succeeds(f"expanse ctl vm exec {NAME} -- {SW}/true", timeout=180)
     host.succeed(f"test -e /run/expanse/block-live/default-{NAME}-0")  # the runtime serves reloads
     cursor = host.succeed("journalctl --show-cursor -n0 | tail -1 | cut -d' ' -f3").strip()
     deploy(n1, NAME, MANIFEST.replace("memory: 2Gi", "memory: 1Gi"))
