@@ -41,7 +41,8 @@ let
       imports = [ "${pkgs.path}/nixos/modules/installer/netboot/netboot-minimal.nix" ];
       netboot.squashfsCompression = "gzip -Xcompression-level 1";
       documentation.enable = lib.mkForce false;
-      boot.kernelParams = [ "console=ttyS0" "panic=-1" ];
+      # rd.: the initrd's journal reaches the console log, so a failed boot shows why.
+      boot.kernelParams = [ "console=ttyS0" "panic=-1" "rd.systemd.journald.forward_to_console=1" ];
       # A single virtio-net device, named predictably: this config is
       # built standalone (not through nixosTest's own node wrapper,
       # which sets this for n1/n2/n3 themselves), so it must set its own
