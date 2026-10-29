@@ -29,6 +29,7 @@ func TestProbeJobsCoverThisNodesReplicas(t *testing.T) {
 		"/nodes/n1": `{"raft_addr":"10.0.0.5:7000"}`,
 		"/node/n1/resources/block-replica:default/web/2":  "type: block-replica\n" + `{"namespace":"default","name":"web","index":2,"runAsRoot":true}`,
 		"/node/n1/resources/block-replica:default/gone/0": "{}", // block deleted since
+		"/node/n1/resources/block-replica:default/web/3":  "type: block-replica\n" + `{"namespace":"default","name":"web","index":3,"stopped":true}`,
 		"/node/n1/resources/volume:data":                  "{}",
 		"/node/n2/resources/block-replica:default/web/0":  "{}",
 		"/blocks/default/web":                             string(web),

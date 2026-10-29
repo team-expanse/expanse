@@ -56,6 +56,8 @@ func phasePill(p pb.Phase) pill {
 		return pill{"Lost", "crit"}
 	case pb.Phase_TERMINATED:
 		return pill{"Terminated", "neutral"}
+	case pb.Phase_SUSPENDED:
+		return pill{"Suspended", "neutral"}
 	default:
 		return pillUnknown
 	}

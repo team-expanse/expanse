@@ -836,3 +836,55 @@ func TestReplicaSpecEncodesTheConfigCanonically(t *testing.T) {
 		t.Errorf("Args = %q, want --config %s", spec.Args, want)
 	}
 }
+
+func TestPowerStateStopsASuspendedBlockUnderItsRevision(t *testing.T) {
+	blk := &pb.Block{Spec: &pb.BlockSpec{Power: pb.Power_POWER_SUSPENDED}}
+	p := &pb.PlacementStatus{SavedState: "r7"}
+	if stopped, token := powerState(blk, p, 42); !stopped || token != "r42" {
+		t.Errorf("suspended: stopped=%v token=%q, want true r42", stopped, token)
+	}
+}
+
+func TestPowerStateResumesFromThePlacementsSavedState(t *testing.T) {
+	for _, power := range []pb.Power{pb.Power_POWER_ON, pb.Power_POWER_UNSPECIFIED} {
+		blk := &pb.Block{Spec: &pb.BlockSpec{Power: power}}
+		if stopped, token := powerState(blk, &pb.PlacementStatus{SavedState: "r7"}, 42); stopped || token != "r7" {
+			t.Errorf("%v: stopped=%v token=%q, want false r7", power, stopped, token)
+		}
+		if _, token := powerState(blk, &pb.PlacementStatus{}, 42); token != "" {
+			t.Errorf("%v with nothing saved: token %q, want none", power, token)
+		}
+	}
+}
+
+func TestBridgeSyncWritesASuspendedReplicaAsStopped(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	r1 := int32(1)
+	blk, _ := proto.Marshal(&pb.Block{
+		Metadata: &pb.Metadata{Name: "vm", Namespace: "default"},
+		Spec:     &pb.BlockSpec{Type: "vm/instance", Replicas: &r1, Power: pb.Power_POWER_SUSPENDED},
+	})
+	rev, err := st.Put(ctx, store.Key("/blocks/default/vm"), blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, _ := proto.Marshal(&pb.BlockStatus{Placements: []*pb.PlacementStatus{{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_RUNNING}}})
+	if _, err := st.Put(ctx, store.Key("/blocks/default/vm/status"), status); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Bridge{St: st}).Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	e, err := st.Get(ctx, store.Key("/node/n1/resources/block-replica:default/vm/0"))
+	if err != nil {
+		t.Fatalf("no desired spec: %v", err)
+	}
+	var spec systemd.Spec
+	if err := json.Unmarshal(bytes.TrimPrefix(e.Value, []byte("type: block-replica\n")), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if !spec.Stopped || spec.StateToken != "r"+strconv.FormatInt(int64(rev), 10) {
+		t.Errorf("spec stopped=%v token=%q, want true r%d", spec.Stopped, spec.StateToken, rev)
+	}
+}

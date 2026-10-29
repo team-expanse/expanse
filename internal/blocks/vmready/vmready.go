@@ -18,10 +18,14 @@ type Tracker struct {
 	stopping  bool            // multi-user.target went inactive after being active
 	shutdown  string          // X_SYSTEMD_SHUTDOWN value, once sent
 	exitState string          // EXIT_STATUS value, once sent
+	resumed   bool            // the guest was restored running from a saved state
 }
 
 // NewTracker starts a guest in the booting state.
 func NewTracker() *Tracker { return &Tracker{active: map[string]bool{}} }
+
+// ResumedTracker starts a guest restored from a saved state: it was up when saved and won't boot again.
+func ResumedTracker() *Tracker { return &Tracker{active: map[string]bool{}, resumed: true} }
 
 // Observe applies one notify datagram: newline-separated KEY=VALUE pairs.
 func (t *Tracker) Observe(msg []byte) {
@@ -51,7 +55,12 @@ func (t *Tracker) Observe(msg []byte) {
 
 // Ready reports a booted guest: READY=1 and multi-user.target active (emergency mode sends
 // READY=1 too). A guest whose systemd reports no units (254, 255) is ready on READY=1 alone.
-func (t *Tracker) Ready() bool { return t.ready && (t.active["multi-user.target"] || !t.units) }
+func (t *Tracker) Ready() bool {
+	if t.resumed {
+		return t.shutdown == "" && !t.stopping
+	}
+	return t.ready && (t.active["multi-user.target"] || !t.units)
+}
 
 // Status is a one-line description, prefixed with ReadyPrefix exactly when Ready.
 func (t *Tracker) Status() string {
@@ -60,6 +69,8 @@ func (t *Tracker) Status() string {
 		return fmt.Sprintf("not ready: guest powered off (exit status %s)", orUnknown(t.exitState))
 	case t.stopping:
 		return "not ready: guest shutting down"
+	case t.resumed:
+		return ReadyPrefix + " resumed from its saved state"
 	case t.Ready() && !t.units:
 		return ReadyPrefix + " guest systemd reported READY"
 	case t.Ready():

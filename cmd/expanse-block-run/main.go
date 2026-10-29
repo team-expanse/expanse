@@ -94,6 +94,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 		os.Exit(1)
 	}
+	if spec.Stopped {
+		fmt.Printf("expanse-block-run: %s is suspended; not starting it\n", instance)
+		return
+	}
 	// The agent realised this type's runtime (if it has one) before starting the unit.
 	_ = os.Setenv("PATH", runtimepath.Prepend(runtimepath.Dir, spec.Type, os.Getenv("PATH")))
 	args, err := withCredentials(spec.Args, os.Getenv("CREDENTIALS_DIRECTORY"))
@@ -222,7 +226,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "vm/instance":
-		if err := runVM(ctx, instance, spec.Name, args); err != nil {
+		if err := runVM(ctx, instance, spec.Name, spec.StateToken, args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
@@ -241,6 +245,9 @@ type spec struct {
 	Type      string   `json:"type"`
 	Args      []string `json:"args,omitempty"`
 	Index     int      `json:"index"`
+	// Stopped and StateToken mirror systemd.Spec: suspended, and the save to write or resume.
+	Stopped    bool   `json:"stopped,omitempty"`
+	StateToken string `json:"stateToken,omitempty"`
 }
 
 // loadSpec reads the desired-state JSON the agent wrote for this

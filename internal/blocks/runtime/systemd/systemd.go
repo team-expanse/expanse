@@ -102,6 +102,10 @@ type Spec struct {
 	// must setuid()/setgid() at runtime (share/smb, share/nfs) — a
 	// capability DynamicUser's unprivileged random uid can never hold.
 	RunAsRoot bool `json:"runAsRoot,omitempty"`
+	// Stopped keeps the unit down (BlockSpec.power SUSPENDED).
+	Stopped bool `json:"stopped,omitempty"`
+	// StateToken names the saved state: the one to write while Stopped, else the one to resume from.
+	StateToken string `json:"stateToken,omitempty"`
 }
 
 // UnitFile renders the systemd TEMPLATE unit (expanse-block@.service):

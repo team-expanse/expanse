@@ -38,6 +38,7 @@ func (s *Server) registerBlockRoutes() {
 	s.routes.Handle("GET /blocks/{ns}/{name}/events", s.requireAuth(http.HandlerFunc(s.handleBlockEvents)))
 	s.routes.Handle("GET /blocks/{ns}/{name}/network/events", s.requireAuth(http.HandlerFunc(s.handleBlockNetworkEvents)))
 	s.routes.Handle("POST /blocks/{ns}/{name}/scale", s.requireAuth(http.HandlerFunc(s.handleBlockScale)))
+	s.routes.Handle("POST /blocks/{ns}/{name}/power", s.requireAuth(http.HandlerFunc(s.handleBlockPower)))
 	s.routes.Handle("POST /blocks/{ns}/{name}/delete", s.requireAuth(http.HandlerFunc(s.handleBlockDelete)))
 	s.routes.Handle("GET /blocks/{ns}/{name}/logs", s.requireAuth(http.HandlerFunc(s.handleBlockLogs)))
 	s.routes.Handle("GET /blocks/{ns}/{name}/logs/stream", s.requireAuth(http.HandlerFunc(s.handleBlockLogsStream)))
@@ -190,6 +191,8 @@ type blockDetailData struct {
 	Page  page
 	Block *pb.Block
 	Net   blockNetwork
+	// Suspendable shows the Power card (block.yaml suspendable).
+	Suspendable bool
 }
 
 // blockNetwork is the block's address and guest cards, rendered live.
@@ -232,6 +235,9 @@ func (s *Server) handleBlockDetail(w http.ResponseWriter, r *http.Request) {
 		Page:  s.newPage(w, r, full, "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full}),
 		Block: b,
 		Net:   s.loadBlockNetwork(r.Context(), b),
+	}
+	if bt, err := s.catalog.GetType(r.Context(), &pb.GetTypeRequest{Name: b.GetSpec().GetType()}); err == nil {
+		d.Suspendable = bt.GetSuspendable()
 	}
 	s.render(w, http.StatusOK, "block_detail.html", d)
 }
@@ -336,6 +342,34 @@ func (s *Server) handleBlockScale(w http.ResponseWriter, r *http.Request) {
 	// this block's lifecycle, this is only the immediate acknowledgement.
 	w.Header().Set("HX-Trigger", toastTrigger("success", fmt.Sprintf("Scaling %s/%s to %d", ns, name, n)))
 	s.render(w, http.StatusOK, "block-fragment", b)
+}
+
+// handleBlockPower suspends or resumes a block and returns its Power card.
+func (s *Server) handleBlockPower(w http.ResponseWriter, r *http.Request) {
+	if s.blocksUnavailable(w, r) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	power, verb := pb.Power_POWER_SUSPENDED, "Suspending"
+	switch r.PostForm.Get("power") {
+	case "suspended":
+	case "on":
+		power, verb = pb.Power_POWER_ON, "Resuming"
+	default:
+		http.Error(w, "power must be on or suspended", http.StatusBadRequest)
+		return
+	}
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	b, err := s.blocks.SetPower(r.Context(), &pb.SetPowerRequest{Namespace: ns, Name: name, Power: power})
+	if err != nil {
+		http.Error(w, errText(err), httpStatus(err))
+		return
+	}
+	w.Header().Set("HX-Trigger", toastTrigger("success", fmt.Sprintf("%s %s/%s", verb, ns, name)))
+	s.render(w, http.StatusOK, "block-power", b)
 }
 
 func (s *Server) handleBlockDelete(w http.ResponseWriter, r *http.Request) {

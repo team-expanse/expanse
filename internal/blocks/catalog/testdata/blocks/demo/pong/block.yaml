@@ -3,3 +3,4 @@ version: 0.2.0
 description: synthetic pong block with enum-constrained config
 icon: pong
 capabilities: [net]
+suspendable: true

@@ -94,6 +94,36 @@ func (s *Server) Restart(ctx context.Context, r *pb.RestartRequest) (*pb.Block, 
 	return s.putVersioned(ctx, "Restart", b, e.Revision)
 }
 
+// SetPower suspends or resumes a block (V25: suspendable types only). Same txn contract as Update.
+func (s *Server) SetPower(ctx context.Context, r *pb.SetPowerRequest) (*pb.Block, error) {
+	const op = "blocks.service.SetPower"
+	if r.GetName() == "" {
+		return nil, errors.New(errors.KindInvalid, op, "name is required")
+	}
+	if r.GetPower() == pb.Power_POWER_UNSPECIFIED {
+		return nil, errors.New(errors.KindInvalid, op, "power is required (on or suspended)")
+	}
+	ns := r.GetNamespace()
+	if ns == "" {
+		ns = "default"
+	}
+	b, err := s.get(ctx, ns, r.GetName())
+	if err != nil {
+		return nil, err
+	}
+	e, err := s.St.Get(ctx, key(ns, r.GetName()))
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, op, "read for revision")
+	}
+	b.Spec.Power = r.GetPower()
+	ad := s.adCtx()
+	ad.Existing = s.namesInNamespace(ctx, ns, r.GetName())
+	if ves := validate.Validate(b, ad); len(ves) > 0 {
+		return nil, admissionErr(ves)
+	}
+	return s.putVersioned(ctx, "SetPower", b, e.Revision)
+}
+
 // putVersioned marshals and CAS-writes a validated block, preserving the
 // shared Update txn semantics (status untouched — callers mutated a clone
 // of the stored block).
@@ -239,6 +269,7 @@ func toBlockType(t *catalog.Type) *pb.BlockType {
 		Icon:         t.Icon,
 		Capabilities: t.Capabilities,
 		SchemaJson:   t.SchemaJSON,
+		Suspendable:  t.Suspendable,
 	}
 	if t.Defaults != nil {
 		bt.DefaultsJson, _ = json.Marshal(t.Defaults)

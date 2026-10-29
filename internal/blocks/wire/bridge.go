@@ -18,6 +18,7 @@ package wire
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,7 +143,9 @@ func (b *Bridge) Sync(ctx context.Context) error {
 			if p.GetReplicaIndex() < 0 || p.GetNodeId() == "" || p.GetPhase() == pb.Phase_LOST {
 				continue
 			}
-			spec, err := replicaSpec(&blk, ns, name, int(p.GetReplicaIndex()), vols, extra...)
+			rs := buildReplicaSpec(&blk, ns, name, int(p.GetReplicaIndex()), vols, extra...)
+			rs.Stopped, rs.StateToken = powerState(&blk, p, int64(e.Revision))
+			spec, err := json.Marshal(rs)
 			if err != nil {
 				continue
 			}
@@ -278,6 +281,20 @@ func blockStorageVolumeName(blk *pb.Block, ns, name string, st *pb.Storage, idx 
 // (proven by share-colocation.nix), but is not a path any block's own
 // sandboxed process can see.
 func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volumeRef, extra ...string) ([]byte, error) {
+	return json.Marshal(buildReplicaSpec(blk, ns, name, idx, vols, extra...))
+}
+
+// powerState is a placement's stop flag and state token: a suspended block saves under its
+// spec revision; a running one resumes from what the placement's node reported saving.
+func powerState(blk *pb.Block, p *pb.PlacementStatus, revision int64) (stopped bool, token string) {
+	if blk.GetSpec().GetPower() == pb.Power_POWER_SUSPENDED {
+		return true, "r" + strconv.FormatInt(revision, 10)
+	}
+	return false, p.GetSavedState()
+}
+
+// buildReplicaSpec is replicaSpec before encoding.
+func buildReplicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volumeRef, extra ...string) systemd.Spec {
 	spec := systemd.Spec{
 		Namespace: ns,
 		Name:      name,
@@ -344,7 +361,7 @@ func replicaSpec(blk *pb.Block, ns, name string, idx int, vols map[string]volume
 		spec.Args = append(spec.Args, "--mount", st.GetName()+"="+host)
 	}
 	spec.Args = append(spec.Args, extra...)
-	return json.Marshal(spec)
+	return spec
 }
 
 // rootBlockTypes lists catalog types whose daemon must run unsandboxed

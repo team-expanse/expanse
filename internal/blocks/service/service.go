@@ -270,6 +270,9 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	}
 
 	carrySecrets(b, cur.GetSpec().GetSecrets())
+	if b.GetSpec().GetPower() == pb.Power_POWER_UNSPECIFIED && b.GetSpec() != nil {
+		b.Spec.Power = cur.GetSpec().GetPower() // a manifest that doesn't say keeps the block suspended
+	}
 	if ves := s.Check(ctx, b, true); len(ves) > 0 {
 		return nil, admissionErr(ves)
 	}

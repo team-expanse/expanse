@@ -44,6 +44,8 @@ type Type struct {
 	// apart from the spec. Sorted.
 	WriteOnly []string
 	Defaults  map[string]any
+	// Suspendable types can be stopped with their state kept (BlockSpec.power).
+	Suspendable bool
 	// Template holds the spec fields (no type or config) a working block of this type starts from.
 	Template map[string]any
 }
@@ -58,6 +60,7 @@ type blockYAML struct {
 	Description  string   `yaml:"description"`
 	Icon         string   `yaml:"icon"`
 	Capabilities []string `yaml:"capabilities"`
+	Suspendable  bool     `yaml:"suspendable"`
 }
 
 // Catalog is the set of block types loaded from a blocks directory.
@@ -133,6 +136,7 @@ func loadType(dir, category, name string) (*Type, error) {
 		Description:  meta.Description,
 		Icon:         meta.Icon,
 		Capabilities: meta.Capabilities,
+		Suspendable:  meta.Suspendable,
 		Dir:          dir,
 		Schema:       schema,
 		SchemaJSON:   schemaRaw,
@@ -235,6 +239,12 @@ func (c *Catalog) WriteOnlyFields(t string) []string {
 		return typ.WriteOnly
 	}
 	return nil
+}
+
+// Suspendable reports whether type t can be suspended (block.yaml suspendable).
+func (c *Catalog) Suspendable(t string) bool {
+	typ, ok := c.types[t]
+	return ok && typ.Suspendable
 }
 
 // ValidateConfig validates config against the type's JSON Schema and returns

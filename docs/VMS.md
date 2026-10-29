@@ -230,6 +230,27 @@ pressing its power button would, then waits up to `config.shutdownTimeout` secon
 60) before turning the VM off hard. A guest that ignores ACPI power events is always turned off hard
 once the time runs out; set `shutdownTimeout: 0` for one to skip the wait.
 
+### Suspending a VM
+
+`expanse ctl vm suspend <name>`, or **Suspend** on the block's page, pauses the guest, writes its
+memory to the node's disk under `/persist/expanse/vm-state/` and stops qemu. The block's phase reads
+`SUSPENDED` once that's done. It keeps its place on the node and its share of the node's CPU and
+memory, so a resume always fits.
+
+`expanse ctl vm resume <name>`, or **Resume**, starts qemu from the saved state: processes, open
+connections and tmpfs files are as they were. Clients see the pause as a long network stall, and
+the guest's clock is behind until it next syncs. The save is deleted once it's loaded. A resume
+sent before the phase reads `SUSPENDED` boots the guest fresh instead.
+
+A suspended VM resumes from its save only on the node that wrote it. If it moves while suspended
+(the node is drained or lost), it boots fresh on the new node, and the old node deletes its save, so
+a guest never wakes up with memory that no longer matches its disk. A save that won't load, for
+example after its config changed the VM's memory size, also ends in a fresh boot.
+
+The save is about as large as the memory the guest was using, so leave room on the node's `/persist`
+for it. Writing it may take a few minutes for a large guest; if it fails, the guest is powered off as
+in a stop instead. Only `vm/instance` can be suspended (its `block.yaml` says `suspendable: true`).
+
 ### Machine type
 
 qemu presents the guest a fixed set of virtual hardware, its machine type. `config.machine` pins it

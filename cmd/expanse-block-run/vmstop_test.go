@@ -1,9 +1,13 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/expanse/expanse/internal/blocks/vm/vmstate"
 )
 
 func TestShutdownWaitIsOnlyForVMs(t *testing.T) {
@@ -46,5 +50,42 @@ func TestWaitGoneGivesUpAtTheDeadline(t *testing.T) {
 	}
 	if d := time.Since(t0); d > 2*time.Second {
 		t.Errorf("waitGone took %v past a 200ms deadline", d)
+	}
+}
+
+func savedAs(t *testing.T, token string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "default-vm-0")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vmstate.TempPath(dir), []byte("ram"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := vmstate.Commit(dir, token); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestAStartResumesOnlyTheSaveItsSpecNames(t *testing.T) {
+	dir := savedAs(t, "r5")
+	if !resumeOrDiscard(dir, "r5") {
+		t.Fatal("the named save was not resumed")
+	}
+	if vmstate.Token(dir) != "r5" {
+		t.Error("the save to resume from was deleted before loading")
+	}
+}
+
+func TestAColdBootDeletesAnyOtherSave(t *testing.T) {
+	for _, token := range []string{"", "r6"} {
+		dir := savedAs(t, "r5")
+		if resumeOrDiscard(dir, token) {
+			t.Errorf("token %q resumed the r5 save", token)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("token %q: the stale save survived a cold boot", token)
+		}
 	}
 }

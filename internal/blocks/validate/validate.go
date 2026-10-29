@@ -1,5 +1,5 @@
 // Package validate implements the Phase 04 admission validation rules
-// (PHASE04.md §3.2, V1–V24). Validation runs at API write time, before
+// (PHASE04.md §3.2, V1–V24; V25 power). Validation runs at API write time, before
 // anything is persisted — rejecting early is the whole point.
 //
 // Every rule has a stable identifier ("V1".."V24") so API consumers and
@@ -10,6 +10,7 @@
 // Rules that need knowledge beyond the block itself read it from Context:
 //
 //	V3/V19   Catalog (type existence, config JSON-Schema validation)
+//	V25      Catalog (suspendable types)
 //	V2       Context.Existing (blocks already in the namespace)
 //	V12      Context.NodeCount
 //	V13/V18/V23  Context.SharedClasses / KnownCapabilities / Devices
@@ -53,6 +54,8 @@ type Catalog interface {
 	ValidateConfig(t string, config *structpb.Struct) []string
 	// WriteOnlyFields lists the type's top-level secret fields (V20).
 	WriteOnlyFields(t string) []string
+	// Suspendable reports whether type t keeps its state when suspended (V25).
+	Suspendable(t string) bool
 }
 
 // Context carries cluster state into validation. Zero fields mean "not
@@ -111,6 +114,7 @@ func Validate(b *pb.Block, ctx Context) []ValidationError {
 	add(v22(b))
 	add(v23(b, ctx))
 	add(v24(b, ctx))
+	add(v25(b, ctx))
 	return errs
 }
 
@@ -667,4 +671,14 @@ func v24(b *pb.Block, ctx Context) []ValidationError {
 			"cyclic dependsOn: %s", strings.Join(cycle, " -> "))}
 	}
 	return nil
+}
+
+// --- V25: only suspendable types take power SUSPENDED ---
+
+func v25(b *pb.Block, ctx Context) []ValidationError {
+	typ := b.GetSpec().GetType()
+	if b.GetSpec().GetPower() != pb.Power_POWER_SUSPENDED || ctx.Catalog == nil || ctx.Catalog.Suspendable(typ) {
+		return nil
+	}
+	return []ValidationError{verr("V25", "block type %q cannot be suspended", typ)}
 }

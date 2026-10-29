@@ -8,6 +8,7 @@
 package validate
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,7 +21,10 @@ type fakeCatalog struct {
 	types      []string
 	configErrs func(t string, c *structpb.Struct) []string
 	writeOnly  map[string][]string
+	suspend    []string
 }
+
+func (f *fakeCatalog) Suspendable(t string) bool { return slices.Contains(f.suspend, t) }
 
 func (f *fakeCatalog) WriteOnlyFields(t string) []string { return f.writeOnly[t] }
 
@@ -737,5 +741,24 @@ func TestRuleOrderDeterministic(t *testing.T) {
 	want := []string{"V1", "V3", "V4"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("rule order = %v, want %v", got, want)
+	}
+}
+
+func TestV25OnlySuspendableTypesSuspend(t *testing.T) {
+	ctx := baseCtx()
+	ctx.Catalog.(*fakeCatalog).suspend = []string{"db/redis"}
+	b := validBlock()
+	b.Spec.Power = pb.Power_POWER_SUSPENDED
+	e := byRule(Validate(b, ctx), "V25")
+	if e == nil || !strings.Contains(e.Message, "web/nginx") {
+		t.Fatalf("want a V25 error naming web/nginx, got %v", e)
+	}
+	b.Spec.Type = "db/redis"
+	if e := byRule(Validate(b, ctx), "V25"); e != nil {
+		t.Errorf("a suspendable type was refused: %v", e)
+	}
+	b.Spec.Type, b.Spec.Power = "web/nginx", pb.Power_POWER_ON
+	if e := byRule(Validate(b, ctx), "V25"); e != nil {
+		t.Errorf("power on was refused: %v", e)
 	}
 }

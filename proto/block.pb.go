@@ -475,6 +475,8 @@ const (
 	// Replica's node is unreachable past unreachable_grace (§4.4). The
 	// record is retired (index freed) once a replacement is scheduled.
 	Phase_LOST Phase = 12
+	// Replica is stopped on purpose (BlockSpec.power); a VM's RAM may be saved on its node.
+	Phase_SUSPENDED Phase = 13
 )
 
 // Enum value maps for Phase.
@@ -493,6 +495,7 @@ var (
 		10: "TERMINATED",
 		11: "DRAINING",
 		12: "LOST",
+		13: "SUSPENDED",
 	}
 	Phase_value = map[string]int32{
 		"PHASE_UNSPECIFIED": 0,
@@ -508,6 +511,7 @@ var (
 		"TERMINATED":        10,
 		"DRAINING":          11,
 		"LOST":              12,
+		"SUSPENDED":         13,
 	}
 )
 
@@ -536,6 +540,56 @@ func (x Phase) Number() protoreflect.EnumNumber {
 // Deprecated: Use Phase.Descriptor instead.
 func (Phase) EnumDescriptor() ([]byte, []int) {
 	return file_proto_block_proto_rawDescGZIP(), []int{8}
+}
+
+// Power is a block's desired run state. Only suspendable types (block.yaml) take SUSPENDED.
+type Power int32
+
+const (
+	Power_POWER_UNSPECIFIED Power = 0 // on
+	Power_POWER_ON          Power = 1
+	Power_POWER_SUSPENDED   Power = 2
+)
+
+// Enum value maps for Power.
+var (
+	Power_name = map[int32]string{
+		0: "POWER_UNSPECIFIED",
+		1: "POWER_ON",
+		2: "POWER_SUSPENDED",
+	}
+	Power_value = map[string]int32{
+		"POWER_UNSPECIFIED": 0,
+		"POWER_ON":          1,
+		"POWER_SUSPENDED":   2,
+	}
+)
+
+func (x Power) Enum() *Power {
+	p := new(Power)
+	*p = x
+	return p
+}
+
+func (x Power) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Power) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_block_proto_enumTypes[9].Descriptor()
+}
+
+func (Power) Type() protoreflect.EnumType {
+	return &file_proto_block_proto_enumTypes[9]
+}
+
+func (x Power) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Power.Descriptor instead.
+func (Power) EnumDescriptor() ([]byte, []int) {
+	return file_proto_block_proto_rawDescGZIP(), []int{9}
 }
 
 // EventType is the watch verb for BlockEvent.
@@ -575,11 +629,11 @@ func (x EventType) String() string {
 }
 
 func (EventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_proto_block_proto_enumTypes[9].Descriptor()
+	return file_proto_block_proto_enumTypes[10].Descriptor()
 }
 
 func (EventType) Type() protoreflect.EnumType {
-	return &file_proto_block_proto_enumTypes[9]
+	return &file_proto_block_proto_enumTypes[10]
 }
 
 func (x EventType) Number() protoreflect.EnumNumber {
@@ -588,7 +642,7 @@ func (x EventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EventType.Descriptor instead.
 func (EventType) EnumDescriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{9}
+	return file_proto_block_proto_rawDescGZIP(), []int{10}
 }
 
 // Metadata identifies a block.
@@ -1638,7 +1692,9 @@ type BlockSpec struct {
 	Secrets []*SecretRef     `protobuf:"bytes,11,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	Backup  *Backup          `protobuf:"bytes,12,opt,name=backup,proto3" json:"backup,omitempty"`
 	// Names of other blocks this one depends on; must be acyclic (V24).
-	DependsOn     []string `protobuf:"bytes,13,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
+	DependsOn []string `protobuf:"bytes,13,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
+	// SUSPENDED stops every replica; a VM saves its RAM first and resumes from it.
+	Power         Power `protobuf:"varint,14,opt,name=power,proto3,enum=expanse.block.v1.Power" json:"power,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1762,6 +1818,13 @@ func (x *BlockSpec) GetDependsOn() []string {
 		return x.DependsOn
 	}
 	return nil
+}
+
+func (x *BlockSpec) GetPower() Power {
+	if x != nil {
+		return x.Power
+	}
+	return Power_POWER_UNSPECIFIED
 }
 
 // Network groups ports, health checks, and the basic §4.6 policy.
@@ -2322,7 +2385,9 @@ type PlacementStatus struct {
 	// The replica's latest probe results on this node; filled in by the block API on read, never stored.
 	Health *ReplicaHealth `protobuf:"bytes,6,opt,name=health,proto3" json:"health,omitempty"`
 	// Why the controller failed this placement, e.g. the liveness probe's last error.
-	Message       string `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
+	Message string `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
+	// The saved-state token this replica's node holds for it; set from the node's report.
+	SavedState    string `protobuf:"bytes,8,opt,name=saved_state,json=savedState,proto3" json:"saved_state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2402,6 +2467,13 @@ func (x *PlacementStatus) GetHealth() *ReplicaHealth {
 func (x *PlacementStatus) GetMessage() string {
 	if x != nil {
 		return x.Message
+	}
+	return ""
+}
+
+func (x *PlacementStatus) GetSavedState() string {
+	if x != nil {
+		return x.SavedState
 	}
 	return ""
 }
@@ -3059,6 +3131,66 @@ func (x *RestartRequest) GetReplica() int32 {
 	return 0
 }
 
+type SetPowerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Power         Power                  `protobuf:"varint,3,opt,name=power,proto3,enum=expanse.block.v1.Power" json:"power,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetPowerRequest) Reset() {
+	*x = SetPowerRequest{}
+	mi := &file_proto_block_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPowerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPowerRequest) ProtoMessage() {}
+
+func (x *SetPowerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_block_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPowerRequest.ProtoReflect.Descriptor instead.
+func (*SetPowerRequest) Descriptor() ([]byte, []int) {
+	return file_proto_block_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *SetPowerRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *SetPowerRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SetPowerRequest) GetPower() Power {
+	if x != nil {
+		return x.Power
+	}
+	return Power_POWER_UNSPECIFIED
+}
+
 // Empty name watches all blocks in the namespace.
 type WatchBlocksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -3070,7 +3202,7 @@ type WatchBlocksRequest struct {
 
 func (x *WatchBlocksRequest) Reset() {
 	*x = WatchBlocksRequest{}
-	mi := &file_proto_block_proto_msgTypes[36]
+	mi := &file_proto_block_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3082,7 +3214,7 @@ func (x *WatchBlocksRequest) String() string {
 func (*WatchBlocksRequest) ProtoMessage() {}
 
 func (x *WatchBlocksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[36]
+	mi := &file_proto_block_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3095,7 +3227,7 @@ func (x *WatchBlocksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchBlocksRequest.ProtoReflect.Descriptor instead.
 func (*WatchBlocksRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{36}
+	return file_proto_block_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *WatchBlocksRequest) GetNamespace() string {
@@ -3122,7 +3254,7 @@ type BlockEvent struct {
 
 func (x *BlockEvent) Reset() {
 	*x = BlockEvent{}
-	mi := &file_proto_block_proto_msgTypes[37]
+	mi := &file_proto_block_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3134,7 +3266,7 @@ func (x *BlockEvent) String() string {
 func (*BlockEvent) ProtoMessage() {}
 
 func (x *BlockEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[37]
+	mi := &file_proto_block_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3147,7 +3279,7 @@ func (x *BlockEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockEvent.ProtoReflect.Descriptor instead.
 func (*BlockEvent) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{37}
+	return file_proto_block_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *BlockEvent) GetType() EventType {
@@ -3179,7 +3311,7 @@ type LogsRequest struct {
 
 func (x *LogsRequest) Reset() {
 	*x = LogsRequest{}
-	mi := &file_proto_block_proto_msgTypes[38]
+	mi := &file_proto_block_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3191,7 +3323,7 @@ func (x *LogsRequest) String() string {
 func (*LogsRequest) ProtoMessage() {}
 
 func (x *LogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[38]
+	mi := &file_proto_block_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3204,7 +3336,7 @@ func (x *LogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsRequest.ProtoReflect.Descriptor instead.
 func (*LogsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{38}
+	return file_proto_block_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *LogsRequest) GetNamespace() string {
@@ -3260,7 +3392,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_proto_block_proto_msgTypes[39]
+	mi := &file_proto_block_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3272,7 +3404,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[39]
+	mi := &file_proto_block_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3285,7 +3417,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{39}
+	return file_proto_block_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *LogLine) GetReplicaIndex() int32 {
@@ -3319,7 +3451,7 @@ type ExplainRequest struct {
 
 func (x *ExplainRequest) Reset() {
 	*x = ExplainRequest{}
-	mi := &file_proto_block_proto_msgTypes[40]
+	mi := &file_proto_block_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3331,7 +3463,7 @@ func (x *ExplainRequest) String() string {
 func (*ExplainRequest) ProtoMessage() {}
 
 func (x *ExplainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[40]
+	mi := &file_proto_block_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3344,7 +3476,7 @@ func (x *ExplainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainRequest.ProtoReflect.Descriptor instead.
 func (*ExplainRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{40}
+	return file_proto_block_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ExplainRequest) GetNamespace() string {
@@ -3377,7 +3509,7 @@ type NodeExplanation struct {
 
 func (x *NodeExplanation) Reset() {
 	*x = NodeExplanation{}
-	mi := &file_proto_block_proto_msgTypes[41]
+	mi := &file_proto_block_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3389,7 +3521,7 @@ func (x *NodeExplanation) String() string {
 func (*NodeExplanation) ProtoMessage() {}
 
 func (x *NodeExplanation) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[41]
+	mi := &file_proto_block_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3402,7 +3534,7 @@ func (x *NodeExplanation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeExplanation.ProtoReflect.Descriptor instead.
 func (*NodeExplanation) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{41}
+	return file_proto_block_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *NodeExplanation) GetNode() string {
@@ -3456,7 +3588,7 @@ type ReplicaExplanation struct {
 
 func (x *ReplicaExplanation) Reset() {
 	*x = ReplicaExplanation{}
-	mi := &file_proto_block_proto_msgTypes[42]
+	mi := &file_proto_block_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3468,7 +3600,7 @@ func (x *ReplicaExplanation) String() string {
 func (*ReplicaExplanation) ProtoMessage() {}
 
 func (x *ReplicaExplanation) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[42]
+	mi := &file_proto_block_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3481,7 +3613,7 @@ func (x *ReplicaExplanation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicaExplanation.ProtoReflect.Descriptor instead.
 func (*ReplicaExplanation) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{42}
+	return file_proto_block_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ReplicaExplanation) GetReplicaIndex() int32 {
@@ -3532,7 +3664,7 @@ type ExplainResponse struct {
 
 func (x *ExplainResponse) Reset() {
 	*x = ExplainResponse{}
-	mi := &file_proto_block_proto_msgTypes[43]
+	mi := &file_proto_block_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3544,7 +3676,7 @@ func (x *ExplainResponse) String() string {
 func (*ExplainResponse) ProtoMessage() {}
 
 func (x *ExplainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[43]
+	mi := &file_proto_block_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3557,7 +3689,7 @@ func (x *ExplainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExplainResponse.ProtoReflect.Descriptor instead.
 func (*ExplainResponse) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{43}
+	return file_proto_block_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ExplainResponse) GetNamespace() string {
@@ -3609,14 +3741,16 @@ type BlockType struct {
 	// defaults.yaml as a JSON object: the config values a new block starts with.
 	DefaultsJson []byte `protobuf:"bytes,7,opt,name=defaults_json,json=defaultsJson,proto3" json:"defaults_json,omitempty"`
 	// template.yaml as a JSON object: the spec fields (no type or config) a new block starts with.
-	TemplateJson  []byte `protobuf:"bytes,8,opt,name=template_json,json=templateJson,proto3" json:"template_json,omitempty"`
+	TemplateJson []byte `protobuf:"bytes,8,opt,name=template_json,json=templateJson,proto3" json:"template_json,omitempty"`
+	// The type keeps its state when suspended (block.yaml suspendable).
+	Suspendable   bool `protobuf:"varint,9,opt,name=suspendable,proto3" json:"suspendable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BlockType) Reset() {
 	*x = BlockType{}
-	mi := &file_proto_block_proto_msgTypes[44]
+	mi := &file_proto_block_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3628,7 +3762,7 @@ func (x *BlockType) String() string {
 func (*BlockType) ProtoMessage() {}
 
 func (x *BlockType) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[44]
+	mi := &file_proto_block_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3641,7 +3775,7 @@ func (x *BlockType) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockType.ProtoReflect.Descriptor instead.
 func (*BlockType) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{44}
+	return file_proto_block_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *BlockType) GetName() string {
@@ -3700,6 +3834,13 @@ func (x *BlockType) GetTemplateJson() []byte {
 	return nil
 }
 
+func (x *BlockType) GetSuspendable() bool {
+	if x != nil {
+		return x.Suspendable
+	}
+	return false
+}
+
 type ListTypesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3708,7 +3849,7 @@ type ListTypesRequest struct {
 
 func (x *ListTypesRequest) Reset() {
 	*x = ListTypesRequest{}
-	mi := &file_proto_block_proto_msgTypes[45]
+	mi := &file_proto_block_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3720,7 +3861,7 @@ func (x *ListTypesRequest) String() string {
 func (*ListTypesRequest) ProtoMessage() {}
 
 func (x *ListTypesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[45]
+	mi := &file_proto_block_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3733,7 +3874,7 @@ func (x *ListTypesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTypesRequest.ProtoReflect.Descriptor instead.
 func (*ListTypesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{45}
+	return file_proto_block_proto_rawDescGZIP(), []int{46}
 }
 
 type ListTypesResponse struct {
@@ -3745,7 +3886,7 @@ type ListTypesResponse struct {
 
 func (x *ListTypesResponse) Reset() {
 	*x = ListTypesResponse{}
-	mi := &file_proto_block_proto_msgTypes[46]
+	mi := &file_proto_block_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3757,7 +3898,7 @@ func (x *ListTypesResponse) String() string {
 func (*ListTypesResponse) ProtoMessage() {}
 
 func (x *ListTypesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[46]
+	mi := &file_proto_block_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3770,7 +3911,7 @@ func (x *ListTypesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTypesResponse.ProtoReflect.Descriptor instead.
 func (*ListTypesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{46}
+	return file_proto_block_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ListTypesResponse) GetTypes() []*BlockType {
@@ -3789,7 +3930,7 @@ type GetTypeRequest struct {
 
 func (x *GetTypeRequest) Reset() {
 	*x = GetTypeRequest{}
-	mi := &file_proto_block_proto_msgTypes[47]
+	mi := &file_proto_block_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3801,7 +3942,7 @@ func (x *GetTypeRequest) String() string {
 func (*GetTypeRequest) ProtoMessage() {}
 
 func (x *GetTypeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_block_proto_msgTypes[47]
+	mi := &file_proto_block_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3814,7 +3955,7 @@ func (x *GetTypeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTypeRequest.ProtoReflect.Descriptor instead.
 func (*GetTypeRequest) Descriptor() ([]byte, []int) {
-	return file_proto_block_proto_rawDescGZIP(), []int{47}
+	return file_proto_block_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *GetTypeRequest) GetName() string {
@@ -3917,7 +4058,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\tpost_hook\x18\x05 \x01(\tR\bpostHook\"3\n" +
 	"\tSecretRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04path\x18\x02 \x01(\tR\x04path\"\xed\x04\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\"\x9c\x05\n" +
 	"\tBlockSpec\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1f\n" +
@@ -3933,7 +4074,8 @@ const file_proto_block_proto_rawDesc = "" +
 	"\asecrets\x18\v \x03(\v2\x1b.expanse.block.v1.SecretRefR\asecrets\x120\n" +
 	"\x06backup\x18\f \x01(\v2\x18.expanse.block.v1.BackupR\x06backup\x12\x1d\n" +
 	"\n" +
-	"depends_on\x18\r \x03(\tR\tdependsOnB\v\n" +
+	"depends_on\x18\r \x03(\tR\tdependsOn\x12-\n" +
+	"\x05power\x18\x0e \x01(\x0e2\x17.expanse.block.v1.PowerR\x05powerB\v\n" +
 	"\t_replicas\"\xc6\x01\n" +
 	"\aNetwork\x12,\n" +
 	"\x05ports\x18\x01 \x03(\v2\x16.expanse.block.v1.PortR\x05ports\x12@\n" +
@@ -3971,7 +4113,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\bR\x06status\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x127\n" +
-	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"\x94\x02\n" +
+	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"\xb5\x02\n" +
 	"\x0fPlacementStatus\x12#\n" +
 	"\rreplica_index\x18\x01 \x01(\x05R\freplicaIndex\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12-\n" +
@@ -3981,7 +4123,9 @@ const file_proto_block_proto_rawDesc = "" +
 	"generation\x12!\n" +
 	"\fformer_index\x18\x05 \x01(\x05R\vformerIndex\x127\n" +
 	"\x06health\x18\x06 \x01(\v2\x1f.expanse.block.v1.ReplicaHealthR\x06health\x12\x18\n" +
-	"\amessage\x18\a \x01(\tR\amessage\"S\n" +
+	"\amessage\x18\a \x01(\tR\amessage\x12\x1f\n" +
+	"\vsaved_state\x18\b \x01(\tR\n" +
+	"savedState\"S\n" +
 	"\vProbeResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x16\n" +
 	"\x06detail\x18\x02 \x01(\tR\x06detail\x12\x1c\n" +
@@ -4031,7 +4175,11 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x0eRestartRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
-	"\areplica\x18\x03 \x01(\x05R\areplica\"F\n" +
+	"\areplica\x18\x03 \x01(\x05R\areplica\"r\n" +
+	"\x0fSetPowerRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12-\n" +
+	"\x05power\x18\x03 \x01(\x0e2\x17.expanse.block.v1.PowerR\x05power\"F\n" +
 	"\x12WatchBlocksRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"l\n" +
@@ -4072,7 +4220,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12-\n" +
 	"\x05phase\x18\x03 \x01(\x0e2\x17.expanse.block.v1.PhaseR\x05phase\x12F\n" +
 	"\x0epending_reason\x18\x04 \x01(\v2\x1f.expanse.block.v1.PendingReasonR\rpendingReason\x12@\n" +
-	"\breplicas\x18\x05 \x03(\v2$.expanse.block.v1.ReplicaExplanationR\breplicas\"\xfe\x01\n" +
+	"\breplicas\x18\x05 \x03(\v2$.expanse.block.v1.ReplicaExplanationR\breplicas\"\xa0\x02\n" +
 	"\tBlockType\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -4082,7 +4230,8 @@ const file_proto_block_proto_rawDesc = "" +
 	"\vschema_json\x18\x06 \x01(\fR\n" +
 	"schemaJson\x12#\n" +
 	"\rdefaults_json\x18\a \x01(\fR\fdefaultsJson\x12#\n" +
-	"\rtemplate_json\x18\b \x01(\fR\ftemplateJson\"\x12\n" +
+	"\rtemplate_json\x18\b \x01(\fR\ftemplateJson\x12 \n" +
+	"\vsuspendable\x18\t \x01(\bR\vsuspendable\"\x12\n" +
 	"\x10ListTypesRequest\"F\n" +
 	"\x11ListTypesResponse\x121\n" +
 	"\x05types\x18\x01 \x03(\v2\x1b.expanse.block.v1.BlockTypeR\x05types\"$\n" +
@@ -4135,7 +4284,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06Spread\x12\x16\n" +
 	"\x12SPREAD_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSPREAD_EVEN\x10\x01\x12\x11\n" +
-	"\rSPREAD_PACKED\x10\x02*\xc9\x01\n" +
+	"\rSPREAD_PACKED\x10\x02*\xd8\x01\n" +
 	"\x05Phase\x12\x15\n" +
 	"\x11PHASE_UNSPECIFIED\x10\x00\x12\v\n" +
 	"\aPENDING\x10\x01\x12\x0e\n" +
@@ -4153,12 +4302,17 @@ const file_proto_block_proto_rawDesc = "" +
 	"TERMINATED\x10\n" +
 	"\x12\f\n" +
 	"\bDRAINING\x10\v\x12\b\n" +
-	"\x04LOST\x10\f*_\n" +
+	"\x04LOST\x10\f\x12\r\n" +
+	"\tSUSPENDED\x10\r*A\n" +
+	"\x05Power\x12\x15\n" +
+	"\x11POWER_UNSPECIFIED\x10\x00\x12\f\n" +
+	"\bPOWER_ON\x10\x01\x12\x13\n" +
+	"\x0fPOWER_SUSPENDED\x10\x02*_\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vEVENT_ADDED\x10\x01\x12\x12\n" +
 	"\x0eEVENT_MODIFIED\x10\x02\x12\x11\n" +
-	"\rEVENT_DELETED\x10\x032\xd5\x05\n" +
+	"\rEVENT_DELETED\x10\x032\x9d\x06\n" +
 	"\fBlockService\x12:\n" +
 	"\x06Create\x12\x17.expanse.block.v1.Block\x1a\x17.expanse.block.v1.Block\x12A\n" +
 	"\x03Get\x12!.expanse.block.v1.GetBlockRequest\x1a\x17.expanse.block.v1.Block\x12Q\n" +
@@ -4166,7 +4320,8 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06Update\x12\x17.expanse.block.v1.Block\x1a\x17.expanse.block.v1.Block\x12F\n" +
 	"\x06Delete\x12$.expanse.block.v1.DeleteBlockRequest\x1a\x16.google.protobuf.Empty\x12@\n" +
 	"\x05Scale\x12\x1e.expanse.block.v1.ScaleRequest\x1a\x17.expanse.block.v1.Block\x12D\n" +
-	"\aRestart\x12 .expanse.block.v1.RestartRequest\x1a\x17.expanse.block.v1.Block\x12M\n" +
+	"\aRestart\x12 .expanse.block.v1.RestartRequest\x1a\x17.expanse.block.v1.Block\x12F\n" +
+	"\bSetPower\x12!.expanse.block.v1.SetPowerRequest\x1a\x17.expanse.block.v1.Block\x12M\n" +
 	"\x05Watch\x12$.expanse.block.v1.WatchBlocksRequest\x1a\x1c.expanse.block.v1.BlockEvent0\x01\x12H\n" +
 	"\n" +
 	"StreamLogs\x12\x1d.expanse.block.v1.LogsRequest\x1a\x19.expanse.block.v1.LogLine0\x01\x12N\n" +
@@ -4187,8 +4342,8 @@ func file_proto_block_proto_rawDescGZIP() []byte {
 	return file_proto_block_proto_rawDescData
 }
 
-var file_proto_block_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_proto_block_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
+var file_proto_block_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
+var file_proto_block_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_proto_block_proto_goTypes = []any{
 	(StrategyKind)(0),          // 0: expanse.block.v1.StrategyKind
 	(UpdateMode)(0),            // 1: expanse.block.v1.UpdateMode
@@ -4199,149 +4354,155 @@ var file_proto_block_proto_goTypes = []any{
 	(AccessMode)(0),            // 6: expanse.block.v1.AccessMode
 	(Spread)(0),                // 7: expanse.block.v1.Spread
 	(Phase)(0),                 // 8: expanse.block.v1.Phase
-	(EventType)(0),             // 9: expanse.block.v1.EventType
-	(*Metadata)(nil),           // 10: expanse.block.v1.Metadata
-	(*UpdateStrategy)(nil),     // 11: expanse.block.v1.UpdateStrategy
-	(*Strategy)(nil),           // 12: expanse.block.v1.Strategy
-	(*ResourcePair)(nil),       // 13: expanse.block.v1.ResourcePair
-	(*Device)(nil),             // 14: expanse.block.v1.Device
-	(*Resources)(nil),          // 15: expanse.block.v1.Resources
-	(*Storage)(nil),            // 16: expanse.block.v1.Storage
-	(*Placement)(nil),          // 17: expanse.block.v1.Placement
-	(*Port)(nil),               // 18: expanse.block.v1.Port
-	(*HttpRoute)(nil),          // 19: expanse.block.v1.HttpRoute
-	(*HealthProbe)(nil),        // 20: expanse.block.v1.HealthProbe
-	(*HealthCheck)(nil),        // 21: expanse.block.v1.HealthCheck
-	(*Backup)(nil),             // 22: expanse.block.v1.Backup
-	(*SecretRef)(nil),          // 23: expanse.block.v1.SecretRef
-	(*BlockSpec)(nil),          // 24: expanse.block.v1.BlockSpec
-	(*Network)(nil),            // 25: expanse.block.v1.Network
-	(*PolicyFrom)(nil),         // 26: expanse.block.v1.PolicyFrom
-	(*PolicyTo)(nil),           // 27: expanse.block.v1.PolicyTo
-	(*PolicyPort)(nil),         // 28: expanse.block.v1.PolicyPort
-	(*IngressRule)(nil),        // 29: expanse.block.v1.IngressRule
-	(*EgressRule)(nil),         // 30: expanse.block.v1.EgressRule
-	(*NetworkPolicy)(nil),      // 31: expanse.block.v1.NetworkPolicy
-	(*StatusReplicas)(nil),     // 32: expanse.block.v1.StatusReplicas
-	(*Condition)(nil),          // 33: expanse.block.v1.Condition
-	(*PlacementStatus)(nil),    // 34: expanse.block.v1.PlacementStatus
-	(*ProbeResult)(nil),        // 35: expanse.block.v1.ProbeResult
-	(*ReplicaHealth)(nil),      // 36: expanse.block.v1.ReplicaHealth
-	(*PendingReason)(nil),      // 37: expanse.block.v1.PendingReason
-	(*BlockStatus)(nil),        // 38: expanse.block.v1.BlockStatus
-	(*Block)(nil),              // 39: expanse.block.v1.Block
-	(*GetBlockRequest)(nil),    // 40: expanse.block.v1.GetBlockRequest
-	(*ListBlocksRequest)(nil),  // 41: expanse.block.v1.ListBlocksRequest
-	(*ListBlocksResponse)(nil), // 42: expanse.block.v1.ListBlocksResponse
-	(*DeleteBlockRequest)(nil), // 43: expanse.block.v1.DeleteBlockRequest
-	(*ScaleRequest)(nil),       // 44: expanse.block.v1.ScaleRequest
-	(*RestartRequest)(nil),     // 45: expanse.block.v1.RestartRequest
-	(*WatchBlocksRequest)(nil), // 46: expanse.block.v1.WatchBlocksRequest
-	(*BlockEvent)(nil),         // 47: expanse.block.v1.BlockEvent
-	(*LogsRequest)(nil),        // 48: expanse.block.v1.LogsRequest
-	(*LogLine)(nil),            // 49: expanse.block.v1.LogLine
-	(*ExplainRequest)(nil),     // 50: expanse.block.v1.ExplainRequest
-	(*NodeExplanation)(nil),    // 51: expanse.block.v1.NodeExplanation
-	(*ReplicaExplanation)(nil), // 52: expanse.block.v1.ReplicaExplanation
-	(*ExplainResponse)(nil),    // 53: expanse.block.v1.ExplainResponse
-	(*BlockType)(nil),          // 54: expanse.block.v1.BlockType
-	(*ListTypesRequest)(nil),   // 55: expanse.block.v1.ListTypesRequest
-	(*ListTypesResponse)(nil),  // 56: expanse.block.v1.ListTypesResponse
-	(*GetTypeRequest)(nil),     // 57: expanse.block.v1.GetTypeRequest
-	nil,                        // 58: expanse.block.v1.Metadata.LabelsEntry
-	nil,                        // 59: expanse.block.v1.Metadata.AnnotationsEntry
-	nil,                        // 60: expanse.block.v1.Placement.NodeSelectorEntry
-	nil,                        // 61: expanse.block.v1.PendingReason.PerNodeEntry
-	(*structpb.Struct)(nil),    // 62: google.protobuf.Struct
-	(*emptypb.Empty)(nil),      // 63: google.protobuf.Empty
+	(Power)(0),                 // 9: expanse.block.v1.Power
+	(EventType)(0),             // 10: expanse.block.v1.EventType
+	(*Metadata)(nil),           // 11: expanse.block.v1.Metadata
+	(*UpdateStrategy)(nil),     // 12: expanse.block.v1.UpdateStrategy
+	(*Strategy)(nil),           // 13: expanse.block.v1.Strategy
+	(*ResourcePair)(nil),       // 14: expanse.block.v1.ResourcePair
+	(*Device)(nil),             // 15: expanse.block.v1.Device
+	(*Resources)(nil),          // 16: expanse.block.v1.Resources
+	(*Storage)(nil),            // 17: expanse.block.v1.Storage
+	(*Placement)(nil),          // 18: expanse.block.v1.Placement
+	(*Port)(nil),               // 19: expanse.block.v1.Port
+	(*HttpRoute)(nil),          // 20: expanse.block.v1.HttpRoute
+	(*HealthProbe)(nil),        // 21: expanse.block.v1.HealthProbe
+	(*HealthCheck)(nil),        // 22: expanse.block.v1.HealthCheck
+	(*Backup)(nil),             // 23: expanse.block.v1.Backup
+	(*SecretRef)(nil),          // 24: expanse.block.v1.SecretRef
+	(*BlockSpec)(nil),          // 25: expanse.block.v1.BlockSpec
+	(*Network)(nil),            // 26: expanse.block.v1.Network
+	(*PolicyFrom)(nil),         // 27: expanse.block.v1.PolicyFrom
+	(*PolicyTo)(nil),           // 28: expanse.block.v1.PolicyTo
+	(*PolicyPort)(nil),         // 29: expanse.block.v1.PolicyPort
+	(*IngressRule)(nil),        // 30: expanse.block.v1.IngressRule
+	(*EgressRule)(nil),         // 31: expanse.block.v1.EgressRule
+	(*NetworkPolicy)(nil),      // 32: expanse.block.v1.NetworkPolicy
+	(*StatusReplicas)(nil),     // 33: expanse.block.v1.StatusReplicas
+	(*Condition)(nil),          // 34: expanse.block.v1.Condition
+	(*PlacementStatus)(nil),    // 35: expanse.block.v1.PlacementStatus
+	(*ProbeResult)(nil),        // 36: expanse.block.v1.ProbeResult
+	(*ReplicaHealth)(nil),      // 37: expanse.block.v1.ReplicaHealth
+	(*PendingReason)(nil),      // 38: expanse.block.v1.PendingReason
+	(*BlockStatus)(nil),        // 39: expanse.block.v1.BlockStatus
+	(*Block)(nil),              // 40: expanse.block.v1.Block
+	(*GetBlockRequest)(nil),    // 41: expanse.block.v1.GetBlockRequest
+	(*ListBlocksRequest)(nil),  // 42: expanse.block.v1.ListBlocksRequest
+	(*ListBlocksResponse)(nil), // 43: expanse.block.v1.ListBlocksResponse
+	(*DeleteBlockRequest)(nil), // 44: expanse.block.v1.DeleteBlockRequest
+	(*ScaleRequest)(nil),       // 45: expanse.block.v1.ScaleRequest
+	(*RestartRequest)(nil),     // 46: expanse.block.v1.RestartRequest
+	(*SetPowerRequest)(nil),    // 47: expanse.block.v1.SetPowerRequest
+	(*WatchBlocksRequest)(nil), // 48: expanse.block.v1.WatchBlocksRequest
+	(*BlockEvent)(nil),         // 49: expanse.block.v1.BlockEvent
+	(*LogsRequest)(nil),        // 50: expanse.block.v1.LogsRequest
+	(*LogLine)(nil),            // 51: expanse.block.v1.LogLine
+	(*ExplainRequest)(nil),     // 52: expanse.block.v1.ExplainRequest
+	(*NodeExplanation)(nil),    // 53: expanse.block.v1.NodeExplanation
+	(*ReplicaExplanation)(nil), // 54: expanse.block.v1.ReplicaExplanation
+	(*ExplainResponse)(nil),    // 55: expanse.block.v1.ExplainResponse
+	(*BlockType)(nil),          // 56: expanse.block.v1.BlockType
+	(*ListTypesRequest)(nil),   // 57: expanse.block.v1.ListTypesRequest
+	(*ListTypesResponse)(nil),  // 58: expanse.block.v1.ListTypesResponse
+	(*GetTypeRequest)(nil),     // 59: expanse.block.v1.GetTypeRequest
+	nil,                        // 60: expanse.block.v1.Metadata.LabelsEntry
+	nil,                        // 61: expanse.block.v1.Metadata.AnnotationsEntry
+	nil,                        // 62: expanse.block.v1.Placement.NodeSelectorEntry
+	nil,                        // 63: expanse.block.v1.PendingReason.PerNodeEntry
+	(*structpb.Struct)(nil),    // 64: google.protobuf.Struct
+	(*emptypb.Empty)(nil),      // 65: google.protobuf.Empty
 }
 var file_proto_block_proto_depIdxs = []int32{
-	58, // 0: expanse.block.v1.Metadata.labels:type_name -> expanse.block.v1.Metadata.LabelsEntry
-	59, // 1: expanse.block.v1.Metadata.annotations:type_name -> expanse.block.v1.Metadata.AnnotationsEntry
+	60, // 0: expanse.block.v1.Metadata.labels:type_name -> expanse.block.v1.Metadata.LabelsEntry
+	61, // 1: expanse.block.v1.Metadata.annotations:type_name -> expanse.block.v1.Metadata.AnnotationsEntry
 	1,  // 2: expanse.block.v1.UpdateStrategy.mode:type_name -> expanse.block.v1.UpdateMode
 	0,  // 3: expanse.block.v1.Strategy.kind:type_name -> expanse.block.v1.StrategyKind
-	11, // 4: expanse.block.v1.Strategy.update:type_name -> expanse.block.v1.UpdateStrategy
-	13, // 5: expanse.block.v1.Resources.requests:type_name -> expanse.block.v1.ResourcePair
-	13, // 6: expanse.block.v1.Resources.limits:type_name -> expanse.block.v1.ResourcePair
-	14, // 7: expanse.block.v1.Resources.devices:type_name -> expanse.block.v1.Device
+	12, // 4: expanse.block.v1.Strategy.update:type_name -> expanse.block.v1.UpdateStrategy
+	14, // 5: expanse.block.v1.Resources.requests:type_name -> expanse.block.v1.ResourcePair
+	14, // 6: expanse.block.v1.Resources.limits:type_name -> expanse.block.v1.ResourcePair
+	15, // 7: expanse.block.v1.Resources.devices:type_name -> expanse.block.v1.Device
 	6,  // 8: expanse.block.v1.Storage.access_mode:type_name -> expanse.block.v1.AccessMode
 	3,  // 9: expanse.block.v1.Placement.anti_affinity:type_name -> expanse.block.v1.AntiAffinity
-	60, // 10: expanse.block.v1.Placement.node_selector:type_name -> expanse.block.v1.Placement.NodeSelectorEntry
+	62, // 10: expanse.block.v1.Placement.node_selector:type_name -> expanse.block.v1.Placement.NodeSelectorEntry
 	7,  // 11: expanse.block.v1.Placement.spread:type_name -> expanse.block.v1.Spread
 	4,  // 12: expanse.block.v1.Port.expose:type_name -> expanse.block.v1.Expose
-	19, // 13: expanse.block.v1.Port.http_routes:type_name -> expanse.block.v1.HttpRoute
+	20, // 13: expanse.block.v1.Port.http_routes:type_name -> expanse.block.v1.HttpRoute
 	5,  // 14: expanse.block.v1.HealthProbe.type:type_name -> expanse.block.v1.ProbeType
-	20, // 15: expanse.block.v1.HealthCheck.readiness:type_name -> expanse.block.v1.HealthProbe
-	20, // 16: expanse.block.v1.HealthCheck.liveness:type_name -> expanse.block.v1.HealthProbe
-	12, // 17: expanse.block.v1.BlockSpec.strategy:type_name -> expanse.block.v1.Strategy
+	21, // 15: expanse.block.v1.HealthCheck.readiness:type_name -> expanse.block.v1.HealthProbe
+	21, // 16: expanse.block.v1.HealthCheck.liveness:type_name -> expanse.block.v1.HealthProbe
+	13, // 17: expanse.block.v1.BlockSpec.strategy:type_name -> expanse.block.v1.Strategy
 	2,  // 18: expanse.block.v1.BlockSpec.runtime:type_name -> expanse.block.v1.Runtime
-	15, // 19: expanse.block.v1.BlockSpec.resources:type_name -> expanse.block.v1.Resources
-	16, // 20: expanse.block.v1.BlockSpec.storage:type_name -> expanse.block.v1.Storage
-	17, // 21: expanse.block.v1.BlockSpec.placement:type_name -> expanse.block.v1.Placement
-	25, // 22: expanse.block.v1.BlockSpec.network:type_name -> expanse.block.v1.Network
-	62, // 23: expanse.block.v1.BlockSpec.config:type_name -> google.protobuf.Struct
-	23, // 24: expanse.block.v1.BlockSpec.secrets:type_name -> expanse.block.v1.SecretRef
-	22, // 25: expanse.block.v1.BlockSpec.backup:type_name -> expanse.block.v1.Backup
-	18, // 26: expanse.block.v1.Network.ports:type_name -> expanse.block.v1.Port
-	21, // 27: expanse.block.v1.Network.health_check:type_name -> expanse.block.v1.HealthCheck
-	31, // 28: expanse.block.v1.Network.policy:type_name -> expanse.block.v1.NetworkPolicy
-	26, // 29: expanse.block.v1.IngressRule.from:type_name -> expanse.block.v1.PolicyFrom
-	28, // 30: expanse.block.v1.IngressRule.ports:type_name -> expanse.block.v1.PolicyPort
-	27, // 31: expanse.block.v1.EgressRule.to:type_name -> expanse.block.v1.PolicyTo
-	28, // 32: expanse.block.v1.EgressRule.ports:type_name -> expanse.block.v1.PolicyPort
-	29, // 33: expanse.block.v1.NetworkPolicy.ingress:type_name -> expanse.block.v1.IngressRule
-	30, // 34: expanse.block.v1.NetworkPolicy.egress:type_name -> expanse.block.v1.EgressRule
-	8,  // 35: expanse.block.v1.PlacementStatus.phase:type_name -> expanse.block.v1.Phase
-	36, // 36: expanse.block.v1.PlacementStatus.health:type_name -> expanse.block.v1.ReplicaHealth
-	35, // 37: expanse.block.v1.ReplicaHealth.readiness:type_name -> expanse.block.v1.ProbeResult
-	35, // 38: expanse.block.v1.ReplicaHealth.liveness:type_name -> expanse.block.v1.ProbeResult
-	61, // 39: expanse.block.v1.PendingReason.per_node:type_name -> expanse.block.v1.PendingReason.PerNodeEntry
-	8,  // 40: expanse.block.v1.BlockStatus.phase:type_name -> expanse.block.v1.Phase
-	32, // 41: expanse.block.v1.BlockStatus.replicas:type_name -> expanse.block.v1.StatusReplicas
-	33, // 42: expanse.block.v1.BlockStatus.conditions:type_name -> expanse.block.v1.Condition
-	34, // 43: expanse.block.v1.BlockStatus.placements:type_name -> expanse.block.v1.PlacementStatus
-	37, // 44: expanse.block.v1.BlockStatus.pending_reason:type_name -> expanse.block.v1.PendingReason
-	10, // 45: expanse.block.v1.Block.metadata:type_name -> expanse.block.v1.Metadata
-	24, // 46: expanse.block.v1.Block.spec:type_name -> expanse.block.v1.BlockSpec
-	38, // 47: expanse.block.v1.Block.status:type_name -> expanse.block.v1.BlockStatus
-	39, // 48: expanse.block.v1.ListBlocksResponse.blocks:type_name -> expanse.block.v1.Block
-	9,  // 49: expanse.block.v1.BlockEvent.type:type_name -> expanse.block.v1.EventType
-	39, // 50: expanse.block.v1.BlockEvent.block:type_name -> expanse.block.v1.Block
-	8,  // 51: expanse.block.v1.ReplicaExplanation.phase:type_name -> expanse.block.v1.Phase
-	51, // 52: expanse.block.v1.ReplicaExplanation.nodes:type_name -> expanse.block.v1.NodeExplanation
-	8,  // 53: expanse.block.v1.ExplainResponse.phase:type_name -> expanse.block.v1.Phase
-	37, // 54: expanse.block.v1.ExplainResponse.pending_reason:type_name -> expanse.block.v1.PendingReason
-	52, // 55: expanse.block.v1.ExplainResponse.replicas:type_name -> expanse.block.v1.ReplicaExplanation
-	54, // 56: expanse.block.v1.ListTypesResponse.types:type_name -> expanse.block.v1.BlockType
-	39, // 57: expanse.block.v1.BlockService.Create:input_type -> expanse.block.v1.Block
-	40, // 58: expanse.block.v1.BlockService.Get:input_type -> expanse.block.v1.GetBlockRequest
-	41, // 59: expanse.block.v1.BlockService.List:input_type -> expanse.block.v1.ListBlocksRequest
-	39, // 60: expanse.block.v1.BlockService.Update:input_type -> expanse.block.v1.Block
-	43, // 61: expanse.block.v1.BlockService.Delete:input_type -> expanse.block.v1.DeleteBlockRequest
-	44, // 62: expanse.block.v1.BlockService.Scale:input_type -> expanse.block.v1.ScaleRequest
-	45, // 63: expanse.block.v1.BlockService.Restart:input_type -> expanse.block.v1.RestartRequest
-	46, // 64: expanse.block.v1.BlockService.Watch:input_type -> expanse.block.v1.WatchBlocksRequest
-	48, // 65: expanse.block.v1.BlockService.StreamLogs:input_type -> expanse.block.v1.LogsRequest
-	50, // 66: expanse.block.v1.BlockService.Explain:input_type -> expanse.block.v1.ExplainRequest
-	55, // 67: expanse.block.v1.CatalogService.ListTypes:input_type -> expanse.block.v1.ListTypesRequest
-	57, // 68: expanse.block.v1.CatalogService.GetType:input_type -> expanse.block.v1.GetTypeRequest
-	39, // 69: expanse.block.v1.BlockService.Create:output_type -> expanse.block.v1.Block
-	39, // 70: expanse.block.v1.BlockService.Get:output_type -> expanse.block.v1.Block
-	42, // 71: expanse.block.v1.BlockService.List:output_type -> expanse.block.v1.ListBlocksResponse
-	39, // 72: expanse.block.v1.BlockService.Update:output_type -> expanse.block.v1.Block
-	63, // 73: expanse.block.v1.BlockService.Delete:output_type -> google.protobuf.Empty
-	39, // 74: expanse.block.v1.BlockService.Scale:output_type -> expanse.block.v1.Block
-	39, // 75: expanse.block.v1.BlockService.Restart:output_type -> expanse.block.v1.Block
-	47, // 76: expanse.block.v1.BlockService.Watch:output_type -> expanse.block.v1.BlockEvent
-	49, // 77: expanse.block.v1.BlockService.StreamLogs:output_type -> expanse.block.v1.LogLine
-	53, // 78: expanse.block.v1.BlockService.Explain:output_type -> expanse.block.v1.ExplainResponse
-	56, // 79: expanse.block.v1.CatalogService.ListTypes:output_type -> expanse.block.v1.ListTypesResponse
-	54, // 80: expanse.block.v1.CatalogService.GetType:output_type -> expanse.block.v1.BlockType
-	69, // [69:81] is the sub-list for method output_type
-	57, // [57:69] is the sub-list for method input_type
-	57, // [57:57] is the sub-list for extension type_name
-	57, // [57:57] is the sub-list for extension extendee
-	0,  // [0:57] is the sub-list for field type_name
+	16, // 19: expanse.block.v1.BlockSpec.resources:type_name -> expanse.block.v1.Resources
+	17, // 20: expanse.block.v1.BlockSpec.storage:type_name -> expanse.block.v1.Storage
+	18, // 21: expanse.block.v1.BlockSpec.placement:type_name -> expanse.block.v1.Placement
+	26, // 22: expanse.block.v1.BlockSpec.network:type_name -> expanse.block.v1.Network
+	64, // 23: expanse.block.v1.BlockSpec.config:type_name -> google.protobuf.Struct
+	24, // 24: expanse.block.v1.BlockSpec.secrets:type_name -> expanse.block.v1.SecretRef
+	23, // 25: expanse.block.v1.BlockSpec.backup:type_name -> expanse.block.v1.Backup
+	9,  // 26: expanse.block.v1.BlockSpec.power:type_name -> expanse.block.v1.Power
+	19, // 27: expanse.block.v1.Network.ports:type_name -> expanse.block.v1.Port
+	22, // 28: expanse.block.v1.Network.health_check:type_name -> expanse.block.v1.HealthCheck
+	32, // 29: expanse.block.v1.Network.policy:type_name -> expanse.block.v1.NetworkPolicy
+	27, // 30: expanse.block.v1.IngressRule.from:type_name -> expanse.block.v1.PolicyFrom
+	29, // 31: expanse.block.v1.IngressRule.ports:type_name -> expanse.block.v1.PolicyPort
+	28, // 32: expanse.block.v1.EgressRule.to:type_name -> expanse.block.v1.PolicyTo
+	29, // 33: expanse.block.v1.EgressRule.ports:type_name -> expanse.block.v1.PolicyPort
+	30, // 34: expanse.block.v1.NetworkPolicy.ingress:type_name -> expanse.block.v1.IngressRule
+	31, // 35: expanse.block.v1.NetworkPolicy.egress:type_name -> expanse.block.v1.EgressRule
+	8,  // 36: expanse.block.v1.PlacementStatus.phase:type_name -> expanse.block.v1.Phase
+	37, // 37: expanse.block.v1.PlacementStatus.health:type_name -> expanse.block.v1.ReplicaHealth
+	36, // 38: expanse.block.v1.ReplicaHealth.readiness:type_name -> expanse.block.v1.ProbeResult
+	36, // 39: expanse.block.v1.ReplicaHealth.liveness:type_name -> expanse.block.v1.ProbeResult
+	63, // 40: expanse.block.v1.PendingReason.per_node:type_name -> expanse.block.v1.PendingReason.PerNodeEntry
+	8,  // 41: expanse.block.v1.BlockStatus.phase:type_name -> expanse.block.v1.Phase
+	33, // 42: expanse.block.v1.BlockStatus.replicas:type_name -> expanse.block.v1.StatusReplicas
+	34, // 43: expanse.block.v1.BlockStatus.conditions:type_name -> expanse.block.v1.Condition
+	35, // 44: expanse.block.v1.BlockStatus.placements:type_name -> expanse.block.v1.PlacementStatus
+	38, // 45: expanse.block.v1.BlockStatus.pending_reason:type_name -> expanse.block.v1.PendingReason
+	11, // 46: expanse.block.v1.Block.metadata:type_name -> expanse.block.v1.Metadata
+	25, // 47: expanse.block.v1.Block.spec:type_name -> expanse.block.v1.BlockSpec
+	39, // 48: expanse.block.v1.Block.status:type_name -> expanse.block.v1.BlockStatus
+	40, // 49: expanse.block.v1.ListBlocksResponse.blocks:type_name -> expanse.block.v1.Block
+	9,  // 50: expanse.block.v1.SetPowerRequest.power:type_name -> expanse.block.v1.Power
+	10, // 51: expanse.block.v1.BlockEvent.type:type_name -> expanse.block.v1.EventType
+	40, // 52: expanse.block.v1.BlockEvent.block:type_name -> expanse.block.v1.Block
+	8,  // 53: expanse.block.v1.ReplicaExplanation.phase:type_name -> expanse.block.v1.Phase
+	53, // 54: expanse.block.v1.ReplicaExplanation.nodes:type_name -> expanse.block.v1.NodeExplanation
+	8,  // 55: expanse.block.v1.ExplainResponse.phase:type_name -> expanse.block.v1.Phase
+	38, // 56: expanse.block.v1.ExplainResponse.pending_reason:type_name -> expanse.block.v1.PendingReason
+	54, // 57: expanse.block.v1.ExplainResponse.replicas:type_name -> expanse.block.v1.ReplicaExplanation
+	56, // 58: expanse.block.v1.ListTypesResponse.types:type_name -> expanse.block.v1.BlockType
+	40, // 59: expanse.block.v1.BlockService.Create:input_type -> expanse.block.v1.Block
+	41, // 60: expanse.block.v1.BlockService.Get:input_type -> expanse.block.v1.GetBlockRequest
+	42, // 61: expanse.block.v1.BlockService.List:input_type -> expanse.block.v1.ListBlocksRequest
+	40, // 62: expanse.block.v1.BlockService.Update:input_type -> expanse.block.v1.Block
+	44, // 63: expanse.block.v1.BlockService.Delete:input_type -> expanse.block.v1.DeleteBlockRequest
+	45, // 64: expanse.block.v1.BlockService.Scale:input_type -> expanse.block.v1.ScaleRequest
+	46, // 65: expanse.block.v1.BlockService.Restart:input_type -> expanse.block.v1.RestartRequest
+	47, // 66: expanse.block.v1.BlockService.SetPower:input_type -> expanse.block.v1.SetPowerRequest
+	48, // 67: expanse.block.v1.BlockService.Watch:input_type -> expanse.block.v1.WatchBlocksRequest
+	50, // 68: expanse.block.v1.BlockService.StreamLogs:input_type -> expanse.block.v1.LogsRequest
+	52, // 69: expanse.block.v1.BlockService.Explain:input_type -> expanse.block.v1.ExplainRequest
+	57, // 70: expanse.block.v1.CatalogService.ListTypes:input_type -> expanse.block.v1.ListTypesRequest
+	59, // 71: expanse.block.v1.CatalogService.GetType:input_type -> expanse.block.v1.GetTypeRequest
+	40, // 72: expanse.block.v1.BlockService.Create:output_type -> expanse.block.v1.Block
+	40, // 73: expanse.block.v1.BlockService.Get:output_type -> expanse.block.v1.Block
+	43, // 74: expanse.block.v1.BlockService.List:output_type -> expanse.block.v1.ListBlocksResponse
+	40, // 75: expanse.block.v1.BlockService.Update:output_type -> expanse.block.v1.Block
+	65, // 76: expanse.block.v1.BlockService.Delete:output_type -> google.protobuf.Empty
+	40, // 77: expanse.block.v1.BlockService.Scale:output_type -> expanse.block.v1.Block
+	40, // 78: expanse.block.v1.BlockService.Restart:output_type -> expanse.block.v1.Block
+	40, // 79: expanse.block.v1.BlockService.SetPower:output_type -> expanse.block.v1.Block
+	49, // 80: expanse.block.v1.BlockService.Watch:output_type -> expanse.block.v1.BlockEvent
+	51, // 81: expanse.block.v1.BlockService.StreamLogs:output_type -> expanse.block.v1.LogLine
+	55, // 82: expanse.block.v1.BlockService.Explain:output_type -> expanse.block.v1.ExplainResponse
+	58, // 83: expanse.block.v1.CatalogService.ListTypes:output_type -> expanse.block.v1.ListTypesResponse
+	56, // 84: expanse.block.v1.CatalogService.GetType:output_type -> expanse.block.v1.BlockType
+	72, // [72:85] is the sub-list for method output_type
+	59, // [59:72] is the sub-list for method input_type
+	59, // [59:59] is the sub-list for extension type_name
+	59, // [59:59] is the sub-list for extension extendee
+	0,  // [0:59] is the sub-list for field type_name
 }
 
 func init() { file_proto_block_proto_init() }
@@ -4355,8 +4516,8 @@ func file_proto_block_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_block_proto_rawDesc), len(file_proto_block_proto_rawDesc)),
-			NumEnums:      10,
-			NumMessages:   52,
+			NumEnums:      11,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

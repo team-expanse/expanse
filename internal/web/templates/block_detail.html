@@ -17,6 +17,10 @@
   <div id="block-network" sse-swap="network" hx-swap="innerHTML">{{template "block-network" .Net}}</div>
 </div>
 
+{{if .Suspendable}}
+<section class="card" id="block-power">{{template "block-power" .Block}}</section>
+{{end}}
+
 {{if scalable .Block.Spec}}
 <section class="card">
   <div class="card-head"><h2>Scale</h2></div>
@@ -26,6 +30,21 @@
   </form>
 </section>
 {{end}}
+{{end}}
+
+{{define "block-power"}}
+<div class="card-head"><h2>Power</h2></div>
+<form class="form-inline" hx-post="/blocks/{{.Metadata.GetNamespace}}/{{.Metadata.GetName}}/power" hx-target="#block-power" hx-swap="innerHTML">
+  {{if eq .Spec.GetPower.String "POWER_SUSPENDED"}}
+  <p class="muted">Suspended. Resume picks up where it left off on the node that saved it; on any other node it boots fresh.</p>
+  <input type="hidden" name="power" value="on">
+  <button class="btn btn-primary" type="submit">Resume</button>
+  {{else}}
+  <p class="muted">Suspend saves the running guest's memory to its node's disk and stops it.</p>
+  <input type="hidden" name="power" value="suspended">
+  <button class="btn" type="submit">Suspend</button>
+  {{end}}
+</form>
 {{end}}
 
 {{define "block-deleted"}}

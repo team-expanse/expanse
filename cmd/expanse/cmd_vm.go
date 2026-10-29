@@ -12,6 +12,7 @@ import (
 
 	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/vm/qga"
+	pb "github.com/expanse/expanse/proto"
 )
 
 // exitCode is an error that makes the CLI exit with that code and print nothing more.
@@ -21,11 +22,14 @@ func (e exitCode) Error() string { return fmt.Sprintf("exit status %d", int(e)) 
 
 type execFunc func(ctx context.Context, sock, ref string, argv []string, stdin []byte, stdout, stderr io.Writer) error
 
-// newVMCmd builds `expanse ctl vm ...`, which talks to a VM's guest agent on this node.
-func newVMCmd() *cobra.Command { return newVMCmdWith(vmExec) }
+// newVMCmd builds `expanse ctl vm ...`: suspend and resume, and exec through a VM's guest agent on this node.
+func newVMCmd(opts *ctlOpts) *cobra.Command { return newVMCmdWith(opts, vmExec) }
 
-func newVMCmdWith(run execFunc) *cobra.Command {
-	vm := &cobra.Command{Use: "vm", Short: "Commands for vm/instance blocks running on this node"}
+func newVMCmdWith(opts *ctlOpts, run execFunc) *cobra.Command {
+	vm := &cobra.Command{Use: "vm", Short: "Commands for vm/instance blocks"}
+	for _, verb := range []string{"suspend", "resume"} {
+		vm.AddCommand(newPowerCmd(opts, verb))
+	}
 	var ns string
 	var withStdin bool
 	exec := &cobra.Command{
@@ -66,6 +70,47 @@ and its exit code becomes this command's. Ctrl-C stops waiting; the guest comman
 	exec.Flags().BoolVarP(&withStdin, "stdin", "i", false, "send this command's stdin to the guest command")
 	vm.AddCommand(exec)
 	return vm
+}
+
+// newPowerCmd builds `vm suspend` or `vm resume`.
+func newPowerCmd(opts *ctlOpts, verb string) *cobra.Command {
+	short := "Save a VM's running state to its node's disk and stop it"
+	if verb == "resume" {
+		short = "Start a suspended VM from its saved state (a VM moved since boots fresh)"
+	}
+	var ns string
+	c := &cobra.Command{
+		Use:   verb + " <[namespace/]name>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			bns, name := blockRef(ns, args[0])
+			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
+				return setPower(ctx, c, bns, name, verb, cmd.OutOrStdout())
+			})
+		},
+	}
+	c.Flags().StringVarP(&ns, "namespace", "n", "default", "namespace")
+	return c
+}
+
+// setPower asks for a block to be suspended or resumed; its node does the work shortly after.
+func setPower(ctx context.Context, c pb.BlockServiceClient, ns, name, verb string, out io.Writer) error {
+	p := pb.Power_POWER_SUSPENDED
+	if verb == "resume" {
+		p = pb.Power_POWER_ON
+	}
+	b, err := c.SetPower(ctx, &pb.SetPowerRequest{Namespace: ns, Name: name, Power: p})
+	if err != nil {
+		return fmt.Errorf("%s: %w", verb, err)
+	}
+	ref := b.GetMetadata().GetNamespace() + "/" + b.GetMetadata().GetName()
+	if p == pb.Power_POWER_SUSPENDED {
+		fmt.Fprintf(out, "suspending %s; its phase reads SUSPENDED once its node has saved it\n", ref)
+	} else {
+		fmt.Fprintf(out, "resuming %s\n", ref)
+	}
+	return nil
 }
 
 func vmExec(ctx context.Context, sock, ref string, argv []string, stdin []byte, stdout, stderr io.Writer) error {

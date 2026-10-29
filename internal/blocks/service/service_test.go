@@ -24,6 +24,7 @@ func (fakeCatalog) ValidateConfig(t string, c *structpb.Struct) []string {
 	return nil
 }
 func (fakeCatalog) WriteOnlyFields(string) []string { return nil }
+func (fakeCatalog) Suspendable(t string) bool       { return t == "util/echo" }
 
 func newServer(t *testing.T) (*Server, func(context.Context) (uint64, error)) {
 	t.Helper()

@@ -63,6 +63,14 @@ func TestLoadMetadata(t *testing.T) {
 	}
 }
 
+func TestSuspendableComesFromBlockYAML(t *testing.T) {
+	c := mustLoad(t)
+	if !c.Suspendable("demo/pong") || c.Suspendable("demo/ping") || c.Suspendable("demo/other") {
+		t.Errorf("Suspendable: pong=%v ping=%v other=%v, want true false false",
+			c.Suspendable("demo/pong"), c.Suspendable("demo/ping"), c.Suspendable("demo/other"))
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	c := mustLoad(t)
 	d := c.Defaults("demo/ping")

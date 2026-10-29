@@ -26,6 +26,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/blockkey"
 	"github.com/expanse/expanse/internal/blocks/health"
 	"github.com/expanse/expanse/internal/errors"
+	agentreconcile "github.com/expanse/expanse/internal/reconcile"
 	"github.com/expanse/expanse/internal/store"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/protobuf/proto"
@@ -76,6 +77,9 @@ func (c *Controller) promoteBlock(ctx context.Context, e store.Entry) error {
 		return errors.Wrap(err, errors.KindInternal, "controller.RuntimePass", "unmarshal "+string(k))
 	}
 	want := replicaCount(&blk)
+	if blk.GetSpec().GetPower() == pb.Power_POWER_SUSPENDED {
+		return c.recordSuspended(ctx, k, &status, want, int64(e.Revision))
+	}
 	changed := false
 	active, running := 0, 0
 	for _, p := range status.GetPlacements() {
@@ -168,8 +172,68 @@ func (c *Controller) replicaUp(ctx context.Context, node, ns, name string, idx i
 		return false, errors.Wrap(err, errors.KindInternal, "controller.RuntimePass", "replica status")
 	}
 	f := statusFields(string(e.Value))
+	if _, down := stoppedReport(string(e.Value)); down {
+		return false, nil // the node hasn't started it since it was suspended
+	}
 	// ready is absent for workloads that never report it; only an explicit false holds promotion back.
 	return f["health"] == "healthy" && f["in_sync"] == "true" && f["ready"] != "false", nil
+}
+
+// stoppedReport reads a node's record of a replica it holds stopped: down, and the token of
+// the save it holds ("" for none).
+func stoppedReport(record string) (token string, down bool) {
+	f := statusFields(record)
+	if f["health"] != "healthy" || f["in_sync"] != "true" {
+		return "", false
+	}
+	switch text := agentreconcile.RecordedStatusText(record); {
+	case text == "stopped":
+		return "", true
+	case strings.HasPrefix(text, "suspended "):
+		return strings.TrimPrefix(text, "suspended "), true
+	}
+	return "", false
+}
+
+// recordSuspended marks the replicas of a suspended block SUSPENDED as their nodes report them
+// stopped, keeping the save each node holds, and the block once all of them are.
+func (c *Controller) recordSuspended(ctx context.Context, k store.Key, status *pb.BlockStatus, want int, revision int64) error {
+	changed := false
+	active, down := 0, 0
+	for _, p := range status.GetPlacements() {
+		if p.GetReplicaIndex() < 0 || p.GetNodeId() == "" {
+			continue
+		}
+		active++
+		e, err := c.St.Get(ctx, store.Key("/node/"+p.GetNodeId()+"/status/resources/"+
+			ReplicaResourceID(statusKey2ns(k), statusKey2name(k), int(p.GetReplicaIndex()))))
+		if err != nil && !errors.Is(err, errors.KindNotFound) {
+			return errors.Wrap(err, errors.KindInternal, "controller.RuntimePass", "replica status")
+		}
+		token, stopped := "", false
+		if err == nil {
+			token, stopped = stoppedReport(string(e.Value))
+		}
+		if !stopped {
+			continue
+		}
+		down++
+		if p.GetPhase() != pb.Phase_SUSPENDED || p.GetGeneration() != revision || (token != "" && token != p.GetSavedState()) {
+			p.Phase, p.Generation, p.Message = pb.Phase_SUSPENDED, revision, ""
+			if token != "" {
+				p.SavedState = token // a later report of no save keeps the one this node made
+			}
+			changed = true
+		}
+	}
+	if active > 0 && down == active && (want == 0 || active == want) && status.GetPhase() != pb.Phase_SUSPENDED {
+		status.Phase, status.PendingReason = pb.Phase_SUSPENDED, nil
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return c.persistStatus(ctx, k, status)
 }
 
 // statusFields parses the agent's "key=value ..." status record up to the free-text error field.

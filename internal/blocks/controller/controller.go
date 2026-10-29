@@ -257,7 +257,12 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 	// instead of plain placement. Generation 0 = pre-T15 placement, kept
 	// at-target so old records do not trigger surprise rolls.
 	target := int64(e.Revision)
-	if want > 0 && len(status.GetPlacements()) > 0 &&
+	// A suspended block's replicas don't roll: RuntimePass records them as their nodes stop them.
+	suspended := b.GetSpec().GetPower() == pb.Power_POWER_SUSPENDED
+	if !suspended && resumeSuspended(status, target) {
+		return 0, c.persistStatus(ctx, e.Key, status)
+	}
+	if !suspended && want > 0 && len(status.GetPlacements()) > 0 &&
 		b.GetSpec().GetStrategy().GetKind() != pb.StrategyKind_DAEMONSET &&
 		(updateNeededLegacy(status, target) || status.GetPhase() == pb.Phase_UPDATING) {
 		changed, err := c.updatePass(ctx, &b, status, target, want, nodes, cfg)
@@ -287,6 +292,22 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 		return c.placeSingleton(ctx, &b, e, status, nodes, cfg)
 	}
 	return c.placeReplicas(ctx, &b, e, status, nodes, cfg)
+}
+
+// resumeSuspended hands a resumed block's SUSPENDED replicas back to their nodes to start,
+// where they are, and reports whether any were.
+func resumeSuspended(status *pb.BlockStatus, target int64) bool {
+	resumed := false
+	for _, p := range status.GetPlacements() {
+		if p.GetReplicaIndex() >= 0 && p.GetPhase() == pb.Phase_SUSPENDED {
+			p.Phase, p.Generation, p.Message = pb.Phase_SCHEDULING, target, ""
+			resumed = true
+		}
+	}
+	if resumed {
+		status.Phase = pb.Phase_STARTING
+	}
+	return resumed
 }
 
 // loadStatus reads (or seeds) the status record for a block.

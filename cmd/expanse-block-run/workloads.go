@@ -36,6 +36,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/blocks/vm/qga"
 	"github.com/expanse/expanse/internal/blocks/vm/qmp"
+	"github.com/expanse/expanse/internal/blocks/vm/vmstate"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/network/vip"
 	"github.com/expanse/expanse/internal/quantity"
@@ -1279,7 +1280,7 @@ wal_log_hints = on
 // A stop first powers the guest off (stopReplica, the unit's ExecStop).
 // qemu's exit closes its fd on the raw device, so DRBD
 // can demote with no separate release step (unlike LIO's teardown).
-func runVM(ctx context.Context, instance, name string, args []string) error {
+func runVM(ctx context.Context, instance, name, stateToken string, args []string) error {
 	cfg, err := cfgMap(args)
 	if err != nil {
 		return err
@@ -1338,6 +1339,9 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		return err
 	}
 
+	stateDir := vmstate.Dir("", instance)
+	resume := resumeOrDiscard(stateDir, stateToken)
+
 	tapName := macvtapIfaceName(instance)
 	tap, err := createMacvtap(uplink, tapName, mac)
 	if err != nil {
@@ -1388,6 +1392,10 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 		}
 	}
 
+	if resume { // paused until qmp.Load has read the saved state in
+		qemuArgv = append(qemuArgv, "-S", "-incoming", "defer")
+	}
+
 	extra := []*os.File{tap} // fd 3
 	if watch != nil {
 		qemuArgv = append(qemuArgv, vmready.QEMUArgs(watch.cid, 4)...)
@@ -1413,11 +1421,24 @@ func runVM(ctx context.Context, instance, name string, args []string) error {
 	// as Start returns; closing our own copy here does not affect it.
 	_ = tap.Close()
 	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d memMiB=%d)\n", instance, dev, mac, cpus, memMiB)
+	tracker := vmready.NewTracker()
+	if resume {
+		err := qmp.Load(qmpSock, vmstate.StatePath(stateDir), saveTimeout)
+		_ = vmstate.Remove(stateDir) // loaded or not, it is never loaded twice
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			_ = deleteLink(tapName)
+			return fmt.Errorf("vm/instance: resume failed, so the next start boots it fresh: %w", err)
+		}
+		fmt.Printf("expanse-block-run: vm %s resumed from its saved state\n", instance)
+		tracker = vmready.ResumedTracker()
+	}
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
 	go pollGuestAgent(watchCtx, instance, qgaSock, mac)
 	if watch != nil {
-		go watch.serve(watchCtx, instance)
+		go watch.serve(watchCtx, instance, tracker)
 	} else if cfgStr(cfg, "guestReady") == "none" {
 		publishGuestStatus(instance, vmready.ReadyPrefix+" not waited on (guestReady: none)")
 	}

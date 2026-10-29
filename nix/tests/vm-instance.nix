@@ -16,12 +16,13 @@
 # (X1's "disk on a replicated raw volume"), which a real systemd service
 # inside the guest writes a marker to, mirroring the D1 probe's own
 # canary pattern.
-{ self }:
+# vm-suspend-resume.nix reuses this cluster and guest with its own script and a larger root disk.
+{ self, name ? "vm-instance", script ? ./python/vm_instance.py, diskSize ? null }:
 { pkgs, lib, ... }:
 let
   lint = pkgs.runCommand "vm-instance-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     export PYTHONDONTWRITEBYTECODE=1
-    for f in ${./cluster-common.py} ${./block-common.py} ${./python/vol_cluster.py} ${./python/vm_instance.py}; do
+    for f in ${./cluster-common.py} ${./block-common.py} ${./python/vol_cluster.py} ${script}; do
       python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $f
     done
     touch $out
@@ -108,10 +109,11 @@ let
     # first-ever placement is an arbitrary first-primary election, so
     # any of the three could end up hosting the VM instance.
     virtualisation.memorySize = 4608;
+    virtualisation.diskSize = lib.mkIf (diskSize != null) diskSize;
   };
 in
 {
-  name = "expanse-vm-instance";
+  name = "expanse-${name}";
 
   nodes = {
     n1 = { ... }: nodeCommon 1;
@@ -128,6 +130,6 @@ in
     INITRD = "${initrd}"
     CMDLINE = "${cmdline}"
     GUEST_IP = "${guestIP}"
-    ${builtins.readFile ./python/vm_instance.py}
+    ${builtins.readFile script}
   '';
 }

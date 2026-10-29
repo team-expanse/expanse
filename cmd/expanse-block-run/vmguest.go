@@ -37,8 +37,8 @@ func startGuestWatch(instance string) (*guestWatch, error) {
 }
 
 // serve publishes the guest's status until ctx ends.
-func (w *guestWatch) serve(ctx context.Context, instance string) {
-	err := vmready.Serve(ctx, w.l, w.cid, func(s string) { publishGuestStatus(instance, s) })
+func (w *guestWatch) serve(ctx context.Context, instance string, tr *vmready.Tracker) {
+	err := vmready.ServeFrom(ctx, w.l, w.cid, tr, func(s string) { publishGuestStatus(instance, s) })
 	if ctx.Err() == nil {
 		publishGuestStatus(instance, fmt.Sprintf("not ready: guest watch stopped: %v", err))
 	}

@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/expanse/expanse/internal/blocks/vm/qga"
+	pb "github.com/expanse/expanse/proto"
+	"google.golang.org/grpc"
 )
 
 func TestVMExecSaysWhereToRunWhenTheSocketIsMissing(t *testing.T) {
@@ -42,7 +44,7 @@ func TestVMExecHandsTheGuestTheCommandAfterTheDashes(t *testing.T) {
 	} {
 		var gotSock string
 		var gotArgv []string
-		cmd := newVMCmdWith(func(_ context.Context, sock, _ string, argv []string, _ []byte, _, _ io.Writer) error {
+		cmd := newVMCmdWith(nil, func(_ context.Context, sock, _ string, argv []string, _ []byte, _, _ io.Writer) error {
 			gotSock, gotArgv = sock, argv
 			return nil
 		})
@@ -57,7 +59,7 @@ func TestVMExecHandsTheGuestTheCommandAfterTheDashes(t *testing.T) {
 }
 
 func TestVMExecNeedsACommand(t *testing.T) {
-	cmd := newVMCmdWith(func(context.Context, string, string, []string, []byte, io.Writer, io.Writer) error {
+	cmd := newVMCmdWith(nil, func(context.Context, string, string, []string, []byte, io.Writer, io.Writer) error {
 		t.Error("ran with no command")
 		return nil
 	})
@@ -75,5 +77,31 @@ func TestVMExecBlamesTheAgentOnlyWhenItDoesNotAnswer(t *testing.T) {
 	}
 	if msg := execError(context.DeadlineExceeded).Error(); !strings.Contains(msg, "installed") {
 		t.Errorf("a silent agent got no install hint: %s", msg)
+	}
+}
+
+type powerClient struct {
+	pb.BlockServiceClient
+	got *pb.SetPowerRequest
+}
+
+func (c *powerClient) SetPower(_ context.Context, r *pb.SetPowerRequest, _ ...grpc.CallOption) (*pb.Block, error) {
+	c.got = r
+	return &pb.Block{Metadata: &pb.Metadata{Namespace: r.GetNamespace(), Name: r.GetName()}}, nil
+}
+
+func TestVMSuspendAndResumeSetTheBlocksPower(t *testing.T) {
+	for verb, want := range map[string]pb.Power{"suspend": pb.Power_POWER_SUSPENDED, "resume": pb.Power_POWER_ON} {
+		c := &powerClient{}
+		var out bytes.Buffer
+		if err := setPower(context.Background(), c, "default", "vm1", verb, &out); err != nil {
+			t.Fatalf("%s: %v", verb, err)
+		}
+		if c.got.GetPower() != want || c.got.GetName() != "vm1" || c.got.GetNamespace() != "default" {
+			t.Errorf("%s sent %v", verb, c.got)
+		}
+		if !strings.Contains(out.String(), "default/vm1") {
+			t.Errorf("%s printed %q", verb, out.String())
+		}
 	}
 }

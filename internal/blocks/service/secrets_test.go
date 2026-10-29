@@ -18,8 +18,9 @@ import (
 // secretCatalog has one type, db/pg, whose password field is writeOnly.
 type secretCatalog struct{ fakeCatalog }
 
-func (secretCatalog) HasType(t string) bool { return t == "db/pg" }
-func (secretCatalog) Types() []string       { return []string{"db/pg"} }
+func (secretCatalog) HasType(t string) bool   { return t == "db/pg" }
+func (secretCatalog) Types() []string         { return []string{"db/pg"} }
+func (secretCatalog) Suspendable(string) bool { return false }
 func (secretCatalog) WriteOnlyFields(t string) []string {
 	if t == "db/pg" {
 		return []string{"password"}

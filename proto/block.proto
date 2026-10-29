@@ -97,6 +97,15 @@ enum Phase {
   // Replica's node is unreachable past unreachable_grace (§4.4). The
   // record is retired (index freed) once a replacement is scheduled.
   LOST = 12;
+  // Replica is stopped on purpose (BlockSpec.power); a VM's RAM may be saved on its node.
+  SUSPENDED = 13;
+}
+
+// Power is a block's desired run state. Only suspendable types (block.yaml) take SUSPENDED.
+enum Power {
+  POWER_UNSPECIFIED = 0; // on
+  POWER_ON = 1;
+  POWER_SUSPENDED = 2;
 }
 
 // EventType is the watch verb for BlockEvent.
@@ -279,6 +288,8 @@ message BlockSpec {
   Backup backup = 12;
   // Names of other blocks this one depends on; must be acyclic (V24).
   repeated string depends_on = 13;
+  // SUSPENDED stops every replica; a VM saves its RAM first and resumes from it.
+  Power power = 14;
 }
 
 // Network groups ports, health checks, and the basic §4.6 policy.
@@ -367,6 +378,8 @@ message PlacementStatus {
   ReplicaHealth health = 6;
   // Why the controller failed this placement, e.g. the liveness probe's last error.
   string message = 7;
+  // The saved-state token this replica's node holds for it; set from the node's report.
+  string saved_state = 8;
 }
 
 // ProbeResult is one probe outcome as the replica's node last recorded it.
@@ -442,6 +455,12 @@ message RestartRequest {
   string namespace = 1;
   string name = 2;
   int32 replica = 3;
+}
+
+message SetPowerRequest {
+  string namespace = 1;
+  string name = 2;
+  Power power = 3;
 }
 
 // Empty name watches all blocks in the namespace.
@@ -524,6 +543,8 @@ message BlockType {
   bytes defaults_json = 7;
   // template.yaml as a JSON object: the spec fields (no type or config) a new block starts with.
   bytes template_json = 8;
+  // The type keeps its state when suspended (block.yaml suspendable).
+  bool suspendable = 9;
 }
 
 message ListTypesRequest {}
@@ -548,6 +569,7 @@ service BlockService {
   rpc Delete(DeleteBlockRequest) returns (google.protobuf.Empty);
   rpc Scale(ScaleRequest) returns (Block);
   rpc Restart(RestartRequest) returns (Block);
+  rpc SetPower(SetPowerRequest) returns (Block);
   rpc Watch(WatchBlocksRequest) returns (stream BlockEvent);
   rpc StreamLogs(LogsRequest) returns (stream LogLine);
   // Explain reports why a block is pending or unhealthy, per node.

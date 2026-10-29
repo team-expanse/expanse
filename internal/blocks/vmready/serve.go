@@ -24,7 +24,11 @@ type Listener interface {
 // Serve tracks the guest at cid and publishes its status on every change, starting with "booting".
 // It returns the listener's error, or the context's once cancelled.
 func Serve(ctx context.Context, l Listener, cid uint32, publish func(string)) error {
-	tr := NewTracker()
+	return ServeFrom(ctx, l, cid, NewTracker(), publish)
+}
+
+// ServeFrom is Serve starting from tr's state, e.g. a ResumedTracker.
+func ServeFrom(ctx context.Context, l Listener, cid uint32, tr *Tracker, publish func(string)) error {
 	last := tr.Status()
 	publish(last)
 	for {

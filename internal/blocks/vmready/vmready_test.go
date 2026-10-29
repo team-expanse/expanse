@@ -1,6 +1,9 @@
 package vmready
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Message sequences as measured by nix/tests/vm-vsock-notify-probe.nix (systemd 260.2).
 var (
@@ -144,5 +147,16 @@ func TestReadyAloneCountsForAGuestThatReportsNoUnits(t *testing.T) {
 	})
 	if !tr.Ready() || !StatusTextReady(tr.Status()) {
 		t.Fatalf("status = %q, want ready", tr.Status())
+	}
+}
+
+func TestAResumedGuestIsReadyWithoutBooting(t *testing.T) {
+	tr := ResumedTracker()
+	if !tr.Ready() || !StatusTextReady(tr.Status()) || !strings.Contains(tr.Status(), "resumed") {
+		t.Errorf("resumed: ready=%v status=%q", tr.Ready(), tr.Status())
+	}
+	tr.Observe([]byte("X_SYSTEMD_SHUTDOWN=poweroff\nEXIT_STATUS=0"))
+	if tr.Ready() || StatusTextReady(tr.Status()) {
+		t.Errorf("a resumed guest powering off is still ready: %q", tr.Status())
 	}
 }

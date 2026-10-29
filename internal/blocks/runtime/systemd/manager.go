@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/expanse/expanse/internal/blocks/vm/vmstate"
 	"github.com/expanse/expanse/internal/blocks/vmready"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/reconcile"
@@ -73,6 +74,8 @@ type Manager struct {
 	SecretDir string
 	// Unseal reads one of a namespace's block secrets; nil delivers none.
 	Unseal func(ctx context.Context, ns, name string) ([]byte, error)
+	// StateDir holds suspended VMs' saved state; empty = vmstate.DefaultDir.
+	StateDir string
 }
 
 // DefaultSpecDir is the runtime directory expanse-block-run reads its
@@ -233,6 +236,9 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 	if err != nil {
 		return reconcile.Observed{}, errors.Wrap(err, errors.KindInternal, "systemd.Observe", "unit state")
 	}
+	if res.spec.Stopped {
+		return m.observeStopped(res.spec, unit, load, active, sub), nil
+	}
 	inSync := load != "not-found" && active == "active" && sub != "failed" &&
 		// Spec drift (e.g. a §5.2 in-place config change): the unit can
 		// be active while running the OLD config — the runtime helper
@@ -259,6 +265,34 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 		obs.Details["status"] = text
 	}
 	return obs, nil
+}
+
+// observeStopped reports a replica meant to be down: in sync once its unit is, with "suspended
+// <token>" when this node holds the save its spec names, else "stopped".
+func (m *Manager) observeStopped(s Spec, unit, load, active, sub string) reconcile.Observed {
+	down := active == "inactive" || active == "failed"
+	inSync := down && m.specOnDiskMatches(s)
+	h := reconcile.HealthDegraded
+	if inSync {
+		h = reconcile.HealthHealthy
+	}
+	status := "stopped"
+	if tok := vmstate.Token(m.stateDir(s)); tok != "" && tok == s.StateToken {
+		status = "suspended " + tok
+	}
+	return reconcile.Observed{
+		Exists: load != "not-found",
+		InSync: inSync,
+		Health: h,
+		Details: map[string]string{
+			"unit": unit, "load": load, "active": active, "sub": sub, "status": status,
+		},
+	}
+}
+
+// stateDir is the replica's saved-state directory.
+func (m *Manager) stateDir(s Spec) string {
+	return vmstate.Dir(m.StateDir, Instance(s.Namespace, s.Name, s.Index))
 }
 
 // Plan implements reconcile.Manager: resolve the closure (cache-checked)
@@ -296,7 +330,16 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 			return nil
 		},
 	})
-	if !o.InSync {
+	if !o.InSync && spec.Stopped {
+		acts = append(acts, reconcile.Action{
+			ResourceID:  res.id,
+			Kind:        "stop",
+			Description: "stop " + unit + " (suspended)",
+			Fn: func(ctx context.Context) error {
+				return m.API.Stop(ctx, unit)
+			},
+		})
+	} else if !o.InSync {
 		acts = append(acts, reconcile.Action{
 			ResourceID:  res.id,
 			Kind:        "start",
@@ -328,6 +371,9 @@ func (m *Manager) Delete(ctx context.Context, r reconcile.Resource) error {
 	_ = m.API.Stop(ctx, UnitNameForSpec(res.spec))
 	if err := os.RemoveAll(m.secretDir(res.spec)); err != nil {
 		return errors.Wrap(err, errors.KindInternal, "systemd.Delete", "credentials")
+	}
+	if err := vmstate.Remove(m.stateDir(res.spec)); err != nil {
+		return errors.Wrap(err, errors.KindInternal, "systemd.Delete", "saved state")
 	}
 	return m.removeSpec(res.spec)
 }

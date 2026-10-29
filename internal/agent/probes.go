@@ -98,13 +98,17 @@ func (a *Agent) probeJobs(ctx context.Context) []blockhealth.Job {
 		if proto.Unmarshal(be.Value, &b) != nil {
 			continue
 		}
+		var spec systemd.Spec
+		_, raw, err := reconcile.SplitType(string(e.Key), e.Value)
+		parsed := err == nil && json.Unmarshal(raw, &spec) == nil && spec.Name != ""
+		if spec.Stopped {
+			continue // suspended on purpose: nothing to probe, nothing to restart
+		}
 		host := a.lookupNodeIP(a.cfg.NodeID)
 		if j, ok := blockhealth.JobFor(&b, idx, host); ok {
 			jobs = append(jobs, j)
 		}
-		var spec systemd.Spec
-		_, raw, err := reconcile.SplitType(string(e.Key), e.Value)
-		if a.replicaUnits != nil && err == nil && json.Unmarshal(raw, &spec) == nil && spec.Name != "" {
+		if a.replicaUnits != nil && parsed {
 			if j, ok := blockhealth.LivenessJobFor(&b, idx, host, systemd.UnitNameForSpec(spec)); ok {
 				jobs = append(jobs, j)
 			}

@@ -8,9 +8,23 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const banner = `{"QMP":{"version":{"qemu":{"micro":1,"minor":1,"major":11},"package":""},"capabilities":["oob"]}}`
+
+// nextReply takes cmd's next reply: replies holds newline-separated ones, the last repeating.
+func nextReply(replies map[string]string, cmd string) string {
+	r, ok := replies[cmd]
+	if !ok {
+		return `{"return":{}}`
+	}
+	first, rest, more := strings.Cut(r, "\n")
+	if more {
+		replies[cmd] = rest
+	}
+	return first
+}
 
 // fakeQEMU answers the handshake, then each command from replies (default: an empty return).
 // It sends an event before each later reply, as QEMU may, and records the commands it got.
@@ -42,11 +56,7 @@ func fakeQEMU(t *testing.T, replies map[string]string) (string, <-chan []string)
 			if cmd.Execute != "qmp_capabilities" { // QEMU sends no events before the handshake
 				fmt.Fprintln(c, `{"event":"RTC_CHANGE","data":{"offset":0},"timestamp":{"seconds":1,"microseconds":0}}`)
 			}
-			reply, ok := replies[cmd.Execute]
-			if !ok {
-				reply = `{"return":{}}`
-			}
-			fmt.Fprintln(c, reply)
+			fmt.Fprintln(c, nextReply(replies, cmd.Execute))
 		}
 	}()
 	return sock, got
@@ -107,5 +117,62 @@ func TestPowerdownFailsWithoutQEMU(t *testing.T) {
 func TestSocketPathIsUnderRun(t *testing.T) {
 	if p := SocketPath("default-vm-0"); p != "/run/expblk-default-vm-0-qmp.sock" {
 		t.Errorf("SocketPath = %q", p)
+	}
+}
+
+func TestSavePausesTheGuestAndWritesItsStateToTheFile(t *testing.T) {
+	sock, got := fakeQEMU(t, map[string]string{
+		"query-migrate": `{"return":{"status":"active"}}` + "\n" + `{"return":{"status":"completed"}}`,
+	})
+	if err := Save(sock, "/var/lib/x/state.tmp", time.Second); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	want := []string{"qmp_capabilities", "stop", "migrate", "query-migrate", "query-migrate"}
+	if cmds := <-got; !slices.Equal(cmds, want) {
+		t.Errorf("commands = %q, want %q", cmds, want)
+	}
+}
+
+func TestAFailedSaveRunsTheGuestAgain(t *testing.T) {
+	sock, got := fakeQEMU(t, map[string]string{
+		"query-migrate": `{"return":{"status":"failed","error-desc":"No space left on device"}}`,
+	})
+	err := Save(sock, "/x", time.Second)
+	if err == nil || !strings.Contains(err.Error(), "No space left") {
+		t.Fatalf("Save = %v, want QEMU's reason", err)
+	}
+	if cmds := <-got; cmds[len(cmds)-1] != "cont" {
+		t.Errorf("commands = %q, want a cont last", cmds)
+	}
+}
+
+func TestWaitMigrationGivesUpAtTheTimeout(t *testing.T) {
+	sock, _ := fakeQEMU(t, map[string]string{"query-migrate": `{"return":{"status":"active"}}`})
+	m, err := Dial(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if err := m.WaitMigration(50*time.Millisecond, 10*time.Millisecond); err == nil {
+		t.Error("WaitMigration returned without the migration completing")
+	}
+}
+
+func TestLoadReadsTheStateThenRunsTheGuest(t *testing.T) {
+	sock, got := fakeQEMU(t, map[string]string{
+		"query-migrate": `{"return":{}}` + "\n" + `{"return":{"status":"completed"}}`,
+	})
+	if err := Load(sock, "/var/lib/x/state", time.Second); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"qmp_capabilities", "migrate-incoming", "query-migrate", "query-migrate", "cont"}
+	if cmds := <-got; !slices.Equal(cmds, want) {
+		t.Errorf("commands = %q, want %q", cmds, want)
+	}
+}
+
+func TestDialRetryWaitsForTheSocket(t *testing.T) {
+	if _, err := DialRetry(filepath.Join(t.TempDir(), "none.sock"), 100*time.Millisecond); err == nil {
+		t.Error("DialRetry found a socket that never appeared")
 	}
 }

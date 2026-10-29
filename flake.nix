@@ -353,6 +353,8 @@
 
           # Stream A, X1: a real vm/instance block deploy, not a probe.
           vm-instance = mkTest "vm-instance" ./nix/tests/vm-instance.nix;
+          # Phase 16 V2: suspend and resume a VM; a move while suspended boots it fresh.
+          vm-suspend-resume = mkTest "vm-suspend-resume" ./nix/tests/vm-suspend-resume.nix;
 
           # Stream B, X2 (the phase's decider)/X3: survives a hard node kill.
           vm-instance-failover = mkTest "vm-instance-failover" ./nix/tests/vm-instance-failover.nix;
