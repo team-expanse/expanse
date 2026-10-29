@@ -54,7 +54,8 @@ def guest(m, script):
 
 def size(m):
     """The guest's online vCPUs and MemTotal in MiB."""
-    cpus, kib = guest(m, "nproc; awk '/^MemTotal:/ {print $2}' /proc/meminfo").split()
+    # The netboot guest has no awk or grep; sh's read splits the line.
+    cpus, kib = guest(m, 'nproc; while read k v _; do if [ "$k" = MemTotal: ]; then echo "$v"; fi; done < /proc/meminfo').split()
     return int(cpus), int(kib) // 1024
 
 
