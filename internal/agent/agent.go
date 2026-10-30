@@ -217,7 +217,10 @@ type Agent struct {
 	volMu        sync.Mutex
 	volStop      func(cause error)
 	volClosed    bool
-	storageVG    atomic.Value // string: the VG reported as disk capacity
+	meshUp       chan struct{} // closed once the mesh has this node's overlay address; nil when no mesh runs
+	meshUpOnce   sync.Once
+	meshWait     time.Duration // how long volumes wait for meshUp; 0 means defaultMeshWait
+	storageVG    atomic.Value  // string: the VG reported as disk capacity
 	lastStore    *storage.NodeStorage
 	blockBridge  *wire.Bridge
 	replicaUnits unitStarter // nil when block replicas are disabled; liveness probes restart through it
@@ -763,6 +766,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	// DRBD volume node loop. Its stop demotes every unused primary, so shutdown waits for
 	// it, and before the store closes: releasing a volume lease needs the store.
 	stopVolumes := a.stopVolumes
+	if a.ctl != nil && !witness {
+		a.meshUp = make(chan struct{})
+	}
 	if a.volnode != nil {
 		node := a.volnode
 		a.startVolumes(ctx, func() volumeRunner { return node })
