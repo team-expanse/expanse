@@ -1025,6 +1025,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.status.Store("shutting-down")
 	stopVolumes(volumesCause)
 	a.recon.Stop()
+	// In-flight calls finish first (Serve stops gracefully, 5 s at most): `cluster leave` is answered
+	// by the agent its own removal stops.
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			a.logger.Warn("grpc server stopped with an error", "err", err)
+		}
+	case <-time.After(10 * time.Second):
+	}
 	if err := a.store.Close(); err != nil {
 		a.logger.Error("store close failed", "err", err)
 	}
