@@ -67,6 +67,10 @@ History before 1.0.0 is not recorded here.
 - A block with storage starts only once its volume is mounted on its node, and reads "waiting for
   volume mount" until then. A replica placed away from its fresh volume's first primary started
   before the primary moved to it, read RUNNING, and wrote to the node's own disk.
+- A db/postgres primary that restarts after a crash or reboot waits until its node holds the
+  primary lease again before it takes connections. It used to start as primary at once and accept
+  writes for about a second after another replica had already taken over; it now re-clones from
+  the new primary without ever starting.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

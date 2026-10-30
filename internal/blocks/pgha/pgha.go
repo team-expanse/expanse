@@ -88,6 +88,15 @@ func RolePath(mountPath string) string {
 	return filepath.Join(mountPath, RoleFile)
 }
 
+// HeldFile marks, relative to a replica's mount point, that this node holds the primary lease now.
+// The workload clears it before a restart as primary and waits for it to come back.
+const HeldFile = ".expanse-postgres/held"
+
+// HeldPath returns the held-mark path under a replica's mount point.
+func HeldPath(mountPath string) string {
+	return filepath.Join(mountPath, HeldFile)
+}
+
 // SlotName derives one replica's own physical replication slot name,
 // deterministically from its identity. Shared by the workload
 // (cmd/expanse-block-run's own pgSlotName, which creates the slot at
@@ -266,6 +275,7 @@ func (c *Controller) reconcileOne(ctx context.Context, ref string, inst Instance
 			c.mu.Lock()
 			delete(c.active, ref)
 			c.mu.Unlock()
+			c.clearHeld(ref, inst)
 			c.log(c.cfg.Logger.Warn, "pgha: lost the primary lease this node believed it held, re-deriving role", "block", ref)
 			// Fall through to the normal reconcile below: the role file
 			// still says "primary" (nothing has rewritten it yet), so
@@ -338,8 +348,10 @@ func (c *Controller) reclaimPrimary(ctx context.Context, ref string, inst Instan
 		c.mu.Lock()
 		c.active[ref] = held
 		c.mu.Unlock()
+		c.markHeld(ref, inst)
 		return
 	}
+	c.clearHeld(ref, inst)
 	c.demoteIfLostToAnother(ctx, ref, inst)
 }
 
@@ -518,6 +530,7 @@ func (c *Controller) maintainActive(ref string, inst Instance) {
 			c.log(c.cfg.Logger.Warn, "pgha: role file not yet writable, retrying next pass", "block", ref, "err", werr)
 		}
 	}
+	c.markHeld(ref, inst)
 	if c.cfg.Confirm == nil {
 		return
 	}
@@ -541,6 +554,7 @@ func (c *Controller) elect(ctx context.Context, ref string, inst Instance) {
 		c.mu.Lock()
 		c.active[ref] = held
 		c.mu.Unlock()
+		c.markHeld(ref, inst)
 		c.log(c.cfg.Logger.Info, "pgha: elected primary", "block", ref, "node", c.cfg.Self, "roleFile", RolePath(inst.MountPath))
 		return
 	}
@@ -572,6 +586,24 @@ func (c *Controller) elect(ctx context.Context, ref string, inst Instance) {
 		return
 	}
 	c.log(c.cfg.Logger.Info, "pgha: wrote replica role", "block", ref, "primary", l.Holder, "host", host, "roleFile", RolePath(inst.MountPath))
+}
+
+// markHeld tells the workload this node holds the primary lease; retried next pass on failure.
+func (c *Controller) markHeld(ref string, inst Instance) {
+	path := HeldPath(inst.MountPath)
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	if err := writeRoleFile(path, "held\n"); err != nil {
+		c.log(c.cfg.Logger.Warn, "pgha: held mark not yet writable, retrying next pass", "block", ref, "err", err)
+	}
+}
+
+// clearHeld withdraws the held mark once this node no longer holds the primary lease.
+func (c *Controller) clearHeld(ref string, inst Instance) {
+	if err := os.Remove(HeldPath(inst.MountPath)); err != nil && !os.IsNotExist(err) {
+		c.log(c.cfg.Logger.Warn, "pgha: clearing the held mark failed", "block", ref, "err", err)
+	}
 }
 
 // writeRoleFile creates the state directory and writes the role file
