@@ -330,6 +330,13 @@ func (s *Server) Delete(ctx context.Context, r *pb.DeleteBlockRequest) (*emptypb
 	if err != nil {
 		return nil, err
 	}
+	if r.GetDeleteVolumes() {
+		vols, err := s.volumeDeletes(ctx, ns, r.GetName(), &b)
+		if err != nil {
+			return nil, err
+		}
+		dropped = append(dropped, vols...)
+	}
 	if _, err := s.St.Txn(ctx, append([]store.Op{
 		{Kind: store.OpCheck, Key: k, Expect: e.Revision},
 		{Kind: store.OpDelete, Key: k},

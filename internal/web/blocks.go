@@ -392,7 +392,7 @@ func (s *Server) handleBlockDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	if _, err := s.blocks.Delete(r.Context(), &pb.DeleteBlockRequest{Namespace: ns, Name: name}); err != nil {
+	if _, err := s.blocks.Delete(r.Context(), &pb.DeleteBlockRequest{Namespace: ns, Name: name, DeleteVolumes: r.FormValue("volumes") == "1"}); err != nil {
 		http.Error(w, errText(err), httpStatus(err))
 		return
 	}
