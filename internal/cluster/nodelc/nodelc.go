@@ -19,6 +19,7 @@ package nodelc
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -406,18 +407,29 @@ const RestartHold = 2 * time.Minute
 func RestartKey(node string) string { return "/node/" + node + "/status/restart" }
 
 // restarting reports whether node's agent announced a restart after its last status, within
-// RestartHold of now. An announcement the node has since reported past is deleted.
+// RestartHold of now. An announcement the node has reported past, or that overran, is deleted.
 func (m *Monitor) restarting(ctx context.Context, node string, statusRev store.Revision, now time.Time) bool {
 	k := store.Key(RestartKey(node))
 	ann, err := m.St.Get(ctx, k)
 	if err != nil {
 		return false
 	}
-	if statusRev > ann.Revision {
-		_ = m.St.Delete(ctx, k, 0) // a failure retries on the next pass
-		return false
+	switch {
+	case statusRev > ann.Revision:
+		m.endRestartHold(ctx, k, "node's agent is back from its restart; its restart hold ends", node)
+	case now.Sub(time.Unix(0, ann.UpdatedAt)) >= RestartHold:
+		m.endRestartHold(ctx, k, "node's agent did not come back within its restart hold; it is judged as usual", node)
+	default:
+		return true
 	}
-	return now.Sub(time.Unix(0, ann.UpdatedAt)) < RestartHold
+	return false
+}
+
+// endRestartHold drops node's restart announcement and logs why; a failed delete retries next pass.
+func (m *Monitor) endRestartHold(ctx context.Context, k store.Key, msg, node string) {
+	if err := m.St.Delete(ctx, k, 0); err == nil && m.Logger != nil {
+		m.Logger.Info(msg, "node", node, "hold", RestartHold)
+	}
 }
 
 // Transition is one lifecycle state change made by the Monitor.
@@ -443,6 +455,8 @@ type Monitor struct {
 	Evict func(nodeID string)
 	// Now is the clock (fake in tests). Defaults to time.Now.
 	Now func() time.Time
+	// Logger, when set, records when a restart hold ends.
+	Logger *slog.Logger
 }
 
 // Run drives the monitor until ctx is canceled. Only the leader

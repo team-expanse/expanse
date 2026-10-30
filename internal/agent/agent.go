@@ -820,6 +820,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		mon := &nodelc.Monitor{
 			St:         a.ctl.store,
 			ThisNodeID: a.cfg.NodeID,
+			Logger:     a.logger,
 			Evict: func(nodeID string) {
 				// Clearing the status makes the node not ready, so the block controller replaces its placements.
 				a.logger.Warn("node failed; its placements will be replaced", "node", nodeID)

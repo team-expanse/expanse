@@ -1,9 +1,11 @@
 package nodelc_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -617,5 +619,47 @@ func TestMonitorEndsARestartHoldThatOverruns(t *testing.T) {
 	ts := m.Evaluate(ctx, base.Add(nodelc.RestartHold+time.Second))
 	if len(ts) != 1 || ts[0].To != nodelc.StateUnreachable {
 		t.Errorf("past the hold = %+v, want unreachable", ts)
+	}
+}
+
+func bufLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
+}
+
+func TestMonitorLogsTheEndOfARestartHold(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeStatus(t, ctx, st, "n1")
+	if _, err := st.Put(ctx, store.Key(nodelc.RestartKey("n1")), []byte("restarting")); err != nil {
+		t.Fatal(err)
+	}
+	logger, buf := bufLogger()
+	m := &nodelc.Monitor{St: st, ThisNodeID: "n0", Logger: logger}
+	writeStatus(t, ctx, st, "n1") // back
+	m.Evaluate(ctx, time.Now())
+	m.Evaluate(ctx, time.Now())
+	if got := buf.String(); strings.Count(got, "restart hold ends") != 1 || !strings.Contains(got, "node=n1") {
+		t.Errorf("log = %q, want one hold-end line for n1", got)
+	}
+}
+
+func TestMonitorLogsAndDropsARestartHoldThatOverruns(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeStatus(t, ctx, st, "n1")
+	base := time.Now()
+	if _, err := st.Put(ctx, store.Key(nodelc.RestartKey("n1")), []byte("restarting")); err != nil {
+		t.Fatal(err)
+	}
+	logger, buf := bufLogger()
+	m := &nodelc.Monitor{St: st, ThisNodeID: "n0", Logger: logger}
+	m.Evaluate(ctx, base.Add(nodelc.RestartHold+time.Second))
+	m.Evaluate(ctx, base.Add(nodelc.RestartHold+2*time.Second))
+	if got := buf.String(); strings.Count(got, "did not come back") != 1 || !strings.Contains(got, "node=n1") {
+		t.Errorf("log = %q, want one overrun line for n1", got)
+	}
+	if _, err := st.Get(ctx, store.Key(nodelc.RestartKey("n1"))); err == nil {
+		t.Error("an overrun restart announcement was kept")
 	}
 }
