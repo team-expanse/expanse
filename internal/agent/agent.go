@@ -848,15 +848,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	// the write itself will fail while degraded (no quorum = no
 	// commits), which is exactly what makes the leader mark us
 	// unreachable via §4.8.
-	go a.loop(ctx, 10*time.Second, "health", func() {
-		rep := a.runHealth(ctx)
-		rs, ok := a.store.(*raftstore.Store)
-		a.status.Store(statusFromHealth(rep.Overall))
-		key := store.Key(fmt.Sprintf("/nodes/%s/status", a.cfg.NodeID))
-		if _, err := a.store.Put(ctx, key, []byte(nodeStatusValue(rep, ok && rs.Degraded()))); err != nil {
-			a.logger.Error("write node status failed", "err", err)
-		}
-	})
+	// The first write retries each second until it lands: until then the leader counts the node as down.
+	go func() {
+		firstSuccess(ctx, time.Second, func() error { return a.publishStatus(ctx) })
+		a.loop(ctx, 10*time.Second, "health", func() {
+			if err := a.publishStatus(ctx); err != nil {
+				a.logger.Error("write node status failed", "err", err)
+			}
+		})
+	}()
 
 	// sd_notify: READY once the store is open, listeners are about to
 	// bind, and the first reconcile has been kicked off (the reconciler's
@@ -1138,6 +1138,27 @@ func (a *Agent) publishHostname(ctx context.Context, hostname string) {
 	}
 	if _, err := a.store.Put(ctx, key, []byte(hostname)); err != nil {
 		a.logger.Error("write node hostname failed", "err", err)
+	}
+}
+
+// publishStatus runs the health checks and writes the node's /status record.
+func (a *Agent) publishStatus(ctx context.Context) error {
+	rep := a.runHealth(ctx)
+	rs, ok := a.store.(*raftstore.Store)
+	a.status.Store(statusFromHealth(rep.Overall))
+	key := store.Key(fmt.Sprintf("/nodes/%s/status", a.cfg.NodeID))
+	_, err := a.store.Put(ctx, key, []byte(nodeStatusValue(rep, ok && rs.Degraded())))
+	return err
+}
+
+// firstSuccess calls fn now, then every retry until it succeeds or ctx ends.
+func firstSuccess(ctx context.Context, retry time.Duration, fn func() error) {
+	for fn() != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(retry):
+		}
 	}
 }
 
