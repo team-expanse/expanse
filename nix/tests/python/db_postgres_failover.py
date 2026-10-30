@@ -160,7 +160,8 @@ def start_ack_writer(vip):
         "i=0\n"
         "while true; do\n"
         "  i=$((i+1))\n"
-        f"  if PGPASSWORD={SUPER_PASSWORD} psql -h {vip} -p {PORT} -U postgres -d {DATABASE} "
+        # Bounded: an INSERT in flight on a connection to the crashed node otherwise hangs for minutes.
+        f"  if PGPASSWORD={SUPER_PASSWORD} PGCONNECT_TIMEOUT=5 timeout 15 psql -h {vip} -p {PORT} -U postgres -d {DATABASE} "
         f"-v ON_ERROR_STOP=1 -tAc \"INSERT INTO {STREAM_TABLE}(id, val) VALUES ($i, 'seq-' || $i)\" "
         "1>>/root/ack-writer.log 2>&1; then\n"
         "    echo \"$i\" > /root/last_acked\n"
@@ -190,7 +191,7 @@ def start_pgbench_load(vip):
         # No --exit-on-abort (the default): a client whose connection
         # dies mid-failover just aborts that one client, pgbench itself
         # keeps running the others and returns normally.
-        f"  PGPASSWORD={SUPER_PASSWORD} pgbench -h {vip} -p {PORT} -U postgres -d {DATABASE} "
+        f"  PGPASSWORD={SUPER_PASSWORD} PGCONNECT_TIMEOUT=5 timeout 40 pgbench -h {vip} -p {PORT} -U postgres -d {DATABASE} "
         "-c 4 -j 2 -T 20 >>/root/pgbench.log 2>&1\n"
         "done\n"
         "EOF\n"
