@@ -13,6 +13,11 @@ let
     capstoneSupport = false;
     enableDocs = false;
   };
+  # Garage 1.3.1 sets LMDB's MdbNoMetaSync even with metadata_fsync, so a crash could undo the last
+  # acknowledged write; skip it when fsync is on (upstream patch pending).
+  garage = pkgs.garage.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./patches/garage-lmdb-meta-sync.patch ];
+  });
   # One postgres serves db/postgres and media/immich, which needs these extensions.
   postgres = pkgs.postgresql_18.withPackages (ps: [ ps.pgvector ps.vectorchord ]);
   packages = with pkgs; {

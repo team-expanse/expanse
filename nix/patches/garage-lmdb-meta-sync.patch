@@ -1,0 +1,13 @@
+--- a/src/db/lmdb_adapter.rs
++++ b/src/db/lmdb_adapter.rs
+@@ -39,8 +39,9 @@
+ 	env_builder.max_readers(2048);
+ 	unsafe {
+ 		env_builder.flag(heed::flags::Flags::MdbNoRdAhead);
+-		env_builder.flag(heed::flags::Flags::MdbNoMetaSync);
+ 		if !opt.fsync {
++			// With metadata_fsync, a crash must not undo the last committed transaction.
++			env_builder.flag(heed::flags::Flags::MdbNoMetaSync);
+ 			env_builder.flag(heed::flags::Flags::MdbNoSync);
+ 		}
+ 	}

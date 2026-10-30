@@ -1,6 +1,6 @@
-# What a release's binary cache must hold: the installer's reference nodes and the grafana plugins,
-# built from this source tree exactly as an upgraded node builds them. release.sh keeps only the
-# paths cache.nixos.org lacks.
+# What a release's binary cache must hold: the installer's reference nodes, the grafana plugins and
+# the patched garage, built from this source tree exactly as an upgraded node builds them.
+# release.sh keeps only the paths cache.nixos.org lacks.
 { system ? builtins.currentSystem }:
 let
   src = ../.;
@@ -15,4 +15,5 @@ pkgs.linkFarm "expanse-release-cache-roots" [
   { name = "single"; path = (node "single").config.system.build.toplevel; }
   { name = "mirror"; path = (node "mirror").config.system.build.toplevel; }
   { name = "grafana-plugins"; path = pkgs.callPackage ./grafana-plugins.nix { }; }
+  { name = "storage-s3"; path = (import ./block-runtimes.nix { inherit pkgs; })."storage/s3"; }
 ]
