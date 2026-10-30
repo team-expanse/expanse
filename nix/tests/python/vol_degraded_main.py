@@ -5,7 +5,8 @@ hard-killed: the volume must report Degraded and keep taking writes. Once the no
 for the configured wait, the controller retires its node-id, the survivors forget it, and the
 spare node builds a replacement under a fresh id and syncs it: every replica ends UpToDate with the
 data written before and during the outage. The killed node comes back, finds it no longer holds
-a replica, removes it, and the volume is left as it was.
+a replica, removes it, and the volume keeps its data; being the spare now, it becomes the
+volume's diskless tiebreaker.
 
 Runs after cluster-common.py and vol_cluster.py.
 """
@@ -27,10 +28,15 @@ def state_of(m):
     return found["state"] if found else ""
 
 
+def peer_disks(primary, res):
+    """Each peer's name and disk state as the primary sees them."""
+    return dict(re.findall(r"^  (\S+) role:\S+.*\n\s+peer-disk:(\w+)", drbd_status(primary, res), re.M))
+
+
 def synced_with(primary, res, peer):
-    """The primary has exactly one peer, it is `peer`, and its disk is UpToDate."""
-    text = drbd_status(primary, res)
-    return text.count("peer-disk:") == 1 and text.count("peer-disk:UpToDate") == 1 and f"\n  {peer.name} " in text
+    """`peer` is the primary's only peer with a disk, and it is UpToDate; a diskless tiebreaker may join."""
+    disks = {name: d for name, d in peer_disks(primary, res).items() if d != "Diskless"}
+    return disks == {peer.name: "UpToDate"}
 
 
 def has_lv(m, res):
@@ -90,8 +96,9 @@ with subtest("the returning node removes its stale replica and the volume is unc
     victim.wait_for_unit("expansed.service", timeout=120)
     wait_agent_ready(victim)
     wait_for(lambda: not has_lv(victim, res), "the returned node to drop its replica", 180)
-    assert victim.execute(f"drbdadm status {res} 2>&1")[0] != 0, "the returned node still runs the resource"
-    time.sleep(10)
+    # The returned node is now the volume's spare, so it becomes its diskless tiebreaker.
+    wait_for(lambda: peer_disks(primary, res).get(victim.name) == "Diskless", "the returned node to be the tiebreaker", 120)
+    assert not has_lv(victim, res), "the tiebreaker got a backing LV"
     assert synced_with(primary, res, spare), drbd_status(primary, res)
     assert state_of(primary) == "healthy" and row(primary)["nodes"] == sorted([primary.name, spare.name])
     assert checksum(primary, dev, SIZE_MIB) == ref, "the volume changed while the old node came back"
