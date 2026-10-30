@@ -684,6 +684,36 @@ func TestTheWorkloadsStatusTextIsRecorded(t *testing.T) {
 	}
 }
 
+// waitingManager is out of sync with nothing to do yet, like a replica waiting on its mount.
+type waitingManager struct{ fakeManager }
+
+func (m *waitingManager) Observe(ctx context.Context, r Resource) (Observed, error) {
+	no := false
+	return Observed{Exists: true, Health: HealthDegraded, Ready: &no, Details: map[string]string{"status": "waiting for volume mount /m"}}, nil
+}
+
+func (m *waitingManager) Plan(ctx context.Context, r Resource, o Observed) ([]Action, error) {
+	return nil, nil
+}
+
+func TestAWaitingResourceRecordsWhatItWaitsFor(t *testing.T) {
+	s := testStore(t)
+	r := New(s, Options{NodeID: "n1", Logger: testLogger(), Period: time.Hour})
+	r.Register(&waitingManager{fakeManager: fakeManager{converged: map[string]bool{}}})
+	putDesired(t, s, "n1", "web", "")
+	if err := r.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e, err := s.Get(context.Background(), r.StatusPrefix()+"web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := string(e.Value)
+	if RecordedStatusText(res) != "waiting for volume mount /m" || !contains(res, "health=degraded") {
+		t.Errorf("resource status = %q, want degraded and the wait's status text", res)
+	}
+}
+
 func TestRetireTearsDownEveryResourceDependentsFirstAndFreezes(t *testing.T) {
 	r, s, m := newDeletingReconciler(t)
 	m.deps = map[string][]string{"unit": {"mount"}}

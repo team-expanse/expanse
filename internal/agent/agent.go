@@ -481,6 +481,7 @@ func New(cfg Config) (*Agent, error) {
 								fallback: &blockBuilder{driver: nixDriver, flakeRef: cfg.BlocksFlakeRef, logger: logger},
 							},
 						})
+						mgr.Mounted = systemd.MountPoint
 						if sealer != nil {
 							mgr.Unseal = sealer.Get
 						}

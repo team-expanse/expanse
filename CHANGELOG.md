@@ -64,6 +64,9 @@ History before 1.0.0 is not recorded here.
 - After a boot, a node brings up its volumes only once the mesh has its overlay address, which
   DRBD binds to. The first attempt used to fail with "IP ... not found on this host" and wait for
   the next pass.
+- A block with storage starts only once its volume is mounted on its node, and reads "waiting for
+  volume mount" until then. A replica placed away from its fresh volume's first primary started
+  before the primary moved to it, read RUNNING, and wrote to the node's own disk.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

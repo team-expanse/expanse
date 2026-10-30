@@ -535,7 +535,7 @@ func (r *Reconciler) processResource(ctx context.Context, res Resource) *Status 
 	if len(actions) == 0 {
 		// Not in sync but nothing to do (manager waiting on external state).
 		r.markSuccess(res.ID())
-		st.Health, st.Ready = obs.Health, obs.Ready
+		st.Health, st.Ready, st.Text = obs.Health, obs.Ready, obs.Details["status"]
 		st.InSync = true
 		return st
 	}
