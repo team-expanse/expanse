@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,6 +66,30 @@ func TestSystemStoppingReadsSystemdsState(t *testing.T) {
 	for out, want := range map[string]bool{"stopping\n": true, "running\n": false, "degraded\n": false} {
 		if got := systemStoppingFrom(out); got != want {
 			t.Errorf("%q: %v, want %v", out, got, want)
+		}
+	}
+}
+
+func TestASaveQEMUNeverReadIsKeptForTheNextStart(t *testing.T) {
+	exited := make(chan struct{})
+	close(exited)
+	dir := savedAs(t, "r5")
+	kept, err := resumeFrom(dir, func() error { return errors.New("connection refused") }, exited)
+	if !kept || err == nil || vmstate.Token(dir) != "r5" {
+		t.Errorf("qemu exited before loading: kept=%v err=%v token %q, want the save kept", kept, err, vmstate.Token(dir))
+	}
+}
+
+func TestASaveQEMUTriedToLoadIsDeleted(t *testing.T) {
+	running := make(chan struct{})
+	for _, loadErr := range []error{nil, errors.New("migration failed")} {
+		dir := savedAs(t, "r5")
+		kept, err := resumeFrom(dir, func() error { return loadErr }, running)
+		if kept || err != loadErr {
+			t.Errorf("load %v: kept=%v err=%v", loadErr, kept, err)
+		}
+		if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+			t.Errorf("load %v: the save survived, so it could load twice", loadErr)
 		}
 	}
 }

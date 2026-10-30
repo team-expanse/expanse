@@ -1427,6 +1427,9 @@ func runVM(ctx context.Context, instance, name string, resumable []string, args 
 	// qemu has its own inherited copy of the fd (via fork/exec) as soon
 	// as Start returns; closing our own copy here does not affect it.
 	_ = tap.Close()
+	exited := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = cmd.Wait(); close(exited) }()
 	fmt.Printf("expanse-block-run: vm %s booting %s (mac=%s cpus=%d/%d memMiB=%d/%d)\n",
 		instance, dev, mac, shape.CPUs, shape.MaxCPUs, shape.MemMiB, shape.MaxMemMiB)
 	resizer := newVMResizer(instance, shape, qmpSock, qgaSock)
@@ -1434,12 +1437,16 @@ func runVM(ctx context.Context, instance, name string, resumable []string, args 
 	resizer.save(shape)
 	tracker := vmready.NewTracker()
 	if resume {
-		err := qmp.Load(qmpSock, vmstate.StatePath(stateDir), saveTimeout)
-		_ = vmstate.Remove(stateDir) // loaded or not, it is never loaded twice
+		kept, err := resumeFrom(stateDir, func() error {
+			return qmp.Load(qmpSock, vmstate.StatePath(stateDir), saveTimeout)
+		}, exited)
 		if err != nil {
 			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			<-exited
 			_ = deleteLink(tapName)
+			if kept {
+				return fmt.Errorf("vm/instance: qemu exited before resuming, so the next start tries again: %w", err)
+			}
 			return fmt.Errorf("vm/instance: resume failed, so the next start boots it fresh: %w", err)
 		}
 		fmt.Printf("expanse-block-run: vm %s resumed from its saved state\n", instance)
@@ -1459,7 +1466,8 @@ func runVM(ctx context.Context, instance, name string, resumable []string, args 
 	} else if cfgStr(cfg, "guestReady") == "none" {
 		publishGuestStatus(instance, vmready.ReadyPrefix+" not waited on (guestReady: none)")
 	}
-	err = cmd.Wait()
+	<-exited
+	err = waitErr
 	_ = deleteLink(tapName)
 	if ctx.Err() != nil {
 		return nil //nolint:nilerr // deliberate stop

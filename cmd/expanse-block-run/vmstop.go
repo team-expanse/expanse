@@ -109,6 +109,20 @@ func resumeOrDiscard(dir string, tokens ...string) bool {
 	return false
 }
 
+// resumeFrom runs load and then deletes the save in dir, so it never loads twice; when load fails
+// because qemu had already exited (it never read the save), the save is kept for the next start.
+func resumeFrom(dir string, load func() error, exited <-chan struct{}) (kept bool, err error) {
+	if err = load(); err != nil {
+		select {
+		case <-exited:
+			return true, err
+		default:
+		}
+	}
+	_ = vmstate.Remove(dir)
+	return false, err
+}
+
 // resumeTokens are the saves s may resume: its suspension's, and one kept for its placement.
 func resumeTokens(s *spec) []string {
 	tokens := []string{s.StateToken}
