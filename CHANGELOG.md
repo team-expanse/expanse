@@ -47,8 +47,8 @@ History before 1.0.0 is not recorded here.
   to 5 minutes, and its status says it crashed and when the next start is. qemu exits cleanly
   when a guest panics, so the agent used to start it again every 10 seconds, forever.
 - storage/s3 no longer loses the last object it acknowledged when its node crashes. Expanse's
-  Garage skips LMDB's `MdbNoMetaSync` while `metadata_fsync` is on (patched until upstream takes
-  it), and the release cache carries the patched build.
+  Garage skips LMDB's `MdbNoMetaSync` while `metadata_fsync` is on (an Expanse patch), and the
+  release cache carries the patched build.
 - A node no longer gives up its leases when the raft leader crashes. A lease renewal that failed
   while the cluster elected a new leader counted as a lost lease, so each volume primary on the
   other nodes stepped down and unmounted under its running block (a db/postgres replica stopped
