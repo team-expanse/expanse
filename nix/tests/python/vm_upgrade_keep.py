@@ -126,6 +126,6 @@ with subtest("a node reboot saves the VM, keeps it placed, and the next boot res
     assert host_of(other)[0] == host_name, "the VM moved"
     host.succeed(f"journalctl -b -1 -u {UNIT} --no-pager | grep -q \"saved for the node's shutdown\"")
     host.succeed(f"journalctl -b 0 -u {UNIT} --no-pager | grep -q 'resumed from its saved state'")
-    host.succeed(f"journalctl -b -1 -u expansed --no-pager | grep -q 'agent stopping'")
+    host.succeed("journalctl -b -1 -u expansed --no-pager | grep -q 'agent stopping'")
 
 print("VM-UPGRADE-KEEP DONE")
