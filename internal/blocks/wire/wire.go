@@ -364,7 +364,7 @@ func nodeLifecycle(ctx context.Context, st storeReader, id string) (lifecycle, e
 	if err := json.Unmarshal(e.Value, &r); err != nil {
 		return lifecycle{}, errors.Wrap(err, errors.KindInternal, "wire.nodeLifecycle", "unmarshal node record")
 	}
-	if r.State == "unreachable" || r.State == "failed" {
+	if (r.State == "unreachable" || r.State == "failed") && !reportedSince(ctx, st, id, e.Revision) {
 		return lifecycle{}, nil
 	}
 	return lifecycle{
@@ -372,6 +372,13 @@ func nodeLifecycle(ctx context.Context, st storeReader, id string) (lifecycle, e
 		cordoned:  r.Cordoned,
 		draining:  r.Draining,
 	}, nil
+}
+
+// reportedSince reports whether node id wrote its status after rev, its detector mark: it is back,
+// though the detector has not cleared the mark yet.
+func reportedSince(ctx context.Context, st storeReader, id string, rev store.Revision) bool {
+	e, err := st.Get(ctx, store.Key("/nodes/"+id+"/status"))
+	return err == nil && e.Revision > rev
 }
 
 // overcommitConfig reads /config/scheduler if present, else defaults

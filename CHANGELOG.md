@@ -48,9 +48,10 @@ History before 1.0.0 is not recorded here.
 - An update that raises a block's CPU, memory or storage requests is refused when a node already
   running one of its replicas hasn't room for the increase. Replicas update in place (and a VM now
   resizes live), so the scheduler never checked it, and a node could be committed past its capacity.
-- A node that comes back from a crash reports in at once, instead of up to 10 seconds after its
-  agent starts. Until it did, the cluster still counted it as down, so a replica whose 30-second
-  grace ran out in that gap was stopped for about 10 seconds and then started again.
+- A node that comes back from a crash counts as up as soon as it reports in. Its agent used to
+  report only 10 seconds after starting, and the leader cleared its "unreachable" mark up to
+  5 seconds after that. A replica whose 30-second grace ran out in that gap was stopped and
+  started again.
 - Only the raft leader turns placements into each node's desired state, as designed. Every node
   did, so followers raced the leader with writes and deletes of their own. Each removal is now
   logged.

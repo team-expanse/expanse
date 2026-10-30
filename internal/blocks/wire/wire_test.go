@@ -295,11 +295,11 @@ func TestNodesViewCordonAndDrain(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	for _, pair := range [][2]string{
+		{"/nodes/n2/status", "idle"}, // before the mark: it has not reported since
 		{"/nodes/n1", `{"id":"n1","cordoned":true}`},
 		{"/nodes/n2", `{"id":"n2","cordoned":true,"state":"unreachable"}`},
 		{"/nodes/n3", `{"id":"n3","cordoned":true,"draining":true}`},
 		{"/nodes/n1/status", "idle"},
-		{"/nodes/n2/status", "idle"},
 		{"/nodes/n3/status", "idle"},
 	} {
 		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
@@ -391,5 +391,34 @@ func TestLargeVMPlacesOnPublishedCapacity(t *testing.T) {
 	cands, reasons := scheduler.Filter(views, scheduler.ReplicaRequest{Block: blk}, cfg)
 	if len(cands) != 1 {
 		t.Fatalf("large VM not placeable: %v", reasons)
+	}
+}
+
+// A node marked unreachable that has reported since is back at once, not on the detector's next
+// pass: until then its replicas' grace keeps running and they can be stopped (2->0->2 flip).
+func TestNodesViewANodeThatReportedSinceItsMarkIsReady(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	for _, pair := range [][2]string{
+		{"/nodes/back/status", "idle"},
+		{"/nodes/back", `{"id":"back","state":"unreachable"}`},
+		{"/nodes/back/status", "health=healthy schedulable=true"},
+		{"/nodes/gone/status", "idle"},
+		{"/nodes/gone", `{"id":"gone","state":"unreachable"}`},
+	} {
+		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
+			t.Fatalf("put %s: %v", pair[0], err)
+		}
+	}
+	views, _, err := Nodes(st)(ctx)
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	ready := map[string]bool{}
+	for _, v := range views {
+		ready[v.ID] = v.Ready
+	}
+	if !ready["back"] || ready["gone"] {
+		t.Errorf("ready = %v, want back ready (reported after its mark) and gone not", ready)
 	}
 }
