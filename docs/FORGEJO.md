@@ -107,8 +107,9 @@ together to a survivor, and Forgejo starts there on the same volume. Pushes, clo
 in flight fail; clients retry against the same address and see the same SSH host key, so `ssh`
 raises no warning. Logged-in users stay logged in.
 
-Nothing Forgejo acknowledged is lost. The block sets git's `core.fsync=all`, so a push is on the
-volume before `git push` reports success, and SQLite syncs every transaction. DRBD replicates each
+Nothing Forgejo acknowledged is lost. The block sets git's `core.fsync=all` and mounts its
+volume `dirsync` (git syncs a ref's file but not the directory it renames it into), so a push is
+on the volume before `git push` reports success, and SQLite syncs every transaction. DRBD replicates each
 write to the other nodes before it completes. Files Forgejo writes without syncing, such as
 sessions and avatars, are flushed every 2 s; a session created in the last 2 s before a crash may
 need a new login.

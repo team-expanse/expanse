@@ -23,6 +23,7 @@ type fakeHost struct {
 	blank    map[string]bool   // device → first MiB is all zero
 	unread   bool              // cmp cannot read the device
 	mounted  map[string]string // mount point → device
+	options  map[string]string // mount point → findmnt OPTIONS
 	busy     bool              // a plain umount fails
 	devBytes uint64
 	fsBytes  uint64
@@ -33,6 +34,7 @@ func newHost() *fakeHost {
 		fsType:   map[string]string{},
 		blank:    map[string]bool{dev: true},
 		mounted:  map[string]string{},
+		options:  map[string]string{},
 		devBytes: 1 << 30,
 		fsBytes:  1 << 30,
 	}
@@ -60,12 +62,22 @@ func (h *fakeHost) Run(_ context.Context, name string, args ...string) (string, 
 	case "mkfs.ext4":
 		h.fsType[args[1]] = "ext4"
 	case "findmnt":
-		if d, ok := h.mounted[args[len(args)-3]]; ok {
-			return d + "\n", nil
+		mp := args[len(args)-3]
+		d, ok := h.mounted[mp]
+		switch {
+		case !ok:
+			return "", exit(1)
+		case args[len(args)-1] == "OPTIONS":
+			return "rw," + h.options[mp] + "\n", nil
 		}
-		return "", exit(1)
+		return d + "\n", nil
 	case "mount":
+		if opts, ok := strings.CutPrefix(args[1], "remount,"); ok {
+			h.options[args[2]] += "," + opts
+			break
+		}
 		h.mounted[args[3]] = args[2]
+		h.options[args[3]] = args[1]
 	case "umount":
 		if args[0] == "-l" {
 			delete(h.mounted, args[1])

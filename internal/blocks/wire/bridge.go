@@ -176,6 +176,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 					Name:       st.GetName(),
 					MountPath:  st.GetMountPath(),
 					Filesystem: storageFilesystem(st),
+					Options:    volumeMountOptions[blk.GetSpec().GetType()],
 				})
 				akey := resourcePrefix + p.GetNodeId() + "/resources/" + expmount.Type + ":" + v.id
 				want[akey] = append([]byte("type: "+expmount.Type+"\n"), ares...)
@@ -412,6 +413,12 @@ var rootBlockTypes = map[string]bool{
 	"vm/instance":  true,
 	// LVM snapshots and their devices, and the agent socket.
 	"util/restic-backup": true,
+}
+
+// volumeMountOptions are extra mount options per block type. git renames refs into
+// place without fsyncing the directory, so Forgejo needs dirsync to keep an acked push.
+var volumeMountOptions = map[string][]string{
+	"dev/forgejo": {"dirsync"},
 }
 
 // storageFilesystem is the mount.Resource filesystem for a storage entry:
