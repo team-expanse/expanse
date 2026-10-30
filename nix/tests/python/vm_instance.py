@@ -187,14 +187,16 @@ with subtest("a shrink below the memory it booted with reaches the VM as a reloa
     host.wait_until_succeeds(f"expanse ctl vm exec {NAME} -- {SW}/true", timeout=180)
     host.succeed(f"test -e /run/expanse/block-live/default-{NAME}-0")  # the runtime serves reloads
     cursor = host.succeed("journalctl --show-cursor -n0 | tail -1 | cut -d' ' -f3").strip()
-    deploy(n1, NAME, MANIFEST.replace("memory: 2Gi", "memory: 1Gi"))
+    # 1792Mi: the netboot guest unpacks a ~1.2 GiB initramfs, so 1Gi panics before userspace.
+    deploy(n1, NAME, MANIFEST.replace("memory: 2Gi", "memory: 1792Mi"))
 
     argv = f"tr '\\0' ' ' < /proc/$(pgrep -P $(systemctl show -P MainPID {unit_of(NAME)}) qemu)/cmdline"
-    host.wait_until_succeeds(f"systemctl is-active {unit_of(NAME)} && {argv} | grep -q -- '-m 1024M,maxmem=2048M '", timeout=300)
+    host.wait_until_succeeds(f"systemctl is-active {unit_of(NAME)} && {argv} | grep -q -- '-m 1792M,maxmem=3584M '", timeout=300)
     journal = host.succeed(f"journalctl --after-cursor='{cursor}' -u {unit_of(NAME)} --no-pager")
     assert "restarting it on its new spec" in journal, f"no reload:\n{journal}"
     assert "reboot: Power down" in journal, f"the guest did not power off:\n{journal}"
-    others[0].wait_until_succeeds(f"ping -c1 -W2 {GUEST_IP}", timeout=180)
+    # The guest agent, not ping: another node may answer for the guest's IP while it boots.
+    host.wait_until_succeeds(f"expanse ctl vm exec {NAME} -- {SW}/true", timeout=300)
     wait_phase(n1, NAME, ["RUNNING"], 300)
 
 print("VM-INSTANCE DONE")
