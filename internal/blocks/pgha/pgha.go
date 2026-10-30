@@ -477,6 +477,16 @@ func (c *Controller) retargetIfPrimaryMoved(ctx context.Context, ref string, ins
 	// bootstrapped yet, so nothing needs retargeting -- the workload's
 	// own next bootstrap attempt reads this fresh and clones directly
 	// from the new primary.
+	// An ex-primary's data (no standby.signal) has no standby to retarget; demoting it makes the
+	// workload wipe and re-clone, where a Reconfigure would fail forever against a stopped postgres.
+	if hasPrimaryData(inst.MountPath) {
+		if werr := writeRoleFile(RolePath(inst.MountPath), fmt.Sprintf("replica %s %d\n", host, inst.Port)); werr != nil {
+			c.log(c.cfg.Logger.Error, "pgha: demoting an old primary's data but role file write failed, retrying next pass", "block", ref, "err", werr)
+			return
+		}
+		c.log(c.cfg.Logger.Warn, "pgha: this replica holds an old primary's data, demoting it to re-clone", "block", ref, "primary", l.Holder, "host", host)
+		return
+	}
 	if !hasBootstrapped(inst.MountPath) {
 		if werr := writeRoleFile(RolePath(inst.MountPath), fmt.Sprintf("replica %s %d\n", host, inst.Port)); werr != nil {
 			c.log(c.cfg.Logger.Error, "pgha: primary moved before this replica ever bootstrapped, but role file write failed, retrying next pass", "block", ref, "err", werr)
@@ -513,6 +523,15 @@ const pgdataSubdir = "pgdata"
 func hasBootstrapped(mountPath string) bool {
 	_, err := os.Stat(filepath.Join(mountPath, pgdataSubdir, "PG_VERSION"))
 	return err == nil
+}
+
+// hasPrimaryData reports whether a replica's PGDATA exists and is set up as a primary (no standby.signal).
+func hasPrimaryData(mountPath string) bool {
+	if !hasBootstrapped(mountPath) {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(mountPath, pgdataSubdir, "standby.signal"))
+	return os.IsNotExist(err)
 }
 
 // maintainActive keeps the on-disk role file in step with a lease this
@@ -637,11 +656,41 @@ func writeRoleFile(path, content string) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+	if err := writeSynced(tmp, []byte(content)); err != nil {
 		return err
 	}
 	if err := os.Chmod(tmp, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+// writeSynced writes and fsyncs a file, so a crash can't leave a renamed but empty decision.
+func writeSynced(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// syncDir fsyncs a directory so a rename in it survives a crash.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

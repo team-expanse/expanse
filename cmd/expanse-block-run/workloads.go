@@ -1160,6 +1160,7 @@ func watchForDemotion(ctx context.Context, roleFile, pgdata string, interval tim
 			continue
 		}
 		demoted.Store(true)
+		fmt.Printf("expanse-block-run: the role file names another primary; stopping postgres and wiping %s\n", pgdata)
 		// Best effort: even a failed stop still gets the directory wiped
 		// (postgres exiting on SIGTERM from execWorkload's own eventual
 		// ctx-cancel teardown, or already dead, either way) and the

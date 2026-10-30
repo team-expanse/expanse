@@ -88,6 +88,23 @@ History before 1.0.0 is not recorded here.
 
 ### Fixed
 
+- An update that raises a block's CPU, memory or storage requests is refused when a node already
+  running one of its replicas hasn't room for the increase. Replicas update in place (and a VM now
+  resizes live), so the scheduler never checked it, and a node could be committed past its capacity.
+- A node that comes back from a crash counts as up as soon as it reports in. Its agent used to
+  report only 10 seconds after starting, and the leader cleared its "unreachable" mark up to
+  5 seconds after that. A replica whose 30-second grace ran out in that gap was stopped and
+  started again.
+- Only the raft leader turns placements into each node's desired state, as designed. Every node
+  did, so followers raced the leader with writes and deletes of their own. Each removal is now
+  logged.
+- `expanse ctl block apply` reports why an update of an existing block was refused. It used to
+  fall back to creating the block and print only that it already existed.
+- A db/postgres primary that restarts after a crash or reboot waits until its node holds the
+  primary lease again before it takes connections. It used to start as primary at once and accept
+  writes for about a second after another replica had already taken over; it now re-clones from
+  the new primary without ever starting, also when a crash left its role file empty or stale
+  (pgha used to retarget such data as a standby, forever). The role file is now fsynced.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

@@ -46,6 +46,7 @@ func awaitPrimaryLease(ctx context.Context, stateDir, pgdata string, timeout, in
 	fmt.Println("expanse-block-run: postgres waits for this node to hold the primary lease")
 	err := waitForPrimaryLease(ctx, stateDir, timeout, interval)
 	if errors.Is(err, errPGDemoted) {
+		fmt.Printf("expanse-block-run: the primary lease moved to another replica; wiping %s to re-clone\n", pgdata)
 		if rerr := os.RemoveAll(pgdata); rerr != nil {
 			return fmt.Errorf("%w; wiping pgdata: %w", err, rerr)
 		}

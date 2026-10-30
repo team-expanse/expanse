@@ -113,6 +113,7 @@ func (a *Agent) initStorage(cfg Config, st store.Store, logger *slog.Logger) err
 	a.splitMarks = marks
 	a.drbd = drbd.New()
 	a.mounts = mount.New(nil, a.drbd, "")
+	a.mounts.Log = logger
 	a.recon.Register(a.mounts)
 	a.drbdAlloc = drbd.NewAllocator(st, drbd.DefaultMinors, drbd.DefaultPorts)
 	a.volctl = volctlc.New(volctlc.Options{

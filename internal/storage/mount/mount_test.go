@@ -1,8 +1,10 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -403,5 +405,22 @@ func TestLoadValidatesTheRequiredFields(t *testing.T) {
 	}
 	if _, err := m.Load("x", []byte(`{"volId":"v"}`)); err == nil {
 		t.Fatal("mountPath required")
+	}
+}
+
+// An unmount ends the workload's view of its data, so it is always logged.
+func TestReleaseLogsTheUnmount(t *testing.T) {
+	h := newHost()
+	m := manager(h, drbd.RolePrimary)
+	var buf bytes.Buffer
+	m.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	if err := m.attach(context.Background(), spec("ext4")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Release(context.Background(), volID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "unmounted volume") || !strings.Contains(buf.String(), volID) {
+		t.Errorf("log = %q, want the unmount", buf.String())
 	}
 }

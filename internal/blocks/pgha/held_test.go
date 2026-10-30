@@ -2,7 +2,9 @@ package pgha
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/expanse/expanse/internal/cluster/lease"
@@ -69,5 +71,44 @@ func TestADemotedPrimaryClearsItsHeldMark(t *testing.T) {
 	c.Pass(context.Background(), map[string]Instance{ref: {BlockRef: ref, MountPath: mount, Port: 5432}})
 	if heldMarked(mount) {
 		t.Fatal("a primary that lost its lease to another node kept its held mark")
+	}
+}
+
+// An ex-primary's data (no standby.signal) can't be retargeted with no postgres running:
+// pgha must demote it so the workload's lease wait wipes and re-clones (svr1, cbc61d5).
+func TestAnExPrimaryWhoseRoleFileIsNotPrimaryIsDemotedNotRetargeted(t *testing.T) {
+	for name, role := range map[string]string{"empty": "", "stale replica": "replica 10.42.0.7 5432\n"} {
+		t.Run(name, func(t *testing.T) {
+			st := newTestStore(t)
+			ref := "default/pg"
+			mount := t.TempDir()
+			seedBootstrapped(t, mount)
+			if err := os.Remove(filepath.Join(mount, pgdataSubdir, "standby.signal")); err != nil {
+				t.Fatal(err) // a primary's data
+			}
+			if err := writeRoleFile(RolePath(mount), role); err != nil {
+				t.Fatal(err)
+			}
+			held, err := lease.NewManager(st, "n2").TryAcquire(context.Background(), LeaseName(ref), LeaseTTL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer held.Abandon()
+			reconfigured := false
+			c := New(Config{
+				Leases:      lease.NewManager(st, "n1"),
+				Self:        "n1",
+				ResolveAddr: func(string) string { return "10.42.0.9" },
+				Reconfigure: func(Instance, string) error { reconfigured = true; return errors.New("no local postgres") },
+			})
+
+			c.Pass(context.Background(), map[string]Instance{ref: {BlockRef: ref, MountPath: mount, Port: 5432}})
+			if reconfigured {
+				t.Error("retargeted an ex-primary's data as if it were a standby")
+			}
+			if got, want := readRole(t, mount), "replica 10.42.0.9 5432\n"; got != want {
+				t.Errorf("role file = %q, want %q", got, want)
+			}
+		})
 	}
 }
