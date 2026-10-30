@@ -104,14 +104,15 @@
 {{if .Edit}}
 <section class="card card-danger">
   <div class="card-head"><h2><svg class="icon"><use href="#i-trash"/></svg>Delete this block</h2></div>
-  <p>Every replica is stopped and removed. Volumes the block used are not deleted.</p>
+  <p>Every replica is stopped and removed. Volumes the block used are kept unless you delete them too.</p>
   <div class="form-actions"><button class="btn btn-danger" type="button" data-confirm="confirm-delete"><svg class="icon"><use href="#i-trash"/></svg>Delete {{.Editing}}</button></div>
 </section>
 <form id="delete-form" hx-post="/blocks/{{.Editing}}/delete" hx-swap="none"></form>
 <dialog id="confirm-delete" class="dialog" data-submit="#delete-form">
   <form method="dialog">
     <h2>Delete {{.Editing}}?</h2>
-    <p>Every replica is stopped and removed. Volumes the block used are not deleted.</p>
+    <p>Every replica is stopped and removed. Volumes the block used are kept unless you delete them too.</p>
+    {{if .Storage}}<label class="field field-check"><span><input type="checkbox" name="volumes" value="1" form="delete-form"> <span class="field-label">Also delete its volumes and their data ({{range $i, $s := .Storage}}{{if $i}}, {{end}}{{$s.Name}}{{end}})</span></span></label>{{end}}
     <div class="dialog-actions">
       <button class="btn btn-ghost" value="cancel">Cancel</button>
       <button class="btn btn-danger" value="confirm">Delete block</button>

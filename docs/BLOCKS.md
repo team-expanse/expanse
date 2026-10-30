@@ -247,7 +247,12 @@ $ expanse ctl block delete web
 
 All replica units are stopped and removed, their cgroups emptied, the
 desired-state resources and status keys are deleted, and the
-resources return to the nodes' free pools. Nothing lingers.
+resources return to the nodes' free pools.
+
+The volumes the block's `storage` entries created stay, with their data: a block
+applied again under the same name and storage names attaches to them. To delete
+them as well, pass `--volumes` (the web UI's delete dialog has the same box), or
+delete them later with `expanse ctl volume delete`.
 
 ## Block types (the catalog)
 

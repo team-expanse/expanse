@@ -55,6 +55,9 @@ History before 1.0.0 is not recorded here.
 - Only the raft leader turns placements into each node's desired state, as designed. Every node
   did, so followers raced the leader with writes and deletes of their own. Each removal is now
   logged.
+- Deleting a block can delete its volumes too: `expanse ctl block delete --volumes`, or the box in
+  the web UI's delete dialog. They stay by default, and `docs/BLOCKS.md` now says so; it claimed
+  nothing was left behind.
 - `expanse ctl block apply` reports why an update of an existing block was refused. It used to
   fall back to creating the block and print only that it already existed.
 - A rolling update no longer counts retired placements as live, which could remove the running

@@ -152,8 +152,9 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ns, name := blockRef(*nsFlag(cmd), args[0])
 			wait, _ := cmd.Flags().GetBool("wait")
+			volumes, _ := cmd.Flags().GetBool("volumes")
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				if _, err := c.Delete(ctx, &pb.DeleteBlockRequest{Namespace: ns, Name: name}); err != nil {
+				if _, err := c.Delete(ctx, &pb.DeleteBlockRequest{Namespace: ns, Name: name, DeleteVolumes: volumes}); err != nil {
 					return fmt.Errorf("delete: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "deleted %s/%s\n", ns, name)
@@ -167,6 +168,7 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 		},
 	}
 	del.Flags().Bool("wait", false, "wait for teardown to finish")
+	del.Flags().Bool("volumes", false, "also delete the volumes the block's storage created, and their data")
 
 	scale := &cobra.Command{
 		Use:   "scale <[namespace/]name> --replicas N",

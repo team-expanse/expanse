@@ -444,6 +444,8 @@ message ListBlocksResponse {
 message DeleteBlockRequest {
   string namespace = 1;
   string name = 2;
+  // Also delete the volumes the block's storage entries created; they stay by default.
+  bool delete_volumes = 3;
 }
 
 message ScaleRequest {
