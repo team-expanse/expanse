@@ -189,6 +189,17 @@ def replica_mount(m, idx):
     return f"/var/lib/expanse/volumes/{row['id']}/mnt"
 
 
+
+def print_unmount_diag(mount):
+    """Who unmounted mount: the agent's step-down and unmount lines on every live node, and the mount state."""
+    for name in nodes:
+        m = NODE_BY_NAME[name]
+        if m.booted:
+            print(f"[diag] {name}:", m.execute(
+                f"findmnt {mount}; drbdadm status; journalctl --no-pager -o short-monotonic | "
+                "grep -E 'stepping down|unmounted volume|wiping|primary moved|primary elected|"
+                "primary moves|removed undesired|bridge: removed|placement' | tail -40")[1])
+
 def as_pguser(cmd):
     """Runs cmd as pgdata's own owning uid (internal/blocks/pgha.StaticUID)
     rather than the test driver's default root -- postgres's own
@@ -321,7 +332,11 @@ with subtest("pg_checksums reports zero corruption on the promoted primary (X3)"
     pg_pid = new_primary_m.succeed(f"head -1 {pgdata}/postmaster.pid").strip()
     new_primary_m.succeed(f"kill -INT {pg_pid}")
     new_primary_m.succeed(f"timeout 30 sh -c 'while kill -0 {pg_pid} 2>/dev/null; do sleep 0.5; done'")
-    out = new_primary_m.succeed(as_pguser(f"{NODE_PG_BIN}/pg_checksums -D {pgdata} -c"))
+    try:
+        out = new_primary_m.succeed(as_pguser(f"{NODE_PG_BIN}/pg_checksums -D {pgdata} -c"))
+    except Exception:
+        print_unmount_diag(mount)
+        raise
     print(f"[diag] pg_checksums: {out}")
     # Restore pgdata's own strict mode -- postgres's restart below
     # refuses to start otherwise (its own permissions check looks only

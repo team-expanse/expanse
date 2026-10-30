@@ -41,7 +41,7 @@ func (n *Node) runResolve(ctx context.Context, d Desired, status storage.Status)
 		n.log().Warn("dropping a request that no longer applies", "vol", d.Name, "survivor", op.Survivor)
 		return n.St.Delete(ctx, key, 0)
 	}
-	n.stopLeading(d.Name)
+	n.stopLeading(d.Name, "a split-brain is being resolved")
 	if survivor {
 		return n.keepData(ctx, d, key)
 	}

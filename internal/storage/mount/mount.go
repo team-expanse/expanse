@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -85,6 +86,7 @@ type Manager struct {
 	Base string // host mount root (default DefaultBase)
 	Run  Runner
 	DRBD Volumes
+	Log  *slog.Logger // nil discards
 }
 
 // New builds the manager; a nil runner shells out.
@@ -239,6 +241,9 @@ func (m *Manager) Release(ctx context.Context, volID string) error {
 	}
 	if _, err := m.Run.Run(ctx, "umount", host); err != nil {
 		return fmt.Errorf("umount %s: %w", host, err)
+	}
+	if m.Log != nil {
+		m.Log.Info("unmounted volume", "vol", volID, "path", host)
 	}
 	return nil
 }
