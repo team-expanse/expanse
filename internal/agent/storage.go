@@ -26,6 +26,8 @@ const (
 	defaultDRBDConfigDir = "/etc/drbd.d"
 	// splitBrainDir, under the data directory, is where the kernel's split-brain handler leaves its marks.
 	splitBrainDir = "split-brain"
+	// defaultMeshWait bounds how long volumes wait for the mesh address, so a broken mesh can't hold them forever.
+	defaultMeshWait = 30 * time.Second
 )
 
 // volumeRunner is the node loop that converges this machine's volume replicas;
@@ -48,11 +50,42 @@ func (a *Agent) startVolumes(ctx context.Context, build func() volumeRunner) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		node.Run(vctx, volumeSyncInterval)
+		if a.waitMesh(vctx) {
+			node.Run(vctx, volumeSyncInterval)
+		}
 	}()
 	a.volStop = func(cause error) {
 		cancel(cause)
 		<-done
+	}
+}
+
+// waitMesh waits for the mesh's overlay address, which DRBD binds to, or for its
+// limit. It is false when the volume loop was stopped first.
+func (a *Agent) waitMesh(ctx context.Context) bool {
+	if a.meshUp == nil {
+		return ctx.Err() == nil
+	}
+	limit := a.meshWait
+	if limit == 0 {
+		limit = defaultMeshWait
+	}
+	t := time.NewTimer(limit)
+	defer t.Stop()
+	select {
+	case <-a.meshUp:
+	case <-t.C:
+		a.logger.Warn("mesh address not up; starting volumes anyway", "waited", limit)
+	case <-ctx.Done():
+		return false
+	}
+	return ctx.Err() == nil
+}
+
+// markMeshUp releases the volume loop once the mesh has this node's address.
+func (a *Agent) markMeshUp() {
+	if a.meshUp != nil {
+		a.meshUpOnce.Do(func() { close(a.meshUp) })
 	}
 }
 

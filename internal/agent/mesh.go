@@ -64,11 +64,7 @@ func (a *Agent) meshLoop(ctx context.Context) {
 		return true
 	}
 
-	for {
-		if ident == nil && identity() {
-			defer ctrl.Close()
-			break
-		}
+	for !identity() {
 		select {
 		case <-ctx.Done():
 			return
@@ -76,10 +72,18 @@ func (a *Agent) meshLoop(ctx context.Context) {
 		}
 	}
 
+	if ctrl == nil { // no WireGuard on this host: volumes have no mesh address to wait for
+		a.markMeshUp()
+		return
+	}
+	defer ctrl.Close()
+
 	// Reconcile pass: immediately, then every 5 s — a join/leave shows
 	// up in the mesh within two ticks, well inside G5.2's 30 s budget.
 	if err := rec.Reconcile(ctx); err != nil {
 		a.logger.Warn("first mesh reconcile failed", "err", err)
+	} else {
+		a.markMeshUp()
 	}
 	a.loop(ctx, 5*time.Second, "mesh", func() {
 		// Re-publish the peer record every tick. The endpoint is derived
@@ -97,6 +101,8 @@ func (a *Agent) meshLoop(ctx context.Context) {
 		}
 		if err := rec.Reconcile(ctx); err != nil {
 			a.logger.Warn("mesh reconcile failed", "err", err)
+			return
 		}
+		a.markMeshUp()
 	})
 }

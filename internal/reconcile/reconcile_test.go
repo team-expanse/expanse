@@ -557,6 +557,19 @@ func TestFailedDesiredStateReadTearsNothingDown(t *testing.T) {
 	}
 }
 
+// A node back from a reboot with no leader yet must not start what its local copy desires.
+func TestLeaderlessStartAppliesNothingFromTheLocalCopy(t *testing.T) {
+	r, s, m := newDeletingReconciler(t)
+	putDesired(t, s, "n1", "vm", "")
+	s.failList.Store(true)
+	if err := r.Tick(context.Background()); err == nil {
+		t.Error("a tick with no linearizable read reported success")
+	}
+	if n := m.applyCount.Load(); n != 0 {
+		t.Fatalf("started %d resources from the stale local copy", n)
+	}
+}
+
 func TestUndecodableDesiredEntryKeepsItsResource(t *testing.T) {
 	r, s, m := newDeletingReconciler(t)
 	ctx := context.Background()

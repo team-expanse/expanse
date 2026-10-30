@@ -201,3 +201,57 @@ func TestVolumesOutliveTheAgentContextAndStopAsAShutdown(t *testing.T) {
 		t.Fatalf("cause = %v, want volume.ErrShutdown so busy volumes stay primary", err)
 	}
 }
+
+// runVolNode reports when its loop starts.
+type runVolNode struct{ ran chan struct{} }
+
+func (f *runVolNode) Run(ctx context.Context, _ time.Duration) {
+	close(f.ran)
+	<-ctx.Done()
+}
+
+func TestVolumesWaitForTheMeshAddress(t *testing.T) {
+	a, _, _ := newStorageAgent(t)
+	a.meshUp = make(chan struct{})
+	node := &runVolNode{ran: make(chan struct{})}
+	a.startVolumes(context.Background(), func() volumeRunner { return node })
+	defer a.stopVolumes(volume.ErrShutdown)
+	select {
+	case <-node.ran:
+		t.Fatal("volumes started before the mesh had its address")
+	case <-time.After(20 * time.Millisecond):
+	}
+	a.markMeshUp()
+	a.markMeshUp() // a second pass must not panic
+	select {
+	case <-node.ran:
+	case <-time.After(time.Second):
+		t.Fatal("volumes never started once the mesh was up")
+	}
+}
+
+func TestVolumesStartWhenTheMeshNeverComesUp(t *testing.T) {
+	a, _, _ := newStorageAgent(t)
+	a.meshUp, a.meshWait = make(chan struct{}), 10*time.Millisecond
+	node := &runVolNode{ran: make(chan struct{})}
+	a.startVolumes(context.Background(), func() volumeRunner { return node })
+	defer a.stopVolumes(volume.ErrShutdown)
+	select {
+	case <-node.ran:
+	case <-time.After(time.Second):
+		t.Fatal("volumes waited past the mesh's limit")
+	}
+}
+
+func TestVolumesStoppedWhileWaitingForTheMeshNeverRun(t *testing.T) {
+	a, _, _ := newStorageAgent(t)
+	a.meshUp = make(chan struct{})
+	node := &runVolNode{ran: make(chan struct{})}
+	a.startVolumes(context.Background(), func() volumeRunner { return node })
+	a.stopVolumes(volume.ErrRestart)
+	select {
+	case <-node.ran:
+		t.Fatal("a stopped volume loop ran")
+	default:
+	}
+}
