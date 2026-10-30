@@ -91,13 +91,21 @@ func (c *Controller) graceFor(ctx context.Context, node string, grace time.Durat
 	return max(grace, RebootHold)
 }
 
-// endRebootHold drops node's reboot announcement once it is up, so a later crash gets the usual grace.
+// endRebootHold drops node's reboot announcement once node is back: up, with a status written
+// after it announced (just after announcing it still reads as up). A later crash gets the usual grace.
 func (c *Controller) endRebootHold(ctx context.Context, node string) {
 	k := store.Key(RebootKey(node))
-	if _, err := c.St.Get(store.WithStale(ctx), k); err != nil {
+	ann, err := c.St.Get(store.WithStale(ctx), k)
+	if err != nil {
 		return
 	}
-	_ = c.St.Delete(ctx, k, 0) // a failure retries on the next pass
+	st, err := c.St.Get(store.WithStale(ctx), store.Key("/nodes/"+node+"/status"))
+	if err != nil || st.Revision <= ann.Revision {
+		return
+	}
+	if err := c.St.Delete(ctx, k, 0); err == nil && c.Logger != nil { // a failure retries on the next pass
+		c.Logger.Info("node is back from its reboot; its hold ends", "node", node)
+	}
 }
 
 // reschedulePass applies §4.4 to one block's placements. It marks Lost

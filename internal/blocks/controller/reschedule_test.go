@@ -366,20 +366,34 @@ func TestARebootingNodeKeepsItsReplicasForTheRebootHold(t *testing.T) {
 	}
 }
 
-// The controller, not the rejoining node, ends a reboot hold: once it sees the node up again.
-func TestTheControllerEndsARebootHoldOnceTheNodeIsUp(t *testing.T) {
+// The controller ends a reboot hold once the node is up with a status written after it announced.
+func TestTheControllerEndsARebootHoldOnceTheNodeIsBack(t *testing.T) {
 	c, st, nodes, clk := statefulDB(t)
 	ctx := context.Background()
 	down := placementAt(loadStatus(t, ctx, st, "default", "db"), 0).GetNodeId()
+	holdCopy(nodes, otherNode(nodes, down), 0)
 	key := store.Key(RebootKey(down))
+	status := store.Key("/nodes/" + down + "/status")
+	if _, err := st.Put(ctx, status, []byte("healthy")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.Put(ctx, key, []byte(clk.Now().Format(time.RFC3339))); err != nil {
 		t.Fatal(err)
 	}
-	loseReplica0(t, c, st, nodes, clk)
+	reconcile(t, c) // the node still reads as up just after it announces
 	if _, err := st.Get(ctx, key); err != nil {
-		t.Fatalf("the hold ended while the node was down: %v", err)
+		t.Fatalf("the hold ended before the node went down: %v", err)
+	}
+	loseReplica0(t, c, st, nodes, clk)
+	clk.Sleep(2 * time.Minute)
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p.GetNodeId() != down {
+		t.Fatalf("replica 0 = %+v while its node rebooted, want kept on %s", p, down)
 	}
 	setReady(nodes, down, true)
+	if _, err := st.Put(ctx, status, []byte("healthy")); err != nil {
+		t.Fatal(err)
+	}
 	reconcile(t, c)
 	if _, err := st.Get(ctx, key); err == nil {
 		t.Error("the announcement outlived the node's return, so a later crash would be held too")
