@@ -182,7 +182,9 @@ with subtest("block, volume primary and VIP re-converge on one survivor"):
         else:
             last_seen = {"placement": sorted(cur)}
         time.sleep(2)
-    assert new_holder, f"never re-converged on one survivor in 240s: {last_seen}"
+    if not new_holder:
+        status = (get_json(survivors[0], "objects") or {}).get("status")
+        raise AssertionError(f"never re-converged on one survivor in 240s: {last_seen}; status {status}")
     print(f"objects re-converged on {new_holder} after {time.time() - t0:.1f}s")
 
 with subtest("the writer resumes against the same endpoint and key"):
