@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"slices"
 	"testing"
@@ -64,5 +65,53 @@ func TestFwDesiredSkipsARevokedNode(t *testing.T) {
 		if slices.Contains(d.Peers, netip.MustParseAddr(banned)) {
 			t.Errorf("revoked n3's %s still admitted: %v", banned, d.Peers)
 		}
+	}
+}
+
+// leaderlessStore fails every read that needs a leader, as a joining node's store does.
+type leaderlessStore struct{ store.Store }
+
+func (s leaderlessStore) List(ctx context.Context, prefix store.Key) ([]*store.Entry, error) {
+	if !store.StaleFrom(ctx) {
+		return nil, errors.New("no leader known")
+	}
+	return s.Store.List(ctx, prefix)
+}
+
+// TestFwDesiredNeedsNoLeader: the peer set is built from local state, so raft is never shut out.
+func TestFwDesiredNeedsNoLeader(t *testing.T) {
+	st, err := boltstore.New(t.TempDir() + "/bolt.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	putFwPeer(t, st, "n1", "192.168.1.1", "10.42.1.0/24")
+
+	d, err := (&Agent{store: leaderlessStore{st}}).fwDesired(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(d.Peers, netip.MustParseAddr("192.168.1.1")) {
+		t.Errorf("n1 not admitted: %v", d.Peers)
+	}
+}
+
+// TestFwDesiredAdmitsRaftPeers: raft's own configuration seeds the set before the store has synced.
+func TestFwDesiredAdmitsRaftPeers(t *testing.T) {
+	st, err := boltstore.New(t.TempDir() + "/bolt.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	a := &Agent{store: st, raftPeers: func() ([]string, error) {
+		return []string{"192.168.1.1:7444", "bad", "[fe80::1]:7444"}, nil
+	}}
+
+	d, err := a.fwDesired(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(d.Peers, []netip.Addr{netip.MustParseAddr("192.168.1.1")}) {
+		t.Errorf("Peers = %v, want n1's raft address only", d.Peers)
 	}
 }

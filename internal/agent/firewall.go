@@ -219,11 +219,11 @@ func policyPorts(pps []*pb.PolicyPort) []fw.PolicyPort {
 	return out
 }
 
-// fwDesired reads node peer records, VIP allocations, and block
-// declarations from the store (fresh List each pass — the store is
-// small and this avoids watch bookkeeping).
+// fwDesired reads node peer records, VIP allocations, and block declarations from the local
+// store copy: a read that needs a leader could keep raft's own port shut and wedge the election.
 func (a *Agent) fwDesired(ctx context.Context) (fw.Desired, error) {
-	d := fw.Desired{}
+	d := fw.Desired{Peers: a.raftPeerAddrs()}
+	ctx = store.WithStale(ctx)
 
 	// Cluster peers: overlay host address (10.42.<idx>.1) plus the
 	// node's LAN endpoint, so raft/control-plane traffic is admitted
@@ -332,4 +332,22 @@ func (a *Agent) fwDesired(ctx context.Context) (fw.Desired, error) {
 		}
 	}
 	return d, nil
+}
+
+// raftPeerAddrs is the IPv4 hosts of raft's configured peers, known before the store syncs.
+func (a *Agent) raftPeerAddrs() []netip.Addr {
+	if a.raftPeers == nil {
+		return nil
+	}
+	addrs, err := a.raftPeers()
+	if err != nil {
+		return nil
+	}
+	var out []netip.Addr
+	for _, s := range addrs {
+		if ap, err := netip.ParseAddrPort(s); err == nil && ap.Addr().Is4() {
+			out = append(out, ap.Addr())
+		}
+	}
+	return out
 }

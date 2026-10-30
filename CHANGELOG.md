@@ -45,6 +45,10 @@ History before 1.0.0 is not recorded here.
 
 ### Fixed
 
+- A node's firewall can no longer shut out raft while the node joins or restarts. It admitted
+  peers only from a store read that needs a leader, so a node that came up before its store had
+  synced kept port 7444 closed, and the cluster could never elect one. It now reads its local copy
+  and also admits raft's configured peers.
 - An update that raises a block's CPU, memory or storage requests is refused when a node already
   running one of its replicas hasn't room for the increase. Replicas update in place (and a VM now
   resizes live), so the scheduler never checked it, and a node could be committed past its capacity.

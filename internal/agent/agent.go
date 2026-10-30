@@ -258,6 +258,8 @@ type Agent struct {
 
 	// askPeers asks the cluster whether this node was removed; nil when single-node.
 	askPeers func(context.Context) (*nodelc.Revocation, error)
+	// raftPeers lists the other servers' raft addresses; nil when single-node.
+	raftPeers func() ([]string, error)
 	// removalPoll and removalAsk pace watchRemoval: the local check and asking the peers.
 	removalPoll, removalAsk time.Duration
 }
@@ -405,6 +407,7 @@ func New(cfg Config) (*Agent, error) {
 	a.status.Store("starting")
 	if ctl != nil {
 		a.askPeers = ctl.askRemoval
+		a.raftPeers = ctl.store.PeerAddrs
 	}
 
 	// Reconciler + managers.
