@@ -256,6 +256,9 @@ type Agent struct {
 	shutdown atomic.Value // chan struct{}
 	stopFn   func()
 
+	// rebootCleared: this run withdrew the node's reboot announcement, once it could take placements.
+	rebootCleared atomic.Bool
+
 	// askPeers asks the cluster whether this node was removed; nil when single-node.
 	askPeers func(context.Context) (*nodelc.Revocation, error)
 	// removalPoll and removalAsk pace watchRemoval: the local check and asking the peers.
@@ -721,7 +724,6 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	a.status.Store("idle")
 	go a.watchRemoval(ctx)
-	go a.clearReboot(ctx, 5*time.Second)
 
 	witness := a.ctl != nil && a.ctl.role == "witness"
 	if witness {
@@ -855,6 +857,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		key := store.Key(fmt.Sprintf("/nodes/%s/status", a.cfg.NodeID))
 		if _, err := a.store.Put(ctx, key, []byte(nodeStatusValue(rep, ok && rs.Degraded()))); err != nil {
 			a.logger.Error("write node status failed", "err", err)
+		} else if !(ok && rs.Degraded()) {
+			a.clearReboot(ctx)
 		}
 	})
 

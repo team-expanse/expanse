@@ -20,23 +20,25 @@ func (a *Agent) announceReboot(stopping func() bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	now := []byte(time.Now().UTC().Format(time.RFC3339))
-	if _, err := a.store.Put(ctx, store.Key(controller.RebootKey(a.cfg.NodeID)), now); err != nil && a.logger != nil {
+	_, err := a.store.Put(ctx, store.Key(controller.RebootKey(a.cfg.NodeID)), now)
+	switch {
+	case a.logger == nil:
+	case err != nil:
 		a.logger.Warn("could not announce this node's reboot; its replicas may move", "err", err)
+	default:
+		a.logger.Info("announced this node's reboot; its replicas stay placed", "hold", controller.RebootHold)
 	}
 }
 
-// clearReboot withdraws the announcement once this node is back, retrying until the store takes it.
-func (a *Agent) clearReboot(ctx context.Context, retry time.Duration) {
-	for {
-		err := a.store.Delete(ctx, store.Key(controller.RebootKey(a.cfg.NodeID)), 0)
-		if err == nil || errors.Is(err, errors.KindNotFound) {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(retry):
-		}
+// clearReboot withdraws the announcement once, after this node has reported a status it can take
+// placements with; withdrawn earlier, the controller would replace its replicas while it rejoins.
+func (a *Agent) clearReboot(ctx context.Context) {
+	if a.rebootCleared.Load() {
+		return
+	}
+	err := a.store.Delete(ctx, store.Key(controller.RebootKey(a.cfg.NodeID)), 0)
+	if err == nil || errors.Is(err, errors.KindNotFound) {
+		a.rebootCleared.Store(true)
 	}
 }
 
