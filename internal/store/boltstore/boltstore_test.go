@@ -194,6 +194,7 @@ func TestWatchSurvivesConcurrentRegistration(t *testing.T) {
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	var okCount atomic.Int64
+	first := make(chan struct{})
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
@@ -206,10 +207,16 @@ func TestWatchSurvivesConcurrentRegistration(t *testing.T) {
 			}
 			go func() {
 				for range ch {
-					okCount.Add(1)
+					if okCount.Add(1) == 1 {
+						close(first)
+					}
 				}
 			}()
-			time.Sleep(5 * time.Millisecond)
+			// Unregister after the first event anywhere (or 2s): a slow first Put can't outlast the watchers.
+			select {
+			case <-first:
+			case <-time.After(2 * time.Second):
+			}
 			cancel()
 		}()
 	}
