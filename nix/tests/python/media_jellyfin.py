@@ -135,8 +135,13 @@ with subtest("the startup wizard creates the administrator"):
     token = log_in()
 
 with subtest("a library on the nodes' media path is scanned and streams"):
+    # Newer Jellyfin reads the paths from LibraryOptions.PathInfos; the query form is kept for older ones.
     ok("POST", "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fsrv%2Fmedia%2Fmovies"
-               "&refreshLibrary=true", {"LibraryOptions": {}}, token)
+               "&refreshLibrary=true",
+       {"LibraryOptions": {"PathInfos": [{"Path": "/srv/media/movies"}]}}, token)
+    folders = ok("GET", "/Library/VirtualFolders", token=token)
+    locations = {f["Name"]: f.get("Locations") for f in folders}
+    assert locations.get("Movies") == ["/srv/media/movies"], f"library folders: {locations}"
     wait_for(lambda: len(movies(token)) == 1, "the library scan finds the movie", timeout=180)
     movie = movies(token)[0]
     size = int(MACHINES[holder].succeed("stat -Lc %s '/srv/media/movies/Test Movie (2024)/Test Movie (2024).mkv'"))
