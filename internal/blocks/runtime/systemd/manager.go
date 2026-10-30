@@ -83,6 +83,9 @@ type Manager struct {
 	KeepDir string
 	// LiveDir holds the markers of runtimes that serve reloads; empty = livespec.DefaultDir.
 	LiveDir string
+	// Mounted reports whether a volume mount's host path is mounted; a replica starts only
+	// once all of its are. nil skips the check.
+	Mounted func(path string) (bool, error)
 }
 
 // DefaultSpecDir is the runtime directory expanse-block-run reads its
@@ -310,6 +313,22 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 	if res.spec.Stopped {
 		return m.observeStopped(res.spec, unit, load, active, sub), nil
 	}
+	missing, err := m.missingMount(res.spec)
+	if err != nil {
+		return reconcile.Observed{}, errors.Wrap(err, errors.KindInternal, "systemd.Observe", "volume mounts")
+	}
+	if missing != "" {
+		ready := false
+		return reconcile.Observed{
+			Exists: load != "not-found",
+			Health: reconcile.HealthDegraded,
+			Ready:  &ready,
+			Details: map[string]string{
+				"unit": unit, "load": load, "active": active, "sub": sub,
+				"status": "waiting for volume mount " + missing,
+			},
+		}, nil
+	}
 	inSync := load != "not-found" && active == "active" && sub != "failed" &&
 		// Spec drift (e.g. a §5.2 in-place config change): the unit can
 		// be active while running the OLD config — the runtime helper
@@ -375,6 +394,10 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 	}
 	unit := UnitNameForSpec(res.spec)
 	spec := res.spec
+	// Without its volume mounts the workload would write to the node's own disk.
+	if missing, err := m.missingMount(spec); err != nil || missing != "" {
+		return nil, err
+	}
 	var acts []reconcile.Action
 	acts = append(acts, reconcile.Action{
 		ResourceID:  res.id,

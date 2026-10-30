@@ -57,6 +57,9 @@ History before 1.0.0 is not recorded here.
   logged.
 - `expanse ctl block apply` reports why an update of an existing block was refused. It used to
   fall back to creating the block and print only that it already existed.
+- A block with storage starts only once its volume is mounted on its node, and reads "waiting for
+  volume mount" until then. A replica placed away from its fresh volume's first primary started
+  before the primary moved to it, read RUNNING, and wrote to the node's own disk.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.
