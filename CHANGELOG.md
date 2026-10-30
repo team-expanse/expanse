@@ -60,7 +60,8 @@ History before 1.0.0 is not recorded here.
 - A db/postgres primary that restarts after a crash or reboot waits until its node holds the
   primary lease again before it takes connections. It used to start as primary at once and accept
   writes for about a second after another replica had already taken over; it now re-clones from
-  the new primary without ever starting.
+  the new primary without ever starting, also when a crash left its role file empty or stale
+  (pgha used to retarget such data as a standby, forever). The role file is now fsynced.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

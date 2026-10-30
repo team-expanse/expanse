@@ -33,7 +33,7 @@ func readRole(t *testing.T, mount string) string {
 }
 
 // seedBootstrapped marks mount as a replica that has already finished
-// its own first-ever bootstrap (hasBootstrapped's own check), for tests
+// its own first-ever bootstrap as a standby (hasBootstrapped's own check), for tests
 // exercising the Reconfigure path rather than the still-bootstrapping
 // skip-path (TestReplicaRetargetsBeforeItsOwnFirstBootstrapWithoutReconfigure).
 func seedBootstrapped(t *testing.T, mount string) {
@@ -44,6 +44,10 @@ func seedBootstrapped(t *testing.T, mount string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "PG_VERSION"), []byte("18\n"), 0o644); err != nil {
 		t.Fatalf("seed PG_VERSION: %v", err)
+	}
+	// pg_basebackup -R writes standby.signal on every replica.
+	if err := os.WriteFile(filepath.Join(dir, "standby.signal"), nil, 0o644); err != nil {
+		t.Fatalf("seed standby.signal: %v", err)
 	}
 }
 
