@@ -103,7 +103,7 @@ func (n *Node) Sync(ctx context.Context) error {
 	}
 	for id := range n.leading {
 		if !slices.Contains(ids, id) {
-			n.stopLeading(id)
+			n.stopLeading(id, "the volume is no longer listed")
 		}
 	}
 	return errors.Join(errs...)
@@ -166,12 +166,12 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 	}
 	if diverged {
 		// An adjust would reconnect the dropped resource and repeat the split-brain.
-		n.stopLeading(id)
+		n.stopLeading(id, "the volume needs manual recovery")
 		return n.publish(ctx, d)
 	}
 	lead := status.Primary == n.Self
 	if !lead {
-		n.stopLeading(id)
+		n.stopLeading(id, "the volume's primary is "+status.Primary)
 	}
 	res, err := n.RT.Reconcile(ctx, d)
 	if err != nil {
@@ -188,7 +188,7 @@ func (n *Node) syncVolume(ctx context.Context, id string) error {
 // syncTiebreaker keeps this node's diskless quorum vote up. It never leads and has no
 // placement row to report into.
 func (n *Node) syncTiebreaker(ctx context.Context, al drbd.Allocation, spec storage.Spec) error {
-	n.stopLeading(al.Name)
+	n.stopLeading(al.Name, "this node is only a tiebreaker")
 	d, err := n.desired(al, spec)
 	if err != nil {
 		return err
@@ -252,7 +252,7 @@ func (n *Node) acknowledge(ctx context.Context, id string, forgot []int) []error
 // release takes a volume this node should not hold off the node. A deleted volume
 // then drops this node's row, which is how the controller learns the node is done.
 func (n *Node) release(ctx context.Context, id string, placed bool) error {
-	n.stopLeading(id)
+	n.stopLeading(id, "the volume is leaving this node")
 	present, err := n.RT.Present(ctx, id)
 	if err != nil {
 		return err
@@ -302,12 +302,13 @@ func (n *Node) markInitialized(id string) {
 	}
 }
 
-// stopLeading ends a volume's leader and waits for it to demote.
-func (n *Node) stopLeading(id string) {
+// stopLeading ends a volume's leader and waits for it to unmount and demote.
+func (n *Node) stopLeading(id, reason string) {
 	l := n.leading[id]
 	if l == nil {
 		return
 	}
+	n.log().Info("volume leadership ends; stepping down", "vol", id, "reason", reason)
 	l.cancel()
 	<-l.done
 	delete(n.leading, id)
@@ -316,7 +317,7 @@ func (n *Node) stopLeading(id string) {
 // Stop ends every leader, each demoting its volume before this returns.
 func (n *Node) Stop() {
 	for id := range n.leading {
-		n.stopLeading(id)
+		n.stopLeading(id, "the agent is stopping")
 	}
 }
 
