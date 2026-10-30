@@ -47,6 +47,16 @@ History before 1.0.0 is not recorded here.
 
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
+- A db/postgres replica stopped partway through cloning from the primary no longer stays down.
+  The clone carried the primary's own settings, so every later start used the primary's socket
+  path and failed; a replica now clones into a staging directory and moves it into place once its
+  own settings are written.
+- `expanse ctl cluster leave` gets its answer: the agent waits for in-flight calls before exiting.
+
+### Known issues
+
+- storage/s3 (Garage 1.3.1) can lose the last object it acknowledged if its node crashes: Garage
+  never syncs LMDB's metadata page. A patched Garage follows in 1.17.1.
 
 ## 1.16.2 - 2026-10-25
 

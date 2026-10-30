@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -991,13 +992,18 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 	}
 
 	roleFile := filepath.Join(stateDir, "role")
-	if _, err := os.Stat(filepath.Join(pgdata, "PG_VERSION")); err != nil {
+	if _, err := os.Stat(filepath.Join(pgdata, "PG_VERSION")); errors.Is(err, fs.ErrNotExist) {
 		slot := pgSlotName(instance)
-		if err := bootstrapPostgres(ctx, pgdata, roleFile, sockDir, passfile,
-			port, database, replPassword, superPassword, slot,
-			sharedBuffers, maxWalSenders, maxReplicationSlots); err != nil {
+		err := bootstrapInto(pgdata, func(dir string) error {
+			return bootstrapPostgres(ctx, dir, roleFile, sockDir, passfile,
+				port, database, replPassword, superPassword, slot,
+				sharedBuffers, maxWalSenders, maxReplicationSlots)
+		})
+		if err != nil {
 			return fmt.Errorf("db/postgres: %w", err)
 		}
+	} else if err != nil {
+		return fmt.Errorf("db/postgres: %w", err)
 	}
 
 	// A demoted flag, not ctx cancellation: execWorkload treats a
@@ -1710,6 +1716,25 @@ func pgCmd(ctx context.Context, env []string, stdin, bin string, args ...string)
 		return fmt.Errorf("%s %s: %w: %s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// bootstrapInto builds a fresh pgdata in a staging dir and moves it into place only once complete:
+// a stop mid-bootstrap must not leave a pgdata with the primary's copied config that later starts trust.
+func bootstrapInto(pgdata string, build func(dir string) error) error {
+	staging := pgdata + ".new"
+	if err := os.RemoveAll(staging); err != nil {
+		return err
+	}
+	if err := build(staging); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(pgdata); err != nil { // never a cluster: it has no PG_VERSION
+		return err
+	}
+	if err := os.Rename(staging, pgdata); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(pgdata))
 }
 
 // bootstrapPostgres runs the once-ever init sequence module.nix
