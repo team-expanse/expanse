@@ -76,7 +76,8 @@ with subtest("a SINGLETON block holds its replication-2 volume open on one node"
     res = volume_row(n1, VOL)["id"]
     wait_for(lambda: role_of(host, res) == "Primary", f"{host.name} to be the volume's primary", 120)
     host.wait_until_succeeds(f"systemctl is-active {UNIT}", timeout=60)
-    host.succeed(f"findmnt /var/lib/expanse/volumes/{res}/mnt")
+    # When the block lands off the volume's first primary, the mount follows the primary's move.
+    host.wait_until_succeeds(f"findmnt /var/lib/expanse/volumes/{res}/mnt", timeout=60)
     # The third node joins as a diskless tiebreaker, which turns DRBD quorum on.
     # Both disk replicas must reach the tiebreaker: a cut mid-handshake leaves the survivor without quorum.
     for m in map(machine, volume_row(n1, VOL)["nodes"]):
