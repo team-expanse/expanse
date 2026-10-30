@@ -124,8 +124,9 @@ with subtest("a node reboot saves the VM, keeps it placed, and the next boot res
     wait_agent_ready(host)
     keeps_guest(host, MARK, before)
     assert host_of(other)[0] == host_name, "the VM moved"
-    host.succeed(f"journalctl -b -1 -u {UNIT} --no-pager | grep -q \"saved for the node's shutdown\"")
+    # The test node's journal doesn't outlive the reboot; only a kept save resumes, and the leader logs the hold.
     host.succeed(f"journalctl -b 0 -u {UNIT} --no-pager | grep -q 'resumed from its saved state'")
-    host.succeed("journalctl -b -1 -u expansed --no-pager | grep -q 'agent stopping'")
+    assert any(m.execute("journalctl -u expansed --no-pager | grep -q 'node is back from its reboot'")[0] == 0
+               for n, m in ALL.items() if n != host_name), "no controller ended the reboot hold"
 
 print("VM-UPGRADE-KEEP DONE")
