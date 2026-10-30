@@ -6,6 +6,17 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- A node no longer gives up its leases when the raft leader crashes. A lease renewal that failed
+  while the cluster elected a new leader counted as a lost lease, so each volume primary on the
+  other nodes stepped down and unmounted under its running block (a db/postgres replica stopped
+  finding its data), and pgha's own leases were lost the same way. A renewal the store cannot
+  answer is now retried, up to the point where giving up has always been due; a conflicting
+  write still ends the lease at once.
+
 ## 1.17.0 - 2026-10-30
 
 ### Added

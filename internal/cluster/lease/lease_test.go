@@ -712,24 +712,101 @@ func TestMaintainReclaimsOwnRecordAfterLostAcquireResponse(t *testing.T) {
 
 // Same failure on renewal: Done closes (fail-fast is the safety rule) and Maintain
 // re-takes its own record without waiting for expiry.
-func TestMaintainReclaimsOwnRecordAfterLostRenewalResponse(t *testing.T) {
+// A renewal whose response was lost after it committed is recognized on the retry,
+// so the lease is kept rather than lost and re-acquired.
+func TestMaintainKeepsItsLeaseAfterLostRenewalResponse(t *testing.T) {
 	st := &lostAckStore{Store: newBoltStore(t)}
 	m := lease.NewManager(st, "node-a")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	held := make(chan *lease.Held, 4)
-	go m.Maintain(ctx, "node-node-a", 3*time.Second, func(h *lease.Held) { held <- h })
+	go m.Maintain(ctx, "node-node-a", 900*time.Millisecond, func(h *lease.Held) { held <- h })
 	first := <-held
+	rev0 := first.CurrentLease().Revision
 	st.loseNext(1)
-	waitDone(t, first, 3*time.Second)
+	time.Sleep(1300 * time.Millisecond)
+	if err := first.Err(); err != nil {
+		t.Fatalf("the lease was lost to its own committed renewal: %v", err)
+	}
+	if rev := first.CurrentLease().Revision; rev <= rev0 {
+		t.Errorf("revision did not advance: %d → %d", rev0, rev)
+	}
 	select {
-	case second := <-held:
-		if !second.Valid() {
-			t.Fatal("re-acquired lease is not valid")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Maintain waited out the TTL on its own committed record")
+	case <-held:
+		t.Error("Maintain re-acquired a lease it never lost")
+	default:
+	}
+}
+
+// writeDownStore fails every CAS while down, as raft does between leaders; reads and
+// watches keep working off the local copy.
+type writeDownStore struct {
+	store.Store
+	mu   sync.Mutex
+	down bool
+}
+
+func (s *writeDownStore) set(down bool) {
+	s.mu.Lock()
+	s.down = down
+	s.mu.Unlock()
+}
+
+func (s *writeDownStore) CompareAndSwap(ctx context.Context, k store.Key, expect store.Revision, v []byte) (store.Revision, error) {
+	s.mu.Lock()
+	down := s.down
+	s.mu.Unlock()
+	if down {
+		return 0, errors.New(errors.KindUnavailable, "writedown.CAS", "no leader known; write dropped")
+	}
+	return s.Store.CompareAndSwap(ctx, k, expect, v)
+}
+
+// A raft election shorter than the renewal slack must not cost the holder its lease.
+func TestRenewalRidesOutABriefWriteOutage(t *testing.T) {
+	st := &writeDownStore{Store: newBoltStore(t)}
+	m := lease.NewManager(st, "node-a")
+	ctx := context.Background()
+
+	h, err := m.Acquire(ctx, "election", 900*time.Millisecond) // renew at 300ms, give up at 600ms
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer m.Release(ctx, h)
+	rev0 := h.CurrentLease().Revision
+	st.set(true)
+	time.Sleep(450 * time.Millisecond)
+	st.set(false)
+	time.Sleep(850 * time.Millisecond)
+
+	if err := h.Err(); err != nil {
+		t.Fatalf("lease lost to a 450ms write outage: %v", err)
+	}
+	if rev := h.CurrentLease().Revision; rev <= rev0 {
+		t.Errorf("revision did not advance: %d → %d", rev0, rev)
+	}
+}
+
+// An outage that outlasts the slack closes Done 2·TTL/3 after the last renewal began,
+// the same bound a renewal stuck for its whole budget gives, and still before expiry.
+func TestLongWriteOutageClosesDoneBeforeExpiry(t *testing.T) {
+	st := &writeDownStore{Store: newBoltStore(t)}
+	m := lease.NewManager(st, "node-a")
+
+	grantedAt := time.Now()
+	h, err := m.Acquire(context.Background(), "outage", 900*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	st.set(true)
+	doneAt := waitDone(t, h, 3*time.Second)
+
+	if elapsed := doneAt.Sub(grantedAt); elapsed < 550*time.Millisecond || elapsed >= 900*time.Millisecond {
+		t.Errorf("Done closed %v after grant, want about 600ms (2·TTL/3), before the 900ms expiry", elapsed)
+	}
+	if e := h.Err(); e == nil || !strings.Contains(e.Error(), "renew") {
+		t.Errorf("Err() = %v, want a renewal error", e)
 	}
 }
 

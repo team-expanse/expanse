@@ -16,6 +16,11 @@
 // > by less than ~50%, which NTP-synced machines always satisfy. It does
 // > not depend on clock *offset* agreement.
 //
+// A renewal the store cannot answer (raft between leaders) is retried, but
+// only until 2·TTL/3 after the last successful renewal began: the same bound a
+// renewal stuck for its whole TTL/3 budget gives, so the guard band is unchanged.
+// A conflict, or the watch seeing the record change hands, still ends it at once.
+//
 // Clock discipline (spec §10 "Clock jumps"): ALL local timing — renewal
 // cadence, slow-renewal detection, the Done() stop deadline — uses
 // monotonic time (time.Ticker, context deadlines, time.Since anchors).
@@ -48,8 +53,8 @@ const (
 	DefaultTTL = 15 * time.Second
 
 	// RenewInterval is the renewal cadence: TTL/3 (5 s for the default
-	// TTL). Renewal is a Raft CAS write; failing or exceeding this
-	// budget closes Done() immediately.
+	// TTL). Renewal is a Raft CAS write, retried while the store is
+	// unavailable until 2·TTL/3 after the last renewal began.
 	RenewInterval = DefaultTTL / 3
 )
 
@@ -175,8 +180,8 @@ func (m *Manager) acquire(ctx context.Context, name string, ttl time.Duration, r
 	}
 }
 
-// Maintain holds name until ctx ends and re-acquires it after any loss (a failed
-// renewal during a raft leader change ends a Held for good). Use it for liveness
+// Maintain holds name until ctx ends and re-acquires it after any loss (a raft
+// outage longer than the renewal slack ends a Held for good). Use it for liveness
 // records, where being briefly unheld is harmless but staying unheld is not.
 // onHeld is called with each newly acquired lease; the lease is released on exit.
 //
@@ -220,12 +225,12 @@ func (m *Manager) tryAcquire(ctx context.Context, name string, ttl time.Duration
 		return nil, errors.Wrap(ctx.Err(), errors.KindTimeout, "lease.TryAcquire", "ctx done")
 	}
 	key := store.Key(Prefix + name)
-	now := m.now()
+	now, anchor := m.now(), time.Now()
 
 	// Fast path: key must not exist.
 	rev, err := m.st.CompareAndSwap(ctx, key, 0, mustEncode(name, m.nodeID, m.term(), now.Add(ttl)))
 	if err == nil {
-		return m.newHeld(name, m.nodeID, m.term(), now.Add(ttl), rev, ttl), nil
+		return m.newHeld(name, m.nodeID, m.term(), now.Add(ttl), rev, ttl, anchor), nil
 	}
 	if !errors.Is(err, errors.KindConflict) {
 		return nil, errors.Wrap(err, errors.KindUnavailable, "lease.TryAcquire", "cas create: "+err.Error())
@@ -252,7 +257,7 @@ func (m *Manager) tryAcquire(ctx context.Context, name string, ttl time.Duration
 		}
 		return nil, errors.Wrap(err, errors.KindUnavailable, "lease.TryAcquire", "cas takeover: "+err.Error())
 	}
-	return m.newHeld(name, m.nodeID, m.term(), now.Add(ttl), rev, ttl), nil
+	return m.newHeld(name, m.nodeID, m.term(), now.Add(ttl), rev, ttl, anchor), nil
 }
 
 // Inspect returns the stored lease state without acquiring. A
@@ -336,12 +341,13 @@ func EncodeForTest(l Lease) ([]byte, error) {
 }
 
 // newHeld starts the background machinery for a freshly acquired lease.
-func (m *Manager) newHeld(name, holder string, term uint64, expires time.Time, rev store.Revision, ttl time.Duration) *Held {
+func (m *Manager) newHeld(name, holder string, term uint64, expires time.Time, rev store.Revision, ttl time.Duration, anchor time.Time) *Held {
 	h := &Held{
-		Lease: Lease{Name: name, Holder: holder, Term: term, ExpiresAt: expires, Revision: rev},
-		mgr:   m,
-		ttl:   ttl,
-		done:  make(chan struct{}),
+		Lease:     Lease{Name: name, Holder: holder, Term: term, ExpiresAt: expires, Revision: rev},
+		mgr:       m,
+		ttl:       ttl,
+		renewedAt: anchor,
+		done:      make(chan struct{}),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
@@ -357,6 +363,8 @@ type Held struct {
 	mgr  *Manager
 	ttl  time.Duration
 	done chan struct{}
+	// renewedAt is when the last successful renewal began (monotonic); renewLoop only.
+	renewedAt time.Time
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -438,8 +446,14 @@ func (h *Held) renewLoop(ctx context.Context) {
 	}
 }
 
-// renewOnce performs one CAS renewal with a hard budget of ttl/3
-// (monotonic context deadline). Returns false when the lease is lost.
+// renewAttempt is one renewal CAS: when it began and the expiry it wrote.
+type renewAttempt struct {
+	start   time.Time
+	expires time.Time
+}
+
+// renewOnce renews by CAS, retrying while the store is unavailable until 2·TTL/3
+// after the last renewal began. Returns false when the lease is lost.
 func (h *Held) renewOnce(ctx context.Context) bool {
 	// A lease whose Done() already closed must never be renewed: the
 	// holder has (or is about to) stop acting, and a zombie renewal
@@ -448,25 +462,73 @@ func (h *Held) renewOnce(ctx context.Context) bool {
 	if !h.Valid() {
 		return false
 	}
-	cctx, cancel := context.WithTimeout(ctx, h.ttl/3)
-	defer cancel()
 	key := store.Key(Prefix + h.Lease.Name)
-	expires := h.mgr.now().Add(h.ttl)
-	start := time.Now()
-	rev, err := h.mgr.st.CompareAndSwap(cctx, key, h.Lease.Revision,
-		mustEncode(h.Lease.Name, h.Lease.Holder, h.mgr.term(), expires))
-	if err != nil {
-		// Renewal failed (conflict, unavailability, or budget exceeded).
-		// Close Done() immediately — do not wait for expiry.
-		h.markLost(errors.Wrap(err, errors.KindUnavailable, "lease.renew",
-			fmt.Sprintf("renewal failed after %v: %v", time.Since(start).Round(time.Millisecond), err)))
-		return false
+	deadline := h.renewedAt.Add(2 * h.ttl / 3)
+	var tried []renewAttempt
+	for {
+		a := renewAttempt{start: time.Now(), expires: h.mgr.now().Add(h.ttl)}
+		tried = append(tried, a)
+		cctx, cancel := context.WithTimeout(ctx, min(max(time.Until(deadline), 0), h.ttl/3))
+		rev, err := h.mgr.st.CompareAndSwap(cctx, key, h.Lease.Revision,
+			mustEncode(h.Lease.Name, h.Lease.Holder, h.mgr.term(), a.expires))
+		cancel()
+		if err == nil {
+			h.renewed(a, rev)
+			return true
+		}
+		if ctx.Err() != nil {
+			return false // released or abandoned
+		}
+		if errors.Is(err, errors.KindConflict) {
+			adopted, known := h.adoptCommitted(ctx, key, tried)
+			if adopted {
+				return true
+			}
+			if known {
+				h.markLost(errors.Wrap(err, errors.KindConflict, "lease.renew", "renewal conflict: "+err.Error()))
+				return false
+			}
+		}
+		if time.Until(deadline) <= 0 {
+			h.markLost(errors.Wrap(err, errors.KindUnavailable, "lease.renew",
+				fmt.Sprintf("renewal failed for %v: %v", time.Since(h.renewedAt).Round(time.Millisecond), err)))
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(min(h.ttl/30, time.Until(deadline))):
+		}
 	}
+}
+
+// adoptCommitted keeps the lease when the record's revision moved because one of
+// this round's attempts committed after its response was lost. known is false
+// when the record could not be read, so the caller retries.
+func (h *Held) adoptCommitted(ctx context.Context, key store.Key, tried []renewAttempt) (adopted, known bool) {
+	cur, err := h.mgr.st.Get(ctx, key)
+	if err != nil {
+		return false, errors.Is(err, errors.KindNotFound)
+	}
+	v, err := decodeValue(cur.Value)
+	if err != nil || v.Holder != h.Lease.Holder {
+		return false, true
+	}
+	for _, a := range tried {
+		if a.expires.UnixNano() == v.ExpiresAtUnix {
+			h.renewed(a, cur.Revision)
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func (h *Held) renewed(a renewAttempt, rev store.Revision) {
+	h.renewedAt = a.start
 	h.mu.Lock()
 	h.Lease.Revision = rev
-	h.Lease.ExpiresAt = expires
+	h.Lease.ExpiresAt = a.expires
 	h.mu.Unlock()
-	return true
 }
 
 // watchLoop observes the lease key. Losing the watch stream (partition,
