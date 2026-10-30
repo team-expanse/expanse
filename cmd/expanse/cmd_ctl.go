@@ -368,7 +368,7 @@ func newCtlCmd() *cobra.Command {
 	cmd.AddCommand(oidcCmd)
 
 	// lease: §4.3 singleton leases. `hold` runs the holder loop
-	// server-side (renewal at TTL/3, loss detection) and streams the
+	// server-side (renewal at TTL/6, loss detection) and streams the
 	// lifecycle events with timestamps — the guard-band evidence.
 	leaseCmd := &cobra.Command{Use: "lease", Short: "Singleton lease operations (§4.3)"}
 	var leaseTTL string

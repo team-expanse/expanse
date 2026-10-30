@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	volumeLeaseTTL       = 10 * time.Second
+	// volumeLeaseTTL leaves a renewal at least 7.5 s to ride out a raft election.
+	volumeLeaseTTL       = 15 * time.Second
 	volumeSyncInterval   = 2 * time.Second
 	defaultDRBDConfigDir = "/etc/drbd.d"
 	// splitBrainDir, under the data directory, is where the kernel's split-brain handler leaves its marks.

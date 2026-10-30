@@ -14,11 +14,11 @@ import (
 
 // Holder constants from spec §4.2.
 const (
-	// LeaseTTL is the VIP lease TTL (renewed at TTL/3 by the lease
-	// package). Lease loss closes Done within ~TTL/3 + 2 s < TTL.
+	// LeaseTTL is the VIP lease TTL (renewed at TTL/6 by the lease
+	// package). Lease loss closes Done within 2·TTL/3 of the last renewal.
 	// 10 s (not the lease package's 15 s default) bounds failover to
 	// G5.4's ≤ 15 s measured from the external client: takeover waits
-	// out the expiry (uniform in [TTL/3, TTL] after holder death), plus
+	// out the expiry (uniform in [5·TTL/6, TTL] after holder death), plus
 	// slippage, election if the leader died, and announcement — worst
 	// case ~14 s at TTL 10, ~20 s at TTL 15 (measured 16.7–21.3 s in
 	// the m3-demo/net-vip-failover VM tests).
@@ -226,7 +226,7 @@ func (h *Holder) Run(ctx context.Context) error {
 				selfHasReadyReplica(h.cfg.Self, cands) {
 				// Expired lease overrides preference: a holder that has
 				// failed to renew for a full TTL is dead by definition
-				// (renewal runs at TTL/3). Any live CANDIDATE may race
+				// (renewal runs at TTL/6). Any live CANDIDATE may race
 				// for it via the takeover CAS — the fence still prevents
 				// split brain, and the winner is whoever commits first.
 				// The selfHasReadyReplica guard is load-bearing, not

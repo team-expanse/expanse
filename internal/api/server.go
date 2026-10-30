@@ -645,8 +645,8 @@ func (s *Server) ListKeyValue(ctx context.Context, req *pb.ListKeyValueRequest) 
 }
 
 // HoldLease acquires (or takes over an expired) lease and holds it for
-// the life of the stream: the lease.Manager renews at TTL/3 and closes
-// Done() on renewal failure (§4.3); this handler streams lifecycle
+// the life of the stream: the lease.Manager renews at TTL/6 and closes
+// Done() once renewal has failed for 2·TTL/3 (§4.3); this handler streams lifecycle
 // events with wall-clock timestamps — the guard-band evidence the VM
 // tests assert on — and releases explicitly when the client goes away.
 func (s *Server) HoldLease(req *pb.HoldLeaseRequest, stream pb.NodeService_HoldLeaseServer) error {
