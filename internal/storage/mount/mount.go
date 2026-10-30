@@ -32,11 +32,15 @@ const blankProbeBytes = 1 << 20
 
 // Resource is the desired state of one volume's local mount.
 type Resource struct {
-	VolID      string `json:"volId"`
-	Name       string `json:"name,omitempty"`
-	MountPath  string `json:"mountPath"`
-	Filesystem string `json:"filesystem,omitempty"` // ext4 | xfs | none
+	VolID      string   `json:"volId"`
+	Name       string   `json:"name,omitempty"`
+	MountPath  string   `json:"mountPath"`
+	Filesystem string   `json:"filesystem,omitempty"` // ext4 | xfs | none
+	Options    []string `json:"options,omitempty"`    // extra mount options, from allowedOptions
 }
+
+// allowedOptions are the mount options a block may ask for: durability only.
+var allowedOptions = map[string]bool{"dirsync": true, "sync": true}
 
 // Runner runs a command and returns its combined output. A command that ran and
 // exited non-zero must fail with an *ExitError.
@@ -127,6 +131,11 @@ func (m *Manager) Load(id string, spec []byte) (reconcile.Resource, error) {
 	if r.MountPath == "" {
 		return nil, fmt.Errorf("%s %s: mountPath required", Type, id)
 	}
+	for _, opt := range r.Options {
+		if !allowedOptions[opt] {
+			return nil, fmt.Errorf("%s %s: mount option %q not allowed", Type, id, opt)
+		}
+	}
 	return &mountRes{id: id, spec: r}, nil
 }
 
@@ -189,6 +198,12 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 	}
 	o.Health = reconcile.HealthHealthy
 	o.InSync = true
+	if missing, err := m.missingOptions(ctx, spec); err != nil {
+		return o, err
+	} else if len(missing) > 0 {
+		o.InSync = false
+		o.Details["remount"] = strings.Join(missing, ",")
+	}
 	if grow, err := m.needsGrow(ctx, dev, spec.Filesystem); err == nil && grow {
 		o.InSync = false
 	}
@@ -200,6 +215,13 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 	a := r.(*mountRes)
 	if o.InSync {
 		return nil, nil
+	}
+	if missing := o.Details["remount"]; o.Health == reconcile.HealthHealthy && missing != "" {
+		return []reconcile.Action{{
+			ResourceID: a.id, Kind: "update",
+			Description: fmt.Sprintf("remount %s with %s", a.spec.VolID, missing),
+			Fn:          func(ctx context.Context) error { return m.remount(ctx, a.spec, missing) },
+		}}, nil
 	}
 	if o.Health == reconcile.HealthHealthy {
 		return []reconcile.Action{{
@@ -266,7 +288,7 @@ func (m *Manager) attach(ctx context.Context, spec Resource) error {
 		return err
 	}
 	if src == "" {
-		if _, err := m.Run.Run(ctx, "mount", "-o", "noatime", dev, host); err != nil {
+		if _, err := m.Run.Run(ctx, "mount", "-o", mountOptions(spec), dev, host); err != nil {
 			return fmt.Errorf("mount %s at %s: %w", dev, host, err)
 		}
 		// A fresh filesystem's root is root:root 0755 (mkfs's own
@@ -287,6 +309,43 @@ func (m *Manager) attach(ctx context.Context, spec Resource) error {
 		}
 	}
 	return m.grow(ctx, spec)
+}
+
+// mountOptions is the -o list for a fresh mount.
+func mountOptions(spec Resource) string {
+	return strings.Join(append([]string{"noatime"}, spec.Options...), ",")
+}
+
+// missingOptions lists the requested options the current mount lacks.
+func (m *Manager) missingOptions(ctx context.Context, spec Resource) ([]string, error) {
+	if len(spec.Options) == 0 {
+		return nil, nil
+	}
+	host := HostPath(m.Base, spec.VolID)
+	out, err := m.Run.Run(ctx, "findmnt", "-rn", "-M", host, "-o", "OPTIONS")
+	if err != nil {
+		return nil, fmt.Errorf("findmnt %s: %w", host, err)
+	}
+	have := map[string]bool{}
+	for _, opt := range strings.Split(strings.TrimSpace(out), ",") {
+		have[opt] = true
+	}
+	var missing []string
+	for _, opt := range spec.Options {
+		if !have[opt] {
+			missing = append(missing, opt)
+		}
+	}
+	return missing, nil
+}
+
+// remount adds options to a live mount in place, so a running workload keeps its files open.
+func (m *Manager) remount(ctx context.Context, spec Resource, opts string) error {
+	host := HostPath(m.Base, spec.VolID)
+	if _, err := m.Run.Run(ctx, "mount", "-o", "remount,"+opts, host); err != nil {
+		return fmt.Errorf("remount %s with %s: %w", host, opts, err)
+	}
+	return nil
 }
 
 // ensureFilesystem formats dev only when it carries no signature and reads as
