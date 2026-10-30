@@ -57,6 +57,9 @@ History before 1.0.0 is not recorded here.
   logged.
 - `expanse ctl block apply` reports why an update of an existing block was refused. It used to
   fall back to creating the block and print only that it already existed.
+- A VM whose guest crashes at boot is started again after a wait that doubles from 10 seconds up
+  to 5 minutes, and its status says it crashed and when the next start is. qemu exits cleanly
+  when a guest panics, so the agent used to start it again every 10 seconds, forever.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

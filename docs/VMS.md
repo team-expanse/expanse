@@ -207,7 +207,10 @@ systemctl show -p StatusText --value expanse-block-root@default-vm1-0.service
 Other values are `booting`, `not ready: guest started, waiting for multi-user.target`, `not ready:
 guest in emergency.target` (or `rescue.target`), `not ready: guest shutting down` and `not ready:
 guest powered off (exit status N)`. A guest that never boots stays out of RUNNING; nothing restarts
-it for that yet. The guest's serial console reads end-of-file, so an emergency shell gives up at
+it for that yet. A guest that stops on its own within a minute of booting (a kernel panic, say)
+counts as crashed: the agent starts it again after 10 seconds, doubling the wait each time up to
+5 minutes, and the node's status record for the VM, shown on its page, reads `the guest crashed
+within 1m0s of booting (N in a row); next start in …`. A minute's good run resets the count. The guest's serial console reads end-of-file, so an emergency shell gives up at
 once and the guest carries on booting.
 
 A guest without systemd never reports. Set `config.guestReady: none` for it, and the VM counts as

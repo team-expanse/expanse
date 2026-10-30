@@ -164,6 +164,45 @@ with subtest("a guest that starts but never reaches multi-user.target is never R
     assert phase != "RUNNING", f"{STUCK} is RUNNING although its guest never reached multi-user.target"
 
 
+CRASHY = "vm3"
+with subtest("a guest that crashes at boot restarts with a growing wait, and its status says so"):
+    # No initrd and no root: the kernel panics a few seconds in, and panic=1 resets it, so qemu exits.
+    deploy(n1, CRASHY, MANIFEST.replace(f"name: {NAME}", f"name: {CRASHY}")
+           .replace(f"/mnt/{NAME}-disk", f"/mnt/{CRASHY}-disk")
+           .replace("memory: 2Gi", "memory: 256Mi")
+           .replace(f'    bootInitrd: "{INITRD}"\n', "")
+           .replace(f'bootCmdline: "{CMDLINE}"', 'bootCmdline: "console=ttyS0 panic=1"'))
+
+    def crashy_node():
+        nodes = placement_nodes(get_json(n1, CRASHY) or {})
+        return next(iter(nodes)) if len(nodes) == 1 else ""
+
+    wait_for(lambda: crashy_node() != "", f"{CRASHY} placed", timeout=300)
+    crashy_name = crashy_node()
+    crashy_host = ALL[crashy_name]
+    booting = f"vm default-{CRASHY}-0 booting"
+
+    def boots():
+        return int(crashy_host.succeed(
+            f"journalctl -u {unit_of(CRASHY)} --no-pager -o cat | grep -c '{booting}' || true").strip())
+
+    def crash_record():
+        rc, out = kv(n1, f"get /node/{crashy_name}/status/resources/block-replica:default/{CRASHY}/0")
+        return out if rc == 0 else ""
+
+    wait_for(lambda: boots() >= 1, f"{CRASHY}'s first boot", timeout=300)
+    t0 = time.monotonic()
+    wait_for(lambda: "crashed within" in crash_record(), f"{CRASHY}'s status to say it crashed", timeout=120)
+    print(crash_record())
+    code = crashy_host.succeed(f"systemctl show -P ExecMainStatus {unit_of(CRASHY)}").strip()
+    assert code == "75", f"{CRASHY}'s last run exited {code}, want the crash status 75"
+    time.sleep(max(0.0, 100 - (time.monotonic() - t0)))
+    n = boots()
+    # Waits of 10, 20 and 40 s fit at most 4 boots in 100 s; a fixed ~10 s retry fits about 9.
+    assert 2 <= n <= 5, f"{CRASHY} booted {n} times in 100 s, want a retry with a growing wait"
+    n1.succeed(f"expanse ctl block delete {SOCK} {CRASHY}")
+
+
 with subtest("qemu runs a pinned machine type, with its monitor socket under /run"):
     pid = host.succeed(f"systemctl show -P MainPID {unit_of(NAME)}").strip()
     qemu = host.succeed(f"pgrep -P {pid} qemu").strip()

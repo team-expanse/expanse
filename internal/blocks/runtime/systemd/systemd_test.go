@@ -11,6 +11,7 @@ import (
 	"time"
 
 	nix "github.com/expanse/expanse/internal/agent/nix"
+	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/reconcile"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -49,6 +50,7 @@ func TestUnitFileProperties(t *testing.T) {
 		"TasksMax=512",                             // default when unset
 		"Restart=on-failure",
 		"RestartSec=5s",
+		fmt.Sprintf("RestartPreventExitStatus=%d", vm.CrashExitStatus), // the agent backs off a crashing guest
 		"StartLimitBurst=3",
 		"StartLimitIntervalSec=60",
 	} {
@@ -300,6 +302,11 @@ type fakeUnitAPI struct {
 	starts  int
 	reloads int
 	status  map[string]string // unit -> StatusText
+	exits   map[string]int    // unit -> its main process's last exit status
+}
+
+func (f *fakeUnitAPI) ExitStatus(ctx context.Context, unit string) (int, error) {
+	return f.exits[unit], nil
 }
 
 func (f *fakeUnitAPI) Reload(ctx context.Context, unit string) error {

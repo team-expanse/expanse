@@ -50,6 +50,16 @@ func (d *DBUSAPI) StatusText(ctx context.Context, unit string) (string, error) {
 	return text, nil
 }
 
+// ExitStatus reads the exit status of the service's last main process.
+func (d *DBUSAPI) ExitStatus(ctx context.Context, unit string) (int, error) {
+	p, err := d.conn.GetUnitTypePropertyContext(ctx, unit, "Service", "ExecMainStatus")
+	if err != nil {
+		return 0, errors.Wrap(err, errors.KindUnavailable, "systemd.ExitStatus", unit)
+	}
+	code, _ := p.Value.Value().(int32)
+	return int(code), nil
+}
+
 // Start starts (or restarts, via replace) the unit and waits for the job.
 //
 // Clears a tripped StartLimitBurst first (PHASE-05-TASKS.md Stream A,

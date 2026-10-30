@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/quantity"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -136,6 +137,8 @@ func UnitFile(s Spec) string {
 	// Restart policy (§5.3).
 	fmt.Fprintf(&b, "Restart=on-failure\n")
 	fmt.Fprintf(&b, "RestartSec=5s\n")
+	// A guest that crashed at boot waits on the agent's backoff instead (crash.go).
+	fmt.Fprintf(&b, "RestartPreventExitStatus=%d\n", vm.CrashExitStatus)
 	// cgroup limits from resources.limits.
 	if s.Limits != nil {
 		if s.Limits.Cpu != "" {

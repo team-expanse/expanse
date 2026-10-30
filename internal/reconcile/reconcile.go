@@ -528,7 +528,7 @@ func (r *Reconciler) processResource(ctx context.Context, res Resource) *Status 
 	actions, err := m.Plan(ctx, res, obs)
 	if err != nil {
 		r.markFailure(res.ID())
-		st.Health = HealthUnhealthy
+		st.Health, st.Text = HealthUnhealthy, obs.Details["status"]
 		st.Error = fmt.Sprintf("plan: %v", err)
 		return st
 	}
