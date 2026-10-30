@@ -16,10 +16,11 @@
 // > by less than ~50%, which NTP-synced machines always satisfy. It does
 // > not depend on clock *offset* agreement.
 //
-// A renewal the store cannot answer (raft between leaders) is retried, but
-// only until 2·TTL/3 after the last successful renewal began: the same bound a
-// renewal stuck for its whole TTL/3 budget gives, so the guard band is unchanged.
-// A conflict, or the watch seeing the record change hands, still ends it at once.
+// Renewal runs every TTL/6. One the store cannot answer (raft between leaders)
+// is retried, but only until 2·TTL/3 after the last successful renewal began:
+// the bound a renewal stuck for a whole TTL/3 budget always had, so the guard
+// band is unchanged, and an election has at least TTL/2 to finish. A conflict,
+// or the watch seeing the record change hands, still ends the lease at once.
 //
 // Clock discipline (spec §10 "Clock jumps"): ALL local timing — renewal
 // cadence, slow-renewal detection, the Done() stop deadline — uses
@@ -52,10 +53,10 @@ const (
 	// DefaultTTL is the default lease TTL (15 s).
 	DefaultTTL = 15 * time.Second
 
-	// RenewInterval is the renewal cadence: TTL/3 (5 s for the default
+	// RenewInterval is the renewal cadence: TTL/6 (2.5 s for the default
 	// TTL). Renewal is a Raft CAS write, retried while the store is
 	// unavailable until 2·TTL/3 after the last renewal began.
-	RenewInterval = DefaultTTL / 3
+	RenewInterval = DefaultTTL / 6
 )
 
 // ErrNotAcquired is returned by TryAcquire when the lease is held
@@ -432,7 +433,7 @@ func (h *Held) renewLoop(ctx context.Context) {
 	defer h.wg.Done()
 	// Monotonic ticker (time.Ticker uses the monotonic clock; a wall
 	// clock jump does not accelerate or stall it — spec §10).
-	t := time.NewTicker(h.ttl / 3)
+	t := time.NewTicker(h.ttl / 6)
 	defer t.Stop()
 	for {
 		select {

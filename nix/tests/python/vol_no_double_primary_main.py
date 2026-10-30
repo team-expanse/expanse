@@ -18,7 +18,7 @@ import random
 SIZE_MIB = 256
 NAME = "vndp"
 SEED = 20260921
-# The election moves the primary only after its node has been unreachable for the 10 s lease TTL
+# The election moves the primary only after its node has been unreachable for the 15 s lease TTL
 # plus the 15 s skew allowance, so "long" cuts force a handoff and "short" ones flap the primary.
 SCHEDULE = ["long", "long", "short", "short", "pair", "pair", "other"]
 CUT_S = {"long": (35, 45), "short": (4, 9), "pair": (10, 25), "other": (10, 25)}

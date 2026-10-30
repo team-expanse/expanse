@@ -261,8 +261,8 @@ func TestSlowRenewalClosesDone(t *testing.T) {
 	if h.Valid() {
 		t.Error("Held still valid after slow renewal")
 	}
-	// First renewal tick at grant+300ms + 300ms budget → lost by
-	// grant+600ms, before the 900ms TTL would have run out.
+	// Renewal retries until grant+600ms (2·TTL/3) → lost by then,
+	// before the 900ms TTL would have run out.
 	if elapsed := doneAt.Sub(grantedAt); elapsed >= 900*time.Millisecond {
 		t.Errorf("Done closed %v after grant; slow renewal must close it before the %v TTL expiry", elapsed, 900*time.Millisecond)
 	}
@@ -785,6 +785,29 @@ func TestRenewalRidesOutABriefWriteOutage(t *testing.T) {
 	}
 	if rev := h.CurrentLease().Revision; rev <= rev0 {
 		t.Errorf("revision did not advance: %d → %d", rev0, rev)
+	}
+}
+
+// Renewing every TTL/6 leaves at least TTL/2 of retry room whenever the outage
+// starts, enough for a raft election late in a renewal cycle.
+func TestRenewalRidesOutHalfATTLOutageLateInTheCycle(t *testing.T) {
+	st := &writeDownStore{Store: newBoltStore(t)}
+	m := lease.NewManager(st, "node-a")
+	ctx := context.Background()
+
+	h, err := m.Acquire(ctx, "late-election", 900*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer m.Release(ctx, h)
+	time.Sleep(270 * time.Millisecond)
+	st.set(true)
+	time.Sleep(380 * time.Millisecond)
+	st.set(false)
+	time.Sleep(600 * time.Millisecond)
+
+	if err := h.Err(); err != nil {
+		t.Fatalf("lease lost to a TTL/2 write outage: %v", err)
 	}
 }
 

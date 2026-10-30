@@ -218,7 +218,7 @@ func vipPorts(b *pb.Block) []vipPort {
 // readyCandidates maps placements to §4.2 preference candidates: a
 // placement counts while its phase is RUNNING. Liveness is NOT part of
 // this gate: a dead node's failure is proven by its lease expiring
-// (renewal every TTL/3), not by placement bookkeeping, and the holder
+// (renewal every TTL/6), not by placement bookkeeping, and the holder
 // takes over the moment the fence is gone (see Holder.Run).
 func readyCandidates(b *pb.Block) []vip.Candidate {
 	byNode := map[string]int{}

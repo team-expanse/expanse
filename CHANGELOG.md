@@ -54,7 +54,9 @@ History before 1.0.0 is not recorded here.
   other nodes stepped down and unmounted under its running block (a db/postgres replica stopped
   finding its data), and pgha's own leases were lost the same way. A renewal the store cannot
   answer is now retried, up to the point where giving up has always been due; a conflicting
-  write still ends the lease at once.
+  write still ends the lease at once. Leases renew twice as often (every sixth of their TTL), and
+  a volume's lease TTL goes from 10 to 15 seconds so a volume rides out a slow election; a
+  stateful block now fails over about 5 seconds later when its node dies.
 
 ## 1.17.0 - 2026-10-30
 

@@ -73,7 +73,7 @@ const primaryContent = "primary\n"
 // imported — same "local copy of the convention" decoupling this
 // package's other constants already use): losing this lease now drives
 // a real failover (Stream B), so the same failover-latency budget
-// applies — TTL/3 renewal + slippage bounds how long a dead primary's
+// applies — TTL/6 renewal + slippage bounds how long a dead primary's
 // fence outlives it before a standby can promote.
 const LeaseTTL = 10 * time.Second
 
