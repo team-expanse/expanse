@@ -365,3 +365,26 @@ func TestARebootingNodeKeepsItsReplicasForTheRebootHold(t *testing.T) {
 		t.Errorf("replica 0 = %+v, want moved once the reboot overran its hold", p)
 	}
 }
+
+// The controller, not the rejoining node, ends a reboot hold: once it sees the node up again.
+func TestTheControllerEndsARebootHoldOnceTheNodeIsUp(t *testing.T) {
+	c, st, nodes, clk := statefulDB(t)
+	ctx := context.Background()
+	down := placementAt(loadStatus(t, ctx, st, "default", "db"), 0).GetNodeId()
+	key := store.Key(RebootKey(down))
+	if _, err := st.Put(ctx, key, []byte(clk.Now().Format(time.RFC3339))); err != nil {
+		t.Fatal(err)
+	}
+	loseReplica0(t, c, st, nodes, clk)
+	if _, err := st.Get(ctx, key); err != nil {
+		t.Fatalf("the hold ended while the node was down: %v", err)
+	}
+	setReady(nodes, down, true)
+	reconcile(t, c)
+	if _, err := st.Get(ctx, key); err == nil {
+		t.Error("the announcement outlived the node's return, so a later crash would be held too")
+	}
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p.GetNodeId() != down {
+		t.Errorf("replica 0 = %+v, want still on %s", p, down)
+	}
+}

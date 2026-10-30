@@ -91,6 +91,15 @@ func (c *Controller) graceFor(ctx context.Context, node string, grace time.Durat
 	return max(grace, RebootHold)
 }
 
+// endRebootHold drops node's reboot announcement once it is up, so a later crash gets the usual grace.
+func (c *Controller) endRebootHold(ctx context.Context, node string) {
+	k := store.Key(RebootKey(node))
+	if _, err := c.St.Get(store.WithStale(ctx), k); err != nil {
+		return
+	}
+	_ = c.St.Delete(ctx, k, 0) // a failure retries on the next pass
+}
+
 // reschedulePass applies §4.4 to one block's placements. It marks Lost
 // placements (after the grace period) and retires them (frees the
 // replica index) only when a replacement is actually permitted:
@@ -119,6 +128,7 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 			continue // already retired: replacement handled elsewhere
 		}
 		if up, draining := nodeUp(nodes, p.GetNodeId()); up {
+			c.endRebootHold(ctx, p.GetNodeId())
 			c.unreachableMu.Lock()
 			delete(c.unreachableSince, string(e.Key)+"\x00"+p.GetNodeId())
 			c.unreachableMu.Unlock()

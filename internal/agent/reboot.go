@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/blocks/controller"
-	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
 )
 
 // announceReboot tells the controller this node is going down to come back, so its replicas keep
-// their placements a while (controller.RebootHold) and its VMs resume their saves here.
+// their placements a while (controller.RebootHold) and its VMs resume their saves here. The
+// controller drops the announcement once it sees the node up again.
 func (a *Agent) announceReboot(stopping func() bool) {
 	if !stopping() {
 		return
@@ -27,18 +27,6 @@ func (a *Agent) announceReboot(stopping func() bool) {
 		a.logger.Warn("could not announce this node's reboot; its replicas may move", "err", err)
 	default:
 		a.logger.Info("announced this node's reboot; its replicas stay placed", "hold", controller.RebootHold)
-	}
-}
-
-// clearReboot withdraws the announcement once, after this node has reported a status it can take
-// placements with; withdrawn earlier, the controller would replace its replicas while it rejoins.
-func (a *Agent) clearReboot(ctx context.Context) {
-	if a.rebootCleared.Load() {
-		return
-	}
-	err := a.store.Delete(ctx, store.Key(controller.RebootKey(a.cfg.NodeID)), 0)
-	if err == nil || errors.Is(err, errors.KindNotFound) {
-		a.rebootCleared.Store(true)
 	}
 }
 
