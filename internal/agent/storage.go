@@ -69,15 +69,6 @@ func (a *Agent) stopVolumes(cause error) {
 	}
 }
 
-// volumeStopCause is how a stopping agent leaves its volumes: untouched when it will be started
-// again on a running node, stepped down when the node shuts down or left the cluster.
-func volumeStopCause(systemStopping, removed bool) error {
-	if systemStopping || removed {
-		return volume.ErrShutdown
-	}
-	return volume.ErrRestart
-}
-
 // initStorage wires the leader-side controller that plans volume replicas, and
 // the volume node for the VG in the node's config, if it names one. The mount
 // manager registers now because the reconciler cannot take one while it runs.

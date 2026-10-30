@@ -161,12 +161,14 @@ store opens, the socket binds, and the first reconcile completes, and pings
 `WATCHDOG=1` every 30 s (`WatchdogSec=60s`). A wedged agent restarts
 automatically.
 
-A restart of the agent alone (a switch, `systemctl restart expansed`, the watchdog) leaves the
-node's workloads as they are. Blocks and VMs run in their own units; the stopping agent leaves every
-volume mounted and Primary under its lease, which the next agent takes back, and tells the cluster
-it is restarting, so the failure monitor doesn't mark the node unreachable for up to 2 minutes
-while it is away. Nothing is re-placed or re-elected. A stop during a node shutdown instead steps
-down the volumes nothing uses and announces a reboot (see `docs/VMS.md`, "Node reboots").
+A restart of the agent alone (a switch, `systemctl restart expansed`) leaves the node's workloads
+as they are. Blocks and VMs run in their own units; the stopping agent sees systemd's restart job,
+leaves every volume mounted and Primary under its lease, which the next agent takes back, and tells
+the cluster it is restarting, so the failure monitor doesn't mark the node unreachable for up to 2
+minutes while it is away. Nothing is re-placed or re-elected. `systemctl stop expansed` is not a
+restart: the agent steps down the volumes nothing uses, and after 15 s of silence the node is
+treated as lost. A stop during a node shutdown announces a reboot (see `docs/VMS.md`, "Node
+reboots"). A crashed or killed agent announces nothing.
 
 ## API surface
 

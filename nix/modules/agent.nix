@@ -368,6 +368,9 @@ in
       before = [ "expanse-ui.service" ];
       # The agent reads the runtimes at start; a new one (e.g. a newer qemu) links in for the next starts.
       restartTriggers = [ config.environment.etc."expanse/block-runtimes.json".text ];
+      # A switch restarts the agent (a restart job) rather than stopping and later starting it, so
+      # the stopping agent knows it is coming back and leaves the node's volumes and placements alone.
+      stopIfChanged = false;
 
       unitConfig = { };
       # The volume runtime shells out to lvm and drbdadm/drbdsetup, and the mount

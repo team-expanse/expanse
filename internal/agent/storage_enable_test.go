@@ -201,18 +201,3 @@ func TestVolumesOutliveTheAgentContextAndStopAsAShutdown(t *testing.T) {
 		t.Fatalf("cause = %v, want volume.ErrShutdown so busy volumes stay primary", err)
 	}
 }
-
-func TestAnAgentRestartLeavesVolumesAlone(t *testing.T) {
-	for _, c := range []struct {
-		stopping, removed bool
-		want              error
-	}{
-		{false, false, volume.ErrRestart},
-		{true, false, volume.ErrShutdown},
-		{false, true, volume.ErrShutdown},
-	} {
-		if got := volumeStopCause(c.stopping, c.removed); got != c.want {
-			t.Errorf("shutdown=%v removed=%v: %v, want %v", c.stopping, c.removed, got, c.want)
-		}
-	}
-}

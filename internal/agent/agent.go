@@ -1012,11 +1012,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		a.logger.Info("agent stopping")
-		stopping, removed := systemStopping(), a.removed.Load()
-		if !removed {
-			a.announceStop(func() bool { return stopping })
-		}
-		volumesCause = volumeStopCause(stopping, removed)
+		kind := stopKindOf(systemStopping(), restartRequested(), a.removed.Load())
+		a.announceStop(kind)
+		volumesCause = kind.volumeStopCause()
 	case err := <-serveErr:
 		if err != nil {
 			a.status.Store("error")
