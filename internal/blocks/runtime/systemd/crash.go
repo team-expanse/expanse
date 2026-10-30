@@ -75,12 +75,12 @@ func (c *crashes) running(unit string, now time.Time) {
 }
 
 // crashStatus reads a failed VM unit's crash: its status line and the wait left, "" when it didn't crash.
-func (m *Manager) crashStatus(ctx context.Context, s Spec, unit, active string) (string, time.Duration) {
+func (m *Manager) crashStatus(ctx context.Context, s Spec, unit, active, sub string) (string, time.Duration) {
 	if s.Type != "vm/instance" {
 		return "", 0
 	}
 	now := m.clock()
-	if active != "failed" {
+	if active != "failed" && sub != "auto-restart" { // auto-restart: systemd's own restart is pending
 		if active == "active" {
 			m.crashes.running(unit, now)
 		}

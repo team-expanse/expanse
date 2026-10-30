@@ -2,6 +2,8 @@ package systemd
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -110,5 +112,31 @@ func TestManagerStartsOtherFailuresAtOnce(t *testing.T) {
 	c.crash(1)
 	if _, started, err := c.tick(); !started || err != nil {
 		t.Fatalf("a non-crash failure: started=%v err=%v, want an immediate start", started, err)
+	}
+}
+
+// Before the unit settles as failed, systemd may hold it in auto-restart: a crash all the same.
+func TestManagerBacksOffACrashSeenDuringAutoRestart(t *testing.T) {
+	c := newCrashTest(t)
+	c.api.states[c.unit] = [3]string{"loaded", "activating", "auto-restart"}
+	c.api.exits[c.unit] = vm.CrashExitStatus
+	if _, started, err := c.tick(); started || err == nil {
+		t.Fatalf("started=%v err=%v, want a wait", started, err)
+	}
+}
+
+// The templates agent.nix installs are the units that really run, so each must not restart a crash.
+func TestTheInstalledTemplatesLeaveACrashToTheAgent(t *testing.T) {
+	raw, err := os.ReadFile("../../../../nix/modules/agent.nix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("RestartPreventExitStatus=%d\n", vm.CrashExitStatus)
+	for _, tmpl := range []string{`"expanse-block@.service"`, `"expanse-block-root@.service"`} {
+		_, rest, ok := strings.Cut(string(raw), "systemd.units."+tmpl)
+		section, _, _ := strings.Cut(rest, "systemd.units.")
+		if !ok || !strings.Contains(section, want) {
+			t.Errorf("agent.nix's %s lacks %q", tmpl, strings.TrimSpace(want))
+		}
 	}
 }

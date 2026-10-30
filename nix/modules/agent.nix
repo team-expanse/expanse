@@ -224,6 +224,8 @@ in
         SyslogIdentifier=expanse-block-%i
         Restart=on-failure
         RestartSec=5s
+        # 75: a VM guest crashed at boot; the agent restarts it after a growing wait (crash.go).
+        RestartPreventExitStatus=75
         DynamicUser=yes
         NoNewPrivileges=yes
         PrivateTmp=yes
@@ -282,6 +284,8 @@ in
         SyslogIdentifier=expanse-block-%i
         Restart=on-failure
         RestartSec=5s
+        # 75: a VM guest crashed at boot; the agent restarts it after a growing wait (crash.go).
+        RestartPreventExitStatus=75
         NoNewPrivileges=yes
         PrivateTmp=yes
         ProtectSystem=strict
