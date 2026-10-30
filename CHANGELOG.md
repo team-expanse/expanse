@@ -57,6 +57,9 @@ History before 1.0.0 is not recorded here.
   logged.
 - `expanse ctl block apply` reports why an update of an existing block was refused. It used to
   fall back to creating the block and print only that it already existed.
+- After a boot, a node brings up its volumes only once the mesh has its overlay address, which
+  DRBD binds to. The first attempt used to fail with "IP ... not found on this host" and wait for
+  the next pass.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.
