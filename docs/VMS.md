@@ -261,6 +261,8 @@ reboot: qemu hot-adds or removes vCPUs, and grows or shrinks a virtio-mem device
 guest's memory beyond what it booted with. Expanse brings added vCPUs and memory online through the
 guest agent when the guest doesn't do so itself.
 
+- The VM's node must have room for the increase, or the redeploy is refused; drain the node or
+  lower another block's requests first.
 - Growth stops at the limits. A larger request than the limit, or a change to a limit, restarts the
   VM on the new size.
 - Memory never shrinks below what the guest booted with; asking for less restarts it.

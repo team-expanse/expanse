@@ -45,6 +45,9 @@ History before 1.0.0 is not recorded here.
 
 ### Fixed
 
+- An update that raises a block's CPU, memory or storage requests is refused when a node already
+  running one of its replicas hasn't room for the increase. Replicas update in place (and a VM now
+  resizes live), so the scheduler never checked it, and a node could be committed past its capacity.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

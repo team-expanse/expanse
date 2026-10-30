@@ -278,6 +278,9 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	if ves := s.Check(ctx, b, true); len(ves) > 0 {
 		return nil, admissionErr(ves)
 	}
+	if err := s.checkGrowthFits(ctx, cur, b); err != nil {
+		return nil, err
+	}
 	sealed, err := s.sealSecrets(ctx, b, cur.GetSpec().GetSecrets())
 	if err != nil {
 		return nil, err
