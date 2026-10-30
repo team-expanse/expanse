@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +33,15 @@ func stopReplica(instance string) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "expanse-block-run: vm suspend failed, powering off instead: %v\n", err)
+	}
+	if why := keepReason(instance, s, "", systemStopping); why != "" {
+		err := suspendVM(instance, vmstate.KeepToken(s.Placement))
+		if err == nil {
+			fmt.Printf("expanse-block-run: vm %s saved for %s; its next start resumes it\n", instance, why)
+			waitGone(pid, quitWait, 250*time.Millisecond)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "expanse-block-run: vm save for %s failed, powering off instead: %v\n", why, err)
 	}
 	wait := shutdownWait(s)
 	if wait == 0 {
@@ -87,15 +99,47 @@ func keepShape(instance, dir string) error {
 	return vmstate.WriteShape(dir, raw)
 }
 
-// resumeOrDiscard reports whether dir holds the save token names; any other save is deleted,
+// resumeOrDiscard reports whether dir holds a save one of tokens names; any other save is deleted,
 // since the disk moves on once the guest boots without it.
-func resumeOrDiscard(dir, token string) bool {
-	if token != "" && vmstate.Token(dir) == token {
+func resumeOrDiscard(dir string, tokens ...string) bool {
+	if have := vmstate.Token(dir); have != "" && slices.Contains(tokens, have) {
 		return true
 	}
 	_ = vmstate.Remove(dir)
 	return false
 }
+
+// resumeTokens are the saves s may resume: its suspension's, and one kept for its placement.
+func resumeTokens(s *spec) []string {
+	tokens := []string{s.StateToken}
+	if s.Placement != "" {
+		tokens = append(tokens, vmstate.KeepToken(s.Placement))
+	}
+	return slices.DeleteFunc(tokens, func(t string) bool { return t == "" })
+}
+
+// keepReason says why this stop saves the running guest to resume it, "" for a power-off. It
+// consumes the agent's keep request; a VM without a placement id can't be resumed safely.
+func keepReason(instance string, s *spec, keepDir string, stopping func() bool) string {
+	asked := os.Remove(vmstate.KeepPath(keepDir, instance)) == nil
+	switch {
+	case s.Type != "vm/instance" || s.Placement == "":
+		return ""
+	case asked:
+		return "an update"
+	case stopping():
+		return "the node's shutdown"
+	}
+	return ""
+}
+
+// systemStopping reports whether the node is shutting down or rebooting.
+func systemStopping() bool {
+	out, _ := exec.Command("systemctl", "is-system-running").Output() // exits non-zero unless running
+	return systemStoppingFrom(string(out))
+}
+
+func systemStoppingFrom(out string) bool { return strings.TrimSpace(out) == "stopping" }
 
 // shutdownWait is how long a stop waits for the guest to power off; 0 for non-VMs.
 func shutdownWait(s *spec) time.Duration {

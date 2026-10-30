@@ -19,12 +19,15 @@ import (
 
 // vmGuest is what the block page tells about a vm/instance guest.
 type vmGuest struct {
-	MAC      string
-	Hostname string
-	Login    string // the user to SSH in as, "" when unknown
+	Namespace, Name string
+	MAC             string
+	Hostname        string
+	Login           string // the user to SSH in as, "" when unknown
 	// Status and Addresses are what the running guest reports; Addresses come from its guest agent.
 	Status    string
 	Addresses []string
+	// UpdatePending: its node has a newer QEMU than the one the guest runs on.
+	UpdatePending bool
 }
 
 // guestInfo describes b's guest, nil for other types. schema is the type's config schema.
@@ -34,7 +37,8 @@ func guestInfo(b *pb.Block, schema []byte) *vmGuest {
 	}
 	cfg := b.GetSpec().GetConfig().AsMap()
 	name := b.GetMetadata().GetName()
-	g := &vmGuest{MAC: vm.MAC(cfg, systemd.Instance(b.GetMetadata().GetNamespace(), name, 0)), Hostname: name}
+	ns := b.GetMetadata().GetNamespace()
+	g := &vmGuest{Namespace: ns, Name: name, MAC: vm.MAC(cfg, systemd.Instance(ns, name, 0)), Hostname: name}
 	ci, _ := vm.CloudInitFromConfig(cfg)
 	if ci.Hostname != "" {
 		g.Hostname = ci.Hostname
@@ -56,6 +60,7 @@ func (s *Server) guestStatus(ctx context.Context, g *vmGuest, b *pb.Block) {
 		key := "/node/" + p.GetNodeId() + "/status/resources/" + controller.ReplicaResourceID(ns, name, 0)
 		if e, err := s.store.Get(store.WithStale(ctx), store.Key(key)); err == nil {
 			g.Status, g.Addresses = vmready.SplitAddresses(reconcile.RecordedStatusText(string(e.Value)))
+			g.Status, g.UpdatePending = vmready.SplitUpdateNote(g.Status)
 		}
 		return
 	}

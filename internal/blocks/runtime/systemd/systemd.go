@@ -106,7 +106,14 @@ type Spec struct {
 	Stopped bool `json:"stopped,omitempty"`
 	// StateToken names the saved state: the one to write while Stopped, else the one to resume from.
 	StateToken string `json:"stateToken,omitempty"`
+	// Placement names the replica's placement; a VM's save for a reboot or update loads only into it.
+	Placement string `json:"placement,omitempty"`
+	// Refresh is the latest request to move a running VM onto the node's current runtime.
+	Refresh string `json:"refresh,omitempty"`
 }
+
+// RefreshAnnotation stamps a block's latest request to update its VM's runtime in place.
+const RefreshAnnotation = "expanse.io/runtimeUpdateAt"
 
 // UnitFile renders the systemd TEMPLATE unit (expanse-block@.service):
 // per-replica identity arrives via the instance string %i. Keeping the

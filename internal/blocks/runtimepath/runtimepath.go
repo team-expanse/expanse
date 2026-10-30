@@ -3,6 +3,8 @@
 package runtimepath
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,4 +28,24 @@ func Prepend(dir, blockType, path string) string {
 		return bin
 	}
 	return bin + ":" + path
+}
+
+// Declared lists the runtime each block type should use, as the node's current system says.
+const Declared = "/etc/expanse/block-runtimes.json"
+
+// DeclaredBin resolves name in blockType's runtime from the list at file, through any symlinks.
+func DeclaredBin(file, blockType, name string) (string, error) {
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	var outs map[string]string
+	if err := json.Unmarshal(raw, &outs); err != nil {
+		return "", err
+	}
+	out, ok := outs[blockType]
+	if !ok {
+		return "", fmt.Errorf("%s lists no runtime for %s", file, blockType)
+	}
+	return filepath.EvalSymlinks(filepath.Join(out, "bin", name))
 }

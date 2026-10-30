@@ -11,6 +11,7 @@ import (
 
 	"github.com/expanse/expanse/internal/scheduler"
 	"github.com/expanse/expanse/internal/storage"
+	"github.com/expanse/expanse/internal/store"
 	"github.com/expanse/expanse/internal/store/raftstore"
 	pb "github.com/expanse/expanse/proto"
 )
@@ -338,5 +339,29 @@ func TestDrainStopsDaemonsetReplica(t *testing.T) {
 	}
 	if p := placementOn(loadStatus(t, ctx, st, "default", "agent"), "n1"); p != nil {
 		t.Errorf("daemonset replica on draining n1 = %+v, want stopped", p)
+	}
+}
+
+// A node that announced its reboot keeps its replicas, VMs resuming their saves, for RebootHold.
+func TestARebootingNodeKeepsItsReplicasForTheRebootHold(t *testing.T) {
+	c, st, nodes, clk := statefulDB(t)
+	ctx := context.Background()
+	down := placementAt(loadStatus(t, ctx, st, "default", "db"), 0).GetNodeId()
+	holdCopy(nodes, otherNode(nodes, down), 0)
+	if _, err := st.Put(ctx, store.Key(RebootKey(down)), []byte(clk.Now().Format(time.RFC3339))); err != nil {
+		t.Fatal(err)
+	}
+	loseReplica0(t, c, st, nodes, clk)
+	clk.Sleep(5 * time.Minute)
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p.GetNodeId() != down || p.GetPhase() == pb.Phase_LOST {
+		t.Fatalf("replica 0 = %+v during its node's reboot, want kept on %s", p, down)
+	}
+	clk.Sleep(RebootHold)
+	reconcile(t, c)
+	reconcile(t, c)
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p == nil || p.GetNodeId() == down {
+		t.Errorf("replica 0 = %+v, want moved once the reboot overran its hold", p)
 	}
 }

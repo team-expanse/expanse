@@ -54,14 +54,27 @@ type guestState struct {
 	mu     sync.Mutex
 	state  string
 	addrs  []string
+	update bool // a newer QEMU is installed than the one running
 	notify func(string)
+}
+
+// text is the status line; callers hold mu.
+func (g *guestState) text() string {
+	return vmready.WithAddresses(vmready.WithUpdateNote(g.state, g.update), g.addrs)
 }
 
 func (g *guestState) setState(s string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.state = s
-	g.notify(vmready.WithAddresses(s, g.addrs))
+	g.notify(g.text())
+}
+
+func (g *guestState) setUpdatePending(p bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.update = p
+	g.notify(g.text())
 }
 
 // setAddrs reports whether the addresses changed.
@@ -72,7 +85,7 @@ func (g *guestState) setAddrs(a []string) bool {
 		return false
 	}
 	g.addrs = a
-	g.notify(vmready.WithAddresses(g.state, a))
+	g.notify(g.text())
 	return true
 }
 
@@ -188,4 +201,26 @@ func downloadStatus(done, total int64) string {
 		return fmt.Sprintf("not ready: downloading the image (%d MiB)", done>>20)
 	}
 	return fmt.Sprintf("not ready: downloading the image (%d%% of %d MiB)", done*100/total, total>>20)
+}
+
+// watchRuntime reports, on each change, whether the node's qemu (resolve) is no longer started.
+func watchRuntime(ctx context.Context, started string, resolve func() (string, error), every time.Duration, set func(bool)) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	pending := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		now, err := resolve()
+		if err != nil {
+			continue // mid-switch, the profile may briefly lack it
+		}
+		if p := now != started; p != pending {
+			pending = p
+			set(p)
+		}
+	}
 }

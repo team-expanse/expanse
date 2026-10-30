@@ -39,6 +39,7 @@ func (s *Server) registerBlockRoutes() {
 	s.routes.Handle("GET /blocks/{ns}/{name}/network/events", s.requireAuth(http.HandlerFunc(s.handleBlockNetworkEvents)))
 	s.routes.Handle("POST /blocks/{ns}/{name}/scale", s.requireAuth(http.HandlerFunc(s.handleBlockScale)))
 	s.routes.Handle("POST /blocks/{ns}/{name}/power", s.requireAuth(http.HandlerFunc(s.handleBlockPower)))
+	s.routes.Handle("POST /blocks/{ns}/{name}/update-runtime", s.requireAuth(http.HandlerFunc(s.handleRuntimeUpdate)))
 	s.routes.Handle("POST /blocks/{ns}/{name}/delete", s.requireAuth(http.HandlerFunc(s.handleBlockDelete)))
 	s.routes.Handle("GET /blocks/{ns}/{name}/logs", s.requireAuth(http.HandlerFunc(s.handleBlockLogs)))
 	s.routes.Handle("GET /blocks/{ns}/{name}/logs/stream", s.requireAuth(http.HandlerFunc(s.handleBlockLogsStream)))
@@ -370,6 +371,20 @@ func (s *Server) handleBlockPower(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Trigger", toastTrigger("success", fmt.Sprintf("%s %s/%s", verb, ns, name)))
 	s.render(w, http.StatusOK, "block-power", b)
+}
+
+// handleRuntimeUpdate moves a running VM onto its node's current QEMU, keeping the guest running.
+func (s *Server) handleRuntimeUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.blocksUnavailable(w, r) {
+		return
+	}
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	if _, err := s.blocks.UpdateRuntime(r.Context(), &pb.UpdateRuntimeRequest{Namespace: ns, Name: name}); err != nil {
+		http.Error(w, errText(err), httpStatus(err))
+		return
+	}
+	w.Header().Set("HX-Trigger", toastTrigger("success", fmt.Sprintf("Updating %s/%s", ns, name)))
+	s.render(w, http.StatusOK, "vm-update-requested", nil)
 }
 
 func (s *Server) handleBlockDelete(w http.ResponseWriter, r *http.Request) {

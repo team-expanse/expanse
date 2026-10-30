@@ -258,6 +258,7 @@ func (c *Controller) surgeCreate(ctx context.Context, b *pb.Block, status *pb.Bl
 		NodeId:       nodeID,
 		Phase:        pb.Phase_STARTING,
 		Generation:   target,
+		PlacementId:  newPlacementID(),
 	}
 	h := c.hooks()
 	if err := h.start(ctx, b, p); err != nil {

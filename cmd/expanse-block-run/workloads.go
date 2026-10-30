@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/blocks/pgconn"
+	"github.com/expanse/expanse/internal/blocks/runtimepath"
 	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/blocks/vm/qga"
 	"github.com/expanse/expanse/internal/blocks/vm/qmp"
@@ -1280,7 +1281,7 @@ wal_log_hints = on
 // A stop first powers the guest off (stopReplica, the unit's ExecStop).
 // qemu's exit closes its fd on the raw device, so DRBD
 // can demote with no separate release step (unlike LIO's teardown).
-func runVM(ctx context.Context, instance, name, stateToken string, args []string) error {
+func runVM(ctx context.Context, instance, name string, resumable []string, args []string) error {
 	cfg, err := cfgMap(args)
 	if err != nil {
 		return err
@@ -1338,7 +1339,7 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 	}
 
 	stateDir := vmstate.Dir("", instance)
-	resume := resumeOrDiscard(stateDir, stateToken)
+	resume := resumeOrDiscard(stateDir, resumable...)
 	shape := bootShape(args)
 	if resume { // the saved RAM loads only into the layout it ran in
 		if shape, err = readShape(vmstate.ShapePath(stateDir)); err != nil {
@@ -1451,6 +1452,7 @@ func runVM(ctx context.Context, instance, name, stateToken string, args []string
 	watchCtx, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
 	go pollGuestAgent(watchCtx, instance, qgaSock, mac)
+	go watchRuntime(watchCtx, path, nodeQEMU, runtimeCheckEvery, guest.setUpdatePending)
 	go serveReloads(watchCtx, instance, "vm/instance", args, resizer.apply)
 	if watch != nil {
 		go watch.serve(watchCtx, instance, tracker)
@@ -1617,6 +1619,14 @@ func vmMachineArgs(cfg map[string]any) ([]string, error) {
 	}
 	return []string{"-machine", m}, nil
 }
+
+// nodeQEMU is the qemu the node's current system declares, which an update or a restart starts.
+func nodeQEMU() (string, error) {
+	return runtimepath.DeclaredBin(runtimepath.Declared, "vm/instance", "qemu-kvm")
+}
+
+// runtimeCheckEvery is how often a VM looks for a newer qemu on its node, which a switch installs.
+const runtimeCheckEvery = 30 * time.Second
 
 // vmShutdownTimeout is how long a stop waits for the guest to power off before killing qemu.
 func vmShutdownTimeout(cfg map[string]any) (time.Duration, error) {

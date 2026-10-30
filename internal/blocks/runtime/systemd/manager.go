@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/expanse/expanse/internal/blocks/livespec"
@@ -78,6 +79,8 @@ type Manager struct {
 	Unseal func(ctx context.Context, ns, name string) ([]byte, error)
 	// StateDir holds suspended VMs' saved state; empty = vmstate.DefaultDir.
 	StateDir string
+	// KeepDir holds the requests that a VM's next stop save its guest; empty = vmstate.DefaultKeepDir.
+	KeepDir string
 	// LiveDir holds the markers of runtimes that serve reloads; empty = livespec.DefaultDir.
 	LiveDir string
 }
@@ -207,14 +210,61 @@ func (m *Manager) reloadable(s Spec, o reconcile.Observed) bool {
 		return false
 	}
 	cur, ok := m.specOnDisk(s)
-	if !ok || cur.Stopped || !livespec.LiveOnly(s.Type, cur.Args, s.Args) {
+	if !ok || cur.Stopped || !liveArgs(s.Type, cur.Args, s.Args) {
 		return false
 	}
-	// A running VM read its state token at start; a new one only matters to its next start.
+	// A running VM reads its state token and placement only when it starts or stops.
 	rest, next := cur, s
 	rest.Args, next.Args = nil, nil
 	rest.StateToken, next.StateToken = "", ""
+	rest.Placement, next.Placement = "", ""
 	return sameSpec(rest, next)
+}
+
+// liveArgs reports whether next's args are cur's, or differ only in typ's live fields.
+func liveArgs(typ string, cur, next []string) bool {
+	return slices.Equal(livespec.CanonicalArgs(cur), livespec.CanonicalArgs(next)) || livespec.LiveOnly(typ, cur, next)
+}
+
+// keepsGuest reports whether s asks the running VM to move onto the node's current runtime: a new
+// update request, maybe with a resize, which its resumed run applies.
+func (m *Manager) keepsGuest(s Spec, o reconcile.Observed) bool {
+	if s.Type != "vm/instance" || s.Stopped || s.Placement == "" ||
+		o.Details["active"] != "active" || o.Details["sub"] != "running" {
+		return false
+	}
+	cur, ok := m.specOnDisk(s)
+	if !ok || cur.Stopped || cur.Refresh == s.Refresh || !liveArgs(s.Type, cur.Args, s.Args) {
+		return false
+	}
+	rest, next := cur, s
+	rest.Args, next.Args = nil, nil
+	rest.StateToken, next.StateToken = "", ""
+	rest.Refresh, next.Refresh = "", ""
+	return sameSpec(rest, next)
+}
+
+// keepMarker is where the agent asks the replica's next stop to save its guest.
+func (m *Manager) keepMarker(s Spec) string {
+	return vmstate.KeepPath(m.KeepDir, Instance(s.Namespace, s.Name, s.Index))
+}
+
+// setKeep asks the replica's next stop to save its guest, or withdraws the request.
+func (m *Manager) setKeep(s Spec, keep bool) error {
+	path := m.keepMarker(s)
+	if !keep {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return errors.Wrap(err, errors.KindInternal, "systemd.setKeep", path)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return errors.Wrap(err, errors.KindInternal, "systemd.setKeep", path)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		return errors.Wrap(err, errors.KindInternal, "systemd.setKeep", path)
+	}
+	return nil
 }
 
 // removeSpec drops the per-replica spec JSON (resource deletion).
@@ -370,14 +420,22 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 			},
 		})
 	} else if !o.InSync {
+		keep := m.keepsGuest(spec, o)
+		desc := "start " + unit
+		if keep {
+			desc = "restart " + unit + " onto the node's runtime, keeping its guest"
+		}
 		acts = append(acts, reconcile.Action{
 			ResourceID:  res.id,
 			Kind:        "start",
-			Description: "start " + unit,
+			Description: desc,
 			Fn: func(ctx context.Context) error {
 				// The new run writes its own marker once it serves reloads.
 				if err := os.Remove(m.liveMarker(spec)); err != nil && !os.IsNotExist(err) {
 					return errors.Wrap(err, errors.KindInternal, "systemd.Start", "reload marker")
+				}
+				if err := m.setKeep(spec, keep); err != nil {
+					return err
 				}
 				return m.API.Start(ctx, unit)
 			},
@@ -402,6 +460,10 @@ func (m *Manager) Delete(ctx context.Context, r reconcile.Resource) error {
 	// removed before the first converge). A stale unit that keeps
 	// running on a failed stop is caught by the next pass; the spec
 	// file removal is strict — it decides expanse-block-run's behavior.
+	// A deleted VM powers off, never saves.
+	if err := m.setKeep(res.spec, false); err != nil {
+		return err
+	}
 	_ = m.API.Stop(ctx, UnitNameForSpec(res.spec))
 	if err := os.RemoveAll(m.secretDir(res.spec)); err != nil {
 		return errors.Wrap(err, errors.KindInternal, "systemd.Delete", "credentials")

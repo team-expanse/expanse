@@ -145,6 +145,7 @@ func (b *Bridge) Sync(ctx context.Context) error {
 			}
 			rs := buildReplicaSpec(&blk, ns, name, int(p.GetReplicaIndex()), vols, extra...)
 			rs.Stopped, rs.StateToken = powerState(&blk, p, int64(e.Revision))
+			rs.Placement, rs.Refresh = keptState(&blk, p)
 			spec, err := json.Marshal(rs)
 			if err != nil {
 				continue
@@ -291,6 +292,15 @@ func powerState(blk *pb.Block, p *pb.PlacementStatus, revision int64) (stopped b
 		return true, "r" + strconv.FormatInt(revision, 10)
 	}
 	return false, p.GetSavedState()
+}
+
+// keptState is a VM's placement id and latest runtime update request, which let its node keep
+// the guest running across a reboot or an update; empty for other types.
+func keptState(blk *pb.Block, p *pb.PlacementStatus) (placement, refresh string) {
+	if blk.GetSpec().GetType() != "vm/instance" {
+		return "", ""
+	}
+	return p.GetPlacementId(), blk.GetMetadata().GetAnnotations()[systemd.RefreshAnnotation]
 }
 
 // buildReplicaSpec is replicaSpec before encoding.

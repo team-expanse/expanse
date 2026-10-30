@@ -226,7 +226,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "vm/instance":
-		if err := runVM(ctx, instance, spec.Name, spec.StateToken, args); err != nil {
+		if err := runVM(ctx, instance, spec.Name, resumeTokens(spec), args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
 			os.Exit(1)
 		}
@@ -248,6 +248,8 @@ type spec struct {
 	// Stopped and StateToken mirror systemd.Spec: suspended, and the save to write or resume.
 	Stopped    bool   `json:"stopped,omitempty"`
 	StateToken string `json:"stateToken,omitempty"`
+	// Placement names the replica's placement, which alone may resume a save kept for a reboot or update.
+	Placement string `json:"placement,omitempty"`
 }
 
 // loadSpec reads the desired-state JSON the agent wrote for this

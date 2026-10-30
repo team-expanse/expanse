@@ -20,17 +20,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BlockService_Create_FullMethodName     = "/expanse.block.v1.BlockService/Create"
-	BlockService_Get_FullMethodName        = "/expanse.block.v1.BlockService/Get"
-	BlockService_List_FullMethodName       = "/expanse.block.v1.BlockService/List"
-	BlockService_Update_FullMethodName     = "/expanse.block.v1.BlockService/Update"
-	BlockService_Delete_FullMethodName     = "/expanse.block.v1.BlockService/Delete"
-	BlockService_Scale_FullMethodName      = "/expanse.block.v1.BlockService/Scale"
-	BlockService_Restart_FullMethodName    = "/expanse.block.v1.BlockService/Restart"
-	BlockService_SetPower_FullMethodName   = "/expanse.block.v1.BlockService/SetPower"
-	BlockService_Watch_FullMethodName      = "/expanse.block.v1.BlockService/Watch"
-	BlockService_StreamLogs_FullMethodName = "/expanse.block.v1.BlockService/StreamLogs"
-	BlockService_Explain_FullMethodName    = "/expanse.block.v1.BlockService/Explain"
+	BlockService_Create_FullMethodName        = "/expanse.block.v1.BlockService/Create"
+	BlockService_Get_FullMethodName           = "/expanse.block.v1.BlockService/Get"
+	BlockService_List_FullMethodName          = "/expanse.block.v1.BlockService/List"
+	BlockService_Update_FullMethodName        = "/expanse.block.v1.BlockService/Update"
+	BlockService_Delete_FullMethodName        = "/expanse.block.v1.BlockService/Delete"
+	BlockService_Scale_FullMethodName         = "/expanse.block.v1.BlockService/Scale"
+	BlockService_Restart_FullMethodName       = "/expanse.block.v1.BlockService/Restart"
+	BlockService_SetPower_FullMethodName      = "/expanse.block.v1.BlockService/SetPower"
+	BlockService_UpdateRuntime_FullMethodName = "/expanse.block.v1.BlockService/UpdateRuntime"
+	BlockService_Watch_FullMethodName         = "/expanse.block.v1.BlockService/Watch"
+	BlockService_StreamLogs_FullMethodName    = "/expanse.block.v1.BlockService/StreamLogs"
+	BlockService_Explain_FullMethodName       = "/expanse.block.v1.BlockService/Explain"
 )
 
 // BlockServiceClient is the client API for BlockService service.
@@ -50,6 +51,7 @@ type BlockServiceClient interface {
 	Scale(ctx context.Context, in *ScaleRequest, opts ...grpc.CallOption) (*Block, error)
 	Restart(ctx context.Context, in *RestartRequest, opts ...grpc.CallOption) (*Block, error)
 	SetPower(ctx context.Context, in *SetPowerRequest, opts ...grpc.CallOption) (*Block, error)
+	UpdateRuntime(ctx context.Context, in *UpdateRuntimeRequest, opts ...grpc.CallOption) (*Block, error)
 	Watch(ctx context.Context, in *WatchBlocksRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BlockEvent], error)
 	StreamLogs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogLine], error)
 	// Explain reports why a block is pending or unhealthy, per node.
@@ -144,6 +146,16 @@ func (c *blockServiceClient) SetPower(ctx context.Context, in *SetPowerRequest, 
 	return out, nil
 }
 
+func (c *blockServiceClient) UpdateRuntime(ctx context.Context, in *UpdateRuntimeRequest, opts ...grpc.CallOption) (*Block, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Block)
+	err := c.cc.Invoke(ctx, BlockService_UpdateRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *blockServiceClient) Watch(ctx context.Context, in *WatchBlocksRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BlockEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &BlockService_ServiceDesc.Streams[0], BlockService_Watch_FullMethodName, cOpts...)
@@ -209,6 +221,7 @@ type BlockServiceServer interface {
 	Scale(context.Context, *ScaleRequest) (*Block, error)
 	Restart(context.Context, *RestartRequest) (*Block, error)
 	SetPower(context.Context, *SetPowerRequest) (*Block, error)
+	UpdateRuntime(context.Context, *UpdateRuntimeRequest) (*Block, error)
 	Watch(*WatchBlocksRequest, grpc.ServerStreamingServer[BlockEvent]) error
 	StreamLogs(*LogsRequest, grpc.ServerStreamingServer[LogLine]) error
 	// Explain reports why a block is pending or unhealthy, per node.
@@ -246,6 +259,9 @@ func (UnimplementedBlockServiceServer) Restart(context.Context, *RestartRequest)
 }
 func (UnimplementedBlockServiceServer) SetPower(context.Context, *SetPowerRequest) (*Block, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetPower not implemented")
+}
+func (UnimplementedBlockServiceServer) UpdateRuntime(context.Context, *UpdateRuntimeRequest) (*Block, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateRuntime not implemented")
 }
 func (UnimplementedBlockServiceServer) Watch(*WatchBlocksRequest, grpc.ServerStreamingServer[BlockEvent]) error {
 	return status.Error(codes.Unimplemented, "method Watch not implemented")
@@ -421,6 +437,24 @@ func _BlockService_SetPower_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BlockService_UpdateRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlockServiceServer).UpdateRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlockService_UpdateRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlockServiceServer).UpdateRuntime(ctx, req.(*UpdateRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BlockService_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(WatchBlocksRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -499,6 +533,10 @@ var BlockService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetPower",
 			Handler:    _BlockService_SetPower_Handler,
+		},
+		{
+			MethodName: "UpdateRuntime",
+			Handler:    _BlockService_UpdateRuntime_Handler,
 		},
 		{
 			MethodName: "Explain",

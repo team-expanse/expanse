@@ -105,3 +105,27 @@ func TestVMSuspendAndResumeSetTheBlocksPower(t *testing.T) {
 		}
 	}
 }
+
+type updateClient struct {
+	pb.BlockServiceClient
+	got *pb.UpdateRuntimeRequest
+}
+
+func (c *updateClient) UpdateRuntime(_ context.Context, r *pb.UpdateRuntimeRequest, _ ...grpc.CallOption) (*pb.Block, error) {
+	c.got = r
+	return &pb.Block{Metadata: &pb.Metadata{Namespace: r.GetNamespace(), Name: r.GetName()}}, nil
+}
+
+func TestVMUpdateAsksForTheNodesCurrentQEMU(t *testing.T) {
+	c := &updateClient{}
+	var out bytes.Buffer
+	if err := updateRuntime(context.Background(), c, "default", "vm1", &out); err != nil {
+		t.Fatal(err)
+	}
+	if c.got.GetName() != "vm1" || c.got.GetNamespace() != "default" {
+		t.Errorf("sent %v", c.got)
+	}
+	if !strings.Contains(out.String(), "default/vm1") {
+		t.Errorf("printed %q", out.String())
+	}
+}

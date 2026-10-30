@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/expanse/expanse/internal/blocks/catalog"
+	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/store"
@@ -122,6 +123,38 @@ func (s *Server) SetPower(ctx context.Context, r *pb.SetPowerRequest) (*pb.Block
 		return nil, admissionErr(ves)
 	}
 	return s.putVersioned(ctx, "SetPower", b, e.Revision)
+}
+
+// UpdateRuntime asks a running VM's node to move it onto the node's current QEMU, keeping the
+// guest running (a save and resume). Same txn contract as Update.
+func (s *Server) UpdateRuntime(ctx context.Context, r *pb.UpdateRuntimeRequest) (*pb.Block, error) {
+	const op = "blocks.service.UpdateRuntime"
+	if r.GetName() == "" {
+		return nil, errors.New(errors.KindInvalid, op, "name is required")
+	}
+	ns := r.GetNamespace()
+	if ns == "" {
+		ns = "default"
+	}
+	b, err := s.get(ctx, ns, r.GetName())
+	if err != nil {
+		return nil, err
+	}
+	if cat := s.adCtx().Catalog; cat != nil && !cat.Suspendable(b.GetSpec().GetType()) {
+		return nil, errors.New(errors.KindInvalid, op, b.GetSpec().GetType()+" cannot keep running across an update")
+	}
+	if b.GetSpec().GetPower() == pb.Power_POWER_SUSPENDED {
+		return nil, errors.New(errors.KindInvalid, op, "the block is suspended; it resumes on the node's current QEMU")
+	}
+	e, err := s.St.Get(ctx, key(ns, r.GetName()))
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, op, "read for revision")
+	}
+	if b.Metadata.Annotations == nil {
+		b.Metadata.Annotations = map[string]string{}
+	}
+	b.Metadata.Annotations[systemd.RefreshAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
+	return s.putVersioned(ctx, "UpdateRuntime", b, e.Revision)
 }
 
 // putVersioned marshals and CAS-writes a validated block, preserving the

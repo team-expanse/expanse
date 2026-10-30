@@ -272,6 +272,27 @@ guest agent when the guest doesn't do so itself.
 Only `vm/instance` resizes live (its `block.yaml` says `resizable: true`); the deploy form shows the
 limit fields for it.
 
+### Expanse upgrades and QEMU updates
+
+An upgrade that doesn't reboot the node leaves running VMs alone: they keep the qemu they started
+with. When the upgrade brings a newer qemu, the block's page shows **Update QEMU** and the guest's
+status ends in `(QEMU update pending)`, within half a minute of the switch. `expanse ctl vm update
+<name>`, or the button, saves the running guest on its node and resumes it at once on the new qemu,
+the way a suspend and resume would: a pause of a few seconds to a few minutes, depending on the
+guest's memory, and no reboot. If the save fails, the guest is powered off and boots fresh on the
+new qemu. A suspended VM needs no update; its resume uses the node's current qemu.
+
+### Node reboots
+
+When a node shuts down or reboots, each running VM on it saves its guest instead of powering it
+off, and the node's next boot resumes it. The node tells the cluster it is rebooting, so its
+replicas keep their places for up to 10 minutes rather than the usual 30 seconds; a node away
+longer has its VMs moved, and they boot fresh elsewhere. A save loads only into the placement that
+wrote it, so a VM that moved away while the node was down, even one that has since moved back,
+boots fresh and the old save is deleted. The save needs the same room under `/persist` as a
+suspend. A VM started by an Expanse too old to save it powers off as before, until it next
+restarts.
+
 ### Machine type
 
 qemu presents the guest a fixed set of virtual hardware, its machine type. `config.machine` pins it

@@ -721,6 +721,7 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	a.status.Store("idle")
 	go a.watchRemoval(ctx)
+	go a.clearReboot(ctx, 5*time.Second)
 
 	witness := a.ctl != nil && a.ctl.role == "witness"
 	if witness {
@@ -1011,6 +1012,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		a.logger.Info("agent stopping")
+		a.announceReboot(systemStopping)
 	case err := <-serveErr:
 		if err != nil {
 			a.status.Store("error")

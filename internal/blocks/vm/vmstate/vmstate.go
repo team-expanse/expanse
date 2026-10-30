@@ -19,6 +19,20 @@ func Dir(base, instance string) string {
 	return filepath.Join(base, instance)
 }
 
+// DefaultKeepDir holds the agent's requests that a VM's next stop save its guest to resume.
+const DefaultKeepDir = "/run/expanse/vm-keep"
+
+// KeepPath is instance's keep request under base (DefaultKeepDir when empty).
+func KeepPath(base, instance string) string {
+	if base == "" {
+		base = DefaultKeepDir
+	}
+	return filepath.Join(base, instance)
+}
+
+// KeepToken names a save kept for a reboot or an update, which only placement may resume.
+func KeepToken(placement string) string { return "p" + placement }
+
 // StatePath is the committed migration stream.
 func StatePath(dir string) string { return filepath.Join(dir, "state") }
 

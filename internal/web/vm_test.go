@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/vm"
 	"github.com/expanse/expanse/internal/web/schemaform"
 	pb "github.com/expanse/expanse/proto"
@@ -152,5 +153,46 @@ func TestVMDeployWithThePandoSetup(t *testing.T) {
 	setup := getBlock(t, st, "default/pando").GetSpec().GetConfig().AsMap()["cloudInit"].(map[string]any)["setup"].(map[string]any)
 	if pk := setup["packages"].([]any); pk[0] != "docker.io" || len(setup["runcmd"].([]any)) == 0 {
 		t.Errorf("setup = %v", setup)
+	}
+}
+
+func TestVMDetailOffersAPendingQEMUUpdate(t *testing.T) {
+	srv, pw, st := newTestServerStore(t)
+	seedNode(t, st, "n1", "kvm")
+	c, csrf := loggedInClient(t, srv, pw)
+	if resp, body := postForm(t, c, srv.URL+"/deploy/vm/instance", csrf, url.Values{
+		"name": {"vm1"}, "cfg/image" + schemaform.PresetSuffix: {"Debian 13 (log in as debian)"},
+	}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("deploy: %d\n%s", resp.StatusCode, alerts(body))
+	}
+	if _, body := get(t, c, srv.URL+"/blocks/default/vm1"); strings.Contains(body, "Update QEMU") {
+		t.Error("offers an update before the node has a newer QEMU")
+	}
+	status, _ := proto.Marshal(&pb.BlockStatus{Placements: []*pb.PlacementStatus{{ReplicaIndex: 0, NodeId: "n1", Phase: pb.Phase_RUNNING}}})
+	ctx := context.Background()
+	if _, err := st.Put(ctx, "/blocks/default/vm1/status", status); err != nil {
+		t.Fatal(err)
+	}
+	rec := `health=healthy in_sync=true ready=true actions=0 error="" updated=1 status="ready: multi-user.target reached (QEMU update pending) (addresses: 192.168.1.50)"`
+	if _, err := st.Put(ctx, "/node/n1/status/resources/block-replica:default/vm1/0", []byte(rec)); err != nil {
+		t.Fatal(err)
+	}
+	_, body := get(t, c, srv.URL+"/blocks/default/vm1")
+	if !strings.Contains(body, "Update QEMU") || !strings.Contains(body, "<dd>ready: multi-user.target reached</dd>") {
+		t.Errorf("the page does not offer the update cleanly:\n%s", body)
+	}
+	if resp, body := postForm(t, c, srv.URL+"/blocks/default/vm1/update-runtime", csrf, url.Values{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("update: %d %s", resp.StatusCode, body)
+	}
+	e, err := st.Get(ctx, "/blocks/default/vm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b pb.Block
+	if err := proto.Unmarshal(e.Value, &b); err != nil {
+		t.Fatal(err)
+	}
+	if b.GetMetadata().GetAnnotations()[systemd.RefreshAnnotation] == "" {
+		t.Error("the update was not requested")
 	}
 }

@@ -47,6 +47,8 @@
 </form>
 {{end}}
 
+{{define "vm-update-requested"}}Updating. The guest pauses for a moment and keeps running.{{end}}
+
 {{define "block-deleted"}}
 <div class="callout callout-info"><svg class="icon"><use href="#i-info"/></svg><div><strong>This block was deleted.</strong><p><a href="/blocks">Back to blocks</a></p></div></div>
 {{end}}
@@ -120,6 +122,10 @@
     <dt>MAC address</dt><dd><code>{{.MAC}}</code></dd>
     <dt>Hostname</dt><dd><code>{{.Hostname}}</code></dd>
     {{if .Status}}<dt>Guest</dt><dd>{{.Status}}</dd>{{end}}
+    {{if .UpdatePending}}<dt>QEMU</dt><dd><div id="vm-update">A newer QEMU is installed on its node.
+      <form class="form-inline" hx-post="/blocks/{{.Namespace}}/{{.Name}}/update-runtime" hx-target="#vm-update" hx-swap="innerHTML">
+        <button class="btn btn-sm" type="submit">Update QEMU</button>
+      </form><p class="field-hint">The guest pauses while its memory is saved and loaded, then keeps running; it does not reboot.</p></div></dd>{{end}}
     <dt>Address</dt><dd>{{range $i, $a := .Addresses}}{{if $i}}, {{end}}<code>{{$a}}</code>{{else}}<span class="muted">No guest agent has answered yet</span>{{end}}</dd>
   </dl>
   {{if .Addresses}}

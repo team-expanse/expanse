@@ -29,6 +29,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/blockkey"
 
 	"github.com/expanse/expanse/internal/blocks/logs"
+	"github.com/expanse/expanse/internal/blocks/runtime/systemd"
 	"github.com/expanse/expanse/internal/blocks/validate"
 	"github.com/expanse/expanse/internal/errors"
 	"github.com/expanse/expanse/internal/scheduler"
@@ -270,6 +271,7 @@ func (s *Server) Update(ctx context.Context, b *pb.Block) (*pb.Block, error) {
 	}
 
 	carrySecrets(b, cur.GetSpec().GetSecrets())
+	carryRuntimeUpdate(b, cur)
 	if b.GetSpec().GetPower() == pb.Power_POWER_UNSPECIFIED && b.GetSpec() != nil {
 		b.Spec.Power = cur.GetSpec().GetPower() // a manifest that doesn't say keeps the block suspended
 	}
@@ -375,4 +377,20 @@ func defaultReplicas(b *pb.Block) {
 		one := int32(1)
 		b.Spec.Replicas = &one
 	}
+}
+
+// carryRuntimeUpdate keeps the latest runtime update request across a re-applied manifest; a
+// changed one would move the VM onto its node's runtime again.
+func carryRuntimeUpdate(b, cur *pb.Block) {
+	v, ok := cur.GetMetadata().GetAnnotations()[systemd.RefreshAnnotation]
+	if !ok || b.GetMetadata() == nil {
+		return
+	}
+	if _, set := b.Metadata.Annotations[systemd.RefreshAnnotation]; set {
+		return
+	}
+	if b.Metadata.Annotations == nil {
+		b.Metadata.Annotations = map[string]string{}
+	}
+	b.Metadata.Annotations[systemd.RefreshAnnotation] = v
 }

@@ -904,3 +904,20 @@ func TestBridgeSyncWritesASuspendedReplicaAsStopped(t *testing.T) {
 		t.Errorf("spec stopped=%v token=%q, want true r%d", spec.Stopped, spec.StateToken, rev)
 	}
 }
+
+func TestAVMsSpecNamesItsPlacementAndUpdateRequest(t *testing.T) {
+	p := &pb.PlacementStatus{PlacementId: "a1b2"}
+	for typ, want := range map[string]bool{"vm/instance": true, "web/caddy": false} {
+		blk := &pb.Block{
+			Metadata: &pb.Metadata{Annotations: map[string]string{systemd.RefreshAnnotation: "2026-10-29T10:00:00Z"}},
+			Spec:     &pb.BlockSpec{Type: typ},
+		}
+		placement, refresh := keptState(blk, p)
+		if got := placement == "a1b2" && refresh == "2026-10-29T10:00:00Z"; got != want {
+			t.Errorf("%s: placement %q refresh %q, want them set: %v", typ, placement, refresh, want)
+		}
+		if !want && (placement != "" || refresh != "") {
+			t.Errorf("%s: placement %q refresh %q, want neither", typ, placement, refresh)
+		}
+	}
+}

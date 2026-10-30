@@ -270,6 +270,8 @@ in
         [Unit]
         Description=expanse block %i (root)
         After=network-online.target
+        # A VM saves its RAM here when the node shuts down, so the mount must outlast the unit.
+        RequiresMountsFor=/persist/expanse/vm-state
         StartLimitIntervalSec=60
         StartLimitBurst=3
 
@@ -364,6 +366,8 @@ in
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
       before = [ "expanse-ui.service" ];
+      # The agent reads the runtimes at start; a new one (e.g. a newer qemu) links in for the next starts.
+      restartTriggers = [ config.environment.etc."expanse/block-runtimes.json".text ];
 
       unitConfig = { };
       # The volume runtime shells out to lvm and drbdadm/drbdsetup, and the mount

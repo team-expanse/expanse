@@ -241,6 +241,9 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 	}
 
 	status := c.loadStatus(ctx, e.Key)
+	if namePlacements(status) {
+		return 0, c.persistStatus(ctx, e.Key, status)
+	}
 	// §4.4 node-failure rescheduling runs before everything else: mark
 	// Lost past the grace period, retire (free the index) when a
 	// replacement is permitted, then schedule the replacement through

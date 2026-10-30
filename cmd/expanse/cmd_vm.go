@@ -22,7 +22,7 @@ func (e exitCode) Error() string { return fmt.Sprintf("exit status %d", int(e)) 
 
 type execFunc func(ctx context.Context, sock, ref string, argv []string, stdin []byte, stdout, stderr io.Writer) error
 
-// newVMCmd builds `expanse ctl vm ...`: suspend and resume, and exec through a VM's guest agent on this node.
+// newVMCmd builds `expanse ctl vm ...`: suspend, resume and update, and exec through a VM's guest agent on this node.
 func newVMCmd(opts *ctlOpts) *cobra.Command { return newVMCmdWith(opts, vmExec) }
 
 func newVMCmdWith(opts *ctlOpts, run execFunc) *cobra.Command {
@@ -30,6 +30,7 @@ func newVMCmdWith(opts *ctlOpts, run execFunc) *cobra.Command {
 	for _, verb := range []string{"suspend", "resume"} {
 		vm.AddCommand(newPowerCmd(opts, verb))
 	}
+	vm.AddCommand(newUpdateCmd(opts))
 	var ns string
 	var withStdin bool
 	exec := &cobra.Command{
@@ -110,6 +111,36 @@ func setPower(ctx context.Context, c pb.BlockServiceClient, ns, name, verb strin
 	} else {
 		fmt.Fprintf(out, "resuming %s\n", ref)
 	}
+	return nil
+}
+
+// newUpdateCmd builds `vm update`.
+func newUpdateCmd(opts *ctlOpts) *cobra.Command {
+	var ns string
+	c := &cobra.Command{
+		Use:   "update <[namespace/]name>",
+		Short: "Move a running VM onto its node's current QEMU, keeping the guest running",
+		Long: `update saves the running guest on its node, then resumes it on the QEMU the node now has.
+The guest pauses for the save and load, then carries on; it does not reboot.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			bns, name := blockRef(ns, args[0])
+			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
+				return updateRuntime(ctx, c, bns, name, cmd.OutOrStdout())
+			})
+		},
+	}
+	c.Flags().StringVarP(&ns, "namespace", "n", "default", "namespace")
+	return c
+}
+
+// updateRuntime asks for a VM to move onto its node's current QEMU; its node does the work shortly after.
+func updateRuntime(ctx context.Context, c pb.BlockServiceClient, ns, name string, out io.Writer) error {
+	b, err := c.UpdateRuntime(ctx, &pb.UpdateRuntimeRequest{Namespace: ns, Name: name})
+	if err != nil {
+		return fmt.Errorf("update: %w", err)
+	}
+	fmt.Fprintf(out, "updating %s; its guest pauses briefly and keeps running\n", b.GetMetadata().GetNamespace()+"/"+b.GetMetadata().GetName())
 	return nil
 }
 

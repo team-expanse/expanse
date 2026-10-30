@@ -120,6 +120,7 @@ func (c *Controller) placeReplicas(ctx context.Context, b *pb.Block, e store.Ent
 			NodeId:       nodeID,
 			Phase:        pb.Phase_SCHEDULING,
 			Generation:   int64(e.Revision),
+			PlacementId:  newPlacementID(),
 		})
 		existing = append(existing, nodeID)
 		scheduler.Reserve(nodes, nodeID, req)
@@ -206,6 +207,7 @@ func (c *Controller) placeDaemonset(ctx context.Context, b *pb.Block, e store.En
 			NodeId:       n.ID,
 			Phase:        pb.Phase_SCHEDULING,
 			Generation:   int64(e.Revision),
+			PlacementId:  newPlacementID(),
 		})
 		changed = true
 		placed++

@@ -71,6 +71,26 @@ func nodeUp(nodes []scheduler.NodeView, nodeID string) (up, draining bool) {
 	return false, false
 }
 
+// RebootHold is how long a node that announced its reboot keeps its placements: its VMs saved
+// themselves to resume there, and a move would boot them fresh.
+const RebootHold = 10 * time.Minute
+
+// RebootKey is where a node announces, as an RFC 3339 time, that it is shutting down to reboot.
+func RebootKey(node string) string { return "/node/" + node + "/status/reboot" }
+
+// graceFor is the unreachable grace for node: RebootHold from a fresh reboot announcement, else grace.
+func (c *Controller) graceFor(ctx context.Context, node string, grace time.Duration, now time.Time) time.Duration {
+	e, err := c.St.Get(store.WithStale(ctx), store.Key(RebootKey(node)))
+	if err != nil {
+		return grace
+	}
+	at, err := time.Parse(time.RFC3339, string(e.Value))
+	if err != nil || now.Sub(at) > RebootHold {
+		return grace
+	}
+	return max(grace, RebootHold)
+}
+
 // reschedulePass applies §4.4 to one block's placements. It marks Lost
 // placements (after the grace period) and retires them (frees the
 // replica index) only when a replacement is actually permitted:
@@ -127,7 +147,7 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 				c.unreachableSince[ckey] = now
 			}
 			c.unreachableMu.Unlock()
-			if !seen || now.Sub(since) < grace {
+			if !seen || now.Sub(since) < c.graceFor(ctx, p.GetNodeId(), grace, now) {
 				continue // inside the grace window: do nothing
 			}
 			p.Phase = pb.Phase_LOST

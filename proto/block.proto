@@ -380,6 +380,8 @@ message PlacementStatus {
   string message = 7;
   // The saved-state token this replica's node holds for it; set from the node's report.
   string saved_state = 8;
+  // Names this placement for good; a VM's save for a reboot or a QEMU update loads only into it.
+  string placement_id = 9;
 }
 
 // ProbeResult is one probe outcome as the replica's node last recorded it.
@@ -461,6 +463,12 @@ message SetPowerRequest {
   string namespace = 1;
   string name = 2;
   Power power = 3;
+}
+
+// UpdateRuntimeRequest moves a running VM onto its node's current QEMU, keeping the guest running.
+message UpdateRuntimeRequest {
+  string namespace = 1;
+  string name = 2;
 }
 
 // Empty name watches all blocks in the namespace.
@@ -572,6 +580,7 @@ service BlockService {
   rpc Scale(ScaleRequest) returns (Block);
   rpc Restart(RestartRequest) returns (Block);
   rpc SetPower(SetPowerRequest) returns (Block);
+  rpc UpdateRuntime(UpdateRuntimeRequest) returns (Block);
   rpc Watch(WatchBlocksRequest) returns (stream BlockEvent);
   rpc StreamLogs(LogsRequest) returns (stream LogLine);
   // Explain reports why a block is pending or unhealthy, per node.

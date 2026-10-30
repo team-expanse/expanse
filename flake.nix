@@ -357,6 +357,7 @@
           vm-suspend-resume = mkTest "vm-suspend-resume" ./nix/tests/vm-suspend-resume.nix;
           # Phase 16 V4: a running VM grows and shrinks its vCPUs and memory without a reboot.
           vm-live-resize = mkTest "vm-live-resize" ./nix/tests/vm-live-resize.nix;
+          vm-upgrade-keep = mkTest "vm-upgrade-keep" ./nix/tests/vm-upgrade-keep.nix;
 
           # Stream B, X2 (the phase's decider)/X3: survives a hard node kill.
           vm-instance-failover = mkTest "vm-instance-failover" ./nix/tests/vm-instance-failover.nix;

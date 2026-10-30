@@ -16,8 +16,9 @@
 # (X1's "disk on a replicated raw volume"), which a real systemd service
 # inside the guest writes a marker to, mirroring the D1 probe's own
 # canary pattern.
-# vm-suspend-resume.nix and vm-live-resize.nix reuse this cluster and guest with its own script and a larger root disk.
-{ self, name ? "vm-instance", script ? ./python/vm_instance.py, diskSize ? null }:
+# vm-suspend-resume.nix, vm-live-resize.nix and vm-upgrade-keep.nix reuse this cluster and guest with
+# their own script, a larger root disk and (nodeModule) extra node config.
+{ self, name ? "vm-instance", script ? ./python/vm_instance.py, diskSize ? null, nodeModule ? null }:
 { pkgs, lib, ... }:
 let
   lint = pkgs.runCommand "vm-instance-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -82,7 +83,7 @@ let
     imports = [
       self.nixosModules.expanse
       ../modules/storage-test.nix
-    ];
+    ] ++ lib.optional (nodeModule != null) nodeModule;
     nixpkgs.overlays = [
       (final: prev: { expanse = self.packages.${prev.system}.expanse; })
     ];
