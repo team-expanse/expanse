@@ -123,6 +123,15 @@ with subtest("a VM boots with hotplug room up to its limits"):
     assert cpus == 1, f"{cpus} vCPUs at boot"
     print(f"boot: {cpus} vCPUs, MemTotal {base_mib} MiB")
 
+with subtest("a grow past the node's room is refused and the VM keeps running as it is"):
+    pid = qemu_pid(host)
+    big = base64.b64encode(manifest("4", "2Gi").encode()).decode()
+    n1.succeed(f"echo {big} | base64 -d > /tmp/{NAME}-big.yaml")
+    rc, out = n1.execute(f"expanse ctl block apply {SOCK} -f /tmp/{NAME}-big.yaml 2>&1")
+    assert rc != 0 and "InsufficientCPU" in out and host_name in out, f"rc {rc}: {out}"
+    time.sleep(10)  # a few reconcile passes: nothing resizes it
+    assert qemu_pid(host) == pid and size(host)[0] == 1, "a refused grow changed the VM"
+
 with subtest("a grow adds vCPUs and memory to the running guest"):
     cpus, mib = resize_live(host, "3", "2560Mi", 3, lambda mib: mib >= base_mib + 500)
     print(f"grown: {cpus} vCPUs, MemTotal {mib} MiB")

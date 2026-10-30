@@ -131,16 +131,11 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 				return nil
 			}
 			return withBlockClient(cmd, opts, func(ctx context.Context, c pb.BlockServiceClient) error {
-				// Idiomatic apply: try Update; create on NotFound.
-				if _, err := c.Update(ctx, b); err == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "updated %s/%s\n",
-						b.GetMetadata().GetNamespace(), b.GetMetadata().GetName())
-					return nil
+				verb, err := applyBlock(ctx, c, b)
+				if err != nil {
+					return err
 				}
-				if _, err := c.Create(ctx, b); err != nil {
-					return fmt.Errorf("create: %w", err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "created %s/%s\n",
+				fmt.Fprintf(cmd.OutOrStdout(), "%s %s/%s\n", verb,
 					b.GetMetadata().GetNamespace(), b.GetMetadata().GetName())
 				return nil
 			})
@@ -317,6 +312,21 @@ func newBlockCmd(opts *ctlOpts) (*cobra.Command, *cobra.Command) {
 }
 
 // withBlockClient dials the agent socket and runs fn with a BlockService.
+// applyBlock updates b when it exists, else creates it; an update's refusal is reported as is.
+func applyBlock(ctx context.Context, c pb.BlockServiceClient, b *pb.Block) (string, error) {
+	ref := &pb.GetBlockRequest{Namespace: b.GetMetadata().GetNamespace(), Name: b.GetMetadata().GetName()}
+	if _, err := c.Get(ctx, ref); err != nil {
+		if _, err := c.Create(ctx, b); err != nil {
+			return "", fmt.Errorf("create: %w", err)
+		}
+		return "created", nil
+	}
+	if _, err := c.Update(ctx, b); err != nil {
+		return "", fmt.Errorf("update: %w", err)
+	}
+	return "updated", nil
+}
+
 func withBlockClient(cmd *cobra.Command, opts *ctlOpts, fn func(ctx context.Context, c pb.BlockServiceClient) error) error {
 	conn, err := dial(opts)
 	if err != nil {

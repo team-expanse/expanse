@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/expanse/expanse/internal/cluster/join"
 	"github.com/expanse/expanse/internal/quantity"
 	"github.com/expanse/expanse/internal/scheduler"
 	pb "github.com/expanse/expanse/proto"
@@ -63,5 +64,18 @@ func TestAnUnplacedBlockGrowsFreely(t *testing.T) {
 	withNodes(s, "0")
 	if _, err := s.Update(ctx, webWithMemory("1Gi")); err != nil {
 		t.Fatalf("a block with no placements was refused: %v", err)
+	}
+}
+
+func TestARefusedGrowthNamesTheNodeByHostname(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newServer(t)
+	placeOn(t, ctx, s)
+	withNodes(s, "128Mi")
+	if _, err := s.St.Put(ctx, join.HostnameKey("n1"), []byte("rack1-a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Update(ctx, webWithMemory("1Gi")); err == nil || !strings.Contains(err.Error(), "node rack1-a ") {
+		t.Errorf("err %v, want the node named rack1-a", err)
 	}
 }
