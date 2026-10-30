@@ -21,7 +21,8 @@ let
       netboot.squashfsCompression = "gzip -Xcompression-level 1";
       documentation.enable = lib.mkForce false;
       # Warnings from the journal go to the console, so a failed guest boot says why.
-      boot.kernelParams = [ "console=ttyS0" "panic=-1" "systemd.journald.forward_to_console=1" "systemd.journald.max_level_console=warning" ];
+      # rd.: the initrd's journal reaches the console too, so a failed NixOS activation shows why.
+      boot.kernelParams = [ "console=ttyS0" "panic=-1" "rd.systemd.journald.forward_to_console=1" "systemd.journald.forward_to_console=1" "systemd.journald.max_level_console=warning" ];
       networking.usePredictableInterfaceNames = false;
       networking.useDHCP = false;
       networking.firewall.enable = false;
