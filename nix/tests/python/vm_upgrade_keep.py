@@ -95,10 +95,21 @@ with subtest("a running VM holds a marker in its tmpfs"):
 
 with subtest("a switch to another QEMU leaves the VM running and flags it"):
     before = uptime(host)
+    curs = {n: cursor(m) for n, m in ALL.items()}
     host.succeed("/run/current-system/specialisation/newqemu/bin/switch-to-configuration test")
     host.wait_until_succeeds(f"systemctl show -p StatusText --value {UNIT} | grep -q '{NOTE}'", timeout=240)
     keeps_guest(host, MARK, before)
     assert "qemu-kvm-next" not in host.succeed(f"systemctl status --no-pager -l {UNIT}")
+
+with subtest("the switch's agent restart moves nothing"):
+    time.sleep(30)  # past the 15 s unreachable mark, had the restart counted as an outage
+    agent = host.succeed(f"journalctl --after-cursor='{curs[host_name]}' -u expansed --no-pager")
+    assert "announced this node's restart" in agent, "the restarting agent did not announce itself"
+    for n, m in ALL.items():
+        log = m.succeed(f"journalctl --after-cursor='{curs[n]}' -u expansed --no-pager")
+        assert "primary elected" not in log, f"{n}: a volume's primary moved during an agent restart"
+        assert "left primary for the next agent" not in log, f"{n}: a restart stepped a volume down"
+    assert host_of(other)[0] == host_name, "the VM moved"
 
 with subtest("update moves the VM onto the new QEMU and keeps its guest"):
     before = uptime(host)

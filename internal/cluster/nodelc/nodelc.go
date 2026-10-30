@@ -398,6 +398,28 @@ func IsRevoked(ctx context.Context, st store.Store, id string) (bool, error) {
 	}
 }
 
+// RestartHold is how long a node whose agent announced a restart stays healthy without reporting:
+// the agent's restart leaves the node's workloads running, so nothing should move meanwhile.
+const RestartHold = 2 * time.Minute
+
+// RestartKey is where a stopping agent that will be started again (not a shutdown) says so.
+func RestartKey(node string) string { return "/node/" + node + "/status/restart" }
+
+// restarting reports whether node's agent announced a restart after its last status, within
+// RestartHold of now. An announcement the node has since reported past is deleted.
+func (m *Monitor) restarting(ctx context.Context, node string, statusRev store.Revision, now time.Time) bool {
+	k := store.Key(RestartKey(node))
+	ann, err := m.St.Get(ctx, k)
+	if err != nil {
+		return false
+	}
+	if statusRev > ann.Revision {
+		_ = m.St.Delete(ctx, k, 0) // a failure retries on the next pass
+		return false
+	}
+	return now.Sub(time.Unix(0, ann.UpdatedAt)) < RestartHold
+}
+
 // Transition is one lifecycle state change made by the Monitor.
 type Transition struct {
 	NodeID string
@@ -473,13 +495,15 @@ func (m *Monitor) Evaluate(ctx context.Context, now time.Time) []Transition {
 		// Last seen: the status entry's store timestamp (FSM-assigned,
 		// from the leader's command clock), falling back to join time.
 		last := time.Unix(0, r.JoinedAt)
+		var statusRev store.Revision
 		if se, err := m.St.Get(ctx, store.Key(join.NodesKeyPrefix+r.ID+"/status")); err == nil {
-			last = time.Unix(0, se.UpdatedAt)
+			last, statusRev = time.Unix(0, se.UpdatedAt), se.Revision
 		}
 		silent := now.Sub(last)
 
 		want := ""
 		switch {
+		case m.restarting(ctx, r.ID, statusRev, now):
 		case silent >= fail:
 			want = StateFailed
 		case silent >= unr:

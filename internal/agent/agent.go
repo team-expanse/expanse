@@ -215,7 +215,7 @@ type Agent struct {
 	splitMarks   volume.SplitBrainMarks
 	newVolNode   func(vg, pool string) volumeRunner
 	volMu        sync.Mutex
-	volStop      func()
+	volStop      func(cause error)
 	volClosed    bool
 	storageVG    atomic.Value // string: the VG reported as disk capacity
 	lastStore    *storage.NodeStorage
@@ -1008,19 +1008,24 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.logger.Warn("tcp listener enabled without mTLS (Phase 03 adds mTLS)", "addr", a.cfg.TCPTCPAddr)
 	}
 
+	volumesCause := volume.ErrShutdown
 	select {
 	case <-ctx.Done():
 		a.logger.Info("agent stopping")
-		a.announceReboot(systemStopping)
+		stopping, removed := systemStopping(), a.removed.Load()
+		if !removed {
+			a.announceStop(func() bool { return stopping })
+		}
+		volumesCause = volumeStopCause(stopping, removed)
 	case err := <-serveErr:
 		if err != nil {
 			a.status.Store("error")
-			stopVolumes()
+			stopVolumes(volume.ErrShutdown)
 			return fmt.Errorf("grpc serve: %w", err)
 		}
 	}
 	a.status.Store("shutting-down")
-	stopVolumes()
+	stopVolumes(volumesCause)
 	a.recon.Stop()
 	if err := a.store.Close(); err != nil {
 		a.logger.Error("store close failed", "err", err)

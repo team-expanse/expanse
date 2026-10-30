@@ -578,3 +578,44 @@ func TestMonitorPurgesARevokedNodesSubtree(t *testing.T) {
 	(&nodelc.Monitor{St: st, ThisNodeID: "n0"}).Evaluate(ctx, time.Now())
 	assertGoneKept(t, ctx, st, gone, kept)
 }
+
+// An agent that announced its restart keeps its node healthy until it reports again or RestartHold
+// passes: a restart leaves the node's workloads running, so nothing should move.
+func TestMonitorHoldsARestartingAgentsNode(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeStatus(t, ctx, st, "n1")
+	base := time.Now()
+	if _, err := st.Put(ctx, store.Key(nodelc.RestartKey("n1")), []byte("restarting")); err != nil {
+		t.Fatal(err)
+	}
+	m := &nodelc.Monitor{St: st, ThisNodeID: "n0"}
+
+	if ts := m.Evaluate(ctx, base.Add(time.Minute)); len(ts) != 0 {
+		t.Fatalf("t+1min transitions = %+v, want none while the agent restarts", ts)
+	}
+	writeStatus(t, ctx, st, "n1") // back
+	m.Evaluate(ctx, time.Now())
+	if _, err := st.Get(ctx, store.Key(nodelc.RestartKey("n1"))); err == nil {
+		t.Error("the restart announcement outlived the agent's return")
+	}
+	back := time.Now()
+	if ts := m.Evaluate(ctx, back.Add(16*time.Second)); len(ts) != 1 || ts[0].To != nodelc.StateUnreachable {
+		t.Errorf("a later silence = %+v, want unreachable as usual", ts)
+	}
+}
+
+func TestMonitorEndsARestartHoldThatOverruns(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeStatus(t, ctx, st, "n1")
+	base := time.Now()
+	if _, err := st.Put(ctx, store.Key(nodelc.RestartKey("n1")), []byte("restarting")); err != nil {
+		t.Fatal(err)
+	}
+	m := &nodelc.Monitor{St: st, ThisNodeID: "n0"}
+	ts := m.Evaluate(ctx, base.Add(nodelc.RestartHold+time.Second))
+	if len(ts) != 1 || ts[0].To != nodelc.StateUnreachable {
+		t.Errorf("past the hold = %+v, want unreachable", ts)
+	}
+}

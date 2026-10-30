@@ -15,6 +15,10 @@ import (
 // primary under its lease record, for the next agent to adopt, rather than being retried.
 var ErrShutdown = errors.New("agent shutting down")
 
+// ErrRestart is the cancel cause for an agent that stops only to start again. Every volume
+// stays as it is, mounted and primary under the lease, for the next agent to adopt.
+var ErrRestart = errors.New("agent restarting")
+
 // errLeftPrimary marks a busy volume left primary on shutdown; it is not a failure.
 var errLeftPrimary = errors.New("volume in use; left primary for the next agent")
 
@@ -136,7 +140,10 @@ func (p *Promoter) Hold(ctx context.Context, res string, l Lease, opt HoldOption
 	if ctx.Err() == nil {
 		p.log().Warn("volume lease lost", "vol", res, "err", l.Err())
 	}
-	if errors.Is(context.Cause(ctx), ErrShutdown) {
+	switch cause := context.Cause(ctx); {
+	case errors.Is(cause, ErrRestart):
+		return errLeftPrimary // untouched; giveUp keeps the lease for the next agent
+	case errors.Is(cause, ErrShutdown):
 		return p.leaveIfBusy(res)
 	}
 	return p.stepDown(res)

@@ -50,22 +50,32 @@ func (a *Agent) startVolumes(ctx context.Context, build func() volumeRunner) {
 		defer close(done)
 		node.Run(vctx, volumeSyncInterval)
 	}()
-	a.volStop = func() {
-		cancel(volume.ErrShutdown)
+	a.volStop = func(cause error) {
+		cancel(cause)
 		<-done
 	}
 }
 
-// stopVolumes stops the volume node loop, waiting until it has demoted every
-// volume nothing uses, and keeps it from starting again.
-func (a *Agent) stopVolumes() {
+// stopVolumes stops the volume node loop and keeps it from starting again. For
+// volume.ErrShutdown it first demotes every volume nothing uses; for volume.ErrRestart
+// it leaves every volume as it is, for the next agent.
+func (a *Agent) stopVolumes(cause error) {
 	a.volMu.Lock()
 	defer a.volMu.Unlock()
 	a.volClosed = true
 	if a.volStop != nil {
-		a.volStop()
+		a.volStop(cause)
 		a.volStop = nil
 	}
+}
+
+// volumeStopCause is how a stopping agent leaves its volumes: untouched when it will be started
+// again on a running node, stepped down when the node shuts down or left the cluster.
+func volumeStopCause(systemStopping, removed bool) error {
+	if systemStopping || removed {
+		return volume.ErrShutdown
+	}
+	return volume.ErrRestart
 }
 
 // initStorage wires the leader-side controller that plans volume replicas, and

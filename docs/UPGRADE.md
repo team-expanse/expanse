@@ -21,8 +21,9 @@ list (the published releases, from the oldest one the cluster runs to the newest
    `/persist/expanse/release-systems.json`, which the node page's Generations tab compares each
    generation with to show drift. A build that fails puts the previous source back. Downloads go to
    `/var/cache/expanse/upgrade/<version>/` and are removed once the node runs the release.
-3. Blocks and VMs keep running through the switch, and the agent's restart leaves their volumes
-   Primary. A VM picks up the new release when you restart it.
+3. Blocks and VMs keep running through the switch. The agent's restart leaves their volumes
+   mounted and Primary, and nothing is re-placed or re-elected (`docs/AGENT.md`). A VM whose release
+   brings a newer QEMU shows **Update QEMU**, which moves it over without a reboot (`docs/VMS.md`).
 4. Once the node runs the release and the cluster is healthy again, the next node starts.
 
 **Pause** stops before the next node; the one upgrading now finishes. A node that fails, or

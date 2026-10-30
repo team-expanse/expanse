@@ -68,7 +68,7 @@ func newStorageAgent(t *testing.T) (*Agent, *fakeLVM, *fakeVolNode) {
 		node.started <- vg + "/" + pool
 		return node
 	}
-	t.Cleanup(a.stopVolumes)
+	t.Cleanup(func() { a.stopVolumes(volume.ErrShutdown) })
 	return a, fl, node
 }
 
@@ -169,7 +169,7 @@ func TestStoragePassReportsTheNodeConfig(t *testing.T) {
 func TestStoppedVolumesNeverStartAgain(t *testing.T) {
 	ctx := context.Background()
 	a, _, node := newStorageAgent(t)
-	a.stopVolumes()
+	a.stopVolumes(volume.ErrShutdown)
 	_ = storage.SaveEnableRequest(ctx, a.store, "n1", storage.EnableRequest{}.WithDefaults())
 	a.storagePass(ctx)
 	if len(node.started) != 0 {
@@ -196,8 +196,23 @@ func TestVolumesOutliveTheAgentContextAndStopAsAShutdown(t *testing.T) {
 		t.Fatalf("volumes stopped with the agent's context (%v), before stopVolumes", err)
 	case <-time.After(20 * time.Millisecond):
 	}
-	a.stopVolumes()
+	a.stopVolumes(volume.ErrShutdown)
 	if err := <-node.cause; !errors.Is(err, volume.ErrShutdown) {
 		t.Fatalf("cause = %v, want volume.ErrShutdown so busy volumes stay primary", err)
+	}
+}
+
+func TestAnAgentRestartLeavesVolumesAlone(t *testing.T) {
+	for _, c := range []struct {
+		stopping, removed bool
+		want              error
+	}{
+		{false, false, volume.ErrRestart},
+		{true, false, volume.ErrShutdown},
+		{false, true, volume.ErrShutdown},
+	} {
+		if got := volumeStopCause(c.stopping, c.removed); got != c.want {
+			t.Errorf("shutdown=%v removed=%v: %v, want %v", c.stopping, c.removed, got, c.want)
+		}
 	}
 }

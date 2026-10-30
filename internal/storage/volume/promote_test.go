@@ -802,3 +802,34 @@ func TestNextAgentAdoptsItsOwnBusyPrimaryWithoutTouchingIt(t *testing.T) {
 		t.Error("no longer primary")
 	}
 }
+
+func TestARestartLeavesEveryVolumeAsItIsForTheNextAgent(t *testing.T) {
+	r := newLeaderRig(t, status(drbd.RoleSecondary, true, drbd.DiskUpToDate))
+	r.ttl = time.Minute
+	ctx, cancel := context.WithCancelCause(context.Background())
+	r.ended = make(chan error, 1)
+	go func() { r.ended <- r.p.Lead(ctx, r.mine, leaseName, "vol-a1", r.ttl, HoldOptions{}) }()
+	waitFor(t, "promotion", func() bool { return r.role() == drbd.RolePrimary })
+	before := len(r.tr.all())
+	cancel(ErrRestart) // nothing has the device open: a shutdown would demote it
+	select {
+	case err := <-r.ended:
+		if err != nil {
+			t.Fatalf("a restart is not an error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Lead did not return")
+	}
+	if calls := r.tr.all()[before:]; slices.Contains(calls, "release") || slices.Contains(calls, "secondary") {
+		t.Errorf("a restarting agent unmounted or demoted a volume: %v", calls)
+	}
+	if r.role() != drbd.RolePrimary || r.holder(t) != "n1" {
+		t.Errorf("role %s, holder %q; want still Primary under this node's lease", r.role(), r.holder(t))
+	}
+	r.lead(HoldOptions{})
+	t.Cleanup(func() { r.stop(t) })
+	time.Sleep(50 * time.Millisecond)
+	if calls := r.tr.all()[before:]; slices.Contains(calls, "release") || slices.Contains(calls, "secondary") {
+		t.Errorf("the next agent unmounted or demoted the volume: %v", calls)
+	}
+}
