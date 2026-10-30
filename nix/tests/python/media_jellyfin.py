@@ -89,6 +89,19 @@ def movies(token):
     return ok("GET", "/Items?Recursive=true&IncludeItemTypes=Movie", token=token)["Items"]
 
 
+last_refresh = [0.0]
+
+
+def scanned_movie(token):
+    """A library added during the wizard's own scan is skipped by it, so rescan every 15 s until found."""
+    if len(movies(token)) == 1:
+        return True
+    if time.time() - last_refresh[0] > 15:
+        ok("POST", "/Library/Refresh", token=token)
+        last_refresh[0] = time.time()
+    return False
+
+
 def journal(m):
     return m.execute(f"journalctl -t 'expanse-block-default-{NAME}-0' --no-pager -n 200 2>&1")[1]
 
@@ -135,14 +148,12 @@ with subtest("the startup wizard creates the administrator"):
     token = log_in()
 
 with subtest("a library on the nodes' media path is scanned and streams"):
-    # Newer Jellyfin reads the paths from LibraryOptions.PathInfos; the query form is kept for older ones.
     ok("POST", "/Library/VirtualFolders?name=Movies&collectionType=movies&paths=%2Fsrv%2Fmedia%2Fmovies"
-               "&refreshLibrary=true",
-       {"LibraryOptions": {"PathInfos": [{"Path": "/srv/media/movies"}]}}, token)
+               "&refreshLibrary=true", {"LibraryOptions": {}}, token)
     folders = ok("GET", "/Library/VirtualFolders", token=token)
     locations = {f["Name"]: f.get("Locations") for f in folders}
     assert locations.get("Movies") == ["/srv/media/movies"], f"library folders: {locations}"
-    wait_for(lambda: len(movies(token)) == 1, "the library scan finds the movie", timeout=180)
+    wait_for(lambda: scanned_movie(token), "the library scan finds the movie", timeout=180)
     movie = movies(token)[0]
     size = int(MACHINES[holder].succeed("stat -Lc %s '/srv/media/movies/Test Movie (2024)/Test Movie (2024).mkv'"))
     code, _ = http("GET", f"/Videos/{movie['Id']}/stream?static=true", token=token, out="/tmp/movie")
