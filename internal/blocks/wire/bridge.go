@@ -18,6 +18,7 @@ package wire
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,10 @@ type Bridge struct {
 	St store.Store
 	// Interval between full syncs; DefaultBridgeInterval when zero.
 	Interval time.Duration
+	// IsLeader gates Sync to the raft leader; nil syncs always (single node).
+	IsLeader func() bool
+	// Logger, when set, records each desired key the bridge deletes.
+	Logger *slog.Logger
 }
 
 // Run syncs until ctx is done: on every tick and on any /blocks/ write.
@@ -95,6 +100,9 @@ func (b *Bridge) watch(ctx context.Context) (<-chan struct{}, func(), error) {
 
 // Sync converges the desired-state keys with current placements.
 func (b *Bridge) Sync(ctx context.Context) error {
+	if b.IsLeader != nil && !b.IsLeader() {
+		return nil
+	}
 	// Wanted: resource key -> spec JSON.
 	want := map[string][]byte{}
 	// Volume view (T14 §4.7): name → {id, primary node} for every
@@ -194,6 +202,9 @@ func (b *Bridge) Sync(ctx context.Context) error {
 		}
 		if err := b.St.Delete(ctx, store.Key(k), 0); err != nil && !errors.Is(err, errors.KindNotFound) {
 			return errors.Wrap(err, errors.KindUnavailable, "bridge.Sync", "delete "+k)
+		}
+		if b.Logger != nil {
+			b.Logger.Info("bridge: removed desired state with no live placement", "key", k)
 		}
 	}
 	for k, v := range want {

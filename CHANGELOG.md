@@ -48,6 +48,9 @@ History before 1.0.0 is not recorded here.
 - An update that raises a block's CPU, memory or storage requests is refused when a node already
   running one of its replicas hasn't room for the increase. Replicas update in place (and a VM now
   resizes live), so the scheduler never checked it, and a node could be committed past its capacity.
+- Only the raft leader turns placements into each node's desired state, as designed. Every node
+  did, and a follower's copy of the work could delete a replica's desired state that the leader
+  then wrote back, stopping the replica for a few seconds. The bridge now logs each key it removes.
 - `expanse ctl block apply` reports why an update of an existing block was refused. It used to
   fall back to creating the block and print only that it already existed.
 - A rolling update no longer counts retired placements as live, which could remove the running

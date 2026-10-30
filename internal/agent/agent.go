@@ -894,7 +894,7 @@ func (a *Agent) Run(ctx context.Context) error {
 				a.blockCtl.Interval = a.cfg.ControllerPeriod
 			}
 			go a.blockCtl.Run(ctx)
-			a.blockBridge = &wire.Bridge{St: rs}
+			a.blockBridge = &wire.Bridge{St: rs, IsLeader: rs.IsLeader, Logger: a.logger}
 			go a.blockBridge.Run(ctx)
 			// Fast path: block or node changes wake placement.
 			for _, prefix := range []string{"/blocks/", "/nodes/"} {
