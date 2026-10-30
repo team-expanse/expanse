@@ -714,6 +714,39 @@ func TestAWaitingResourceRecordsWhatItWaitsFor(t *testing.T) {
 	}
 }
 
+// heldManager reports a resource out of sync that its manager refuses to act on yet.
+type heldManager struct {
+	fakeManager
+	status string
+}
+
+func (m *heldManager) Observe(ctx context.Context, r Resource) (Observed, error) {
+	return Observed{Exists: true, Health: HealthUnhealthy, Details: map[string]string{"status": m.status}}, nil
+}
+
+func (m *heldManager) Plan(ctx context.Context, r Resource, o Observed) ([]Action, error) {
+	return nil, fmt.Errorf("%s", m.status)
+}
+
+// A workload its manager holds back (a guest crashing at boot) keeps its status text in the record.
+func TestTheStatusTextIsRecordedWhenThePlanFails(t *testing.T) {
+	s := testStore(t)
+	r := New(s, Options{NodeID: "n1", Logger: testLogger(), Period: time.Hour})
+	const text = "the guest crashed within 1m0s of booting (2 in a row); next start in 20s"
+	r.Register(&heldManager{fakeManager: fakeManager{converged: map[string]bool{}}, status: text})
+	putDesired(t, s, "n1", "vm", "")
+	if err := r.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e, err := s.Get(context.Background(), r.StatusPrefix()+"vm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RecordedStatusText(string(e.Value)); got != text || !contains(string(e.Value), "health=unhealthy") {
+		t.Errorf("resource status = %q, want unhealthy with status text %q", e.Value, text)
+	}
+}
+
 func TestRetireTearsDownEveryResourceDependentsFirstAndFreezes(t *testing.T) {
 	r, s, m := newDeletingReconciler(t)
 	m.deps = map[string][]string{"unit": {"mount"}}

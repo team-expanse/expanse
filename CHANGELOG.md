@@ -74,6 +74,9 @@ History before 1.0.0 is not recorded here.
   primary lease again before it takes connections. It used to start as primary at once and accept
   writes for about a second after another replica had already taken over; it now re-clones from
   the new primary without ever starting.
+- A VM whose guest crashes at boot is started again after a wait that doubles from 10 seconds up
+  to 5 minutes, and its status says it crashed and when the next start is. qemu exits cleanly
+  when a guest panics, so the agent used to start it again every 10 seconds, forever.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

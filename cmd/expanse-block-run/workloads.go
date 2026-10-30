@@ -1440,6 +1440,7 @@ func runVM(ctx context.Context, instance, name string, resumable []string, args 
 		_ = deleteLink(tapName)
 		return fmt.Errorf("vm/instance: start qemu-kvm: %w", err)
 	}
+	booted := time.Now()
 	// qemu has its own inherited copy of the fd (via fork/exec) as soon
 	// as Start returns; closing our own copy here does not affect it.
 	_ = tap.Close()
@@ -1488,7 +1489,13 @@ func runVM(ctx context.Context, instance, name string, resumable []string, args 
 	if ctx.Err() != nil {
 		return nil //nolint:nilerr // deliberate stop
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if err := guestExit(time.Since(booted), ownUnitStopping); err != nil {
+		return fmt.Errorf("vm/instance: %w", err)
+	}
+	return nil
 }
 
 // createMacvtap creates a bridge-mode macvtap child of uplink (D2,

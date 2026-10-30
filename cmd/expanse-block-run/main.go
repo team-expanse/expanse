@@ -228,7 +228,7 @@ func main() {
 	case "vm/instance":
 		if err := runVM(ctx, instance, spec.Name, resumeTokens(spec), args); err != nil {
 			fmt.Fprintf(os.Stderr, "expanse-block-run: %v\n", err)
-			os.Exit(1)
+			os.Exit(vmExitStatus(err))
 		}
 	default:
 		// Idle placeholder: the unit runs healthy but does nothing

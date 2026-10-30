@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/expanse/expanse/internal/blocks/livespec"
 	"github.com/expanse/expanse/internal/blocks/vm/vmstate"
@@ -40,6 +41,8 @@ type unitAPI interface {
 	StatusText(ctx context.Context, unit string) (string, error)
 	// Reload sends the unit's main process SIGHUP: re-read the spec and apply its live fields.
 	Reload(ctx context.Context, unit string) error
+	// ExitStatus is the exit status of the unit's last main process.
+	ExitStatus(ctx context.Context, unit string) (int, error)
 }
 
 // reportsReadiness lists block types whose runtime publishes readiness as the unit's status text.
@@ -86,6 +89,9 @@ type Manager struct {
 	// Mounted reports whether a volume mount's host path is mounted; a replica starts only
 	// once all of its are. nil skips the check.
 	Mounted func(path string) (bool, error)
+
+	crashes crashes
+	now     func() time.Time // nil = time.Now
 }
 
 // DefaultSpecDir is the runtime directory expanse-block-run reads its
@@ -348,6 +354,10 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 			"unit": unit, "load": load, "active": active, "sub": sub,
 		},
 	}
+	if text, _ := m.crashStatus(ctx, res.spec, unit, active); text != "" {
+		obs.Health = reconcile.HealthUnhealthy
+		obs.Details["status"] = text
+	}
 	if inSync && reportsReadiness[res.spec.Type] {
 		text, err := m.API.StatusText(ctx, unit)
 		ready := err == nil && vmready.StatusTextReady(text) // unreadable is not ready; nothing demotes on it
@@ -443,6 +453,9 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 			},
 		})
 	} else if !o.InSync {
+		if text, left := m.crashStatus(ctx, spec, unit, o.Details["active"]); left > 0 {
+			return nil, errors.New(errors.KindUnavailable, "systemd.Plan", text)
+		}
 		keep := m.keepsGuest(spec, o)
 		desc := "start " + unit
 		if keep {
@@ -460,6 +473,7 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 				if err := m.setKeep(spec, keep); err != nil {
 					return err
 				}
+				m.crashes.started(unit, m.clock())
 				return m.API.Start(ctx, unit)
 			},
 		})
