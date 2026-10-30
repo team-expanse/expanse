@@ -354,7 +354,7 @@ func (m *Manager) Observe(ctx context.Context, r reconcile.Resource) (reconcile.
 			"unit": unit, "load": load, "active": active, "sub": sub,
 		},
 	}
-	if text, _ := m.crashStatus(ctx, res.spec, unit, active); text != "" {
+	if text, _ := m.crashStatus(ctx, res.spec, unit, active, sub); text != "" {
 		obs.Health = reconcile.HealthUnhealthy
 		obs.Details["status"] = text
 	}
@@ -453,7 +453,7 @@ func (m *Manager) Plan(ctx context.Context, r reconcile.Resource, o reconcile.Ob
 			},
 		})
 	} else if !o.InSync {
-		if text, left := m.crashStatus(ctx, spec, unit, o.Details["active"]); left > 0 {
+		if text, left := m.crashStatus(ctx, spec, unit, o.Details["active"], o.Details["sub"]); left > 0 {
 			return nil, errors.New(errors.KindUnavailable, "systemd.Plan", text)
 		}
 		keep := m.keepsGuest(spec, o)
