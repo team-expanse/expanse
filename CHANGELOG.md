@@ -6,42 +6,7 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
-## 1.17.0 - 2026-10-30
-
-### Added
-
-- VM blocks can be suspended and resumed: `expanse ctl vm suspend|resume`, or Suspend and Resume
-  on the block's page. A suspend saves the running guest's memory to its node's disk; a resume
-  carries on where it left off, with its processes and connections. A VM moved while suspended
-  boots fresh, and its old node deletes the save.
-- A running VM grows and shrinks its vCPUs and memory with no reboot when a redeploy changes only
-  `requests.cpu` or `requests.memory`, up to its `limits` (default twice the requests). The deploy
-  form has the limit fields for VMs. The guest needs the `virtio_mem` driver and
-  `memhp_default_state=online_movable` to give memory back (`docs/VMS.md`).
-- When an upgrade brings a newer QEMU, a running VM's page shows **Update QEMU**, and
-  `expanse ctl vm update` does the same: the guest is saved and resumed on the new QEMU without a
-  reboot.
-- A node that shuts down or reboots saves its running VMs instead of powering them off, and its
-  next boot resumes them. The node announces the reboot, so the cluster keeps its replicas placed
-  for up to 10 minutes rather than 30 seconds.
-- `config.machine` pins a VM's QEMU machine type (default `pc-i440fx-11.1`), so a newer QEMU shows
-  an existing guest the same hardware and its saves stay loadable.
-
-### Changed
-
-- Stopping a VM asks the guest to power off and waits up to `config.shutdownTimeout` seconds
-  (default 60) before turning it off, instead of killing QEMU at once.
-- A restart of the agent alone (a switch, `systemctl restart expansed`) leaves the node's
-  workloads and volumes exactly as they are and moves nothing: the node stays healthy for up to
-  2 minutes while the agent is away, and its volumes stay mounted and Primary. Before, a restart
-  that took over 15 seconds let another node's copy of a busy volume be elected primary and later
-  moved back. `systemctl stop expansed` behaves as before.
-- Each running VM restarts once when its node moves to 1.17: its spec gains the placement id that
-  guards its saves, and the 1.16 runtime can't take a spec change live. Later upgrades leave it
-  running.
-- The agent restarts when the node's block runtimes change, so it starts VMs on the new QEMU.
-- On nodes with static addresses, the addresses stay up until the blocks and the agent have
-  stopped at shutdown.
+## Unreleased
 
 ### Fixed
 
@@ -83,6 +48,46 @@ History before 1.0.0 is not recorded here.
 - storage/s3 no longer loses the last object it acknowledged when its node crashes. Expanse's
   Garage skips LMDB's `MdbNoMetaSync` while `metadata_fsync` is on (patched until upstream takes
   it), and the release cache carries the patched build.
+
+## 1.17.0 - 2026-10-30
+
+### Added
+
+- VM blocks can be suspended and resumed: `expanse ctl vm suspend|resume`, or Suspend and Resume
+  on the block's page. A suspend saves the running guest's memory to its node's disk; a resume
+  carries on where it left off, with its processes and connections. A VM moved while suspended
+  boots fresh, and its old node deletes the save.
+- A running VM grows and shrinks its vCPUs and memory with no reboot when a redeploy changes only
+  `requests.cpu` or `requests.memory`, up to its `limits` (default twice the requests). The deploy
+  form has the limit fields for VMs. The guest needs the `virtio_mem` driver and
+  `memhp_default_state=online_movable` to give memory back (`docs/VMS.md`).
+- When an upgrade brings a newer QEMU, a running VM's page shows **Update QEMU**, and
+  `expanse ctl vm update` does the same: the guest is saved and resumed on the new QEMU without a
+  reboot.
+- A node that shuts down or reboots saves its running VMs instead of powering them off, and its
+  next boot resumes them. The node announces the reboot, so the cluster keeps its replicas placed
+  for up to 10 minutes rather than 30 seconds.
+- `config.machine` pins a VM's QEMU machine type (default `pc-i440fx-11.1`), so a newer QEMU shows
+  an existing guest the same hardware and its saves stay loadable.
+
+### Changed
+
+- Stopping a VM asks the guest to power off and waits up to `config.shutdownTimeout` seconds
+  (default 60) before turning it off, instead of killing QEMU at once.
+- A restart of the agent alone (a switch, `systemctl restart expansed`) leaves the node's
+  workloads and volumes exactly as they are and moves nothing: the node stays healthy for up to
+  2 minutes while the agent is away, and its volumes stay mounted and Primary. Before, a restart
+  that took over 15 seconds let another node's copy of a busy volume be elected primary and later
+  moved back. `systemctl stop expansed` behaves as before.
+- Each running VM restarts once when its node moves to 1.17: its spec gains the placement id that
+  guards its saves, and the 1.16 runtime can't take a spec change live. Later upgrades leave it
+  running.
+- The agent restarts when the node's block runtimes change, so it starts VMs on the new QEMU.
+- On nodes with static addresses, the addresses stay up until the blocks and the agent have
+  stopped at shutdown.
+
+### Fixed
+
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.
