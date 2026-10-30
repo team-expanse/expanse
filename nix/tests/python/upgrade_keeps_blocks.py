@@ -101,7 +101,8 @@ try:
         assert took < 20, f"the agent took {took:.0f}s to restart; a busy volume must not be retried"
         wait_agent_ready(n1)
         assert_untouched(pid, "an agent restart")
-        n1.succeed("journalctl -u expansed.service | grep -q 'left primary for the next agent'")
+        # A restart leaves the volume as it is, rather than trying to step it down.
+        n1.succeed("journalctl -u expansed.service | grep -q \"announced this node's restart\"")
 
     with subtest("a config encoded with other spacing, as another agent build may write it, is no drift"):
         n1.fail(f"grep -qF {SPACED} {APP_SPEC}")
