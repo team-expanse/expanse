@@ -169,7 +169,7 @@ in
     environment.etc."expanse/block-runtimes.json".text = builtins.toJSON
       (lib.mapAttrs (_: env: builtins.unsafeDiscardStringContext env.outPath) cfg.blockRuntimes);
     environment.etc."expanse/block-runtimes.nix".text =
-      let src = lib.fileset.toSource { root = ../.; fileset = lib.fileset.unions [ ../block-runtimes.nix ../grafana-plugins.nix ]; };
+      let src = lib.fileset.toSource { root = ../.; fileset = lib.fileset.unions [ ../block-runtimes.nix ../grafana-plugins.nix ../patches ]; };
       in "import ${src}/block-runtimes.nix { pkgs = import <nixpkgs> { }; }\n";
     # VMs start offline: qemu ships with the node (and in the installer ISO).
     system.extraDependencies = lib.optional (cfg.blockRuntimes ? "vm/instance") cfg.blockRuntimes."vm/instance";

@@ -80,6 +80,9 @@ History before 1.0.0 is not recorded here.
 - A VM whose guest crashes at boot is started again after a wait that doubles from 10 seconds up
   to 5 minutes, and its status says it crashed and when the next start is. qemu exits cleanly
   when a guest panics, so the agent used to start it again every 10 seconds, forever.
+- storage/s3 no longer loses the last object it acknowledged when its node crashes. Expanse's
+  Garage skips LMDB's `MdbNoMetaSync` while `metadata_fsync` is on (patched until upstream takes
+  it), and the release cache carries the patched build.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.
