@@ -57,6 +57,10 @@ History before 1.0.0 is not recorded here.
   logged.
 - `expanse ctl block apply` reports why an update of an existing block was refused. It used to
   fall back to creating the block and print only that it already existed.
+- A db/postgres primary that restarts after a crash or reboot waits until its node holds the
+  primary lease again before it takes connections. It used to start as primary at once and accept
+  writes for about a second after another replica had already taken over; it now re-clones from
+  the new primary without ever starting.
 - A rolling update no longer counts retired placements as live, which could remove the running
   replica when a suspended VM that had moved was resumed.
 - A db/postgres replica stopped partway through cloning from the primary no longer stays down.

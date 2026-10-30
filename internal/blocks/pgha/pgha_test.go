@@ -905,6 +905,9 @@ func TestActivePrimaryDemotesWhenItsOwnLeaseIsLostToAnotherNodeWithoutRestarting
 			if stillActive {
 				t.Fatal("n1 demoted its role file but still holds the primary lease active")
 			}
+			if _, err := os.Stat(HeldPath(mount)); err == nil {
+				t.Fatal("n1 lost its lease but kept its held mark")
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

@@ -135,18 +135,18 @@ def find_primary(node_names, timeout):
     raise AssertionError(f"never settled on exactly one primary among {node_names} within {timeout}s: {last}")
 
 
-def wait_is_replica(node_name, timeout):
-    """Poll node_name directly until it reports pg_is_in_recovery()=t --
-    proof it has rejoined as a streaming standby, not a diverged primary
-    (X4)."""
+def wait_replica_never_primary(node_name, timeout):
+    """Poll node_name fast until it reports pg_is_in_recovery()=t, failing
+    if it ever answers as a primary: a stale ex-primary must take no writes."""
     deadline = time.time() + timeout
     last = (None, None)
     while time.time() < deadline:
         rc, out = node_psql(IP[node_name], "SELECT pg_is_in_recovery()")
         last = (rc, out)
+        assert not (rc == 0 and out == "f"), f"{node_name} came back as a writable primary without the lease"
         if rc == 0 and out == "t":
             return
-        time.sleep(2)
+        time.sleep(0.2)
     raise AssertionError(f"{node_name} never reported pg_is_in_recovery()=t within {timeout}s (last: {last})")
 
 
@@ -334,13 +334,13 @@ with subtest("pg_checksums reports zero corruption on the promoted primary (X3)"
 
 with subtest("the old primary's node rejoins as a streaming replica, not diverged (X4)"):
     NODE_BY_NAME[primary_name].start()
-    wait_agent_ready(NODE_BY_NAME[primary_name])
     # Generous budget: the rejoined node must reboot, its agent must run
     # a pass, discover pgha's own demotion (another node already won the
     # lease for real), stop and wipe its diverged PGDATA, get restarted
     # by systemd's Restart=on-failure, and re-clone via pg_basebackup --
     # several real, sequenced steps, not a single fast state flip.
-    wait_is_replica(primary_name, timeout=240)
+    wait_replica_never_primary(primary_name, timeout=240)
+    wait_agent_ready(NODE_BY_NAME[primary_name])
     wait_replica_count(new_primary_name, REPLICAS - 1, timeout=120)
     print(f"{primary_name} rejoined as a streaming replica of {new_primary_name}, no manual pg_rewind")
 

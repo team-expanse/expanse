@@ -992,7 +992,17 @@ func runPostgres(ctx context.Context, instance string, args []string) error {
 	}
 
 	roleFile := filepath.Join(stateDir, "role")
-	if _, err := os.Stat(filepath.Join(pgdata, "PG_VERSION")); errors.Is(err, fs.ErrNotExist) {
+	_, err = os.Stat(filepath.Join(pgdata, "PG_VERSION"))
+	if err == nil && isLocalPrimary(pgdata) {
+		// A crash or reboot leaves the role file saying primary; only a held lease may take writes.
+		if err := awaitPrimaryLease(ctx, stateDir, pgdata, pgLeaseWaitTimeout, 500*time.Millisecond); err != nil {
+			if ctx.Err() != nil {
+				return nil //nolint:nilerr // a stop while waiting is a clean exit, as in execWorkload
+			}
+			return fmt.Errorf("db/postgres: %w", err)
+		}
+	}
+	if errors.Is(err, fs.ErrNotExist) {
 		slot := pgSlotName(instance)
 		err := bootstrapInto(pgdata, func(dir string) error {
 			return bootstrapPostgres(ctx, dir, roleFile, sockDir, passfile,
