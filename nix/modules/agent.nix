@@ -8,7 +8,7 @@ let
   cfg = config.expanse.agent;
 in
 {
-  imports = [ ./drbd.nix ];
+  imports = [ ./drbd.nix ./network-shutdown-order.nix ];
 
   options.expanse.agent = {
     enable = lib.mkEnableOption "Expanse node agent (expansed)";
