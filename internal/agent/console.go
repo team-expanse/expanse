@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/expanse/expanse/internal/blocks/vm/console"
 	"github.com/expanse/expanse/internal/cluster/control"
@@ -45,6 +47,16 @@ func (a *Agent) consoleService(ctx context.Context) *console.Service {
 		Creds: credentials.NewTLS(tlsCfg),
 	}).Dial
 	return svc
+}
+
+// localConsoleClient reaches this node's ConsoleService through the agent socket, as the CLI does.
+func (a *Agent) localConsoleClient() pb.ConsoleServiceClient {
+	conn, err := grpc.NewClient("unix://"+filepath.ToSlash(a.cfg.Socket), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		a.logger.Warn("the web UI has no VM consoles", "err", err)
+		return nil
+	}
+	return pb.NewConsoleServiceClient(conn)
 }
 
 // registerConsole adds svc to a gRPC server; a nil svc registers nothing.

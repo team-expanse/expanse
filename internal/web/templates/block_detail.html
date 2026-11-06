@@ -7,7 +7,7 @@
   </div>
   <div class="page-actions">{{template "live"}}</div>
 </div>
-{{template "block-tabs" (blockTabs (printf "%s/%s" $ns $name) "overview")}}
+{{template "block-tabs" (blockTabs (printf "%s/%s" $ns $name) "overview" .Block.Spec.GetType)}}
 
 <div hx-ext="sse" sse-connect="/blocks/{{$ns}}/{{$name}}/events">
   <div id="block-fragment" sse-swap="block" hx-swap="innerHTML">{{template "block-fragment" .Block}}</div>

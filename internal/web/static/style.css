@@ -486,6 +486,12 @@ fieldset:disabled .input { opacity: 0.6; }
 }
 .log-view:empty::before { content: "Waiting for log lines…"; color: var(--fg-faint); }
 
+/* ---------- VM console ---------- */
+/* The terminal keeps xterm.js's own dark colors in either theme, as a console reads best that way. */
+.console-card { overflow: hidden; }
+.console-view { height: 70vh; min-height: 20rem; padding: 0.5rem; background: #000; border-radius: 10px; }
+.console-status { color: var(--fg-muted); font-size: 0.85rem; }
+
 /* ---------- dialogs ---------- */
 .dialog {
   border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg);

@@ -79,6 +79,8 @@ type Server struct {
 	VIPPoolFallback string
 	// GitHubURL serves <user>.keys for the gh:<user> SSH key shortcut; "" is https://github.com.
 	GitHubURL string
+	// Console attaches to VM consoles on any node; nil leaves the console page without one.
+	Console pb.ConsoleServiceClient
 
 	store         store.Store
 	blocks        pb.BlockServiceServer
@@ -125,6 +127,7 @@ func New(nodeID string, st store.Store, blocks pb.BlockServiceServer, catalog pb
 	s.routes.Handle("/", s.requireAuth(http.HandlerFunc(s.handleIndex)))
 	s.registerDashboardRoutes()
 	s.registerBlockRoutes()
+	s.registerConsoleRoutes()
 	s.registerDeployRoutes()
 	s.registerClusterRoutes()
 	s.registerNodeRoutes()
@@ -401,7 +404,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			}
 		}
 		ctx := context.WithValue(r.Context(), sessionCtxKey{}, sess)
-		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") || strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			var cancel context.CancelFunc
 			ctx, cancel = s.whileSignedIn(ctx, sess)
 			defer cancel()

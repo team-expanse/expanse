@@ -139,7 +139,9 @@ func templateFuncs(names *nodeNames) template.FuncMap {
 		"genChange": func(a, b uint64, d *pb.DiffGenerationsResponse) generationsDiffData {
 			return generationsDiffData{A: a, B: b, Diff: d}
 		},
-		"blockTabs":       func(key, current string) blockTabsView { return blockTabsView{key, current} },
+		"blockTabs": func(key, current, blockType string) blockTabsView {
+			return blockTabsView{key, current, blockType == "vm/instance"}
+		},
 		"upgradeFragment": func(v upgradeView, csrf string) upgradeFragment { return upgradeFragment{View: v, CSRF: csrf} },
 		"bytes":           humanBytesAny,
 		"mib":             func(n int64) string { return humanBytesAny(n << 20) },

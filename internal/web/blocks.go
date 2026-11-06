@@ -27,7 +27,11 @@ import (
 // segment count, so "/blocks/new" (1 segment) never matches
 // "/blocks/{ns}/{name}" (2 segments).
 // blockTabsView feeds the "block-tabs" strip: the block's "ns/name" and the current tab.
-type blockTabsView struct{ Key, Current string }
+// blockTabsView is the tab strip of one block's pages; VMs also get a Console tab.
+type blockTabsView struct {
+	Key, Current string
+	VM           bool
+}
 
 func (s *Server) registerBlockRoutes() {
 	s.routes.Handle("GET /blocks", s.requireAuth(http.HandlerFunc(s.handleBlocksList)))
@@ -405,6 +409,7 @@ type blockLogsData struct {
 	Name      string
 	Replica   int32
 	Replicas  []int32
+	Type      string
 }
 
 func (s *Server) handleBlockLogs(w http.ResponseWriter, r *http.Request) {
@@ -415,12 +420,13 @@ func (s *Server) handleBlockLogs(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	full := ns + "/" + name
 	var replicas []int32
+	var blockType string
 	if b, err := s.getBlock(r.Context(), r); err == nil {
-		replicas = logReplicas(b)
+		replicas, blockType = logReplicas(b), b.GetSpec().GetType()
 	}
 	s.render(w, http.StatusOK, "block_logs.html", blockLogsData{
 		Page:      s.newPage(w, r, full+" logs", "blocks", crumb{Label: "Blocks", Href: "/blocks"}, crumb{Label: full, Href: "/blocks/" + full}, crumb{Label: "Logs"}),
-		Namespace: ns, Name: name, Replica: int32(replica), Replicas: replicas,
+		Namespace: ns, Name: name, Replica: int32(replica), Replicas: replicas, Type: blockType,
 	})
 }
 

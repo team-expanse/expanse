@@ -1,0 +1,28 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title"><span><span class="muted">{{.Namespace}}/</span>{{.Name}}</span><span class="muted">console</span></h1>
+    <p class="page-sub">The guest's serial console (ttyS0), replica #{{.Replica}}{{with .Node}} on {{nodename .}}{{end}}. It opens with the console's recent output; log in with an account the guest already has.</p>
+  </div>
+  <div class="page-actions">
+    <span id="console-status" class="console-status" role="status">Connecting…</span>
+    {{if gt (len .Replicas) 1}}
+    <form method="get" class="form-inline">
+      <label class="field"><span class="field-label">Replica</span>
+        <select class="input input-sm" name="replica" data-autosubmit>
+          {{range .Replicas}}<option value="{{.}}"{{if eq . $.Replica}} selected{{end}}>#{{.}}</option>{{end}}
+        </select>
+      </label>
+    </form>
+    {{end}}
+  </div>
+</div>
+{{template "block-tabs" (blockTabs (printf "%s/%s" .Namespace .Name) "console" "vm/instance")}}
+<section class="card card-flush console-card">
+  <div id="console" class="console-view" data-socket="/blocks/{{.Namespace}}/{{.Name}}/console/socket?replica={{.Replica}}"></div>
+</section>
+<link rel="stylesheet" href="/static/xterm/xterm.css">
+<script src="/static/xterm/xterm.js" defer></script>
+<script src="/static/xterm/addon-fit.js" defer></script>
+<script src="/static/console.js" defer></script>
+{{end}}
