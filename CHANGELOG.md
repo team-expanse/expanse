@@ -6,6 +6,16 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- A VM's serial console from any node: the block page's new **Console** tab in the web UI, or
+  `expanse ctl vm console <vm>` (Ctrl-] leaves). It opens with the console's recent output, and
+  several viewers can attach at once. It is a plain console, so logging in takes an account the
+  guest already has. A running VM gets its console at its next restart; its console output still
+  goes to the journal too.
+
 ## 1.17.1 - 2026-10-30
 
 ### Fixed

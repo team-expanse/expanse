@@ -154,6 +154,29 @@ waiting but leaves the command running in the guest. The agent's socket is
 `/run/expblk-<ns>-<name>-0-qga.sock`, which only root can open; a VM started by an older Expanse
 has it in the unit's private `/tmp` instead and needs a restart first.
 
+### The serial console
+
+A VM's serial console (the guest's `ttyS0`) can be attached from any node: on the block's
+**Console** tab in the web UI, or as root with
+
+```sh
+expanse ctl vm console vm1
+expanse ctl vm console -n apps vm1 --replica 0
+```
+
+It first shows the console's recent output (the last 64 KiB), then follows it live. In a terminal,
+Ctrl-] leaves and the guest keeps running; piped input is sent as it is, and the console closes
+shortly after the input ends. Several viewers can attach at once, and each one's keystrokes reach
+the guest. It is a plain console: logging in takes an account the guest already has, as cloud
+images ship without passwords (set one with `vm exec`, e.g. `echo debian:secret | expanse ctl vm exec
+-i vm1 -- chpasswd`). The guest only offers a login there if its kernel's console includes `ttyS0`,
+as Debian's and Ubuntu's cloud images do. Anyone signed in to the web UI can use the Console tab.
+
+The console is served by the node running the VM, on the root-only socket
+`/run/expblk-<ns>-<name>-0-console.sock`; another node forwards to it over the cluster's own mTLS
+port (7443). A VM started by an older Expanse has no console until it next restarts. The guest's console
+output still goes to its journal as well.
+
 ### First-boot setup
 
 `cloudInit.setup` installs packages, then runs shell commands as root, on the first boot only (a
@@ -338,16 +361,15 @@ already has. The host process never mounts or formats it, by design (D3) — eve
 has formatted a real filesystem there, the host's own view of the device never changes.
 
 Console access is the VMM's own serial channel, not a network hop: `runVM` execs `qemu-kvm` with
-`-serial stdio`, so the guest's console (`ttyS0`) is the block's own systemd unit's stdout, captured
-by journald under `expanse-block-root@default-<name>-0.service` like any other unit's output. This
+`-serial stdio` through pipes it keeps, copying the guest's console (`ttyS0`) to the block's own
+systemd unit's stdout, captured by journald under `expanse-block-root@default-<name>-0.service` like
+any other unit's output, and to the console socket (see "The serial console"). This
 was enough for every VM test in this project to observe guest-internal state (boot progress, write-
 load status, fsck results) without ever needing the host to reach the guest over its own macvtap
 network — which matters, since same-node host→guest IP reachability over macvtap has a known
 limitation (`ARCHITECTURE.md` A34): a bridge-mode macvtap child is unreachable from its own lower
-device's root netns. **Interactive console access** (attaching to that same stdio stream live, or a
-VNC/SPICE web console integrated into the management UI) is documented as a known extension point,
-not built this phase (D5) — the same "named so it isn't silently forgotten" treatment Phase 5's D6
-gave backup hooks.
+device's root netns. Interactive access to that stream is the serial console above; a graphical
+(VNC/SPICE) console is not built.
 
 ```sh
 journalctl -u expanse-block-root@default-vm1-0.service -f
