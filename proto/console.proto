@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package expanse.console.v1;
+
+option go_package = "github.com/expanse/expanse/proto";
+
+// ConsoleService attaches to a VM replica's serial console on whichever node runs it.
+service ConsoleService {
+  // The first message names the replica and later ones carry input; output streams back.
+  rpc Attach(stream ConsoleInput) returns (stream ConsoleOutput);
+}
+
+message ConsoleInput {
+  string namespace = 1;
+  string name = 2;
+  int32 replica = 3;
+  // Keystrokes for the guest.
+  bytes data = 4;
+  // Set by a node that routed the request here; the receiver must host the replica itself.
+  bool forwarded = 5;
+}
+
+message ConsoleOutput {
+  bytes data = 1;
+}
