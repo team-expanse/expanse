@@ -6,18 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
 	"slices"
 	"strings"
 	gosync "sync"
 	"testing"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 // agentByCommand serves any number of connections, answering each command from replies and
 // recording it as "cmd {args}".
 func agentByCommand(t *testing.T, replies map[string]string) (string, func() []string) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "qga.sock")
+	sock := testsock.Path(t, "qga.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

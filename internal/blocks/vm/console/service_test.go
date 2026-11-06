@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +14,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/expanse/expanse/proto"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 // node is one node's console service on a loopback gRPC server.
@@ -32,7 +33,7 @@ type cluster struct {
 
 func newCluster(t *testing.T, host string, ids ...string) *cluster {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "vm1.sock")
+	sock := testsock.Path(t, "vm1.sock")
 	c := &cluster{nodes: map[string]*node{}, guestIn: &syncBuffer{}}
 	mux := NewMux(c.guestIn, io.Discard)
 	ln, err := Listen(sock)
@@ -178,7 +179,7 @@ func TestAttachWithoutABlockNameIsInvalid(t *testing.T) {
 
 func TestAttachWhenTheConsoleIsNotUpIsUnavailable(t *testing.T) {
 	c := newCluster(t, "n1", "n1")
-	c.nodes["n1"].svc.Socket = func(string, string, int32) string { return filepath.Join(t.TempDir(), "absent.sock") }
+	c.nodes["n1"].svc.Socket = func(string, string, int32) string { return testsock.Path(t, "absent.sock") }
 	wantCode(t, c.attach(t, "n1", vm1()), codes.Unavailable)
 }
 

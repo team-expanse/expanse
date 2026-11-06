@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 const banner = `{"QMP":{"version":{"qemu":{"micro":1,"minor":1,"major":11},"package":""},"capabilities":["oob"]}}`
@@ -41,7 +42,7 @@ func fakeQEMUArgs(t *testing.T, replies map[string]string) (string, <-chan []str
 
 func serveFake(t *testing.T, replies map[string]string, withArgs bool) (string, <-chan []string) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "qmp.sock")
+	sock := testsock.Path(t, "qmp.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +128,7 @@ func TestPowerdownAsksTheGuestToShutDown(t *testing.T) {
 }
 
 func TestPowerdownFailsWithoutQEMU(t *testing.T) {
-	if err := Powerdown(filepath.Join(t.TempDir(), "none.sock")); err == nil {
+	if err := Powerdown(testsock.Path(t, "none.sock")); err == nil {
 		t.Error("powerdown with no monitor succeeded")
 	}
 }
@@ -190,7 +191,7 @@ func TestLoadReadsTheStateThenRunsTheGuest(t *testing.T) {
 }
 
 func TestDialRetryWaitsForTheSocket(t *testing.T) {
-	if _, err := DialRetry(filepath.Join(t.TempDir(), "none.sock"), 100*time.Millisecond); err == nil {
+	if _, err := DialRetry(testsock.Path(t, "none.sock"), 100*time.Millisecond); err == nil {
 		t.Error("DialRetry found a socket that never appeared")
 	}
 }

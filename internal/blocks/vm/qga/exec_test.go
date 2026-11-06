@@ -8,10 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 type command struct {
@@ -22,7 +23,7 @@ type command struct {
 // serveAgent answers each connection's sync and one command with handle's reply, the way qemu-ga does.
 func serveAgent(t *testing.T, handle func(command) string) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "qga.sock")
+	sock := testsock.Path(t, "qga.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

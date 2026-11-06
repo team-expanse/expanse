@@ -5,17 +5,18 @@ import (
 	"context"
 	"errors"
 	"io"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/expanse/expanse/internal/blocks/vm/qga"
 	pb "github.com/expanse/expanse/proto"
 	"google.golang.org/grpc"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 func TestVMExecSaysWhereToRunWhenTheSocketIsMissing(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "absent.sock")
+	sock := testsock.Path(t, "absent.sock")
 	err := vmExec(context.Background(), sock, "default/vm1", []string{"true"}, nil, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "the node that runs default/vm1") {
 		t.Errorf("vmExec error = %v, want a hint naming the VM's node", err)

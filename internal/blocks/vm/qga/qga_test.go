@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 const ifaces = `{"return":[
@@ -48,7 +49,7 @@ func fakeAgent(t *testing.T, c net.Conn, stale, reply string) {
 
 func serve(t *testing.T, stale, reply string) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "qga.sock")
+	sock := testsock.Path(t, "qga.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func TestAddressesReportTheAgentsError(t *testing.T) {
 }
 
 func TestAddressesGiveUpWhenNoAgentAnswers(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "qga.sock")
+	sock := testsock.Path(t, "qga.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

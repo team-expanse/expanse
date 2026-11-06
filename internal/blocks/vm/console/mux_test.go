@@ -5,11 +5,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/expanse/expanse/internal/testsock"
 )
 
 // syncBuffer is a bytes.Buffer safe for the pump and the test to share.
@@ -44,7 +45,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 // serve starts m on a fresh socket and returns a dialer for clients.
 func serve(t *testing.T, m *Mux) func() net.Conn {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "console.sock")
+	path := testsock.Path(t, "console.sock")
 	ln, err := Listen(path)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -152,7 +153,7 @@ func TestAStalledClientIsDroppedAndOutputFlows(t *testing.T) {
 }
 
 func TestListenReplacesAStaleSocketAndIsRootOnly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "console.sock")
+	path := testsock.Path(t, "console.sock")
 	first, err := Listen(path)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
