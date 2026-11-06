@@ -114,6 +114,10 @@ with subtest("the web UI's console socket reaches the guest, from its node and a
 
 with subtest("a cross-origin console socket is refused"):
     ui_login(other)
+    # A follower may not have the new session yet; wait until it signs the jar in.
+    other.wait_until_succeeds(
+        f"test $(curl -s -o /dev/null -w '%{{http_code}}' -b {JAR} --cacert {UI_CAFILE} "
+        f"https://{other.name}:8443/blocks/default/{NAME}/console) = 200", timeout=30)
     code = other.succeed(
         f"curl -s -o /dev/null -w '%{{http_code}}' -b {JAR} --cacert {UI_CAFILE} "
         "-H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' "
