@@ -1434,14 +1434,22 @@ func runVM(ctx context.Context, instance, name string, resumable []string, args 
 	}
 	cmd := exec.CommandContext(ctx, path, qemuArgv...)
 	cmd.ExtraFiles = extra
-	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	serial, err := newSerialPipes(cmd)
+	if err != nil {
+		_ = tap.Close()
+		_ = deleteLink(tapName)
+		return fmt.Errorf("vm/instance: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
+		serial.close()
 		_ = tap.Close()
 		_ = deleteLink(tapName)
 		return fmt.Errorf("vm/instance: start qemu-kvm: %w", err)
 	}
 	booted := time.Now()
+	stopConsole := serveConsole(instance, serial)
+	defer stopConsole()
 	// qemu has its own inherited copy of the fd (via fork/exec) as soon
 	// as Start returns; closing our own copy here does not affect it.
 	_ = tap.Close()
