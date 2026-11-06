@@ -114,15 +114,14 @@ with subtest("the web UI's console socket reaches the guest, from its node and a
 
 with subtest("a cross-origin console socket is refused"):
     ui_login(other)
-    # A follower may not have the new session yet; wait until it signs the jar in.
-    other.wait_until_succeeds(
-        f"test $(curl -s -o /dev/null -w '%{{http_code}}' -b {JAR} --cacert {UI_CAFILE} "
-        f"https://{other.name}:8443/blocks/default/{NAME}/console) = 200", timeout=30)
-    code = other.succeed(
+    page = other.succeed(
         f"curl -s -o /dev/null -w '%{{http_code}}' -b {JAR} --cacert {UI_CAFILE} "
-        "-H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' "
-        "-H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Origin: https://evil.example' "
-        f"'https://{other.name}:8443/blocks/default/{NAME}/console/socket?replica=0'"
+        f"https://{other.name}:8443/blocks/default/{NAME}/console"
     ).strip()
-    assert code == "403", f"cross-origin upgrade answered {code}, want 403"
+    print(f"the console page with this jar answered {page}")
+    path = f"/blocks/default/{NAME}/console/socket?replica=0"
+    code = other.succeed(f"python3 {WS} --status {other.name} '{path}' {JAR} {UI_CAFILE} https://{other.name}:8443").strip()
+    assert code == "101", f"a same-origin upgrade answered {code}, want 101"
+    code = other.succeed(f"python3 {WS} --status {other.name} '{path}' {JAR} {UI_CAFILE} https://evil.example").strip()
+    assert code == "403", f"a cross-origin upgrade answered {code}, want 403"
     print("VM-CONSOLE DONE")
