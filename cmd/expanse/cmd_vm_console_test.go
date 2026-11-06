@@ -159,3 +159,12 @@ func TestConsoleReportsTheServersError(t *testing.T) {
 		t.Fatalf("attachConsole error %v, want FailedPrecondition", err)
 	}
 }
+
+// Input that ends at once must not hide why the console could not open.
+func TestPipedConsoleReportsTheServersError(t *testing.T) {
+	f := &fakeConsole{fail: status.Error(codes.NotFound, "block default/nosuch: not found")}
+	err := attachConsole(context.Background(), consoleClient(t, f), &pb.ConsoleInput{Name: "nosuch"}, strings.NewReader(""), io.Discard, false)
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("attachConsole error %v, want NotFound", err)
+	}
+}

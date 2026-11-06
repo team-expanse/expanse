@@ -355,6 +355,7 @@
           vm-instance = mkTest "vm-instance" ./nix/tests/vm-instance.nix;
           # Phase 16 V2: suspend and resume a VM; a move while suspended boots it fresh.
           vm-suspend-resume = mkTest "vm-suspend-resume" ./nix/tests/vm-suspend-resume.nix;
+          vm-console = mkTest "vm-console" ./nix/tests/vm-console.nix;
           # Phase 16 V4: a running VM grows and shrinks its vCPUs and memory without a reboot.
           vm-live-resize = mkTest "vm-live-resize" ./nix/tests/vm-live-resize.nix;
           vm-upgrade-keep = mkTest "vm-upgrade-keep" ./nix/tests/vm-upgrade-keep.nix;

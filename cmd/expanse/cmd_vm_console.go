@@ -111,16 +111,15 @@ func attachConsole(ctx context.Context, client pb.ConsoleServiceClient, first *p
 	select {
 	case err = <-outputDone:
 	case <-inputDone:
-		if ctx.Err() == nil { // input ended rather than the escape key
+		err = nil
+		if ctx.Err() == nil { // input ended rather than the escape key: let the output finish
 			select {
-			case <-outputDone: //nolint:errcheck // the input is all sent; how the session ended doesn't matter
+			case err = <-outputDone:
 			case <-time.After(pipedLinger):
 			}
 		}
-		cancel()
-		return nil
 	}
-	if errors.Is(err, io.EOF) || ctx.Err() != nil {
+	if err == nil || errors.Is(err, io.EOF) || ctx.Err() != nil {
 		return nil
 	}
 	return fmt.Errorf("console: %w", err)
