@@ -139,6 +139,9 @@ func (s *Service) local(ctx context.Context, stream pb.ConsoleService_AttachServ
 
 // forward relays stream through host's ConsoleService, opening it with first.
 func (s *Service) forward(ctx context.Context, stream pb.ConsoleService_AttachServer, host string, first *pb.ConsoleInput) error {
+	if s.Dial == nil {
+		return status.Errorf(codes.Unavailable, "console: the VM runs on %s, and this node cannot reach other nodes", host)
+	}
 	client, err := s.Dial(ctx, host)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "console: reach %s: %v", host, err)

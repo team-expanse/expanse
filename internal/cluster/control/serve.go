@@ -211,17 +211,17 @@ func membershipCheck(ctx context.Context, st *raftstore.Store) func() []string {
 // a current member (live membership check). Blocks until ctx is done.
 // ServeInternalEndpoint runs the node↔node gRPC service on the fixed
 // API port (config.PortAPI) until ctx is done.
-func ServeInternalEndpoint(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, dataDir string) error {
+func ServeInternalEndpoint(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, dataDir string, services ...func(grpc.ServiceRegistrar)) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", config.PortAPI))
 	if err != nil {
 		return errors.Wrap(err, errors.KindUnavailable, "control.ServeInternalEndpoint", "bind :7443: "+err.Error())
 	}
-	return ServeInternalEndpointOn(ctx, st, clusterCA, dataDir, ln)
+	return ServeInternalEndpointOn(ctx, st, clusterCA, dataDir, ln, services...)
 }
 
 // ServeInternalEndpointOn is ServeInternalEndpoint over a
-// caller-provided listener (tests bind a free loopback port).
-func ServeInternalEndpointOn(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, dataDir string, ln net.Listener) error {
+// caller-provided listener (tests bind a free loopback port). services register more node↔node services.
+func ServeInternalEndpointOn(ctx context.Context, st *raftstore.Store, clusterCA *ca.CA, dataDir string, ln net.Listener, services ...func(grpc.ServiceRegistrar)) error {
 	tlsCfg, err := InternalTLS(ctx, st, clusterCA, dataDir)
 	if err != nil {
 		return err
@@ -229,6 +229,9 @@ func ServeInternalEndpointOn(ctx context.Context, st *raftstore.Store, clusterCA
 
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 	pb.RegisterInternalStoreServiceServer(srv, raftstore.NewForwardServer(st))
+	for _, register := range services {
+		register(srv)
+	}
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()

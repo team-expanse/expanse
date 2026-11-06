@@ -77,6 +77,8 @@ type Server struct {
 	// minimal builds (no block catalog configured).
 	Blocks  pb.BlockServiceServer
 	Catalog pb.CatalogServiceServer
+	// Console, when set, serves VM consoles to `expanse ctl vm console`.
+	Console pb.ConsoleServiceServer
 	// Cluster is this node's enrollment, needed to mint and verify join
 	// tokens and seal CAs; nil outside cluster mode.
 	Cluster *ClusterIdentity
@@ -126,6 +128,9 @@ func (s *Server) Serve(ctx context.Context, socketPath string) error {
 	}
 	if s.Catalog != nil {
 		pb.RegisterCatalogServiceServer(gs, s.Catalog)
+	}
+	if s.Console != nil {
+		pb.RegisterConsoleServiceServer(gs, s.Console)
 	}
 	s.logger.Info("grpc listening", "socket", socketPath)
 

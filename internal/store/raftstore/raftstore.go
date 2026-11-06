@@ -584,6 +584,20 @@ func (s *Store) SelfAddress() (string, error) {
 	return "", nil
 }
 
+// ServerAddress is server id's raft address in the latest configuration, "" when it is not a member.
+func (s *Store) ServerAddress(id string) (string, error) {
+	f := s.r.GetConfiguration()
+	if err := f.Error(); err != nil {
+		return "", err
+	}
+	for _, srv := range f.Configuration().Servers {
+		if string(srv.ID) == id {
+			return string(srv.Address), nil
+		}
+	}
+	return "", nil
+}
+
 // PeerAddrs lists the raft addresses of the other servers in the latest configuration.
 func (s *Store) PeerAddrs() ([]string, error) {
 	f := s.r.GetConfiguration()

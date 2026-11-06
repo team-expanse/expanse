@@ -48,6 +48,7 @@ import (
 	"github.com/expanse/expanse/internal/blocks/runtimepath"
 	"github.com/expanse/expanse/internal/blocks/service"
 	"github.com/expanse/expanse/internal/blocks/validate"
+	"github.com/expanse/expanse/internal/blocks/vm/console"
 	"github.com/expanse/expanse/internal/blocks/wire"
 	"github.com/expanse/expanse/internal/cluster/ca"
 	"github.com/expanse/expanse/internal/cluster/control"
@@ -921,13 +922,19 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}
 
+	// VM consoles: on the agent socket for the CLI, and on :7443 so any node's UI reaches any VM.
+	var consoles *console.Service
+	if a.blocks != nil && !witness {
+		consoles = a.consoleService(ctx)
+	}
+
 	// Cluster mode: the internal mTLS endpoint on :7443 — the
 	// leader-side forwarding service every node runs (G3.8). All
 	// nodes need it: any follower may need to forward, any follower
 	// may become leader.
 	if a.ctl != nil {
 		go func() {
-			if err := control.ServeInternalEndpoint(ctx, a.ctl.store, a.ctl.ca, a.ctl.dataDir); err != nil {
+			if err := control.ServeInternalEndpoint(ctx, a.ctl.store, a.ctl.ca, a.ctl.dataDir, registerConsole(consoles)); err != nil {
 				a.logger.Error("internal endpoint failed", "err", err)
 			}
 		}()
@@ -950,6 +957,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	srv := api.NewServer(a, a.store, a.logger)
 	srv.Blocks = a.blocks
 	srv.Catalog = a.blockCatalog
+	if consoles != nil {
+		srv.Console = consoles
+	}
 	if a.ctl != nil {
 		srv.Cluster = &api.ClusterIdentity{ID: a.ctl.id, Secret: a.ctl.secret}
 	}
