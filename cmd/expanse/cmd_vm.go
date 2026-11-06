@@ -31,6 +31,7 @@ func newVMCmdWith(opts *ctlOpts, run execFunc) *cobra.Command {
 		vm.AddCommand(newPowerCmd(opts, verb))
 	}
 	vm.AddCommand(newUpdateCmd(opts))
+	vm.AddCommand(newVMConsoleCmd(opts))
 	var ns string
 	var withStdin bool
 	exec := &cobra.Command{

@@ -28,9 +28,11 @@ require (
 
 require (
 	github.com/anishathalye/porcupine v1.3.0
+	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/mdlayher/socket v0.5.1
 	golang.org/x/oauth2 v0.37.0
+	golang.org/x/term v0.45.0
 )
 
 require (
