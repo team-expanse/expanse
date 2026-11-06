@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/expanse/expanse/internal/blocks/vm/console"
 )
+
+// journalLineIdle is how long a guest's unfinished console line waits before the journal gets it.
+const journalLineIdle = 200 * time.Millisecond
 
 // serialPipes carry the guest's serial console (qemu's -serial stdio) to and from this process.
 type serialPipes struct {
@@ -44,8 +48,12 @@ func serveConsole(instance string, p *serialPipes) (stop func()) {
 	// qemu holds its own copies now; ours would keep the output pipe from ever reaching EOF.
 	_ = p.qemuIn.Close()
 	_ = p.qemuOut.Close()
-	mux := console.NewMux(p.in, os.Stdout)
-	go func() { _ = mux.Pump(p.out) }()
+	journal := console.NewLineWriter(os.Stdout, journalLineIdle)
+	mux := console.NewMux(p.in, journal)
+	go func() {
+		_ = mux.Pump(p.out)
+		journal.Flush()
+	}()
 	path := console.SocketPath(instance)
 	ln, err := console.Listen(path)
 	if err != nil {

@@ -97,7 +97,8 @@ with subtest("the CLI console on the VM's node runs a command in the guest"):
     cli_console(host, "LOCAL")
 
 with subtest("the console still writes the guest's output to the journal"):
-    host.succeed(f"journalctl -u {UNIT} --no-pager | grep -q 'Linux version'")
+    # -a: lines carrying the guest's terminal escapes are otherwise shown as blobs.
+    host.succeed(f"journalctl -a -u {UNIT} --no-pager | grep -q 'Booting initrd'")
 
 with subtest("the CLI console works from another node"):
     cli_console(other, "REMOTE")
