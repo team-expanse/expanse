@@ -39,6 +39,11 @@ let
   expanseOld = mkExpanse oldSrc oldRev;
   # Each generation runs its own release's module, so the old one never sees newer flags.
   oldModule = "${oldSrc}/nix/modules/expanse.nix";
+  # v1.0.0 opts into the systemd initrd, an option nixpkgs now refuses; it is the only initrd left.
+  oldImpermanence = "${oldSrc}/nix/modules/impermanence.nix";
+  oldImpermanenceFixed = builtins.toFile "impermanence.nix" (builtins.replaceStrings
+    [ "boot.initrd.systemd.enable = lib.mkDefault true;" ] [ "" ]
+    (builtins.readFile oldImpermanence));
   expanseNew = self.packages.${pkgs.system}.expanse;
 
   lint = pkgs.runCommand "cluster-rolling-upgrade-lint" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -54,8 +59,10 @@ let
     chmod +x $out
   '';
   nodeCommon = idx: {
+    disabledModules = [ oldImpermanence ];
     imports = [
       oldModule
+      oldImpermanenceFixed
       ../modules/storage-test.nix
     ];
     nixpkgs.overlays = [
@@ -73,7 +80,7 @@ let
     # software-only diff, pre-built into the same closure exactly like a real
     # nixos-rebuild boot preparing the next generation ahead of switch time.
     specialisation.upgraded.configuration = {
-      disabledModules = [ oldModule ];
+      disabledModules = [ oldModule oldImpermanenceFixed ];
       imports = [ self.nixosModules.expanse ];
       nixpkgs.overlays = [
         (final: prev: { expanse = expanseNew; })

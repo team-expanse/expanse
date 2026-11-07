@@ -21,6 +21,8 @@
             substituteInPlace drbd/drbd_transport_lb-tcp.c \
               --replace-fail 'sock->ops->connect(sock, (struct sockaddr_unsized *)' 'sock->ops->connect(sock, (struct sockaddr *)'
           '';
+          # coccinelle is broken in nixpkgs (legacy pcre removed); the tarball's cocci_cache covers 6.18.
+          nativeBuildInputs = builtins.filter (p: (p.pname or "") != "coccinelle") old.nativeBuildInputs;
           meta = old.meta // { broken = false; };
         });
       });

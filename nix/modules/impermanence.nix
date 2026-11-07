@@ -47,10 +47,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Recreate @root from @root-blank before it is mounted. The
-    # systemd-initrd variant is preferred: explicit ordering before
-    # local-fs.
-    boot.initrd.systemd.enable = lib.mkDefault true;
+    # Recreate @root from @root-blank before it is mounted (systemd initrd, the only one nixpkgs has).
     boot.initrd.systemd.services.expanse-impermanence-rollback = {
       description = "Recreate @root from the @root-blank snapshot";
       wantedBy = [ "initrd.target" ];
@@ -87,15 +84,17 @@ in
 
     # Bind mounts from /persist. machine-id must exist before systemd
     # reads it; sources are pre-created by expanse-persist-init below.
-    fileSystems = builtins.listToAttrs (map (p: {
-      name = p;
-      value = {
-        device = "${persistPath}${p}";
-        fsType = "none";
-        options = [ "bind" ];
-        neededForBoot = true;
-      };
-    }) bindPaths);
+    fileSystems = builtins.listToAttrs (map
+      (p: {
+        name = p;
+        value = {
+          device = "${persistPath}${p}";
+          fsType = "none";
+          options = [ "bind" ];
+          neededForBoot = true;
+        };
+      })
+      bindPaths);
 
     # Create bind-mount sources under /persist before the bind mounts
     # start. The bind mounts are neededForBoot, so they happen in systemd
