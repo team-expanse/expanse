@@ -181,8 +181,9 @@ func (d *ExecDriver) build(ctx context.Context, logs io.Writer, installable ...s
 	// --print-out-paths prints the resulting store path to stdout.
 	var stdoutBuf strings.Builder
 	_, _ = io.Copy(&stdoutBuf, stdout) // buffer writes cannot fail
-	waitErr := cmd.Wait()
+	// Wait closes the pipes, so the stderr reader must reach EOF first or the error's text is lost.
 	wg.Wait()
+	waitErr := cmd.Wait()
 	if waitErr != nil {
 		errMu.Lock()
 		msg := errTail.String()
