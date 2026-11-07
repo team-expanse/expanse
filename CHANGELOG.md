@@ -6,6 +6,18 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## 1.18.1 - 2026-11-06
+
+### Security
+
+- Expanse is built with Go 1.26.10, which distrusts the compromised eMudhra intermediate CA
+  certificates (GO-2026-6809) and fixes flaws in `net/http`, `crypto/tls` and `html/template`.
+- golang.org/x/net is updated to v0.60.0. It fixes four HTTP/2 server bugs a client could use to
+  crash a node's gRPC endpoint or exhaust its memory or CPU (GO-2026-6603, -6611, -6612, -6617).
+- nixpkgs is refreshed to 2026-11-03: Linux 6.18.60, Redis 8.10.3 (a cluster-bus heap overflow),
+  Grafana 13.3.0 (four CVEs), Prometheus 3.15.1, Uptime Kuma 2.5.9 (RSS cache poisoning) and
+  MariaDB 11.4.13.
+
 ## 1.18.0 - 2026-11-06
 
 ### Added
