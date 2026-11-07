@@ -18,6 +18,14 @@ History before 1.0.0 is not recorded here.
   Grafana 13.3.0 (four CVEs), Prometheus 3.15.1, Uptime Kuma 2.5.9 (RSS cache poisoning) and
   MariaDB 11.4.13.
 
+### Fixed
+
+- Stopping or restarting a VM presses its power button again every 5 seconds until it powers off.
+  A guest still booting drops a press it gets before it listens for one, so a VM restarted during
+  its boot ran out its shutdown timeout and had qemu stopped under it.
+- A failed system build on a node reports why it failed. Under load its error text could be lost,
+  so a full disk or a failed download showed up as an internal error.
+
 ## 1.18.0 - 2026-11-06
 
 ### Added
