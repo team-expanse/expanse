@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +51,72 @@ func TestWaitGoneGivesUpAtTheDeadline(t *testing.T) {
 	}
 	if d := time.Since(t0); d > 2*time.Second {
 		t.Errorf("waitGone took %v past a 200ms deadline", d)
+	}
+}
+
+// A guest still booting misses the first presses; the later ones power it off.
+func TestPowerOffPressesAgainUntilTheGuestExits(t *testing.T) {
+	cmd := exec.Command("sleep", "5")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go cmd.Wait() //nolint:errcheck // reaps the child so its /proc entry goes away
+	presses := 0
+	press := func() error {
+		if presses++; presses == 3 {
+			_ = cmd.Process.Kill()
+		}
+		return nil
+	}
+	if gone, err := powerOff(cmd.Process.Pid, press, 5*time.Second, 100*time.Millisecond, 20*time.Millisecond); err != nil || !gone {
+		t.Fatalf("powerOff = %v, %v; want the guest gone", gone, err)
+	}
+	if presses != 3 {
+		t.Errorf("pressed %d times, want 3", presses)
+	}
+}
+
+func TestPowerOffGivesUpAtTheDeadline(t *testing.T) {
+	cmd := exec.Command("sleep", "5")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	presses := 0
+	press := func() error { presses++; return nil }
+	if gone, _ := powerOff(cmd.Process.Pid, press, 350*time.Millisecond, 100*time.Millisecond, 20*time.Millisecond); gone {
+		t.Error("powerOff reported a running guest gone")
+	}
+	if presses < 3 || presses > 5 {
+		t.Errorf("pressed %d times in 350ms at 100ms apart, want about 4", presses)
+	}
+}
+
+// A first press that fails means no monitor to ask; later ones may fail as qemu exits.
+func TestPowerOffReportsOnlyTheFirstPressFailing(t *testing.T) {
+	presses := 0
+	press := func() error { presses++; return errors.New("no monitor") }
+	if _, err := powerOff(os.Getpid(), press, time.Second, 10*time.Millisecond, 5*time.Millisecond); err == nil {
+		t.Error("a failed first press was not reported")
+	}
+	if presses != 1 {
+		t.Errorf("pressed %d times after the monitor failed, want 1", presses)
+	}
+	cmd := exec.Command("sleep", "5")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go cmd.Wait() //nolint:errcheck // reaps the child so its /proc entry goes away
+	presses = 0
+	press = func() error {
+		if presses++; presses == 1 {
+			return nil
+		}
+		_ = cmd.Process.Kill()
+		return errors.New("qemu is exiting")
+	}
+	if gone, err := powerOff(cmd.Process.Pid, press, 5*time.Second, 50*time.Millisecond, 10*time.Millisecond); err != nil || !gone {
+		t.Errorf("powerOff = %v, %v; a later failed press should not end the wait", gone, err)
 	}
 }
 
