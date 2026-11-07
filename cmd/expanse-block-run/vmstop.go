@@ -47,12 +47,38 @@ func stopReplica(instance string) {
 	if wait == 0 {
 		return
 	}
-	if err := qmp.Powerdown(qmp.SocketPath(instance)); err != nil {
+	press := func() error { return qmp.Powerdown(qmp.SocketPath(instance)) }
+	gone, err := powerOff(pid, press, wait, powerPressEvery, 250*time.Millisecond)
+	switch {
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "expanse-block-run: vm power-off request failed: %v\n", err)
-		return
-	}
-	if !waitGone(pid, wait, 250*time.Millisecond) {
+	case !gone:
 		fmt.Fprintf(os.Stderr, "expanse-block-run: the guest did not power off within %v; stopping qemu\n", wait)
+	}
+}
+
+// powerPressEvery is how often a stop presses the power button again while the guest runs.
+const powerPressEvery = 5 * time.Second
+
+// powerOff presses the guest's power button until pid exits or wait passes, and reports whether it
+// exited; a guest still booting drops a press it gets before it listens. Only the first press's error counts.
+func powerOff(pid int, press func() error, wait, every, poll time.Duration) (bool, error) {
+	if err := press(); err != nil {
+		return false, err
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		next := time.Now().Add(every)
+		if next.After(deadline) {
+			next = deadline
+		}
+		if waitGone(pid, time.Until(next), poll) {
+			return true, nil
+		}
+		if !time.Now().Before(deadline) {
+			return false, nil
+		}
+		_ = press() // qemu may already be exiting
 	}
 }
 
