@@ -218,10 +218,38 @@ func Uncordon(ctx context.Context, st *raftstore.Store, id string) error {
 	if err != nil {
 		return err
 	}
-	if !r.Cordoned && !r.Draining {
+	if !r.Cordoned && !r.Draining && !r.RebootDrain {
 		return nil
 	}
-	r.Cordoned, r.Draining = false, false
+	r.Cordoned, r.Draining, r.RebootDrain = false, false, false
+	return saveRecord(ctx, st, r, e.Revision)
+}
+
+// DrainForReboot drains the node ahead of a reboot: replicas another node can run move, the rest
+// stay through it. It reports whether the node was cordoned before, for EndDrainForReboot.
+func DrainForReboot(ctx context.Context, st *raftstore.Store, id string) (cordoned bool, err error) {
+	r, e, err := loadRecord(ctx, st, id)
+	if err != nil {
+		return false, err
+	}
+	if r.RebootDrain {
+		return false, nil // already draining: the caller recorded the cordon the first time
+	}
+	cordoned = r.Cordoned
+	r.Cordoned, r.Draining, r.RebootDrain = true, true, true
+	return cordoned, saveRecord(ctx, st, r, e.Revision)
+}
+
+// EndDrainForReboot puts the node back in service, leaving it cordoned when it was before.
+func EndDrainForReboot(ctx context.Context, st *raftstore.Store, id string, cordoned bool) error {
+	r, e, err := loadRecord(ctx, st, id)
+	if err != nil {
+		return err
+	}
+	if !r.RebootDrain {
+		return nil
+	}
+	r.Cordoned, r.Draining, r.RebootDrain = cordoned, false, false
 	return saveRecord(ctx, st, r, e.Revision)
 }
 

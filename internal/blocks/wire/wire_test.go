@@ -299,8 +299,10 @@ func TestNodesViewCordonAndDrain(t *testing.T) {
 		{"/nodes/n1", `{"id":"n1","cordoned":true}`},
 		{"/nodes/n2", `{"id":"n2","cordoned":true,"state":"unreachable"}`},
 		{"/nodes/n3", `{"id":"n3","cordoned":true,"draining":true}`},
+		{"/nodes/n4", `{"id":"n4","cordoned":true,"draining":true,"reboot_drain":true}`},
 		{"/nodes/n1/status", "idle"},
 		{"/nodes/n3/status", "idle"},
+		{"/nodes/n4/status", "idle"},
 	} {
 		if _, err := st.Put(ctx, store.Key(pair[0]), []byte(pair[1])); err != nil {
 			t.Fatalf("put %s: %v", pair[0], err)
@@ -313,6 +315,9 @@ func TestNodesViewCordonAndDrain(t *testing.T) {
 	got := map[string]scheduler.NodeView{}
 	for _, v := range views {
 		got[v.ID] = v
+	}
+	if got["n3"].RebootDrain || !got["n4"].RebootDrain {
+		t.Errorf("reboot drain: n3=%t n4=%t, want only n4", got["n3"].RebootDrain, got["n4"].RebootDrain)
 	}
 	for id, want := range map[string][2]bool{"n1": {true, false}, "n2": {false, false}, "n3": {true, true}} {
 		v := got[id]

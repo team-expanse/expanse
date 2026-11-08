@@ -663,3 +663,57 @@ func TestMonitorLogsAndDropsARestartHoldThatOverruns(t *testing.T) {
 		t.Error("an overrun restart announcement was kept")
 	}
 }
+
+// A reboot drain never refuses: what has nowhere to go stays (a single-node cluster holds all).
+func TestDrainForRebootAndItsEnd(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	writeRes(t, ctx, st, "n1", "web")
+	was, err := nodelc.DrainForReboot(ctx, st, "n1")
+	if err != nil || was {
+		t.Fatalf("DrainForReboot = %t, %v; want not cordoned before, no error", was, err)
+	}
+	if r := record(t, ctx, st, "n1"); !r.Cordoned || !r.Draining || !r.RebootDrain {
+		t.Errorf("after reboot drain %+v, want cordoned, draining and a reboot drain", r)
+	}
+	if err := nodelc.EndDrainForReboot(ctx, st, "n1", false); err != nil {
+		t.Fatal(err)
+	}
+	if r := record(t, ctx, st, "n1"); r.Cordoned || r.Draining || r.RebootDrain {
+		t.Errorf("after its end %+v, want back in service", r)
+	}
+}
+
+// A node the operator had cordoned stays cordoned once its reboot drain ends.
+func TestDrainForRebootKeepsAnOperatorsCordon(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	if err := nodelc.Cordon(ctx, st, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	was, err := nodelc.DrainForReboot(ctx, st, "n1")
+	if err != nil || !was {
+		t.Fatalf("DrainForReboot = %t, %v; want cordoned before", was, err)
+	}
+	if err := nodelc.EndDrainForReboot(ctx, st, "n1", was); err != nil {
+		t.Fatal(err)
+	}
+	if r := record(t, ctx, st, "n1"); !r.Cordoned || r.Draining || r.RebootDrain {
+		t.Errorf("after its end %+v, want cordoned only", r)
+	}
+}
+
+// Uncordon ends a reboot drain too.
+func TestUncordonEndsARebootDrain(t *testing.T) {
+	st, ctx := newLCEnv(t)
+	writeNode(t, ctx, st, "n1", "")
+	if _, err := nodelc.DrainForReboot(ctx, st, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodelc.Uncordon(ctx, st, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	if r := record(t, ctx, st, "n1"); r.RebootDrain {
+		t.Errorf("after uncordon %+v, want no reboot drain", r)
+	}
+}

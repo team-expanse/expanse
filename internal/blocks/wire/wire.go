@@ -141,6 +141,7 @@ func Nodes(st storeReader) func(context.Context) ([]scheduler.NodeView, schedule
 				Ready:          ready,
 				Cordoned:       lc.cordoned,
 				Draining:       lc.draining,
+				RebootDrain:    lc.rebootDrain,
 				Capabilities:   nodeCapabilities(ctx, st, id),
 				Volumes:        local,
 				HealthyVolumes: healthyLocal,
@@ -351,7 +352,7 @@ func nodeCapabilities(ctx context.Context, st storeReader, id string) []string {
 
 // lifecycle is a node record's placement state; cordoned and draining are
 // reported only for a node the §4.8 detector still sees as up.
-type lifecycle struct{ placeable, cordoned, draining bool }
+type lifecycle struct{ placeable, cordoned, draining, rebootDrain bool }
 
 // nodeLifecycle reads the node record's detector state (written by
 // nodelc.Monitor) and cordon/drain flags; nodelc.placeable semantics.
@@ -368,9 +369,10 @@ func nodeLifecycle(ctx context.Context, st storeReader, id string) (lifecycle, e
 		return lifecycle{}, nil
 	}
 	return lifecycle{
-		placeable: r.Role != "witness" && !r.Cordoned,
-		cordoned:  r.Cordoned,
-		draining:  r.Draining,
+		placeable:   r.Role != "witness" && !r.Cordoned,
+		cordoned:    r.Cordoned,
+		draining:    r.Draining,
+		rebootDrain: r.RebootDrain,
 	}, nil
 }
 

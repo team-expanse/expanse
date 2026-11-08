@@ -248,7 +248,7 @@ func (c *Controller) placeBlock(ctx context.Context, e store.Entry, nodes []sche
 	// Lost past the grace period, retire (free the index) when a
 	// replacement is permitted, then schedule the replacement through
 	// the normal strategy path (singleton lease gate applies there).
-	freed, err := c.reschedulePass(ctx, &b, e, status, nodes)
+	freed, err := c.reschedulePass(ctx, &b, e, status, nodes, cfg)
 	if err != nil {
 		return 0, err
 	}

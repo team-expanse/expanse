@@ -402,3 +402,91 @@ func TestTheControllerEndsARebootHoldOnceTheNodeIsBack(t *testing.T) {
 		t.Errorf("replica 0 = %+v, want still on %s", p, down)
 	}
 }
+
+// rebootDrain marks node id draining for a reboot, as the wire reports it.
+func rebootDrain(nodes []scheduler.NodeView, id string) {
+	for i := range nodes {
+		if nodes[i].ID == id {
+			nodes[i].Ready, nodes[i].Cordoned, nodes[i].Draining, nodes[i].RebootDrain = false, true, true, true
+		}
+	}
+}
+
+// A reboot drain moves a replica another node can run, as a plain drain does.
+func TestRebootDrainMovesWhatCanMove(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mustCreate(t, ctx, st, blockFor("web", 2))
+	nodes := nodeViews(3)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodes, testCfg(), nil
+	})
+	reconcile(t, c)
+	from := placementAt(loadStatus(t, ctx, st, "default", "web"), 0).GetNodeId()
+	rebootDrain(nodes, from)
+	reconcile(t, c)
+	if got := placementAt(loadStatus(t, ctx, st, "default", "web"), 0); got.GetNodeId() == from || got.GetHeld() != "" {
+		t.Errorf("replica 0 = %+v, want moved off %s", got, from)
+	}
+}
+
+// A replica no other node can run stays through a reboot drain, saying why.
+func TestRebootDrainHoldsAReplicaWithNowhereToGo(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mustCreate(t, ctx, st, blockFor("web", 3)) // anti-affinity: one replica per node
+	nodes := nodeViews(3)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodes, testCfg(), nil
+	})
+	reconcile(t, c)
+	rebootDrain(nodes, "n1")
+	reconcile(t, c)
+	p := placementOn(loadStatus(t, ctx, st, "default", "web"), "n1")
+	if p.GetReplicaIndex() == -1 || !strings.Contains(p.GetHeld(), "AntiAffinityConflict") {
+		t.Fatalf("replica on n1 = %+v, want held there with the scheduler's reason", p)
+	}
+	nodes = append(nodes, nodeViews(4)[3]) // room appears: the held replica moves
+	reconcile(t, c)
+	if p := placementOn(loadStatus(t, ctx, st, "default", "web"), "n1"); p.GetReplicaIndex() != -1 {
+		t.Errorf("replica on n1 = %+v, want moved to the new node", p)
+	}
+}
+
+// A reboot drain keeps a daemonset's replica, which belongs to its node.
+func TestRebootDrainHoldsADaemonsetReplica(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	mustCreate(t, ctx, st, daemonsetBlock("agent"))
+	nodes := nodeViews(3)
+	c := New(st, func(context.Context) ([]scheduler.NodeView, scheduler.OvercommitConfig, error) {
+		return nodes, testCfg(), nil
+	})
+	reconcile(t, c)
+	rebootDrain(nodes, "n1")
+	reconcile(t, c)
+	if p := placementOn(loadStatus(t, ctx, st, "default", "agent"), "n1"); p == nil || p.GetHeld() == "" {
+		t.Errorf("daemonset replica on n1 = %+v, want held", p)
+	}
+}
+
+// A stateful replica without a copy elsewhere is held, and the hold clears with the drain.
+func TestRebootDrainHoldsAStatefulReplicaUntilUncordoned(t *testing.T) {
+	c, st, nodes, _ := statefulDB(t)
+	ctx := context.Background()
+	from := placementAt(loadStatus(t, ctx, st, "default", "db"), 0).GetNodeId()
+	rebootDrain(nodes, from)
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p.GetNodeId() != from || !strings.Contains(p.GetHeld(), "healthy copy") {
+		t.Fatalf("replica 0 = %+v, want held on %s for want of a copy", p, from)
+	}
+	for i := range nodes {
+		if nodes[i].ID == from {
+			nodes[i].Ready, nodes[i].Cordoned, nodes[i].Draining, nodes[i].RebootDrain = true, false, false, false
+		}
+	}
+	reconcile(t, c)
+	if p := placementAt(loadStatus(t, ctx, st, "default", "db"), 0); p.GetHeld() != "" {
+		t.Errorf("replica 0 = %+v, want its hold cleared once uncordoned", p)
+	}
+}

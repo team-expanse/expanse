@@ -169,7 +169,8 @@ func (c *Controller) placeDaemonset(ctx context.Context, b *pb.Block, e store.En
 		// eligible regardless of readiness — the same rule Filter
 		// applies for SINGLETON, reused via scheduler.MissingVolumes
 		// rather than duplicated here.
-		if (n.Ready || n.Cordoned) && !n.Draining && !n.Witness && len(scheduler.MissingVolumes(b, n.HealthyVolumes)) == 0 {
+		// A reboot drain keeps the node's replica: it has nowhere else to go.
+		if (n.Ready || n.Cordoned) && (!n.Draining || n.RebootDrain) && !n.Witness && len(scheduler.MissingVolumes(b, n.HealthyVolumes)) == 0 {
 			desired[n.ID] = true
 		}
 	}

@@ -382,6 +382,8 @@ message PlacementStatus {
   string saved_state = 8;
   // Names this placement for good; a VM's save for a reboot or a QEMU update loads only into it.
   string placement_id = 9;
+  // Why the replica stays on its node through the node's reboot drain: nowhere else can run it.
+  string held = 10;
 }
 
 // ProbeResult is one probe outcome as the replica's node last recorded it.

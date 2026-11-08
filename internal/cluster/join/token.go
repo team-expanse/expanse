@@ -114,6 +114,8 @@ type NodeRecord struct {
 	State     string `json:"state,omitempty"`    // "" | unreachable | failed
 	Cordoned  bool   `json:"cordoned,omitempty"` // no new placements
 	Draining  bool   `json:"draining,omitempty"` // replicas move off; cleared by uncordon
+	// RebootDrain: draining for a reboot, so replicas with nowhere else to run stay.
+	RebootDrain bool `json:"reboot_drain,omitempty"`
 
 	// PubKeyFingerprint binds this record to the key that created it
 	// (see PubKeyFingerprint below). An "idempotent re-join" against an

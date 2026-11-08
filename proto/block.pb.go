@@ -2389,7 +2389,9 @@ type PlacementStatus struct {
 	// The saved-state token this replica's node holds for it; set from the node's report.
 	SavedState string `protobuf:"bytes,8,opt,name=saved_state,json=savedState,proto3" json:"saved_state,omitempty"`
 	// Names this placement for good; a VM's save for a reboot or a QEMU update loads only into it.
-	PlacementId   string `protobuf:"bytes,9,opt,name=placement_id,json=placementId,proto3" json:"placement_id,omitempty"`
+	PlacementId string `protobuf:"bytes,9,opt,name=placement_id,json=placementId,proto3" json:"placement_id,omitempty"`
+	// Why the replica stays on its node through the node's reboot drain: nowhere else can run it.
+	Held          string `protobuf:"bytes,10,opt,name=held,proto3" json:"held,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2483,6 +2485,13 @@ func (x *PlacementStatus) GetSavedState() string {
 func (x *PlacementStatus) GetPlacementId() string {
 	if x != nil {
 		return x.PlacementId
+	}
+	return ""
+}
+
+func (x *PlacementStatus) GetHeld() string {
+	if x != nil {
+		return x.Held
 	}
 	return ""
 }
@@ -4193,7 +4202,7 @@ const file_proto_block_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\bR\x06status\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x127\n" +
-	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"\xd8\x02\n" +
+	"\x18last_transition_unix_sec\x18\x05 \x01(\x03R\x15lastTransitionUnixSec\"\xec\x02\n" +
 	"\x0fPlacementStatus\x12#\n" +
 	"\rreplica_index\x18\x01 \x01(\x05R\freplicaIndex\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12-\n" +
@@ -4206,7 +4215,9 @@ const file_proto_block_proto_rawDesc = "" +
 	"\amessage\x18\a \x01(\tR\amessage\x12\x1f\n" +
 	"\vsaved_state\x18\b \x01(\tR\n" +
 	"savedState\x12!\n" +
-	"\fplacement_id\x18\t \x01(\tR\vplacementId\"S\n" +
+	"\fplacement_id\x18\t \x01(\tR\vplacementId\x12\x12\n" +
+	"\x04held\x18\n" +
+	" \x01(\tR\x04held\"S\n" +
 	"\vProbeResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x16\n" +
 	"\x06detail\x18\x02 \x01(\tR\x06detail\x12\x1c\n" +

@@ -22,6 +22,7 @@ type NodeView struct {
 	Ready        bool
 	Cordoned     bool
 	Draining     bool // cordoned and moving its replicas off
+	RebootDrain  bool // draining for a reboot: replicas with nowhere else to run stay
 	Witness      bool
 	FreeCPU      quantity.CPU
 	FreeMem      quantity.Bytes

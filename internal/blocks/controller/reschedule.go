@@ -71,6 +71,42 @@ func nodeUp(nodes []scheduler.NodeView, nodeID string) (up, draining bool) {
 	return false, false
 }
 
+// rebootDraining reports whether nodeID is draining for a reboot.
+func rebootDraining(nodes []scheduler.NodeView, nodeID string) bool {
+	for _, n := range nodes {
+		if n.ID == nodeID {
+			return n.RebootDrain
+		}
+	}
+	return false
+}
+
+// heldReason says why replica p cannot leave its node for the node's reboot, or "" when it can.
+func heldReason(b *pb.Block, p *pb.PlacementStatus, status *pb.BlockStatus, nodes []scheduler.NodeView, cfg scheduler.OvercommitConfig, stateful, daemonset bool) string {
+	from := p.GetNodeId()
+	switch {
+	case daemonset:
+		return "a daemonset runs one replica on each node"
+	case stateful && !storageAvailable(b, p.GetReplicaIndex(), from, nodes):
+		return "no other node holds a healthy copy of its volumes"
+	}
+	var existing []string
+	for _, q := range status.GetPlacements() {
+		if q != p && q.GetReplicaIndex() != -1 {
+			existing = append(existing, q.GetNodeId())
+		}
+	}
+	others := withoutNodes(nodes, map[string]bool{from: true})
+	req := scheduler.ReplicaRequest{Block: b, ReplicaIndex: int(p.GetReplicaIndex()), ExistingPlacements: existing}
+	if candidates, reasons := scheduler.Filter(others, req, cfg); len(candidates) == 0 {
+		if why := scheduler.BuildPendingReason(reasons); why != nil {
+			return "no other node can run it: " + why.GetMessage()
+		}
+		return "no other node can run it"
+	}
+	return ""
+}
+
 // RebootHold is how long a node that announced its reboot keeps its placements: its VMs saved
 // themselves to resume there, and a move would boot them fresh.
 const RebootHold = 10 * time.Minute
@@ -121,7 +157,7 @@ func (c *Controller) endRebootHold(ctx context.Context, node string) {
 // leader failover resets the grace clock, which is safe — the grace
 // exists to ride out blips, and a fresh leader re-observes before
 // acting. Returns whether the status record changed.
-func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.Entry, status *pb.BlockStatus, nodes []scheduler.NodeView) (bool, error) {
+func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.Entry, status *pb.BlockStatus, nodes []scheduler.NodeView, cfg scheduler.OvercommitConfig) (bool, error) {
 	grace := c.UnreachableGrace
 	if grace <= 0 {
 		grace = DefaultUnreachableGrace
@@ -130,7 +166,7 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 
 	stateful := len(b.GetSpec().GetStorage()) > 0
 	daemonset := b.GetSpec().GetStrategy().GetKind() == pb.StrategyKind_DAEMONSET
-	changed, failed, drained, waiting := false, false, false, false
+	changed, failed, drained, waiting, heldChanged := false, false, false, false, false
 	for _, p := range status.GetPlacements() {
 		if p.GetReplicaIndex() == -1 {
 			continue // already retired: replacement handled elsewhere
@@ -144,8 +180,15 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 				p.Phase, p.Message = pb.Phase_SCHEDULING, ""
 				changed = true
 			}
+			held := ""
+			if draining && rebootDraining(nodes, p.GetNodeId()) {
+				held = heldReason(b, p, status, nodes, cfg, stateful, daemonset)
+			}
+			if p.GetHeld() != held {
+				p.Held, heldChanged = held, true
+			}
 			// placeDaemonset stops a draining node's daemonset replica.
-			if draining && !daemonset && (!stateful || storageAvailable(b, p.GetReplicaIndex(), p.GetNodeId(), nodes)) {
+			if draining && held == "" && !daemonset && (!stateful || storageAvailable(b, p.GetReplicaIndex(), p.GetNodeId(), nodes)) {
 				p.Phase, p.Message = pb.Phase_TERMINATED, "moved off draining node "+p.GetNodeId()
 				p.FormerIndex, p.ReplicaIndex = p.GetReplicaIndex(), -1
 				changed, drained = true, true
@@ -185,6 +228,9 @@ func (c *Controller) reschedulePass(ctx context.Context, b *pb.Block, e store.En
 		c.unreachableMu.Unlock()
 	}
 	if !changed {
+		if heldChanged {
+			return false, c.persistStatus(ctx, e.Key, status)
+		}
 		return false, nil
 	}
 	status.Phase = pb.Phase_DEGRADED
