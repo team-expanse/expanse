@@ -96,7 +96,7 @@ On a single-node cluster there is nowhere to move them: run
 **3. Run the upgrade on the node.** Fetch the script from the release's tag and run it:
 
 ```sh
-V=1.18.1
+V=1.19.0
 curl -fsSLO https://raw.githubusercontent.com/team-expanse/expanse/v$V/scripts/upgrade-node.sh
 bash upgrade-node.sh $V
 ```
@@ -132,7 +132,7 @@ cluster** while any node still runs 1.11: it never reports back, and the rollout
 The same steps by hand, if you would rather not run the script:
 
 ```sh
-V=1.18.1
+V=1.19.0
 url=https://github.com/team-expanse/expanse/releases/download/v$V
 work=/var/cache/expanse/upgrade/$V
 mkdir -p $work && cd $work
