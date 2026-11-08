@@ -52,24 +52,55 @@ func TestFetchDownloadsACacheThatFits(t *testing.T) {
 	}
 }
 
-func TestApplyRefusesToBuildWithoutRoomInTheNixStore(t *testing.T) {
+// withNarCache gives the release a cache holding one store path of narSize bytes.
+func withNarCache(t *testing.T, r *applyRig, narSize string) {
+	t.Helper()
+	cache := writeTarball(t, map[string]string{
+		"nix-cache-info": "StoreDir: /nix/store\n",
+		"abc.narinfo":    "StorePath: /nix/store/abc-expanse-1.12.0\nNarSize: " + narSize + "\n",
+	})
+	rel := newTestRelease(t, "1.12.0", map[string][]byte{
+		"expanse-1.12.0.tar.gz": mustRead(t, writeTarball(t, release("1.12.0"))),
+		CacheName("1.12.0"):     mustRead(t, cache),
+	})
+	r.u.Source = rel.source(t)
+}
+
+func TestApplyRefusesToBuildWithoutRoomForTheCachesNewPaths(t *testing.T) {
 	r := newApplyRig(t)
-	r.u.NixStore = "/nix/store"
+	withNarCache(t, r, "1000000000")
+	r.u.NixStore = t.TempDir()
 	r.u.Source.Free = func(path string) (uint64, error) {
-		if path == "/nix/store" {
-			return BuildReserve - 1, nil
+		if path == r.u.NixStore {
+			return 1000000000, nil
 		}
 		return 1 << 40, nil
 	}
 	err := r.u.Apply(context.Background(), "1.12.0", io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "/nix/store") {
-		t.Fatalf("err = %v, want one naming /nix/store", err)
+	if err == nil || !strings.Contains(err.Error(), r.u.NixStore) || !strings.Contains(err.Error(), "1.3 GB") {
+		t.Fatalf("err = %v, want one naming the store and the 1.3 GB it needs", err)
 	}
 	if len(r.nix.calls) != 0 {
 		t.Errorf("built anyway: %v", r.nix.calls)
 	}
 	if v, _ := r.u.Tree.Version("expanse"); v != "1.11.3" {
 		t.Errorf("source is %q, want the old one untouched", v)
+	}
+}
+
+func TestApplyCountsOnlyTheCachePathsTheStoreLacks(t *testing.T) {
+	r := newApplyRig(t)
+	withNarCache(t, r, "1000000000")
+	r.u.NixStore = t.TempDir()
+	os.MkdirAll(filepath.Join(r.u.NixStore, "abc-expanse-1.12.0"), 0o755)
+	r.u.Source.Free = func(path string) (uint64, error) {
+		if path == r.u.NixStore {
+			return BuildReserve, nil
+		}
+		return 1 << 40, nil
+	}
+	if err := r.u.Apply(context.Background(), "1.12.0", io.Discard); err != nil {
+		t.Fatalf("the store already holds the cache's path: %v", err)
 	}
 }
 

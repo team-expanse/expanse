@@ -60,7 +60,7 @@ type Upgrader struct {
 	BootedSystem string
 	// ReleaseSystems records each built system's release (osgen); "" records nothing.
 	ReleaseSystems string
-	// NixStore is checked for BuildReserve free before the build; "" skips the check.
+	// NixStore must have room for the cache's new paths before the build; "" skips the check.
 	NixStore string
 }
 
@@ -97,7 +97,11 @@ func (u *Upgrader) run(ctx context.Context, st *Status, logs io.Writer) error {
 	}
 	defer removeUnpackedCache(rel)
 	if u.NixStore != "" {
-		if err := needSpace(u.Source.Free, u.NixStore, "the build", BuildReserve); err != nil {
+		need := uint64(BuildReserve)
+		if rel.Cache != "" {
+			need += missingNarSize(unpackedCache(rel), u.NixStore)
+		}
+		if err := needSpace(u.Source.Free, u.NixStore, "the build", need); err != nil {
 			return err
 		}
 	}

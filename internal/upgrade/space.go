@@ -1,13 +1,18 @@
 package upgrade
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
-// BuildReserve is the free space a build needs in the Nix store beyond the release's downloads.
-const BuildReserve = 1 << 30
+// BuildReserve is the room a build needs beyond what it copies from the release cache.
+const BuildReserve = 256 << 20
 
 // FreeFunc reports the bytes free on the filesystem holding path.
 type FreeFunc func(path string) (uint64, error)
@@ -38,3 +43,38 @@ func needSpace(free FreeFunc, path, what string, need uint64) error {
 }
 
 func gigabytes(n uint64) string { return fmt.Sprintf("%.1f GB", float64(n)/1e9) }
+
+// missingNarSize totals the unpacked size of the cache's store paths that store does not hold yet.
+func missingNarSize(cache, store string) uint64 {
+	infos, _ := filepath.Glob(filepath.Join(cache, "*.narinfo"))
+	var total uint64
+	for _, info := range infos {
+		path, size := readNarInfo(info)
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(store, filepath.Base(path))); os.IsNotExist(err) {
+			total += size
+		}
+	}
+	return total
+}
+
+func readNarInfo(file string) (path string, size uint64) {
+	f, err := os.Open(file)
+	if err != nil {
+		return "", 0
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		k, v, _ := strings.Cut(sc.Text(), ": ")
+		switch k {
+		case "StorePath":
+			path = v
+		case "NarSize":
+			size, _ = strconv.ParseUint(v, 10, 64)
+		}
+	}
+	return path, size
+}
