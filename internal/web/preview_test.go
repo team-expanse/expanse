@@ -420,8 +420,10 @@ func seedPreviewStore(t *testing.T, st store.Store) {
 			t.Fatal(err)
 		}
 	}
-	reboot := rollout.Reboot{Node: "n1", State: rollout.RebootDraining, BootID: "boot-n1", Since: now.Add(-2 * time.Minute), Started: now.Add(-2 * time.Minute),
-		Held: map[string]string{"default/postgres replica 0": "no other node holds a healthy copy of its volumes"}}
+	reboot := rollout.Reboot{
+		Node: "n1", State: rollout.RebootDraining, BootID: "boot-n1", Since: now.Add(-2 * time.Minute), Started: now.Add(-2 * time.Minute),
+		Held: map[string]string{"default/postgres replica 0": "no other node holds a healthy copy of its volumes"},
+	}
 	if err := rollout.SaveReboot(ctx, st, reboot); err != nil {
 		t.Fatal(err)
 	}

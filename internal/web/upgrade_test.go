@@ -339,8 +339,10 @@ func TestRebootRefusesANodeTooOldToReportItsBoot(t *testing.T) {
 
 func TestUpgradePageShowsARebootAndWhatStaysThroughIt(t *testing.T) {
 	c, base, _, st := newUpgradeTestServer(t)
-	j := rollout.Reboot{Node: "n2", State: rollout.RebootDraining, Started: time.Now(),
-		Held: map[string]string{"default/db replica 0": "no other node holds a healthy copy of its volumes"}}
+	j := rollout.Reboot{
+		Node: "n2", State: rollout.RebootDraining, Started: time.Now(),
+		Held: map[string]string{"default/db replica 0": "no other node holds a healthy copy of its volumes"},
+	}
 	if err := rollout.SaveReboot(context.Background(), st, j); err != nil {
 		t.Fatal(err)
 	}
