@@ -101,7 +101,7 @@ func (u *nodeUpgrades) lead(ctx context.Context, st store.Store, plan *rollout.P
 	}
 	h := u.health(ctx)
 	if plan != nil && rollout.NeedsRebootJob(*plan, reports, jobs) {
-		j := rollout.Reboot{Node: plan.Current, State: rollout.RebootPending, Since: now, Started: now, Updated: now}
+		j := rollout.NewReboot(plan.Current, jobs[plan.Current], now)
 		if err := rollout.SaveReboot(ctx, st, j); err != nil {
 			u.logger().Warn("reboot not started", "node", j.Node, "err", err)
 		} else {
@@ -131,7 +131,7 @@ func (u *nodeUpgrades) leadReboots(ctx context.Context, st store.Store, jobs map
 	}
 	for _, n := range slices.Sorted(maps.Keys(jobs)) {
 		j := jobs[n]
-		if !j.Open() {
+		if !j.Open() && !(j.Cancel && j.State == rollout.RebootFailed) {
 			continue
 		}
 		next, err := u.stepReboot(ctx, j, jobs, reports[n], h, now)
@@ -152,6 +152,16 @@ func (u *nodeUpgrades) leadReboots(ctx context.Context, st store.Store, jobs map
 }
 
 func (u *nodeUpgrades) stepReboot(ctx context.Context, j rollout.Reboot, jobs map[string]rollout.Reboot, rep rollout.Report, h rollout.Health, now time.Time) (rollout.Reboot, error) {
+	if j.Cancel && j.State != rollout.RebootRebooting { // a node already going down cannot be called back
+		// A failed reboot may have left the node drained; an in-place one never drains it.
+		if (j.State == rollout.RebootDraining || j.State == rollout.RebootFailed) && !j.InPlace {
+			if err := u.rebooter.end(ctx, j); err != nil {
+				return j, err
+			}
+		}
+		j.State, j.Reason, j.Updated = rollout.RebootCancelled, "", now
+		return j, nil
+	}
 	if j.State == rollout.RebootPending {
 		if why := rollout.CanBegin(j, jobs, h); why != "" {
 			j.Reason = why

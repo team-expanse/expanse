@@ -126,3 +126,31 @@ func TestAnAutomatedRolloutStartsTheCurrentNodesReboot(t *testing.T) {
 		t.Fatalf("job = %+v, want n1's reboot started", j)
 	}
 }
+
+func TestCancellingADrainPutsTheNodeBack(t *testing.T) {
+	r, f, reboots, _ := rebootRig(t)
+	ctx := context.Background()
+	r.leader = true
+	j := rollout.Reboot{Node: "n1", State: rollout.RebootDraining, BootID: "boot-1", Cancel: true, Started: time.Now(), Since: time.Now()}
+	if err := rollout.SaveReboot(ctx, r.st, j); err != nil {
+		t.Fatal(err)
+	}
+	r.u.pass(ctx, r.st, time.Now())
+	if j := loadReboot(t, r); j.State != rollout.RebootCancelled || len(f.ended) != 1 || *reboots != 0 {
+		t.Fatalf("job = %+v, ended %v, reboots %d; want cancelled and back in service", j, f.ended, *reboots)
+	}
+}
+
+func TestCancellingAFailedDrainPutsTheNodeBack(t *testing.T) {
+	r, f, _, _ := rebootRig(t)
+	ctx := context.Background()
+	r.leader = true
+	j := rollout.Reboot{Node: "n1", State: rollout.RebootFailed, Replicas: []rollout.Replica{{Block: "default/web"}}, Cancel: true, Started: time.Now()}
+	if err := rollout.SaveReboot(ctx, r.st, j); err != nil {
+		t.Fatal(err)
+	}
+	r.u.pass(ctx, r.st, time.Now())
+	if j := loadReboot(t, r); j.State != rollout.RebootCancelled || len(f.ended) != 1 {
+		t.Fatalf("job = %+v, ended %v; want cancelled and back in service", j, f.ended)
+	}
+}

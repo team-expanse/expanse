@@ -138,3 +138,24 @@ func TestRebootJobsToStart(t *testing.T) {
 		t.Error("a rollout without reboots starts none")
 	}
 }
+
+func TestACancelledRebootHaltsTheRollout(t *testing.T) {
+	p := running("n1", "n2")
+	p.Reboot, p.Current = true, "n1"
+	j := job(RebootCancelled, now)
+	p, _ = Step(p, map[string]Report{"n1": booted("boot-1", true)}, map[string]Reboot{"n1": j}, healthy, now)
+	if p.State != Halted || !strings.Contains(p.Reason, "cancelled") {
+		t.Fatalf("plan = %+v, want halted: its reboot was cancelled", p)
+	}
+}
+
+func TestANewRebootKeepsTheCordonAFailedOneRecorded(t *testing.T) {
+	failed := job(RebootFailed, now)
+	failed.Cordoned = true
+	if j := NewReboot("n1", failed, now); !j.Cordoned || j.State != RebootPending || !j.Started.Equal(now) {
+		t.Fatalf("NewReboot = %+v, want pending, keeping the operator's cordon", j)
+	}
+	if j := NewReboot("n1", job(RebootDone, now), now); j.Cordoned {
+		t.Fatalf("NewReboot = %+v, want no cordon carried from a finished reboot", j)
+	}
+}

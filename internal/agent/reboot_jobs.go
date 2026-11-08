@@ -41,7 +41,8 @@ func (c clusterRebooter) begin(ctx context.Context, r rollout.Reboot) (rollout.R
 	if err != nil {
 		return r, err
 	}
-	r.Cordoned, r.State, r.Replicas = cordoned, rollout.RebootDraining, nil
+	// A retried drain finds the node drained already; r keeps the cordon recorded the first time.
+	r.Cordoned, r.State, r.Replicas = r.Cordoned || cordoned, rollout.RebootDraining, nil
 	for _, p := range replicas {
 		r.Replicas = append(r.Replicas, rollout.Replica{Block: p.Block, Index: p.Index})
 	}

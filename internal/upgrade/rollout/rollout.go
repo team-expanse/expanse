@@ -143,6 +143,8 @@ func awaitReboot(p Plan, r Report, jobs map[string]Reboot) (why string, wait, fa
 	switch {
 	case fresh && j.State == RebootFailed:
 		return j.Reason, true, true
+	case fresh && j.State == RebootCancelled:
+		return p.Current + ": its reboot was cancelled", true, true
 	case fresh && j.State == RebootPending && j.Reason != "":
 		return p.Current + "'s reboot is " + j.Reason, true, false
 	case fresh && j.State == RebootDraining:

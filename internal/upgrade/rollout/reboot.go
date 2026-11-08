@@ -53,6 +53,8 @@ type Reboot struct {
 	// Held maps each replica that stays on the node through its reboot to why.
 	Held   map[string]string `json:"held,omitempty"`
 	Reason string            `json:"reason,omitempty"`
+	// Cancel asks the leader to stop the reboot and put the node back in service.
+	Cancel bool `json:"cancel,omitempty"`
 	// Since is when State was entered; the timeouts count from it.
 	Since   time.Time `json:"since"`
 	Started time.Time `json:"started"`
@@ -64,6 +66,16 @@ func (r Reboot) Active() bool { return r.State == RebootDraining || r.State == R
 
 // Open reports whether the reboot still needs anything from the leader.
 func (r Reboot) Open() bool { return r.State == RebootPending || r.Active() }
+
+// NewReboot starts a pending reboot of node. A failed one before it may have left the node
+// drained, so its record of the operator's cordon carries over.
+func NewReboot(node string, prev Reboot, now time.Time) Reboot {
+	r := Reboot{Node: node, State: RebootPending, Since: now, Started: now, Updated: now}
+	if prev.Node == node && prev.State == RebootFailed {
+		r.Cordoned = prev.Cordoned
+	}
+	return r
+}
 
 // Drain is how far a node's drain has come.
 type Drain struct {
