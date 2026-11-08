@@ -414,9 +414,16 @@ func seedPreviewStore(t *testing.T, st store.Store) {
 		t.Fatal(err)
 	}
 	for id, v := range map[string]string{"n1": "1.14.0", "n2": "1.14.0", "n3": "1.13.0"} {
-		if err := rollout.SaveReport(ctx, st, id, rollout.Report{Version: v, Updated: now}); err != nil {
+		// n2 still runs the kernel it booted before its upgrade.
+		r := rollout.Report{Version: v, RebootNeeded: id == "n2", BootID: "boot-" + id, Updated: now}
+		if err := rollout.SaveReport(ctx, st, id, r); err != nil {
 			t.Fatal(err)
 		}
+	}
+	reboot := rollout.Reboot{Node: "n1", State: rollout.RebootDraining, BootID: "boot-n1", Since: now.Add(-2 * time.Minute), Started: now.Add(-2 * time.Minute),
+		Held: map[string]string{"default/postgres replica 0": "no other node holds a healthy copy of its volumes"}}
+	if err := rollout.SaveReboot(ctx, st, reboot); err != nil {
+		t.Fatal(err)
 	}
 	latest := rollout.Latest{Version: "1.15.0", Releases: []string{"1.15.0", "1.14.2", "1.14.0", "1.13.0", "1.12.0"}, Checked: now.Add(-3 * time.Hour)}
 	if err := rollout.SaveLatest(ctx, st, latest); err != nil {

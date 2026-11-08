@@ -36,7 +36,7 @@
 <section class="card">
   <div class="card-head"><h2>Rollout</h2></div>
   {{with .View.Plan}}{{if $.View.Running}}
-  <p>Upgrading to <strong>{{.Target}}</strong>: {{.State}}{{with .Current}}, now on <a href="/nodes/{{.}}"><strong>{{nodename .}}</strong></a>{{end}}.</p>
+  <p>Upgrading to <strong>{{.Target}}</strong>{{if .Reboot}}, rebooting nodes that need it{{end}}: {{.State}}{{with .Current}}, now on <a href="/nodes/{{.}}"><strong>{{nodename .}}</strong></a>{{end}}.</p>
   {{with .Reason}}<div class="callout {{if eq $.View.Plan.State "halted"}}callout-crit{{else}}callout-warn{{end}}"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{.}}</p></div></div>{{end}}
   {{with $.View.Steps}}
   <ol class="rollout">
@@ -64,6 +64,8 @@
       {{end}}
       <span class="field-hint">Each node in turn downloads the release, checks its signature, builds and switches. The next node starts once the cluster is healthy again.</span>
     </label>
+    <label class="field field-check"><span><input type="checkbox" name="reboot" value="on" id="upgrade-reboot" hx-preserve> <span class="field-label">Reboot nodes that need it</span></span>
+      <span class="field-hint">When a node's new kernel, initrd or kernel modules need a reboot, its blocks move to other nodes, it reboots, and it goes back in service before the next node starts. What can't move stays on it through the reboot, and VMs save and resume. A single-node cluster reboots in place. Without this, nodes that need a reboot are listed below.</span></label>
     <div class="form-actions"><button class="btn btn-primary" type="submit">Upgrade cluster</button></div>
   </form>
   {{else}}
@@ -75,21 +77,43 @@
   {{end}}
 </section>
 
+{{with .View.Reboots}}
+<section class="card">
+  <div class="card-head"><h2>Reboots</h2></div>
+  {{range .}}{{$j := .Job}}
+  <div class="reboot">
+    <p><a class="host" href="/nodes/{{$j.Node}}">{{nodename $j.Node}}</a> {{template "pill" .Status}}
+    {{if eq $j.State "pending"}}{{with $j.Reason}}<span class="muted">{{.}}.</span>{{else}}<span class="muted">Starting once the cluster is healthy.</span>{{end}}
+    {{else if eq $j.State "draining"}}<span class="muted">Moving its blocks to other nodes.</span>
+    {{else if eq $j.State "rebooting"}}<span class="muted">{{if $j.InPlace}}No other node can take its blocks, so it reboots in place; VMs save and resume.{{else}}Rebooting; it goes back in service once it is up.{{end}}</span>{{end}}
+    {{if $j.Cancel}}<span class="muted">Cancelling.</span>{{end}}</p>
+    {{with $j.Reason}}{{if eq $j.State "failed"}}<div class="callout callout-crit"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{.}}</p></div></div>{{end}}{{end}}
+    {{with .Held}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>These stay on {{nodename $j.Node}} through its reboot, since no other node can take them:</p><ul>{{range .}}<li>{{.Replica}}: {{.Why}}</li>{{end}}</ul></div></div>{{end}}
+    {{if not $j.Cancel}}<div class="form-actions">
+      {{if eq $j.State "failed"}}<form method="post" action="/upgrade/reboot/retry" hx-post="/upgrade/reboot/retry" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="node" value="{{$j.Node}}"><button class="btn btn-primary" type="submit">Retry</button></form>{{end}}
+      {{if ne $j.State "rebooting"}}<form method="post" action="/upgrade/reboot/cancel" hx-post="/upgrade/reboot/cancel" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="node" value="{{$j.Node}}"><button class="btn btn-ghost" type="submit">Cancel</button></form>{{end}}
+    </div>{{end}}
+  </div>
+  {{end}}
+</section>
+{{end}}
+
 <section class="card">
   <div class="card-head"><h2>Nodes</h2></div>
-  {{with .View.RebootNeeded}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{len .}} {{if eq (len .) 1}}node waits{{else}}nodes wait{{end}} for a reboot to finish {{if eq (len .) 1}}its upgrade{{else}}their upgrades{{end}}: {{range $i, $id := .}}{{if $i}}, {{end}}<a class="host" href="/nodes/{{$id}}">{{nodename $id}}</a>{{end}}. A new kernel, initrd or kernel modules load only at boot.</p></div></div>{{end}}
+  {{with .View.RebootNeeded}}<div class="callout callout-warn"><svg class="icon"><use href="#i-alert"/></svg><div><p>{{len .}} {{if eq (len .) 1}}node waits{{else}}nodes wait{{end}} for a reboot to finish {{if eq (len .) 1}}its upgrade{{else}}their upgrades{{end}}: {{range $i, $id := .}}{{if $i}}, {{end}}<a class="host" href="/nodes/{{$id}}">{{nodename $id}}</a>{{end}}. A new kernel, initrd or kernel modules load only at boot. The Reboot button beside a node moves its blocks to other nodes first.</p></div></div>{{end}}
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Node</th><th>Version</th><th>Last upgrade</th></tr></thead>
+      <thead><tr><th>Node</th><th>Version</th><th>Last upgrade</th><th></th></tr></thead>
       <tbody>
         {{range .View.Nodes}}
         <tr>
           <td><a class="host" href="/nodes/{{.ID}}">{{nodename .ID}}</a>{{if .Current}} <span class="tag">upgrading</span>{{end}}</td>
           <td>{{with .Report.Version}}{{.}}{{else}}<span class="muted">unknown</span>{{end}}{{if .Behind}} <span class="pill pill-info"><span class="dot"></span>Update available</span>{{end}}{{if .Report.RebootNeeded}} <span class="pill pill-warn"><span class="dot"></span>Reboot needed</span>{{end}}</td>
           <td>{{with .Report.Upgrade}}{{.Version}}: {{.State}}{{with .Error}} <span class="text-crit">{{.}}</span>{{end}}{{else}}<span class="muted">none</span>{{end}}</td>
+          <td class="text-right">{{if .CanReboot}}<form method="post" action="/upgrade/reboot" hx-post="/upgrade/reboot" hx-swap="none"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="node" value="{{.ID}}"><button class="btn btn-sm" type="submit">Reboot</button></form>{{end}}</td>
         </tr>
         {{else}}
-        <tr><td colspan="3">{{template "empty" "No node records."}}</td></tr>
+        <tr><td colspan="4">{{template "empty" "No node records."}}</td></tr>
         {{end}}
       </tbody>
     </table>

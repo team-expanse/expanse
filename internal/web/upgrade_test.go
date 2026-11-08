@@ -180,7 +180,7 @@ func TestUpgradePageShowsWhyARolloutHalted(t *testing.T) {
 func TestRolloutStepsFollowThePlanOrder(t *testing.T) {
 	plan := &rollout.Plan{Target: "1.12.0", State: rollout.Running, Order: []string{"n2", "n3", "n1"}, Current: "n3"}
 	reports := map[string]rollout.Report{"n2": {Version: "1.12.0"}, "n3": {Version: "1.11.3"}, "n1": {Version: "1.11.3"}}
-	got := rolloutSteps(plan, reports)
+	got := rolloutSteps(plan, reports, nil)
 	want := []string{"n2 Done", "n3 Upgrading", "n1 Waiting"}
 	for i, st := range got {
 		if i >= len(want) || st.ID+" "+st.Status.Label != want[i] {
@@ -188,7 +188,7 @@ func TestRolloutStepsFollowThePlanOrder(t *testing.T) {
 		}
 	}
 	plan.State = rollout.Halted
-	if got := rolloutSteps(plan, reports); got[1].Status.Label != "Halted" || got[1].Status.Tone != "crit" {
+	if got := rolloutSteps(plan, reports, nil); got[1].Status.Label != "Halted" || got[1].Status.Tone != "crit" {
 		t.Errorf("a halted node shows %+v", got[1].Status)
 	}
 }
@@ -285,5 +285,107 @@ func TestUpgradePageListsTheNodesWaitingForAReboot(t *testing.T) {
 	}
 	if strings.Contains(body, "reboot to finish</span>") {
 		t.Error("upgrade page still shows n3's stale reboot flag")
+	}
+}
+
+func TestUpgradeStartCanAutomateReboots(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	if _, body := get(t, c, base+"/upgrade"); !strings.Contains(body, `name="reboot"`) {
+		t.Error("start form has no reboot option")
+	}
+	postForm(t, c, base+"/upgrade/start", csrf, url.Values{"version": {"1.12.0"}, "reboot": {"on"}})
+	if p, _ := rollout.LoadPlan(context.Background(), st); p == nil || !p.Reboot {
+		t.Fatalf("plan = %+v, want reboots automated", p)
+	}
+}
+
+// waitingForReboot reports n2 on 1.12.0 with an older kernel still booted.
+func waitingForReboot(t *testing.T, st store.Store, bootID string) {
+	t.Helper()
+	r := rollout.Report{Version: "1.12.0", RebootNeeded: true, BootID: bootID, Updated: time.Now()}
+	if err := rollout.SaveReport(context.Background(), st, "n2", r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRebootANodeFromTheUpgradesPage(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	ctx := context.Background()
+	waitingForReboot(t, st, "boot-1")
+	if _, body := get(t, c, base+"/upgrade"); !strings.Contains(body, `<input type="hidden" name="node" value="n2">`) {
+		t.Fatal("upgrade page has no Reboot button for n2")
+	}
+	resp, body := postForm(t, c, base+"/upgrade/reboot", csrf, url.Values{"node": {"n2"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("reboot: status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+	jobs, _ := rollout.ListReboots(ctx, st)
+	if j := jobs["n2"]; j.State != rollout.RebootPending {
+		t.Fatalf("job = %+v, want pending", j)
+	}
+	if resp, _ := postForm(t, c, base+"/upgrade/reboot", csrf, url.Values{"node": {"n2"}}); resp.StatusCode != http.StatusConflict {
+		t.Errorf("a second reboot of n2: status %d, want a conflict", resp.StatusCode)
+	}
+}
+
+func TestRebootRefusesANodeTooOldToReportItsBoot(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	waitingForReboot(t, st, "")
+	resp, body := postForm(t, c, base+"/upgrade/reboot", csrf, url.Values{"node": {"n2"}})
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "too old") {
+		t.Errorf("status %d:\n%s", resp.StatusCode, alerts(body))
+	}
+}
+
+func TestUpgradePageShowsARebootAndWhatStaysThroughIt(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	j := rollout.Reboot{Node: "n2", State: rollout.RebootDraining, Started: time.Now(),
+		Held: map[string]string{"default/db replica 0": "no other node holds a healthy copy of its volumes"}}
+	if err := rollout.SaveReboot(context.Background(), st, j); err != nil {
+		t.Fatal(err)
+	}
+	_, body := get(t, c, base+"/upgrade")
+	for _, want := range []string{"Draining", "default/db replica 0", "no other node holds a healthy copy of its volumes", `action="/upgrade/reboot/cancel"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upgrade page missing %q", want)
+		}
+	}
+}
+
+func TestCancelAndRetryANodeReboot(t *testing.T) {
+	c, base, csrf, st := newUpgradeTestServer(t)
+	ctx := context.Background()
+	failed := rollout.Reboot{Node: "n2", State: rollout.RebootFailed, Cordoned: true, Reason: "n2: not back", Started: time.Now().Add(-time.Hour)}
+	if err := rollout.SaveReboot(ctx, st, failed); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := get(t, c, base+"/upgrade"); !strings.Contains(body, "n2: not back") || !strings.Contains(body, `action="/upgrade/reboot/retry"`) {
+		t.Error("upgrade page does not offer a retry of n2's failed reboot")
+	}
+	postForm(t, c, base+"/upgrade/reboot/retry", csrf, url.Values{"node": {"n2"}})
+	jobs, _ := rollout.ListReboots(ctx, st)
+	if j := jobs["n2"]; j.State != rollout.RebootPending || !j.Cordoned {
+		t.Fatalf("after retry %+v, want pending, keeping the cordon", j)
+	}
+	postForm(t, c, base+"/upgrade/reboot/cancel", csrf, url.Values{"node": {"n2"}})
+	jobs, _ = rollout.ListReboots(ctx, st)
+	if j := jobs["n2"]; !j.Cancel {
+		t.Fatalf("after cancel %+v, want a cancel asked of the leader", j)
+	}
+	rebooting := rollout.Reboot{Node: "n2", State: rollout.RebootRebooting, Started: time.Now()}
+	if err := rollout.SaveReboot(ctx, st, rebooting); err != nil {
+		t.Fatal(err)
+	}
+	if resp, _ := postForm(t, c, base+"/upgrade/reboot/cancel", csrf, url.Values{"node": {"n2"}}); resp.StatusCode != http.StatusConflict {
+		t.Errorf("cancelling a node already rebooting: status %d, want a conflict", resp.StatusCode)
+	}
+}
+
+func TestRolloutStepsShowAReboot(t *testing.T) {
+	p := &rollout.Plan{Target: "1.12.0", State: rollout.Running, Order: []string{"n1", "n2"}, Current: "n1", Reboot: true, Started: time.Now()}
+	jobs := map[string]rollout.Reboot{"n1": {Node: "n1", State: rollout.RebootRebooting, Started: time.Now()}}
+	steps := rolloutSteps(p, map[string]rollout.Report{"n1": {Version: "1.12.0"}}, jobs)
+	if steps[0].Status.Label != "Rebooting" {
+		t.Errorf("n1's step = %+v, want Rebooting", steps[0])
 	}
 }

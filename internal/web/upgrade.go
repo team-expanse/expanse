@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +23,9 @@ func (s *Server) registerUpgradeRoutes() {
 	s.routes.Handle("POST /upgrade/cancel", s.requireAuth(s.planChange("", s.cancelPlan, "Rollout cancelled; nodes already upgraded stay upgraded.")))
 	s.routes.Handle("POST /upgrade/check", s.requireAuth(http.HandlerFunc(s.handleUpgradeCheck)))
 	s.routes.Handle("POST /upgrade/auto-check", s.requireAuth(http.HandlerFunc(s.handleUpgradeAutoCheck)))
+	s.routes.Handle("POST /upgrade/reboot", s.requireAuth(http.HandlerFunc(s.handleRebootStart)))
+	s.routes.Handle("POST /upgrade/reboot/retry", s.requireAuth(http.HandlerFunc(s.handleRebootRetry)))
+	s.routes.Handle("POST /upgrade/reboot/cancel", s.requireAuth(http.HandlerFunc(s.handleRebootCancel)))
 }
 
 // upgradeNode is one row of the versions table.
@@ -29,6 +34,49 @@ type upgradeNode struct {
 	Report  rollout.Report
 	Current bool
 	Behind  bool // runs a release older than the newest
+	// CanReboot: it waits for a reboot, none is underway, and it can be rebooted from here.
+	CanReboot bool
+}
+
+// rebootView is one node reboot on the page.
+type rebootView struct {
+	Job    rollout.Reboot
+	Status pill
+	Held   []heldReplica
+}
+
+// heldReplica is a replica that stays on its node through the reboot, and why.
+type heldReplica struct{ Replica, Why string }
+
+func rebootPill(s rollout.RebootState) pill {
+	switch s {
+	case rollout.RebootPending:
+		return pill{"Waiting", "neutral"}
+	case rollout.RebootDraining:
+		return pill{"Draining", "warn"}
+	case rollout.RebootRebooting:
+		return pill{"Rebooting", "info"}
+	case rollout.RebootFailed:
+		return pill{"Failed", "crit"}
+	}
+	return pill{"Done", "ok"}
+}
+
+// rebootViews lists the reboots worth showing: open or failed ones, in node order.
+func rebootViews(jobs map[string]rollout.Reboot) []rebootView {
+	var out []rebootView
+	for _, n := range slices.Sorted(maps.Keys(jobs)) {
+		j := jobs[n]
+		if !j.Open() && j.State != rollout.RebootFailed {
+			continue
+		}
+		v := rebootView{Job: j, Status: rebootPill(j.State)}
+		for _, r := range slices.Sorted(maps.Keys(j.Held)) {
+			v.Held = append(v.Held, heldReplica{r, j.Held[r]})
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // releaseOption is one entry of the start form's release drop-down.
@@ -88,6 +136,7 @@ type upgradeView struct {
 	Errors    []string // every read that failed, so none hides another
 	Running   bool     // a rollout is running or paused, so no new one can start
 	Steps     []rolloutStep
+	Reboots   []rebootView
 	// RebootNeeded lists the nodes whose running kernel, initrd or modules wait for a reboot.
 	RebootNeeded []string
 }
@@ -98,17 +147,23 @@ type rolloutStep struct {
 	Status pill
 }
 
-// rolloutSteps walks the plan's order: nodes on the target are done, the
-// current one is upgrading (or halted), the rest wait their turn.
-func rolloutSteps(p *rollout.Plan, reports map[string]rollout.Report) []rolloutStep {
+// rolloutSteps walks the plan's order: nodes on the target (and rebooted, when the plan
+// reboots) are done, the current one is upgrading, rebooting or halted, the rest wait.
+func rolloutSteps(p *rollout.Plan, reports map[string]rollout.Report, jobs map[string]rollout.Reboot) []rolloutStep {
 	var out []rolloutStep
 	for _, id := range p.Order {
 		st := pill{"Waiting", "neutral"}
-		switch {
-		case reports[id].Version == p.Target:
-			st = pill{"Done", "ok"}
+		r := reports[id]
+		onTarget := r.Version == p.Target
+		switch j := jobs[id]; {
 		case id == p.Current && p.State == rollout.Halted:
 			st = pill{"Halted", "crit"}
+		case id == p.Current && onTarget && j.State == rollout.RebootDraining && !j.Started.Before(p.Started):
+			st = pill{"Draining", "warn"}
+		case id == p.Current && onTarget && p.Reboot:
+			st = pill{"Rebooting", "info"}
+		case onTarget && !(p.Reboot && r.RebootNeeded):
+			st = pill{"Done", "ok"}
 		case id == p.Current:
 			st = pill{"Upgrading", "info"}
 		}
@@ -136,6 +191,11 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 	if err != nil {
 		v.Errors = append(v.Errors, "Node versions are unavailable: "+errText(err))
 	}
+	jobs, err := rollout.ListReboots(ctx, s.store)
+	if err != nil {
+		v.Errors = append(v.Errors, "Node reboots are unavailable: "+errText(err))
+	}
+	v.Reboots = rebootViews(jobs)
 	var members []string
 	if rep, err := s.getClusterReport(ctx); err == nil {
 		for _, n := range rep.Nodes {
@@ -146,7 +206,7 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 	}
 	v.Running = v.Plan != nil && (v.Plan.State == rollout.Running || v.Plan.State == rollout.Paused || v.Plan.State == rollout.Halted)
 	if v.Running {
-		v.Steps = rolloutSteps(v.Plan, reports)
+		v.Steps = rolloutSteps(v.Plan, reports, jobs)
 	}
 	v.Available = availableUpgrade(v.Latest, members, reports)
 	for _, id := range members {
@@ -157,6 +217,7 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 		}
 		if n.Report.RebootNeeded {
 			v.RebootNeeded = append(v.RebootNeeded, id)
+			n.CanReboot = n.Report.BootID != "" && !jobs[id].Open()
 		}
 		v.Nodes = append(v.Nodes, n)
 	}
@@ -223,7 +284,7 @@ func (s *Server) handleUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now()
-	plan := rollout.Plan{Target: version, State: rollout.Running, Order: rollout.Order(nodes, leader), Started: now, Updated: now}
+	plan := rollout.Plan{Target: version, State: rollout.Running, Order: rollout.Order(nodes, leader), Reboot: r.PostFormValue("reboot") == "on", Started: now, Updated: now}
 	if err := rollout.SavePlan(ctx, s.store, plan); err != nil {
 		s.renderError(w, r, http.StatusInternalServerError, errText(err))
 		return
@@ -258,6 +319,77 @@ func (s *Server) resumePlan(p *rollout.Plan) {
 }
 
 func (s *Server) cancelPlan(p *rollout.Plan) { p.State, p.Current = rollout.Cancelled, "" }
+
+// handleRebootStart asks the leader to drain and reboot one node.
+func (s *Server) handleRebootStart(w http.ResponseWriter, r *http.Request) {
+	ctx, node := r.Context(), r.PostFormValue("node")
+	reports, err := rollout.ListReports(ctx, s.store)
+	if err != nil {
+		s.renderError(w, r, http.StatusInternalServerError, errText(err))
+		return
+	}
+	rep, ok := reports[node]
+	switch {
+	case !ok:
+		s.renderError(w, r, http.StatusNotFound, "No node "+node+" reports to the cluster.")
+		return
+	case rep.BootID == "":
+		s.renderError(w, r, http.StatusConflict, s.names.name(node)+" runs an Expanse too old to reboot from here. Upgrade it, or reboot it with systemctl reboot.")
+		return
+	}
+	s.rebootChange(w, r, node, func(j *rollout.Reboot) (string, bool) {
+		if j.Open() {
+			return s.names.name(node) + "'s reboot is already " + string(j.State) + ".", false
+		}
+		*j = rollout.NewReboot(node, *j, time.Now())
+		return "Rebooting " + s.names.name(node) + " once the cluster is healthy. Its blocks move to other nodes first; what can't move stays through the reboot.", true
+	})
+}
+
+// handleRebootRetry starts a failed reboot again.
+func (s *Server) handleRebootRetry(w http.ResponseWriter, r *http.Request) {
+	node := r.PostFormValue("node")
+	s.rebootChange(w, r, node, func(j *rollout.Reboot) (string, bool) {
+		if j.State != rollout.RebootFailed {
+			return "There is no failed reboot of " + s.names.name(node) + " to retry.", false
+		}
+		*j = rollout.NewReboot(node, *j, time.Now())
+		return "Retrying " + s.names.name(node) + "'s reboot.", true
+	})
+}
+
+// handleRebootCancel asks the leader to stop a reboot and put its node back in service.
+func (s *Server) handleRebootCancel(w http.ResponseWriter, r *http.Request) {
+	node := r.PostFormValue("node")
+	s.rebootChange(w, r, node, func(j *rollout.Reboot) (string, bool) {
+		if (!j.Open() && j.State != rollout.RebootFailed) || j.State == rollout.RebootRebooting {
+			return "There is no reboot of " + s.names.name(node) + " that can still be cancelled.", false
+		}
+		j.Cancel, j.Updated = true, time.Now()
+		return "Cancelling " + s.names.name(node) + "'s reboot; it goes back in service.", true
+	})
+}
+
+// rebootChange applies change to node's reboot; change returns the message and whether it applies.
+func (s *Server) rebootChange(w http.ResponseWriter, r *http.Request, node string, change func(*rollout.Reboot) (string, bool)) {
+	ctx := r.Context()
+	jobs, err := rollout.ListReboots(ctx, s.store)
+	if err != nil {
+		s.renderError(w, r, http.StatusInternalServerError, errText(err))
+		return
+	}
+	j := jobs[node]
+	msg, ok := change(&j)
+	if !ok {
+		s.renderError(w, r, http.StatusConflict, msg)
+		return
+	}
+	if err := rollout.SaveReboot(ctx, s.store, j); err != nil {
+		s.renderError(w, r, http.StatusInternalServerError, errText(err))
+		return
+	}
+	s.done(w, r, "success", msg, "/upgrade")
+}
 
 func (s *Server) handleUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 	s.updateLatest(w, r, func(l *rollout.Latest) { l.Requested = true }, "Checking for a new release.")
