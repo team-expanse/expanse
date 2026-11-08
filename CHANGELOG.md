@@ -6,6 +6,25 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Added
+
+- **Reboot nodes that need it**, an option on Upgrade cluster. When a node's upgrade brings a new
+  kernel, initrd or kernel modules, its blocks move to other nodes, it reboots into the release and
+  goes back in service before the next node starts. A replica no other node can run (a daemonset's,
+  one whose volume has no healthy copy elsewhere, or one that fits nowhere else) stays on the node
+  through the reboot, and the Upgrades page lists each with why. A one-node cluster reboots in
+  place: its VMs save and resume.
+- Each node waiting for a reboot has a **Reboot** button on the Upgrades page, which does the same
+  for that node alone. A reboot that fails can be retried or cancelled, which puts the node back in
+  service.
+
+### Fixed
+
+- A node no longer shows "reboot to finish" after it has rebooted. Whether a node waits for a
+  reboot is now checked live, against the system it booted.
+
 ## 1.18.1 - 2026-11-06
 
 ### Security

@@ -321,6 +321,9 @@ boots fresh and the old save is deleted. The save needs the same room under `/pe
 suspend. A VM started by an Expanse too old to save it powers off as before, until it next
 restarts.
 
+A reboot from the Upgrades page (`docs/UPGRADE.md`) first drains the node, so a VM another node can
+run moves there and boots fresh; only a VM with nowhere else to go saves and resumes on the node.
+
 ### Machine type
 
 qemu presents the guest a fixed set of virtual hardware, its machine type. `config.machine` pins it

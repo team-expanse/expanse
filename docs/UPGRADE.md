@@ -31,8 +31,24 @@ reports nothing for 45 minutes, **halts** the rollout with its reason. **Retry**
 and **Cancel** stops the rollout. Nodes already upgraded stay upgraded. If a switch leaves a
 node unreachable, the switch watchdog rolls it back and reboots it after 10 minutes.
 
-A node whose kernel changed shows **reboot to finish**. Reboot such nodes one at a time, waiting
-for the cluster to be healthy in between.
+A node whose new kernel, initrd or kernel modules load only at boot shows **Reboot needed**, and the
+Nodes card lists it. Check **Reboot nodes that need it** before **Upgrade cluster** to have the
+rollout reboot each such node before it moves on; otherwise press **Reboot** beside each listed
+node, one at a time. Either way, a node reboot:
+
+1. Waits for a healthy cluster and for any other node's reboot to finish.
+2. Drains the node: its replicas move to other nodes. A replica no other node can run stays on it
+   through the reboot: a daemonset's, one whose volume has no healthy copy on another node, or one
+   the scheduler fits nowhere else (it says why, such as anti-affinity or too little memory). The
+   **Reboots** card lists these. A VM that moves boots fresh on its new node (`docs/VMS.md`).
+3. Reboots the node, through systemd, so a VM still on it saves and resumes after the boot.
+4. Puts the node back in service once it reports a new boot running the system it booted. A node
+   you had cordoned stays cordoned. Blocks that moved off it don't move back.
+
+A one-node cluster, or a node no other can take replicas from, skips the drain and reboots in
+place. A drain still moving replicas after 15 minutes, or a node not back 15 minutes after its
+reboot, fails the reboot (and halts the rollout); **Retry** starts it again, and **Cancel** puts a
+node not yet rebooting back in service.
 
 The leader checks GitHub's list of published releases once a day; **Check now** checks at once, and the
 check can be turned off on the same page. `expanse upgrade status` on a node shows its last
