@@ -76,6 +76,7 @@ func newUpgradeApplyCmd() *cobra.Command {
 				StatusPath:     status,
 				BootedSystem:   "/run/booted-system",
 				ReleaseSystems: filepath.Join(filepath.Dir(status), filepath.Base(osgen.DefaultReleaseSystemsPath)),
+				NixStore:       "/nix/store",
 			}
 			return u.Apply(cmd.Context(), args[0], cmd.ErrOrStderr())
 		},

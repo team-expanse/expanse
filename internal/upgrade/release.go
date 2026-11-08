@@ -31,6 +31,8 @@ type Source struct {
 	Client    *http.Client
 	// CacheDir keeps downloads, one directory per version.
 	CacheDir string
+	// Free reports a filesystem's free bytes; nil asks statfs.
+	Free FreeFunc
 }
 
 // Fetched is a verified release on disk. Cache is empty when the release has none for this system.
@@ -121,7 +123,7 @@ func (s *Source) client() *http.Client {
 	return http.DefaultClient
 }
 
-func (s *Source) open(ctx context.Context, version, name string) (io.ReadCloser, error) {
+func (s *Source) open(ctx context.Context, version, name string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url(version, name), nil)
 	if err != nil {
 		return nil, err
@@ -134,17 +136,17 @@ func (s *Source) open(ctx context.Context, version, name string) (io.ReadCloser,
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("download %s: %s", name, resp.Status)
 	}
-	return resp.Body, nil
+	return resp, nil
 }
 
 // get reads a small asset into memory.
 func (s *Source) get(ctx context.Context, version, name string) ([]byte, error) {
-	body, err := s.open(ctx, version, name)
+	resp, err := s.open(ctx, version, name)
 	if err != nil {
 		return nil, err
 	}
-	defer body.Close()
-	return io.ReadAll(io.LimitReader(body, 1<<20))
+	defer resp.Body.Close()
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
 
 // download streams an asset to dir, keeping it only when its digest matches SHA256SUMS.
@@ -153,11 +155,18 @@ func (s *Source) download(ctx context.Context, version, name, dir string, want m
 	if !ok {
 		return "", fmt.Errorf("SHA256SUMS does not list %s", name)
 	}
-	body, err := s.open(ctx, version, name)
+	resp, err := s.open(ctx, version, name)
 	if err != nil {
 		return "", err
 	}
-	defer body.Close()
+	defer resp.Body.Close()
+	body := resp.Body
+	if name == CacheName(version) && resp.ContentLength > 0 {
+		// The cache is unpacked beside itself, then the build copies from it into the store.
+		if err := needSpace(s.Free, dir, name, 2*uint64(resp.ContentLength)+BuildReserve); err != nil {
+			return "", err
+		}
+	}
 	tmp, err := os.CreateTemp(dir, name+".part-*")
 	if err != nil {
 		return "", err

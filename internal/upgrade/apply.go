@@ -60,6 +60,8 @@ type Upgrader struct {
 	BootedSystem string
 	// ReleaseSystems records each built system's release (osgen); "" records nothing.
 	ReleaseSystems string
+	// NixStore is checked for BuildReserve free before the build; "" skips the check.
+	NixStore string
 }
 
 // Apply moves this node to version. A failed build puts the previous source back.
@@ -92,6 +94,12 @@ func (u *Upgrader) run(ctx context.Context, st *Status, logs io.Writer) error {
 	substituter, err := unpackCache(rel)
 	if err != nil {
 		return err
+	}
+	defer removeUnpackedCache(rel)
+	if u.NixStore != "" {
+		if err := needSpace(u.Source.Free, u.NixStore, "the build", BuildReserve); err != nil {
+			return err
+		}
 	}
 	if err := u.Tree.Install(rel.Tarball, st.Version); err != nil {
 		return err
@@ -170,7 +178,7 @@ func unpackCache(rel *Fetched) (string, error) {
 	if rel.Cache == "" {
 		return "", nil
 	}
-	dir := filepath.Join(filepath.Dir(rel.Cache), "cache")
+	dir := unpackedCache(rel)
 	if err := os.RemoveAll(dir); err != nil {
 		return "", err
 	}
@@ -188,4 +196,13 @@ func ReadStatus(path string) (*Status, error) {
 	}
 	var st Status
 	return &st, json.Unmarshal(b, &st)
+}
+
+func unpackedCache(rel *Fetched) string { return filepath.Join(filepath.Dir(rel.Cache), "cache") }
+
+// removeUnpackedCache drops the cache's unpacked copy once the build is over; the download stays.
+func removeUnpackedCache(rel *Fetched) {
+	if rel.Cache != "" {
+		_ = os.RemoveAll(unpackedCache(rel))
+	}
 }

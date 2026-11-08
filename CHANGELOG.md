@@ -6,6 +6,17 @@ All notable changes to Expanse are recorded here. The format follows
 
 History before 1.0.0 is not recorded here.
 
+## Unreleased
+
+### Fixed
+
+- A node upgrade whose build fails now says why: its error ends with nix's own message, not just
+  "exit status 1".
+- A node upgrade checks for free space before it downloads the release's cache and before it
+  builds, and stops with how much it needs instead of filling the disk.
+- A failed node upgrade no longer leaves the release cache's unpacked copy (about as large as the
+  cache) on the node's disk. The verified downloads stay for a retry.
+
 ## 1.19.0 - 2026-11-07
 
 ### Added

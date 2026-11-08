@@ -29,12 +29,44 @@ func (e *ExecNix) BuildSystem(ctx context.Context, file, substituter string, log
 		cmd := exec.CommandContext(ctx, "nix-build", buildArgs(file, substituter, e.PublicKey)...)
 		cmd.Stdout, cmd.Stderr = &out, io.MultiWriter(logs, &stderr)
 		err := cmd.Run()
+		if err != nil {
+			if why := buildFailure(stderr.String()); why != "" {
+				err = fmt.Errorf("%w: %s", err, why)
+			}
+		}
 		return strings.TrimSpace(out.String()), stderr.String(), err
 	})
 	if err != nil {
 		return "", fmt.Errorf("nix-build %s: %w", file, err)
 	}
 	return path, nil
+}
+
+// maxBuildFailure caps how much of nix's output a failed build's error keeps.
+const maxBuildFailure = 1000
+
+// buildFailure is the part of a failed build's stderr that says why: from nix's last "error:"
+// line on, else its last few lines.
+func buildFailure(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	start := max(len(lines)-5, 0)
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "error:") {
+			start = i
+			break
+		}
+	}
+	var kept []string
+	for _, l := range lines[start:] {
+		if !strings.HasPrefix(l, "copying path ") {
+			kept = append(kept, l)
+		}
+	}
+	s := strings.TrimSpace(strings.Join(kept, "\n"))
+	if len(s) > maxBuildFailure {
+		s = s[:maxBuildFailure-3] + "..."
+	}
+	return s
 }
 
 // retryKilled runs a build once more when a signal killed its builder: Nix kills a builder that
