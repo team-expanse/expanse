@@ -13,7 +13,8 @@ History before 1.0.0 is not recorded here.
 - A node upgrade whose build fails now says why: its error ends with nix's own message, not just
   "exit status 1".
 - A node upgrade checks for free space before it downloads the release's cache and before it
-  builds, and stops with how much it needs instead of filling the disk.
+  builds, and stops with how much it needs instead of filling the disk. On btrfs that includes
+  metadata room, which can run out while `df` still shows space free.
 - A failed node upgrade no longer leaves the release cache's unpacked copy (about as large as the
   cache) on the node's disk. The verified downloads stay for a retry.
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -128,4 +129,74 @@ func TestApplyRemovesTheUnpackedCacheAfterTheBuild(t *testing.T) {
 			t.Errorf("a failed build dropped the verified cache download: %v", err)
 		}
 	}
+}
+
+const mib = uint64(1 << 20)
+
+// fakeBtrfs is a /sys/fs/btrfs/<uuid> directory.
+func fakeBtrfs(t *testing.T, device, dataDisk, metaTotal, metaDisk, metaUsed, reserve, sysDisk uint64) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(rel string, v uint64) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(strconv.FormatUint(v, 10)+"\n"), 0o644)
+	}
+	write("devices/sda2/size", device/512)
+	write("allocation/global_rsv_size", reserve)
+	write("allocation/data/disk_total", dataDisk)
+	write("allocation/metadata/total_bytes", metaTotal)
+	write("allocation/metadata/disk_total", metaDisk)
+	write("allocation/metadata/bytes_used", metaUsed)
+	write("allocation/system/disk_total", sysDisk)
+	return dir
+}
+
+// svr1's disk when its upgrade failed: df showed 1.7G free, with nothing left to allocate.
+func TestBtrfsMetadataRoomSeesAFullyAllocatedDisk(t *testing.T) {
+	dir := fakeBtrfs(t, 8192*mib, 7127*mib, 522*mib, 1044*mib, 437*mib, 30*mib, 20*mib)
+	room, ok := btrfsMetadataRoom(dir)
+	if !ok || room >= btrfsMetadataReserve {
+		t.Fatalf("room = %d MiB, ok = %v; want well under the reserve", room/mib, ok)
+	}
+}
+
+func TestBtrfsMetadataRoomCountsUnallocatedSpaceAtItsProfilesCost(t *testing.T) {
+	dir := fakeBtrfs(t, 10000*mib, 1000*mib, 500*mib, 1000*mib, 400*mib, 0, 0)
+	room, ok := btrfsMetadataRoom(dir)
+	if want := 100*mib + 4000*mib; !ok || room != want { // 8000 MiB unallocated, DUP halves it
+		t.Fatalf("room = %d MiB, ok = %v; want %d MiB", room/mib, ok, want/mib)
+	}
+}
+
+func TestBtrfsMetadataRoomGivesUpWithoutSysfs(t *testing.T) {
+	if _, ok := btrfsMetadataRoom(t.TempDir()); ok {
+		t.Fatal("an empty directory was read as a filesystem")
+	}
+}
+
+func TestMetadataErrorSaysHowToGetRoomBack(t *testing.T) {
+	err := metadataError("/nix/store", "the build", 50*mib)
+	for _, want := range []string{"/nix/store", "btrfs metadata", "the build", "btrfs balance"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
+// Set EXPANSE_BTRFS_PATH to a path on btrfs: the ioctl and sysfs need a real filesystem.
+func TestBtrfsRoomOnARealFilesystem(t *testing.T) {
+	path := os.Getenv("EXPANSE_BTRFS_PATH")
+	if path == "" {
+		t.Skip("EXPANSE_BTRFS_PATH is not set")
+	}
+	dir, ok := btrfsSysfsDir(path)
+	if !ok {
+		t.Fatalf("%s: no btrfs sysfs directory found", path)
+	}
+	room, ok := btrfsMetadataRoom(dir)
+	if !ok {
+		t.Fatalf("%s: could not read %s", path, dir)
+	}
+	t.Logf("%s: %s, metadata room %d MiB", path, dir, room/mib)
 }

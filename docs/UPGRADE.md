@@ -24,7 +24,8 @@ list (the published releases, from the oldest one the cluster runs to the newest
    removed once the node runs the release; a failed upgrade keeps them for its retry, but not the
    cache's unpacked copy. The upgrade needs about twice the cache's size free there, and room in
    `/nix/store` for the cache's paths the store lacks, plus 256 MiB, before the build. With less,
-   it stops before changing anything and says how much it needs.
+   it stops before changing anything and says how much it needs. On btrfs it also needs 256 MiB of
+   metadata room, which `df` doesn't show.
 3. Blocks and VMs keep running through the switch. The agent's restart leaves their volumes
    mounted and Primary, and nothing is re-placed or re-elected (`docs/AGENT.md`). A VM whose release
    brings a newer QEMU shows **Update QEMU**, which moves it over without a reboot (`docs/VMS.md`).
