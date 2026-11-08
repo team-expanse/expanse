@@ -8,6 +8,7 @@ Runs after cluster-common.py, block-common.py, vol_cluster.py and ui_forms_commo
 PASSWORD = "rolling-reboot-password"
 TARGET = "99.0.0"
 SOCK = "--socket /run/expanse/agent.sock"
+csrf = ""  # set by start_rollout(); post() reads it
 
 APP_MANIFEST = """apiVersion: expanse.io/v1
 kind: Block
