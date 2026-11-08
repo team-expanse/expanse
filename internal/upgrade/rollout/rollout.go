@@ -44,7 +44,9 @@ type Plan struct {
 type Report struct {
 	Version string          `json:"version"`
 	Upgrade *upgrade.Status `json:"upgrade,omitempty"`
-	Updated time.Time       `json:"updated"`
+	// RebootNeeded: the running system's kernel, initrd or modules are not the booted ones.
+	RebootNeeded bool      `json:"rebootNeeded,omitempty"`
+	Updated      time.Time `json:"updated"`
 }
 
 // Health gates each node's start and the move to the next one.

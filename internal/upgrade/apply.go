@@ -121,7 +121,7 @@ func (u *Upgrader) run(ctx context.Context, st *Status, logs io.Writer) error {
 			fmt.Fprintf(logs, "recording the release's system: %v\n", err)
 		}
 	}
-	st.RebootNeeded = u.rebootNeeded(st.System)
+	st.RebootNeeded = RebootNeeded(u.BootedSystem, st.System)
 	if err := u.Nix.Switch(ctx, st.System); err != nil {
 		return fmt.Errorf("switch: %w", err)
 	}
@@ -163,22 +163,6 @@ func runsRelease(system, version string) error {
 		return fmt.Errorf("the built system runs expanse-%s, not expanse-%s: configuration.nix must import ./expanse", got, version)
 	}
 	return nil
-}
-
-// rebootNeeded compares the kernel, initrd and modules the node booted with the new system's.
-func (u *Upgrader) rebootNeeded(system string) bool {
-	booted := u.BootedSystem
-	if booted == "" {
-		return false
-	}
-	for _, name := range []string{"kernel", "initrd", "kernel-modules"} {
-		a, errA := filepath.EvalSymlinks(filepath.Join(booted, name))
-		b, errB := filepath.EvalSymlinks(filepath.Join(system, name))
-		if errA != nil || errB != nil || a != b {
-			return true
-		}
-	}
-	return false
 }
 
 // unpackCache unpacks the release's binary cache beside its download, as a file:// substituter.

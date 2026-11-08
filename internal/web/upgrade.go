@@ -88,6 +88,8 @@ type upgradeView struct {
 	Errors    []string // every read that failed, so none hides another
 	Running   bool     // a rollout is running or paused, so no new one can start
 	Steps     []rolloutStep
+	// RebootNeeded lists the nodes whose running kernel, initrd or modules wait for a reboot.
+	RebootNeeded []string
 }
 
 // rolloutStep is one node's place in the running rollout.
@@ -152,6 +154,9 @@ func (s *Server) loadUpgrade(ctx context.Context) upgradeView {
 		n.Behind = v.Available != "" && n.Report.Version != "" && upgrade.Newer(v.Available, n.Report.Version)
 		if n.Behind {
 			v.Behind++
+		}
+		if n.Report.RebootNeeded {
+			v.RebootNeeded = append(v.RebootNeeded, id)
 		}
 		v.Nodes = append(v.Nodes, n)
 	}

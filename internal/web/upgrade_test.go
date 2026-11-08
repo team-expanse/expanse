@@ -262,3 +262,28 @@ func TestUpgradeStreamShowsAJoinedNode(t *testing.T) {
 	putTestNode(t, st, join.NodeRecord{ID: "joiner", RaftAddr: "127.0.0.1:1", APIAddr: "127.0.0.1:2", Role: "voter"}, "")
 	sse.expect("joiner", 5*time.Second)
 }
+
+func TestUpgradePageListsTheNodesWaitingForAReboot(t *testing.T) {
+	c, base, _, st := newUpgradeTestServer(t)
+	ctx := context.Background()
+	// n2 still runs its old kernel; n3's upgrade asked for a reboot it has since had.
+	stale := &upgrade.Status{Version: "1.12.0", State: upgrade.StateDone, RebootNeeded: true}
+	for id, r := range map[string]rollout.Report{
+		"n2": {Version: "1.12.0", RebootNeeded: true, Updated: time.Now()},
+		"n3": {Version: "1.12.0", Upgrade: stale, Updated: time.Now()},
+	} {
+		if err := rollout.SaveReport(ctx, st, id, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, body := get(t, c, base+"/upgrade")
+	if !strings.Contains(body, `1 node waits for a reboot to finish its upgrade: <a class="host" href="/nodes/n2">`) {
+		t.Errorf("upgrade page does not list n2 as waiting for a reboot:\n%s", body)
+	}
+	if n := strings.Count(body, "Reboot needed"); n != 1 {
+		t.Errorf("upgrade page shows %d reboot-needed pills, want 1 (n2's)", n)
+	}
+	if strings.Contains(body, "reboot to finish</span>") {
+		t.Error("upgrade page still shows n3's stale reboot flag")
+	}
+}

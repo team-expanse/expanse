@@ -32,6 +32,8 @@ type nodeUpgrades struct {
 	start                     func(ctx context.Context, version string) error
 	isLeader                  func() bool
 	health                    func(ctx context.Context) rollout.Health
+	// rebootNeeded reports whether the running system waits for a reboot; nil means never.
+	rebootNeeded func() bool
 	// releases lists the published releases, newest first; nil turns the check off.
 	releases func(ctx context.Context) ([]string, error)
 	log      *slog.Logger
@@ -103,6 +105,9 @@ func (u *nodeUpgrades) checkLatest(ctx context.Context, st store.Store, now time
 
 func (u *nodeUpgrades) report(now time.Time) rollout.Report {
 	rep := rollout.Report{Version: u.version, Updated: now}
+	if u.rebootNeeded != nil {
+		rep.RebootNeeded = u.rebootNeeded()
+	}
 	st, err := upgrade.ReadStatus(u.statusPath)
 	switch {
 	case err == nil:
@@ -121,7 +126,7 @@ func (u *nodeUpgrades) logger() *slog.Logger {
 }
 
 func sameReport(a, b rollout.Report) bool {
-	return a.Version == b.Version && reflect.DeepEqual(a.Upgrade, b.Upgrade)
+	return a.Version == b.Version && a.RebootNeeded == b.RebootNeeded && reflect.DeepEqual(a.Upgrade, b.Upgrade)
 }
 
 // startUpgrade runs `expanse upgrade start`, which detaches the upgrade into its own unit.
@@ -176,6 +181,9 @@ func (a *Agent) upgradeLoop(ctx context.Context) {
 		start:    a.startUpgrade,
 		isLeader: func() bool { return a.ctl.store.IsLeader() },
 		health:   a.rolloutHealth,
+		rebootNeeded: func() bool {
+			return upgrade.RebootNeeded("/run/booted-system", "/run/current-system")
+		},
 		releases: func(ctx context.Context) ([]string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // the loop must not hang on GitHub
 			defer cancel()

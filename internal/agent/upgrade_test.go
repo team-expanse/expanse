@@ -39,6 +39,22 @@ func newUpgradeRig(t *testing.T, node, version string) *upgradeRig {
 	return r
 }
 
+func TestUpgradePassReportsWhetherThisNodeNeedsAReboot(t *testing.T) {
+	r := newUpgradeRig(t, "n1", "1.19.0")
+	ctx := context.Background()
+	needed := true
+	r.u.rebootNeeded = func() bool { return needed }
+	r.u.pass(ctx, r.st, time.Now())
+	if got, _ := rollout.ListReports(ctx, r.st); !got["n1"].RebootNeeded {
+		t.Fatalf("reports = %+v, want a reboot needed", got)
+	}
+	needed = false // the node rebooted into its new kernel
+	r.u.pass(ctx, r.st, time.Now())
+	if got, _ := rollout.ListReports(ctx, r.st); got["n1"].RebootNeeded {
+		t.Fatalf("reports = %+v, want the reboot flag cleared at once", got)
+	}
+}
+
 func TestUpgradePassReportsThisNode(t *testing.T) {
 	r := newUpgradeRig(t, "n1", "1.11.3")
 	ctx := context.Background()
