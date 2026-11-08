@@ -5,10 +5,12 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/expanse/expanse/internal/cluster/control"
@@ -34,6 +36,11 @@ type nodeUpgrades struct {
 	health                    func(ctx context.Context) rollout.Health
 	// rebootNeeded reports whether the running system waits for a reboot; nil means never.
 	rebootNeeded func() bool
+	// bootID is the kernel's boot ID; reboot reboots this node; rebooter is the leader's side.
+	bootID    func() string
+	reboot    func(ctx context.Context) error
+	rebooter  rebooter
+	rebooting bool // this node asked systemd to reboot it
 	// releases lists the published releases, newest first; nil turns the check off.
 	releases func(ctx context.Context) ([]string, error)
 	log      *slog.Logger
@@ -54,27 +61,58 @@ func (u *nodeUpgrades) pass(ctx context.Context, st store.Store, now time.Time) 
 	if u.isLeader() {
 		u.checkLatest(ctx, st, now)
 	}
-	plan, err := rollout.LoadPlan(ctx, st)
-	if err != nil || plan == nil {
+	jobs, err := rollout.ListReboots(ctx, st)
+	if err != nil {
 		return
 	}
-	if rollout.ShouldStart(*plan, u.node, rep) {
+	u.rebootIfAsked(ctx, jobs[u.node], rep.BootID)
+	plan, err := rollout.LoadPlan(ctx, st)
+	if err != nil {
+		return
+	}
+	if plan != nil && rollout.ShouldStart(*plan, u.node, rep) {
 		u.logger().Info("starting this node's upgrade", "target", plan.Target)
 		if err := u.start(ctx, plan.Target); err != nil {
 			u.logger().Error("upgrade did not start", "target", plan.Target, "err", err)
 		}
 	}
 	if u.isLeader() {
-		u.lead(ctx, st, *plan, now)
+		u.lead(ctx, st, plan, jobs, now)
 	}
 }
 
-func (u *nodeUpgrades) lead(ctx context.Context, st store.Store, plan rollout.Plan, now time.Time) {
+// rebootIfAsked reboots this node once its reboot says so.
+func (u *nodeUpgrades) rebootIfAsked(ctx context.Context, j rollout.Reboot, bootID string) {
+	if u.rebooting || u.reboot == nil || !rollout.ShouldReboot(j, u.node, bootID) {
+		return
+	}
+	u.logger().Info("rebooting this node", "in_place", j.InPlace, "held", len(j.Held))
+	if err := u.reboot(ctx); err != nil {
+		u.logger().Error("reboot did not start", "err", err)
+		return
+	}
+	u.rebooting = true
+}
+
+func (u *nodeUpgrades) lead(ctx context.Context, st store.Store, plan *rollout.Plan, jobs map[string]rollout.Reboot, now time.Time) {
 	reports, err := rollout.ListReports(ctx, st)
 	if err != nil {
 		return
 	}
-	next, changed := rollout.Step(plan, reports, u.health(ctx), now)
+	h := u.health(ctx)
+	if plan != nil && rollout.NeedsRebootJob(*plan, reports, jobs) {
+		j := rollout.Reboot{Node: plan.Current, State: rollout.RebootPending, Since: now, Started: now, Updated: now}
+		if err := rollout.SaveReboot(ctx, st, j); err != nil {
+			u.logger().Warn("reboot not started", "node", j.Node, "err", err)
+		} else {
+			jobs[j.Node] = j
+		}
+	}
+	u.leadReboots(ctx, st, jobs, reports, h, now)
+	if plan == nil {
+		return
+	}
+	next, changed := rollout.Step(*plan, reports, jobs, h, now)
 	if !changed {
 		return
 	}
@@ -83,6 +121,63 @@ func (u *nodeUpgrades) lead(ctx context.Context, st store.Store, plan rollout.Pl
 		return
 	}
 	u.logger().Info("rollout", "target", next.Target, "state", next.State, "current", next.Current, "reason", next.Reason)
+}
+
+// leadReboots advances every open node reboot, beginning a pending one only while none other
+// is underway and the cluster is healthy.
+func (u *nodeUpgrades) leadReboots(ctx context.Context, st store.Store, jobs map[string]rollout.Reboot, reports map[string]rollout.Report, h rollout.Health, now time.Time) {
+	if u.rebooter == nil {
+		return
+	}
+	for _, n := range slices.Sorted(maps.Keys(jobs)) {
+		j := jobs[n]
+		if !j.Open() {
+			continue
+		}
+		next, err := u.stepReboot(ctx, j, jobs, reports[n], h, now)
+		if err != nil {
+			u.logger().Warn("reboot not advanced", "node", n, "err", err)
+			continue
+		}
+		if reflect.DeepEqual(next, j) {
+			continue
+		}
+		if err := rollout.SaveReboot(ctx, st, next); err != nil {
+			u.logger().Warn("reboot not saved", "node", n, "err", err)
+			continue
+		}
+		jobs[n] = next
+		u.logger().Info("reboot", "node", n, "state", next.State, "reason", next.Reason)
+	}
+}
+
+func (u *nodeUpgrades) stepReboot(ctx context.Context, j rollout.Reboot, jobs map[string]rollout.Reboot, rep rollout.Report, h rollout.Health, now time.Time) (rollout.Reboot, error) {
+	if j.State == rollout.RebootPending {
+		if why := rollout.CanBegin(j, jobs, h); why != "" {
+			j.Reason = why
+			return j, nil
+		}
+		if rep.BootID == "" {
+			j.State, j.Reason = rollout.RebootFailed, j.Node+": reports no boot ID; it runs an Expanse too old to reboot this way"
+			return j, nil
+		}
+		j.BootID, j.Reason, j.Since, j.Updated = rep.BootID, "", now, now
+		return u.rebooter.begin(ctx, j)
+	}
+	var d rollout.Drain
+	if j.State == rollout.RebootDraining {
+		var err error
+		if d, err = u.rebooter.progress(ctx, j); err != nil {
+			return j, err
+		}
+	}
+	next, _ := rollout.StepReboot(j, rep, d, now)
+	if next.State == rollout.RebootDone && !j.InPlace {
+		if err := u.rebooter.end(ctx, j); err != nil {
+			return j, err // still drained: the next pass tries again
+		}
+	}
+	return next, nil
 }
 
 // checkLatest records the published releases when a check is due.
@@ -105,6 +200,9 @@ func (u *nodeUpgrades) checkLatest(ctx context.Context, st store.Store, now time
 
 func (u *nodeUpgrades) report(now time.Time) rollout.Report {
 	rep := rollout.Report{Version: u.version, Updated: now}
+	if u.bootID != nil {
+		rep.BootID = u.bootID()
+	}
 	if u.rebootNeeded != nil {
 		rep.RebootNeeded = u.rebootNeeded()
 	}
@@ -126,7 +224,7 @@ func (u *nodeUpgrades) logger() *slog.Logger {
 }
 
 func sameReport(a, b rollout.Report) bool {
-	return a.Version == b.Version && a.RebootNeeded == b.RebootNeeded && reflect.DeepEqual(a.Upgrade, b.Upgrade)
+	return a.Version == b.Version && a.RebootNeeded == b.RebootNeeded && a.BootID == b.BootID && reflect.DeepEqual(a.Upgrade, b.Upgrade)
 }
 
 // startUpgrade runs `expanse upgrade start`, which detaches the upgrade into its own unit.
@@ -184,6 +282,9 @@ func (a *Agent) upgradeLoop(ctx context.Context) {
 		rebootNeeded: func() bool {
 			return upgrade.RebootNeeded("/run/booted-system", "/run/current-system")
 		},
+		bootID:   bootID,
+		reboot:   rebootNode,
+		rebooter: clusterRebooter{st: a.ctl.store},
 		releases: func(ctx context.Context) ([]string, error) {
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // the loop must not hang on GitHub
 			defer cancel()

@@ -17,6 +17,8 @@ const (
 	ReportPrefix = "/upgrade/nodes/"
 	// LatestKey holds the newest release the leader found.
 	LatestKey = "/upgrade/latest"
+	// RebootPrefix holds each node's latest Reboot, keyed by node ID.
+	RebootPrefix = "/upgrade/reboots/"
 )
 
 // Latest is the newest published release, checked daily by the leader unless Disabled.
@@ -101,6 +103,27 @@ func ListReports(ctx context.Context, st store.Store) (map[string]Report, error)
 		var r Report
 		if json.Unmarshal(e.Value, &r) == nil {
 			out[strings.TrimPrefix(string(e.Key), ReportPrefix)] = r
+		}
+	}
+	return out, nil
+}
+
+// SaveReboot writes a node's reboot.
+func SaveReboot(ctx context.Context, st store.Store, r Reboot) error {
+	return put(ctx, st, RebootPrefix+r.Node, r)
+}
+
+// ListReboots maps each node to its latest reboot, skipping unreadable records.
+func ListReboots(ctx context.Context, st store.Store) (map[string]Reboot, error) {
+	ents, err := st.List(ctx, store.Key(RebootPrefix))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Reboot, len(ents))
+	for _, e := range ents {
+		var r Reboot
+		if json.Unmarshal(e.Value, &r) == nil && r.Node != "" {
+			out[r.Node] = r
 		}
 	}
 	return out, nil

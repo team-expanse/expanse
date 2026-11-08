@@ -31,6 +31,8 @@ type Plan struct {
 	State   State    `json:"state"`
 	Order   []string `json:"order"`
 	Current string   `json:"current,omitempty"`
+	// Reboot: each node whose upgrade needs a reboot is drained and rebooted before the next.
+	Reboot bool `json:"reboot,omitempty"`
 	// CurrentSince is when Current was picked; NodeTimeout counts from it.
 	CurrentSince time.Time `json:"currentSince,omitempty"`
 	// Reason says why the plan waits or halted.
@@ -45,8 +47,10 @@ type Report struct {
 	Version string          `json:"version"`
 	Upgrade *upgrade.Status `json:"upgrade,omitempty"`
 	// RebootNeeded: the running system's kernel, initrd or modules are not the booted ones.
-	RebootNeeded bool      `json:"rebootNeeded,omitempty"`
-	Updated      time.Time `json:"updated"`
+	RebootNeeded bool `json:"rebootNeeded,omitempty"`
+	// BootID is the kernel's random boot ID: a new one means the node rebooted.
+	BootID  string    `json:"bootID,omitempty"`
+	Updated time.Time `json:"updated"`
 }
 
 // Health gates each node's start and the move to the next one.
@@ -66,14 +70,15 @@ func Order(nodes []string, leader string) []string {
 	return out
 }
 
-// Step advances a running plan by at most one move and reports whether it changed.
-func Step(p Plan, reports map[string]Report, h Health, now time.Time) (Plan, bool) {
+// Step advances a running plan by at most one move and reports whether it changed; jobs are
+// the nodes' reboots.
+func Step(p Plan, reports map[string]Report, jobs map[string]Reboot, h Health, now time.Time) (Plan, bool) {
 	if p.State != Running {
 		return p, false
 	}
 	before := p
 	if p.Current != "" {
-		p = stepCurrent(p, reports[p.Current], h, now)
+		p = stepCurrent(p, reports[p.Current], jobs, h, now)
 	}
 	if p.Current == "" && p.State == Running {
 		p = pickNext(p, reports, h, now)
@@ -85,12 +90,19 @@ func Step(p Plan, reports map[string]Report, h Health, now time.Time) (Plan, boo
 	return p, true
 }
 
-func stepCurrent(p Plan, r Report, h Health, now time.Time) Plan {
+func stepCurrent(p Plan, r Report, jobs map[string]Reboot, h Health, now time.Time) Plan {
 	if u := r.Upgrade; u != nil && u.Version == p.Target && u.State == upgrade.StateFailed && !u.Started.Before(p.Started) {
 		p.State, p.Reason = Halted, fmt.Sprintf("%s: %s", p.Current, u.Error)
 		return p
 	}
 	if r.Version == p.Target {
+		if why, wait, failed := awaitReboot(p, r, jobs); wait {
+			p.Reason = why
+			if failed {
+				p.State = Halted
+			}
+			return p
+		}
 		if !h.OK {
 			p.Reason = "waiting for the cluster: " + h.Why
 			return p
@@ -106,7 +118,7 @@ func stepCurrent(p Plan, r Report, h Health, now time.Time) Plan {
 
 func pickNext(p Plan, reports map[string]Report, h Health, now time.Time) Plan {
 	for _, n := range p.Order {
-		if reports[n].Version == p.Target {
+		if r := reports[n]; r.Version == p.Target && !(p.Reboot && r.RebootNeeded) {
 			continue
 		}
 		if !h.OK {
@@ -118,6 +130,29 @@ func pickNext(p Plan, reports map[string]Report, h Health, now time.Time) Plan {
 	}
 	p.State, p.Reason = Done, ""
 	return p
+}
+
+// awaitReboot says what the current node's reboot waits on, when the plan reboots and it needs
+// one, and whether that reboot failed since the plan (re)started.
+func awaitReboot(p Plan, r Report, jobs map[string]Reboot) (why string, wait, failed bool) {
+	if !p.Reboot {
+		return "", false, false
+	}
+	j, ok := jobs[p.Current]
+	fresh := ok && !j.Started.Before(p.Started)
+	switch {
+	case fresh && j.State == RebootFailed:
+		return j.Reason, true, true
+	case fresh && j.State == RebootPending && j.Reason != "":
+		return p.Current + "'s reboot is " + j.Reason, true, false
+	case fresh && j.State == RebootDraining:
+		return "draining " + p.Current + " before its reboot", true, false
+	case fresh && j.State == RebootRebooting:
+		return "rebooting " + p.Current, true, false
+	case r.RebootNeeded:
+		return "starting " + p.Current + "'s reboot", true, false
+	}
+	return "", false, false
 }
 
 func lastSeen(r Report) time.Time {

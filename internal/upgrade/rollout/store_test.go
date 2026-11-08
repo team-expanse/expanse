@@ -34,3 +34,19 @@ func TestPlanAndReportsRoundTrip(t *testing.T) {
 		t.Fatalf("reports %+v, err %v", got, err)
 	}
 }
+
+func TestRebootsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st, err := boltstore.New(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := SaveReboot(ctx, st, job(RebootDraining, now)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ListReboots(ctx, st)
+	if err != nil || len(got) != 1 || got["n1"].State != RebootDraining {
+		t.Fatalf("reboots %+v, err %v", got, err)
+	}
+}
