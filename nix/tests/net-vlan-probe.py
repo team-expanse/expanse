@@ -30,8 +30,12 @@ start_all()
 n1.wait_for_unit("multi-user.target")
 n2.wait_for_unit("dnsmasq.service")
 n1.succeed("mkdir -p /var/lib/dhcpcd /run/dhcpcd")
-n2.succeed("tcpdump -i eth1 -e -n -l vlan > /tmp/tagged.txt 2>&1 &")
-n2.wait_until_succeeds("grep -q listening /tmp/tagged.txt")
+n2.succeed("systemd-run --unit=tagcap sh -c 'tcpdump -i eth1 -e -n -l vlan > /tmp/tagged.txt 2>&1'")
+try:
+    n2.wait_until_succeeds("grep -q listening /tmp/tagged.txt", timeout=30)
+except Exception:
+    print(n2.execute("cat /tmp/tagged.txt; systemctl status tagcap --no-pager")[1])
+    raise
 
 print("--- 0: tagged frames cross the test network: host eth2.99 pings n2's eth1.99 ---")
 n2.succeed("ip link add link eth1 name eth1.99 type vlan id 99 && ip addr add 10.99.0.1/24 dev eth1.99 && ip link set eth1.99 up")

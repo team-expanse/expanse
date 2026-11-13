@@ -10,7 +10,7 @@
     n1 = { pkgs, ... }: {
       virtualisation.vlans = [ 1 2 ];
       virtualisation.memorySize = 768;
-      environment.systemPackages = [ pkgs.dhcpcd pkgs.tcpdump ];
+      environment.systemPackages = [ pkgs.dhcpcd ];
       # dhcpcd's privilege separation needs its user.
       users.users.dhcpcd = { isSystemUser = true; group = "dhcpcd"; };
       users.groups.dhcpcd = { };
@@ -18,8 +18,9 @@
       networking.dhcpcd.denyInterfaces = [ "eth2*" "mv*" ];
     };
     # n2: the switch's far side: DHCP for the native network and VLANs 20 and 30.
-    n2 = { ... }: {
+    n2 = { pkgs, ... }: {
       virtualisation.vlans = [ 2 ];
+      environment.systemPackages = [ pkgs.tcpdump ];
       networking.firewall.enable = false;
       networking.vlans = {
         vl20 = { id = 20; interface = "eth1"; };
