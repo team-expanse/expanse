@@ -11,7 +11,7 @@
       virtualisation.vlans = [ 1 2 ];
       virtualisation.memorySize = 768;
       environment.systemPackages = [ pkgs.dhcpcd pkgs.tcpdump ];
-      # dhcpcd's privilege separation needs its user; the dhcpcd service itself stays off.
+      # dhcpcd's privilege separation needs its user.
       users.users.dhcpcd = { isSystemUser = true; group = "dhcpcd"; };
       users.groups.dhcpcd = { };
       # The trunk NIC and its VLAN devices are the agent's, not the host dhcpcd's.
