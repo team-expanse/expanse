@@ -344,6 +344,7 @@
 
           # Probe (Phase 6 D2): not a gate.
           vm-macvtap-probe = mkTest "vm-macvtap-probe" ./nix/tests/vm-macvtap-probe.nix;
+          net-vlan-probe = mkTest "net-vlan-probe" ./nix/tests/net-vlan-probe.nix;
 
           # Probe (Phase 6 D1, final choice): not a gate.
           vm-d1-boot-probe = mkTest "vm-d1-boot-probe" ./nix/tests/vm-d1-boot-probe.nix;
