@@ -1,5 +1,7 @@
 # Probe body for net-vlan-probe.nix (Phase 17 N0). Observations only.
 
+from datetime import timedelta
+
 
 def lease(ns, dev):
     """Runs one DHCP exchange on dev inside netns ns and returns (exit code, IPv4 addresses)."""
@@ -30,9 +32,9 @@ start_all()
 n1.wait_for_unit("multi-user.target")
 n2.wait_for_unit("dnsmasq.service")
 n1.succeed("mkdir -p /var/lib/dhcpcd /run/dhcpcd")
-n2.succeed("systemd-run --unit=tagcap sh -c 'tcpdump -i eth1 -e -n -l vlan > /tmp/tagged.txt 2>&1'")
+n2.succeed("systemd-run --unit=tagcap --setenv=PATH=/run/current-system/sw/bin sh -c 'tcpdump -i eth1 -e -n -l vlan > /tmp/tagged.txt 2>&1'")
 try:
-    n2.wait_until_succeeds("grep -q listening /tmp/tagged.txt", timeout=30)
+    n2.wait_until_succeeds("grep -q listening /tmp/tagged.txt", timeout=timedelta(seconds=30))
 except Exception:
     print(n2.execute("cat /tmp/tagged.txt; systemctl status tagcap --no-pager")[1])
     raise
