@@ -14,6 +14,8 @@
       # dhcpcd's privilege separation needs its user; the dhcpcd service itself stays off.
       users.users.dhcpcd = { isSystemUser = true; group = "dhcpcd"; };
       users.groups.dhcpcd = { };
+      # The trunk NIC and its VLAN devices are the agent's, not the host dhcpcd's.
+      networking.dhcpcd.denyInterfaces = [ "eth2*" "mv*" ];
     };
     # n2: the switch's far side: DHCP for the native network and VLANs 20 and 30.
     n2 = { ... }: {

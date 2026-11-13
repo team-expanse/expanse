@@ -3,9 +3,11 @@
 
 def lease(ns, dev):
     """Runs one DHCP exchange on dev inside netns ns and returns (exit code, IPv4 addresses)."""
+    # ip netns exec gives a private mount namespace; a tmpfs over /run/dhcpcd keeps this client off
+    # the host dhcpcd's control socket.
     rc, out = n1.execute(
-        f"ip netns exec {ns} dhcpcd -1 -4 -w -t 30 -L -A "
-        f"--nohook resolv.conf --nohook hostname {dev} 2>&1"
+        f"ip netns exec {ns} sh -c 'mount -t tmpfs none /run/dhcpcd && "
+        f"dhcpcd -1 -4 -p -w -t 30 -L -A --nohook resolv.conf --nohook hostname {dev}' 2>&1"
     )
     print(f"dhcpcd {ns}/{dev} exit={rc}\n{out}")
     addrs = n1.succeed(f"ip netns exec {ns} ip -4 -o addr show dev {dev}")
@@ -27,8 +29,15 @@ def macvlan_ns(ns, parent, dev, mac):
 start_all()
 n1.wait_for_unit("multi-user.target")
 n2.wait_for_unit("dnsmasq.service")
-n1.succeed("mkdir -p /var/lib/dhcpcd")
+n1.succeed("mkdir -p /var/lib/dhcpcd /run/dhcpcd")
 n2.succeed("tcpdump -i eth1 -e -n -l vlan > /tmp/tagged.txt 2>&1 &")
+n2.wait_until_succeeds("grep -q listening /tmp/tagged.txt")
+
+print("--- 0: tagged frames cross the test network: host eth2.99 pings n2's eth1.99 ---")
+n2.succeed("ip link add link eth1 name eth1.99 type vlan id 99 && ip addr add 10.99.0.1/24 dev eth1.99 && ip link set eth1.99 up")
+n1.succeed("ip link add link eth2 name eth2.99 type vlan id 99 && ip addr add 10.99.0.2/24 dev eth2.99 && ip link set eth2.99 up")
+print(n1.execute("ping -c2 -W2 10.99.0.1")[1])
+print(n2.succeed("grep -c 'vlan 99' /tmp/tagged.txt || true"))
 
 print("--- 1: trunk child on eth2 (a VM stand-in), before the host has eth2.20 ---")
 macvlan_ns("tr1", "eth2", "mvtr", "52:54:00:17:00:01")
@@ -72,4 +81,5 @@ lease("tr2", "mvtr2.30")
 
 print("--- dnsmasq log and tagged frames seen on n2 ---")
 print(n2.succeed("journalctl -u dnsmasq --no-pager | grep -E 'DHCP(ACK|OFFER)' || true"))
-print(n2.succeed("grep -c 'vlan 20' /tmp/tagged.txt || true; grep -c 'vlan 30' /tmp/tagged.txt || true"))
+print(n2.succeed("for v in 20 30; do echo vlan $v: $(grep -c \"vlan $v\" /tmp/tagged.txt); done"))
+print(n1.succeed("journalctl -u dhcpcd --no-pager | grep -E 'eth2|mv' || true"))
